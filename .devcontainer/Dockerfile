@@ -30,25 +30,29 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     && echo "-------------------------------------------------------------" \
     && echo " Updating Ubuntu Package Repo" \
     && echo "-------------------------------------------------------------" \
-    && apt-get update \
+    && apt update \
     && echo "-------------------------------------------------------------" \
     && echo " Installing Misc. Packages" \
     && echo "-------------------------------------------------------------" \
-    && apt-get install -y apt-utils dialog locales tzdata sudo bash vim dos2unix mlocate zip \
-    && apt-get install -y curl wget \
-    && apt-get install -y openssh-client \
+    && apt install -y apt-utils dialog locales tzdata sudo bash vim dos2unix mlocate zip \
+    && apt install -y curl wget \
+    && apt install -y openssh-client \
     && echo "-------------------------------------------------------------" \
     && echo " Installing GIT" \
     && echo "-------------------------------------------------------------" \
-    && apt-get install -y git \
+    && apt install -y git \
     && echo "-------------------------------------------------------------" \
     && echo " Installing GCC" \
     && echo "-------------------------------------------------------------" \
-    && apt-get install -y gcc \
+    && apt install -y gcc \
     && echo "-------------------------------------------------------------" \
     && echo " Installing Python" \
     && echo "-------------------------------------------------------------" \
-    && apt-get install -y python3 \
+    && apt install -y python3 \
+    && echo "-------------------------------------------------------------" \
+    && echo " Installing WABT" \
+    && echo "-------------------------------------------------------------" \
+    && apt install -y wabt \
     && echo "-------------------------------------------------------------" \
     && echo " Adding User: ${USERNAME}" \
     && echo "-------------------------------------------------------------" \

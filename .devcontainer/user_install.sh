@@ -18,3 +18,14 @@ sed -i 's|\(PS1=.*\@\)\\h|\1docker|g' ~/.bashrc
 chmod 0700 ~/. 
 chmod 0640 ~/.bash*
 chmod 0640 ~/.profile*
+
+LLVM_VERSION=17
+# install llvm
+apt install lsb-release wget software-properties-common gnupg zlib1g-dev libpolly-$LLVM_VERSION-dev -y
+# get newest llvm.sh
+# wget https://apt.llvm.org/llvm.sh
+sudo ./llvm.sh $LLVM_VERSION
+
+# install wasmer
+curl https://get.wasmer.io -sSfL | sh
+source /home/vscode/.wasmer/wasmer.sh

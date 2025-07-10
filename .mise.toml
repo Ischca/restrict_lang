@@ -1,0 +1,115 @@
+[env]
+CARGO_TERM_COLOR = "always"
+
+[tools]
+rust = "latest"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test -- --nocapture"
+
+[tasks.test-one]
+description = "Run specific test"
+run = """
+if [ -z "$TEST" ]; then
+  echo "Usage: mise run test-one TEST=test_name"
+  exit 1
+fi
+cargo test $TEST -- --nocapture
+"""
+
+[tasks.watch]
+description = "Watch mode - auto recompile on changes"
+run = "cargo run -- watch test/"
+
+[tasks.debug]
+description = "Debug specific file"
+run = """
+if [ -z "$FILE" ]; then
+  echo "Usage: mise run debug FILE=test/example.rl"
+  exit 1
+fi
+cargo run -- debug $FILE
+"""
+
+[tasks.repl]
+description = "Run interactive REPL"
+run = "cargo run -- repl"
+
+[tasks.check]
+description = "Check all test files"
+run = """
+for file in test/*.rl; do
+  echo "Checking $file..."
+  cargo run -- compile "$file" || true
+done
+"""
+
+[tasks.prop-test]
+description = "Property-based testing"
+run = "cargo test property_tests:: -- --nocapture"
+
+[tasks.bench]
+description = "Benchmark compilation speed"
+run = "cargo bench"
+
+[tasks.clean]
+description = "Clean generated files"
+run = ["rm -f test/*.wat", "cargo clean"]
+
+[tasks.fmt]
+description = "Format code"
+run = "cargo fmt"
+
+[tasks.lint]
+description = "Lint code"
+run = "cargo clippy -- -D warnings"
+
+[tasks.doc]
+description = "Generate documentation"
+run = "cargo doc --open"
+
+[tasks.run]
+description = "Quick compile and run"
+run = """
+if [ -z "$FILE" ]; then
+  echo "Usage: mise run run FILE=test/example.rl"
+  exit 1
+fi
+cargo run -- compile "$FILE" && wasmtime "test/$(basename "${FILE%.rl}").wat"
+"""
+
+[tasks.dev]
+description = "Run development server with hot reload"
+depends = ["fmt", "lint"]
+run = "cargo watch -x 'test' -x 'run -- compile test/'"
+
+[tasks.ci]
+description = "Run full CI pipeline locally"
+run = [
+  "mise run fmt",
+  "mise run lint", 
+  "mise run test",
+  "mise run prop-test",
+  "mise run check"
+]
+
+[tasks.setup]
+description = "Setup development environment"
+run = """
+# Install cargo-watch for development
+cargo install cargo-watch
+
+# Install wasmtime for running WASM
+curl https://wasmtime.dev/install.sh -sSf | bash
+
+echo "Development environment setup complete!"
+"""
+
+[tasks.quick]
+description = "Quick test of a simple expression"
+run = """
+echo "Enter Restrict Language expression:"
+read -r expr
+echo "$expr" | cargo run -- eval
+"""

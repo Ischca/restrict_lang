@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo:*)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(rg:*)",
+      "Bash(rustc:*)",
+      "Bash(./debug_test)"
+    ],
+    "deny": []
+  }
+}

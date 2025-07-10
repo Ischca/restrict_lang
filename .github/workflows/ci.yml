@@ -73,7 +73,7 @@ jobs:
       run: cargo test --verbose
     
     - name: Run property tests
-      run: cargo test property_tests:: --verbose
+      run: cargo test property_tests --verbose
     
     - name: Install mise
       run: |

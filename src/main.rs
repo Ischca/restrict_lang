@@ -1,4 +1,4 @@
-use restrict_lang::{lex, parse_program};
+use restrict_lang::{lex, parse_program, TypeChecker};
 use std::fs;
 use std::env;
 
@@ -37,15 +37,29 @@ fn main() {
     
     // Parse the source
     println!("\n=== Parsing ===");
-    match parse_program(&source) {
+    let ast = match parse_program(&source) {
         Ok((remaining, ast)) => {
             if !remaining.is_empty() {
                 eprintln!("Warning: Unparsed input remaining: {:?}", remaining);
             }
             println!("AST: {:#?}", ast);
+            ast
         },
         Err(e) => {
             eprintln!("Parsing error: {:?}", e);
+            std::process::exit(1);
+        }
+    };
+    
+    // Type check
+    println!("\n=== Type Checking ===");
+    let mut type_checker = TypeChecker::new();
+    match type_checker.check_program(&ast) {
+        Ok(()) => {
+            println!("Type checking passed!");
+        },
+        Err(e) => {
+            eprintln!("Type error: {}", e);
             std::process::exit(1);
         }
     }

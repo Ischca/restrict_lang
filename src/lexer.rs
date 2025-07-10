@@ -262,14 +262,15 @@ fn whitespace(input: &str) -> IResult<&str, &str> {
     multispace0(input)
 }
 
-fn comment(input: &str) -> IResult<&str, &str> {
-    alt((
-        // Single line comment
-        recognize(pair(tag("//"), take_while(|c| c != '\n'))),
-        // Multi-line comment (simplified for now)
-        recognize(pair(tag("/*"), take_while(|_| false))), // TODO: implement proper multi-line comments
-    ))(input)
-}
+// TODO: implement comment parsing
+// fn comment(input: &str) -> IResult<&str, &str> {
+//     alt((
+//         // Single line comment
+//         recognize(pair(tag("//"), take_while(|c| c != '\n'))),
+//         // Multi-line comment
+//         ...
+//     ))(input)
+// }
 
 fn skip(input: &str) -> IResult<&str, ()> {
     map(

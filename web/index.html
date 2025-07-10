@@ -199,13 +199,15 @@
         
         <div class="editor-section">
             <h3>📝 Source Code</h3>
-            <textarea id="sourceCode" placeholder="Enter your Restrict Language code here...">// Example: Simple function
-fun add(a: Int, b: Int): Int => a + b
+            <textarea id="sourceCode" placeholder="Enter your Restrict Language code here...">// Simple function example
+fun add = a: Int b: Int {
+    a + b
+}
 
-// Example: Main function
-fun main() => {
-    val result = add(2, 3)
-    result.print()
+// Main function
+fun main = {
+    val result = (2, 3) add;
+    result
 }</textarea>
         </div>
         
@@ -246,17 +248,17 @@ fun main() => {
             
             <div class="example" onclick="loadExample('hello')">
                 <div class="example-title">Hello World</div>
-                <div class="example-code">fun main() => "Hello, World!".print()</div>
+                <div class="example-code">fun main = { 42 }</div>
             </div>
             
             <div class="example" onclick="loadExample('function')">
                 <div class="example-title">Function Definition</div>
-                <div class="example-code">fun add(a: Int, b: Int): Int => a + b</div>
+                <div class="example-code">fun add = a: Int b: Int { a + b }</div>
             </div>
             
             <div class="example" onclick="loadExample('pipe')">
                 <div class="example-title">Pipe Operations</div>
-                <div class="example-code">5 |> add(3) |> print()</div>
+                <div class="example-code">42 |> x { x + 1 }</div>
             </div>
             
             <div class="example" onclick="loadExample('record')">

@@ -81,6 +81,8 @@ pub struct TypeChecker {
     records: HashMap<String, RecordDef>,
     // Function definitions
     functions: HashMap<String, FunctionDef>,
+    // Method implementations: record_name -> method_name -> function_def
+    methods: HashMap<String, HashMap<String, FunctionDef>>,
     // Available contexts
     _contexts: Vec<String>,
 }
@@ -91,6 +93,7 @@ impl TypeChecker {
             var_env: vec![HashMap::new()],
             records: HashMap::new(),
             functions: HashMap::new(),
+            methods: HashMap::new(),
             _contexts: Vec::new(),
         }
     }
@@ -225,8 +228,38 @@ impl TypeChecker {
             return Err(TypeError::UndefinedRecord(impl_block.target.clone()));
         }
         
+        // Clone the target to avoid borrow issues
+        let target = impl_block.target.clone();
+        
         for func in &impl_block.functions {
-            self.check_function_decl(func)?;
+            // Check the method, but with special handling for 'self' parameter
+            self.push_scope();
+            
+            let mut param_types = Vec::new();
+            for (i, param) in func.params.iter().enumerate() {
+                let ty = if i == 0 && param.name == "self" {
+                    // First parameter named 'self' should be the record type
+                    TypedType::Record { 
+                        name: target.clone(), 
+                        frozen: false  // Methods can be called on both frozen and unfrozen records
+                    }
+                } else {
+                    self.convert_type(&param.ty)?
+                };
+                param_types.push((param.name.clone(), ty.clone()));
+                self.bind_var(param.name.clone(), ty, false)?;
+            }
+            
+            let return_type = self.check_block_expr(&func.body)?;
+            
+            // Store the method in the methods map
+            let method_map = self.methods.entry(target.clone()).or_insert_with(HashMap::new);
+            method_map.insert(func.name.clone(), FunctionDef {
+                params: param_types,
+                return_type,
+            });
+            
+            self.pop_scope();
         }
         Ok(())
     }
@@ -269,7 +302,6 @@ impl TypeChecker {
             Expr::Then(then) => self.check_then_expr(then),
             Expr::While(while_expr) => self.check_while_expr(while_expr),
             Expr::Match(match_expr) => self.check_match_expr(match_expr),
-            _ => todo!("Type checking for {:?} not implemented", expr),
         }
     }
     
@@ -381,37 +413,79 @@ impl TypeChecker {
         // First check the function expression type
         match &*call.function {
             Expr::Ident(name) => {
-                // Look up function definition
-                let func_info = self.functions.get(name)
-                    .ok_or_else(|| TypeError::UndefinedFunction(name.clone()))?;
-                
-                let expected_arity = func_info.params.len();
-                let return_type = func_info.return_type.clone();
-                let param_types: Vec<TypedType> = func_info.params.iter()
-                    .map(|(_, ty)| ty.clone())
-                    .collect();
-                
-                // Check arity
-                if call.args.len() != expected_arity {
-                    return Err(TypeError::ArityMismatch {
-                        expected: expected_arity,
-                        found: call.args.len(),
-                    });
-                }
-                
-                // Check argument types
-                for (i, arg) in call.args.iter().enumerate() {
-                    let expected_ty = &param_types[i];
-                    let actual_ty = self.check_expr(arg)?;
-                    if &actual_ty != expected_ty {
-                        return Err(TypeError::TypeMismatch {
-                            expected: format!("{:?}", expected_ty),
-                            found: format!("{:?}", actual_ty),
+                // First try to find a regular function
+                if let Some(func_info) = self.functions.get(name) {
+                    let expected_arity = func_info.params.len();
+                    let return_type = func_info.return_type.clone();
+                    let param_types: Vec<TypedType> = func_info.params.iter()
+                        .map(|(_, ty)| ty.clone())
+                        .collect();
+                    
+                    // Check arity
+                    if call.args.len() != expected_arity {
+                        return Err(TypeError::ArityMismatch {
+                            expected: expected_arity,
+                            found: call.args.len(),
                         });
                     }
+                    
+                    // Check argument types
+                    for (i, arg) in call.args.iter().enumerate() {
+                        let expected_ty = &param_types[i];
+                        let actual_ty = self.check_expr(arg)?;
+                        if &actual_ty != expected_ty {
+                            return Err(TypeError::TypeMismatch {
+                                expected: format!("{:?}", expected_ty),
+                                found: format!("{:?}", actual_ty),
+                            });
+                        }
+                    }
+                    
+                    Ok(return_type)
+                } else {
+                    // Try to find a method
+                    // Check if the first argument is a record type
+                    if let Some(first_arg) = call.args.first() {
+                        if let Ok(first_arg_ty) = self.check_expr(first_arg) {
+                            if let TypedType::Record { name: record_name, .. } = &first_arg_ty {
+                                // Look for the method in this record's methods
+                                if let Some(method_map) = self.methods.get(record_name) {
+                                    if let Some(method_info) = method_map.get(name) {
+                                        let expected_arity = method_info.params.len();
+                                        let return_type = method_info.return_type.clone();
+                                        let param_types: Vec<TypedType> = method_info.params.iter()
+                                            .map(|(_, ty)| ty.clone())
+                                            .collect();
+                                        
+                                        // Check arity
+                                        if call.args.len() != expected_arity {
+                                            return Err(TypeError::ArityMismatch {
+                                                expected: expected_arity,
+                                                found: call.args.len(),
+                                            });
+                                        }
+                                        
+                                        // Check argument types
+                                        for (i, arg) in call.args.iter().enumerate() {
+                                            let expected_ty = &param_types[i];
+                                            let actual_ty = self.check_expr(arg)?;
+                                            if &actual_ty != expected_ty {
+                                                return Err(TypeError::TypeMismatch {
+                                                    expected: format!("{:?}", expected_ty),
+                                                    found: format!("{:?}", actual_ty),
+                                                });
+                                            }
+                                        }
+                                        
+                                        return Ok(return_type);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    Err(TypeError::UndefinedFunction(name.clone()))
                 }
-                
-                Ok(return_type)
             }
             Expr::FieldAccess(obj_expr, _method_name) => {
                 // Method call on object
@@ -576,7 +650,7 @@ impl TypeChecker {
         self.pop_scope();
         
         // Check else-if branches
-        let mut result_ty = then_ty.clone();
+        let result_ty = then_ty.clone();
         for (else_cond, else_block) in &then.else_ifs {
             let else_cond_ty = self.check_expr(else_cond)?;
             if else_cond_ty != TypedType::Boolean {

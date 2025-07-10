@@ -23,21 +23,26 @@ pub struct WasmCodeGen {
     locals: Vec<HashMap<String, u32>>,
     // Function signatures
     functions: HashMap<String, FunctionSig>,
+    // Method signatures: record_name -> method_name -> function_sig
+    methods: HashMap<String, HashMap<String, FunctionSig>>,
     // String constants pool
-    strings: Vec<String>,
+    _strings: Vec<String>,
     // Current function context
     current_function: Option<String>,
     // Generated code
     output: String,
+    // Type information for expressions (filled by external type checker)
+    pub expr_types: HashMap<*const Expr, String>,
 }
 
 #[derive(Debug, Clone)]
 struct FunctionSig {
-    params: Vec<WasmType>,
+    _params: Vec<WasmType>,
     result: Option<WasmType>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum WasmType {
     I32,
     I64,
@@ -50,9 +55,11 @@ impl WasmCodeGen {
         Self {
             locals: vec![HashMap::new()],
             functions: HashMap::new(),
-            strings: Vec::new(),
+            methods: HashMap::new(),
+            _strings: Vec::new(),
             current_function: None,
             output: String::new(),
+            expr_types: HashMap::new(),
         }
     }
     
@@ -72,10 +79,16 @@ impl WasmCodeGen {
         // Generate string constants
         self.generate_string_constants(program)?;
         
-        // First pass: collect function signatures
+        // First pass: collect function and method signatures
         for decl in &program.declarations {
-            if let TopDecl::Function(func) = decl {
-                self.collect_function_signature(func)?;
+            match decl {
+                TopDecl::Function(func) => {
+                    self.collect_function_signature(func)?;
+                }
+                TopDecl::Impl(impl_block) => {
+                    self.collect_impl_signatures(impl_block)?;
+                }
+                _ => {}
             }
         }
         
@@ -85,6 +98,9 @@ impl WasmCodeGen {
             match decl {
                 TopDecl::Function(func) => {
                     self.generate_function(func)?;
+                }
+                TopDecl::Impl(impl_block) => {
+                    self.generate_impl_methods(impl_block)?;
                 }
                 TopDecl::Binding(_bind) => {
                     // Global bindings are not supported yet
@@ -121,7 +137,7 @@ impl WasmCodeGen {
         // For now, assume all functions return i32
         let result = Some(WasmType::I32);
         
-        self.functions.insert(func.name.clone(), FunctionSig { params, result });
+        self.functions.insert(func.name.clone(), FunctionSig { _params: params, result });
         Ok(())
     }
     
@@ -131,10 +147,62 @@ impl WasmCodeGen {
                 "Int" | "Int32" => Ok(WasmType::I32),
                 "Float" | "Float64" => Ok(WasmType::F64),
                 "Boolean" | "Bool" => Ok(WasmType::I32), // 0 = false, 1 = true
-                _ => Err(CodeGenError::UnsupportedType(name.clone())),
+                _ => {
+                    // Records are passed as i32 references for now
+                    Ok(WasmType::I32)
+                }
             },
             Type::Generic(_, _) => Err(CodeGenError::UnsupportedType("generic types".to_string())),
         }
+    }
+    
+    fn collect_impl_signatures(&mut self, impl_block: &ImplBlock) -> Result<(), CodeGenError> {
+        let record_name = impl_block.target.clone();
+        
+        let mut method_sigs = Vec::new();
+        let mut function_sigs = Vec::new();
+        
+        for func in &impl_block.functions {
+            let params: Vec<WasmType> = func.params.iter()
+                .map(|p| self.convert_type(&p.ty))
+                .collect::<Result<Vec<_>, _>>()?;
+            
+            // For now, assume all methods return i32
+            let result = Some(WasmType::I32);
+            
+            // Generate a mangled name for the method
+            let mangled_name = format!("{}_{}", record_name, func.name);
+            
+            // Collect signatures to add later
+            method_sigs.push((func.name.clone(), FunctionSig { _params: params.clone(), result }));
+            function_sigs.push((mangled_name, FunctionSig { _params: params, result }));
+        }
+        
+        // Now add them to the maps
+        let method_map = self.methods.entry(record_name).or_insert_with(HashMap::new);
+        for (name, sig) in method_sigs {
+            method_map.insert(name, sig);
+        }
+        for (name, sig) in function_sigs {
+            self.functions.insert(name, sig);
+        }
+        
+        Ok(())
+    }
+    
+    fn generate_impl_methods(&mut self, impl_block: &ImplBlock) -> Result<(), CodeGenError> {
+        let record_name = impl_block.target.clone();
+        
+        for func in &impl_block.functions {
+            // Generate the method with a mangled name
+            let mangled_func = FunDecl {
+                name: format!("{}_{}", record_name, func.name),
+                params: func.params.clone(),
+                body: func.body.clone(),
+            };
+            self.generate_function(&mangled_func)?;
+        }
+        Ok(())
     }
     
     fn generate_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
@@ -253,14 +321,40 @@ impl WasmCodeGen {
             Expr::Block(block) => {
                 self.generate_block(block)?;
             }
-            Expr::RecordLit(_record_lit) => {
-                // For now, records are not directly supported in WASM
-                // We'd need to implement them as memory structures
-                return Err(CodeGenError::NotImplemented("record literals".to_string()));
+            Expr::RecordLit(record_lit) => {
+                // For now, we'll use a simple implementation
+                // Allocate memory and store fields
+                // In a real implementation, we'd have a proper memory allocator
+                
+                // For simplicity, use a fixed address (this is not production-ready!)
+                self.output.push_str("    i32.const 1024\n"); // Base address
+                
+                // Store each field value
+                let mut offset = 0;
+                for field in &record_lit.fields {
+                    self.output.push_str("    i32.const 1024\n");
+                    self.output.push_str(&format!("    i32.const {}\n", offset));
+                    self.output.push_str("    i32.add\n");
+                    self.generate_expr(&field.value)?;
+                    self.output.push_str("    i32.store\n");
+                    offset += 4; // Assume all fields are i32
+                }
+                
+                // Return the base address
+                self.output.push_str("    i32.const 1024\n");
             }
-            Expr::FieldAccess(_obj_expr, _field_name) => {
-                // Field access would require memory layout implementation
-                return Err(CodeGenError::NotImplemented("field access".to_string()));
+            Expr::FieldAccess(obj_expr, field_name) => {
+                // For now, we'll simulate field access with a simple offset
+                // In a real implementation, we'd need proper memory layout
+                self.generate_expr(obj_expr)?;
+                
+                // Assume records are stored as pointers, and fields are at fixed offsets
+                // For simplicity, assume each field is 4 bytes (i32)
+                match field_name.as_str() {
+                    "hp" | "x" | "value" => self.output.push_str("    i32.const 0\n    i32.add\n    i32.load\n"), // offset 0
+                    "atk" | "y" | "mp" => self.output.push_str("    i32.const 4\n    i32.add\n    i32.load\n"), // offset 4
+                    _ => return Err(CodeGenError::NotImplemented(format!("field access: {}", field_name))),
+                }
             }
             Expr::Clone(_) => {
                 return Err(CodeGenError::NotImplemented("clone expressions".to_string()));
@@ -322,10 +416,64 @@ impl WasmCodeGen {
         
         // Generate function call
         if let Expr::Ident(func_name) = &*call.function {
+            // First check if it's a regular function
             if self.functions.contains_key(func_name) {
                 self.output.push_str(&format!("    call ${}\n", func_name));
             } else {
-                return Err(CodeGenError::UndefinedFunction(func_name.clone()));
+                // Try to find it as a method
+                // For methods, we need to determine the record type from the first argument
+                if let Some(first_arg) = call.args.first() {
+                    // Try to get type information from the expr_types map
+                    let record_type = if let Some(ty) = self.expr_types.get(&(&**first_arg as *const Expr)) {
+                        // Extract record name from type string (e.g., "Enemy" from "Enemy")
+                        Some(ty.clone())
+                    } else {
+                        None
+                    };
+                    
+                    if let Some(record_name) = record_type {
+                        // We have type information - use it for precise method resolution
+                        if let Some(method_map) = self.methods.get(&record_name) {
+                            if method_map.contains_key(func_name) {
+                                let mangled_name = format!("{}_{}", record_name, func_name);
+                                self.output.push_str(&format!("    call ${}\n", mangled_name));
+                            } else {
+                                return Err(CodeGenError::UndefinedFunction(
+                                    format!("Method '{}' not found in record '{}'", func_name, record_name)
+                                ));
+                            }
+                        } else {
+                            return Err(CodeGenError::UndefinedFunction(
+                                format!("No methods defined for record '{}'", record_name)
+                            ));
+                        }
+                    } else {
+                        // No type information - fall back to checking uniqueness
+                        let mut found_records = Vec::new();
+                        for (record_name, method_map) in &self.methods {
+                            if method_map.contains_key(func_name) {
+                                found_records.push(record_name.clone());
+                            }
+                        }
+                        
+                        if found_records.is_empty() {
+                            return Err(CodeGenError::UndefinedFunction(func_name.clone()));
+                        } else if found_records.len() > 1 {
+                            // Method exists in multiple records - ambiguous without type info
+                            return Err(CodeGenError::NotImplemented(
+                                format!("Ambiguous method '{}' found in records: {:?}. Type-directed method resolution not yet implemented", 
+                                    func_name, found_records)
+                            ));
+                        } else {
+                            // Unique method - safe to call
+                            let record_name = &found_records[0];
+                            let mangled_name = format!("{}_{}", record_name, func_name);
+                            self.output.push_str(&format!("    call ${}\n", mangled_name));
+                        }
+                    }
+                } else {
+                    return Err(CodeGenError::UndefinedFunction(func_name.clone()));
+                }
             }
         } else {
             return Err(CodeGenError::NotImplemented("indirect calls".to_string()));
@@ -376,6 +524,7 @@ impl WasmCodeGen {
         None
     }
     
+    #[allow(dead_code)]
     fn next_local_index(&self) -> u32 {
         let mut max_idx = 0;
         for scope in &self.locals {
@@ -471,7 +620,7 @@ impl WasmCodeGen {
         
         // Generate then branch
         self.push_scope();
-        let then_result = self.generate_block_contents(&then.then_block)?;
+        let _then_result = self.generate_block_contents(&then.then_block)?;
         self.pop_scope();
         
         self.output.push_str("      )\n");

@@ -290,10 +290,23 @@ fn then_expr(input: &str) -> ParseResult<Expr> {
     }
 }
 
-// TODO: implement binary operations
-// fn binary_op(input: &str) -> ParseResult<BinaryOp> {
-//     ...
-// }
+fn binary_op(input: &str) -> ParseResult<BinaryOp> {
+    let (input, token) = lex_token(input)?;
+    match token {
+        Token::Plus => Ok((input, BinaryOp::Add)),
+        Token::Minus => Ok((input, BinaryOp::Sub)),
+        Token::Star => Ok((input, BinaryOp::Mul)),
+        Token::Slash => Ok((input, BinaryOp::Div)),
+        Token::Percent => Ok((input, BinaryOp::Mod)),
+        Token::Eq => Ok((input, BinaryOp::Eq)),
+        Token::Ne => Ok((input, BinaryOp::Ne)),
+        Token::Lt => Ok((input, BinaryOp::Lt)),
+        Token::Le => Ok((input, BinaryOp::Le)),
+        Token::Gt => Ok((input, BinaryOp::Gt)),
+        Token::Ge => Ok((input, BinaryOp::Ge)),
+        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+    }
+}
 
 fn pipe_op(input: &str) -> ParseResult<PipeOp> {
     let (input, token) = lex_token(input)?;
@@ -305,14 +318,37 @@ fn pipe_op(input: &str) -> ParseResult<PipeOp> {
     }
 }
 
-fn pipe_expr(input: &str) -> ParseResult<Expr> {
+fn binary_expr(input: &str) -> ParseResult<Expr> {
     let (input, first) = call_expr(input)?;
+    
+    // Try to parse binary operator and right operand
+    let (input, rest) = many0(
+        tuple((
+            binary_op,
+            call_expr
+        ))
+    )(input)?;
+    
+    // Left-associative fold
+    let expr = rest.into_iter().fold(first, |left, (op, right)| {
+        Expr::Binary(BinaryExpr {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        })
+    });
+    
+    Ok((input, expr))
+}
+
+fn pipe_expr(input: &str) -> ParseResult<Expr> {
+    let (input, first) = binary_expr(input)?;
     let (input, pipes) = many0(
         tuple((
             pipe_op,
             alt((
                 map(ident, PipeTarget::Ident),
-                map(call_expr, |e| PipeTarget::Expr(Box::new(e)))
+                map(binary_expr, |e| PipeTarget::Expr(Box::new(e)))
             ))
         ))
     )(input)?;

@@ -418,15 +418,23 @@ impl WasmCodeGen {
         
         match &pipe.target {
             PipeTarget::Ident(name) => {
-                // This is a binding: expr |> name
-                // The value is already on the stack, just store it
-                self.output.push_str(&format!("    local.set ${}\n", name));
-                // And leave it on the stack as the result
-                self.output.push_str(&format!("    local.get ${}\n", name));
+                // Check if this is a function or a binding
+                if self.functions.contains_key(name) {
+                    // It's a function call: expr |> func
+                    self.output.push_str(&format!("    call ${}\n", name));
+                } else if self.lookup_local(name).is_some() {
+                    // It's an existing local variable, error
+                    return Err(CodeGenError::NotImplemented("pipe to existing variable".to_string()));
+                } else {
+                    // It's a new binding: expr |> name
+                    // This should have been handled by the type checker to add the local
+                    self.output.push_str(&format!("    local.set ${}\n", name));
+                    // And leave it on the stack as the result
+                    self.output.push_str(&format!("    local.get ${}\n", name));
+                }
             }
             PipeTarget::Expr(target_expr) => {
-                // This is a function call: expr |> func
-                // The argument is already on the stack
+                // This is a complex expression
                 match &**target_expr {
                     Expr::Ident(func_name) => {
                         // Single argument function call
@@ -562,10 +570,12 @@ mod tests {
     use super::*;
     use crate::parser::parse_program;
     
-    fn generate_wat(input: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let (_, ast) = parse_program(input)?;
+    fn generate_wat(input: &str) -> Result<String, String> {
+        let (_, ast) = parse_program(input)
+            .map_err(|e| format!("Parse error: {:?}", e))?;
         let mut codegen = WasmCodeGen::new();
-        Ok(codegen.generate(&ast)?)
+        codegen.generate(&ast)
+            .map_err(|e| format!("Codegen error: {}", e))
     }
     
     #[test]

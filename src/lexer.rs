@@ -1,8 +1,8 @@
 use nom::{
     IResult,
     branch::alt,
-    bytes::complete::{tag, take_while1, take_while},
-    character::complete::{char, digit1, one_of, multispace0},
+    bytes::complete::{tag, take_while1, take_while, take_until},
+    character::complete::{char, digit1, one_of},
     combinator::{recognize, map, value},
     multi::many0,
     sequence::{pair, preceded, delimited},
@@ -259,24 +259,34 @@ fn token(input: &str) -> IResult<&str, Token> {
 }
 
 fn whitespace(input: &str) -> IResult<&str, &str> {
-    multispace0(input)
+    take_while1(|c: char| c.is_whitespace())(input)
 }
 
-// TODO: implement comment parsing
-// fn comment(input: &str) -> IResult<&str, &str> {
-//     alt((
-//         // Single line comment
-//         recognize(pair(tag("//"), take_while(|c| c != '\n'))),
-//         // Multi-line comment
-//         ...
-//     ))(input)
-// }
+fn comment(input: &str) -> IResult<&str, &str> {
+    alt((
+        // Single line comment
+        recognize(pair(tag("//"), take_while(|c| c != '\n'))),
+        // Multi-line comment - simplified version (no nested comments)
+        recognize(
+            delimited(
+                tag("/*"),
+                take_until("*/"),
+                tag("*/")
+            )
+        ),
+    ))(input)
+}
 
 fn skip(input: &str) -> IResult<&str, ()> {
-    map(
-        whitespace,  // Just use whitespace for now
-        |_| ()
-    )(input)
+    let mut input = input;
+    loop {
+        if let Ok((rest, _)) = alt((whitespace, comment))(input) {
+            input = rest;
+        } else {
+            break;
+        }
+    }
+    Ok((input, ()))
 }
 
 pub fn lex_token(input: &str) -> IResult<&str, Token> {
@@ -324,6 +334,45 @@ mod tests {
             Token::IntLit(42),
             Token::Pipe,
             Token::Ident("add".to_string()),
+            Token::IntLit(10),
+        ]);
+    }
+    
+    #[test]
+    fn test_comments() {
+        // Test single line comment
+        let input = "val x = 42 // this is a comment\nval y = 10";
+        let result = lex(input).unwrap().1;
+        assert_eq!(result, vec![
+            Token::Val,
+            Token::Ident("x".to_string()),
+            Token::Assign,
+            Token::IntLit(42),
+            Token::Val,
+            Token::Ident("y".to_string()),
+            Token::Assign,
+            Token::IntLit(10),
+        ]);
+        
+        // Test multi-line comment
+        let input = "val x = /* this is a\nmulti-line comment */ 42";
+        let result = lex(input).unwrap().1;
+        assert_eq!(result, vec![
+            Token::Val,
+            Token::Ident("x".to_string()),
+            Token::Assign,
+            Token::IntLit(42),
+        ]);
+        
+        // Test multiple comments
+        let input = "// start comment\nval x = 42 /* inline */ + 10 // end comment";
+        let result = lex(input).unwrap().1;
+        assert_eq!(result, vec![
+            Token::Val,
+            Token::Ident("x".to_string()),
+            Token::Assign,
+            Token::IntLit(42),
+            Token::Plus,
             Token::IntLit(10),
         ]);
     }

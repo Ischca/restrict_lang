@@ -6,6 +6,7 @@ pub mod codegen;
 pub mod test_framework;
 pub mod debug_visualizer;
 pub mod dev_tools;
+pub mod web;
 
 pub use lexer::*;
 pub use ast::*;

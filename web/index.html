@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restrict Language Web Compiler</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .editor-section {
+            margin-bottom: 30px;
+        }
+        
+        .editor-section h3 {
+            color: #555;
+            margin-bottom: 10px;
+        }
+        
+        textarea {
+            width: 100%;
+            height: 200px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            resize: vertical;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        
+        .button-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        
+        .output-section {
+            margin-top: 30px;
+        }
+        
+        .output-tabs {
+            border-bottom: 2px solid #ddd;
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #f0f0f0;
+            border: none;
+            border-radius: 5px 5px 0 0;
+            cursor: pointer;
+            margin-right: 5px;
+            transition: background-color 0.3s;
+        }
+        
+        .tab.active {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .tab:hover {
+            background-color: #e0e0e0;
+        }
+        
+        .tab.active:hover {
+            background-color: #45a049;
+        }
+        
+        .output-content {
+            background-color: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .output-content pre {
+            margin: 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .error {
+            color: #d32f2f;
+            background-color: #ffebee;
+            border: 1px solid #ffcdd2;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        
+        .success {
+            color: #388e3c;
+            background-color: #e8f5e8;
+            border: 1px solid #c8e6c9;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        
+        .examples {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f0f8ff;
+            border-radius: 5px;
+        }
+        
+        .examples h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .example {
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 10px;
+            margin: 10px 0;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .example:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .example-title {
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 5px;
+        }
+        
+        .example-code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            color: #666;
+            background-color: #f8f8f8;
+            padding: 5px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌐 Restrict Language Web Compiler</h1>
+        
+        <div class="editor-section">
+            <h3>📝 Source Code</h3>
+            <textarea id="sourceCode" placeholder="Enter your Restrict Language code here...">// Example: Simple function
+fun add(a: Int, b: Int): Int => a + b
+
+// Example: Main function
+fun main() => {
+    val result = add(2, 3)
+    result.print()
+}</textarea>
+        </div>
+        
+        <div class="button-container">
+            <button onclick="compile()" id="compileBtn">🔧 Compile</button>
+            <button onclick="lexOnly()" id="lexBtn">📝 Lex Only</button>
+            <button onclick="parseOnly()" id="parseBtn">🔍 Parse Only</button>
+            <button onclick="clearOutput()" id="clearBtn">🗑️ Clear</button>
+        </div>
+        
+        <div class="output-section">
+            <div class="output-tabs">
+                <button class="tab active" onclick="showTab('wasm')">📦 WASM Output</button>
+                <button class="tab" onclick="showTab('tokens')">🎯 Tokens</button>
+                <button class="tab" onclick="showTab('ast')">🌳 AST</button>
+                <button class="tab" onclick="showTab('error')">⚠️ Errors</button>
+            </div>
+            
+            <div id="wasm" class="output-content">
+                <pre id="wasmOutput">Ready to compile...</pre>
+            </div>
+            
+            <div id="tokens" class="output-content" style="display: none;">
+                <pre id="tokensOutput">No tokens yet...</pre>
+            </div>
+            
+            <div id="ast" class="output-content" style="display: none;">
+                <pre id="astOutput">No AST yet...</pre>
+            </div>
+            
+            <div id="error" class="output-content" style="display: none;">
+                <pre id="errorOutput">No errors...</pre>
+            </div>
+        </div>
+        
+        <div class="examples">
+            <h3>📚 Example Programs</h3>
+            
+            <div class="example" onclick="loadExample('hello')">
+                <div class="example-title">Hello World</div>
+                <div class="example-code">fun main() => "Hello, World!".print()</div>
+            </div>
+            
+            <div class="example" onclick="loadExample('function')">
+                <div class="example-title">Function Definition</div>
+                <div class="example-code">fun add(a: Int, b: Int): Int => a + b</div>
+            </div>
+            
+            <div class="example" onclick="loadExample('pipe')">
+                <div class="example-title">Pipe Operations</div>
+                <div class="example-code">5 |> add(3) |> print()</div>
+            </div>
+            
+            <div class="example" onclick="loadExample('record')">
+                <div class="example-title">Record Types</div>
+                <div class="example-code">record Point { x: Int, y: Int }</div>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module" src="./app.js"></script>
+</body>
+</html>

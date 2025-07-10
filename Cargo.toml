@@ -14,6 +14,12 @@ zstd = "0.13.0"
 colored = "2.0"
 notify = "6.1"
 quickcheck = "1.0"
+wasm-bindgen = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
+console_error_panic_hook = { version = "0.1.7", optional = true }
 
 [[bin]]
 name = "debug_parser"
@@ -25,3 +31,12 @@ path = "src/bin/trace_parser.rs"
 
 [dev-dependencies]
 pretty_assertions = "^1.3.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-mutable-globals"]

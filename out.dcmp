@@ -1,7 +1,0 @@
-import memory env.__linear_memory;
-
-function f_a():double {
-  var a:double = 2.0;
-  return a;
-}
-

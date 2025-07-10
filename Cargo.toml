@@ -11,6 +11,17 @@ nom-trace = "0.2.1"
 thiserror = "^1.0.29"
 #inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm17-0"] }
 zstd = "0.13.0"
+colored = "2.0"
+notify = "6.1"
+quickcheck = "1.0"
+
+[[bin]]
+name = "debug_parser"
+path = "src/bin/debug_parser.rs"
+
+[[bin]]
+name = "trace_parser"
+path = "src/bin/trace_parser.rs"
 
 [dev-dependencies]
 pretty_assertions = "^1.3.0"

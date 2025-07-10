@@ -80,12 +80,62 @@ fn param(input: &str) -> ParseResult<Param> {
 
 fn block_expr(input: &str) -> ParseResult<BlockExpr> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    let (input, statements) = many0(statement)(input)?;
-    let (input, expr) = opt(expression)(input)?;
-    let (input, _) = expect_token(Token::RBrace)(input)?;
-    Ok((input, BlockExpr { 
+    
+    // Parse statements and expressions carefully
+    let mut statements = Vec::new();
+    let mut remaining = input;
+    let mut final_expr = None;
+    
+    loop {
+        // Skip whitespace
+        let (next_input, _) = multispace0(remaining)?;
+        remaining = next_input;
+        
+        // Check if we've reached the closing brace
+        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
+            remaining = after_brace;
+            break;
+        }
+        
+        // Try to parse a binding first
+        if let Ok((after_bind, bind_decl)) = bind_decl(remaining) {
+            statements.push(Stmt::Binding(bind_decl));
+            // Consume optional semicolon
+            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_bind)?;
+            remaining = after_semi;
+            continue;
+        }
+        
+        // Try to parse an assignment
+        if let Ok((after_assign, assign_stmt)) = assignment_stmt(remaining) {
+            statements.push(assign_stmt);
+            // Consume optional semicolon
+            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_assign)?;
+            remaining = after_semi;
+            continue;
+        }
+        
+        // Otherwise, parse an expression with statement context
+        let (after_expr, expr) = expression_in_statement(remaining)?;
+        
+        // Peek ahead to see if this is the final expression
+        let (next_input2, _) = multispace0(after_expr)?;
+        if let Ok((_, _)) = expect_token::<'_>(Token::RBrace)(next_input2) {
+            // This is the final expression
+            final_expr = Some(Box::new(expr));
+            remaining = after_expr;
+        } else {
+            // This is a statement expression
+            statements.push(Stmt::Expr(Box::new(expr)));
+            // Consume optional semicolon
+            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_expr)?;
+            remaining = after_semi;
+        }
+    }
+    
+    Ok((remaining, BlockExpr { 
         statements, 
-        expr: expr.map(Box::new) 
+        expr: final_expr 
     }))
 }
 
@@ -121,7 +171,7 @@ pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, _) = expect_token(Token::Val)(input)?;
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression(input)?;
+    let (input, value) = expression(input)?;  // Use normal expression parsing
     Ok((input, BindDecl { 
         mutable: mutable.is_some(), 
         name, 
@@ -213,8 +263,13 @@ fn match_arm(input: &str) -> ParseResult<MatchArm> {
     Ok((input, MatchArm { pattern, body }))
 }
 
+#[allow(dead_code)]
 fn match_expr(input: &str) -> ParseResult<Expr> {
-    let (input, expr) = pipe_expr(input)?;
+    match_expr_with_context(input, false)
+}
+
+fn match_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+    let (input, expr) = pipe_expr_with_context(input, in_statement)?;
     let (input, arms) = opt(
         preceded(
             expect_token(Token::Match),
@@ -235,8 +290,13 @@ fn match_expr(input: &str) -> ParseResult<Expr> {
     }
 }
 
+#[allow(dead_code)]
 fn while_expr(input: &str) -> ParseResult<Expr> {
-    let (input, expr) = match_expr(input)?;
+    while_expr_with_context(input, false)
+}
+
+fn while_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+    let (input, expr) = match_expr_with_context(input, in_statement)?;
     let (input, body) = opt(
         preceded(
             expect_token(Token::While),
@@ -254,7 +314,11 @@ fn while_expr(input: &str) -> ParseResult<Expr> {
 }
 
 fn then_expr(input: &str) -> ParseResult<Expr> {
-    let (input, first_cond) = while_expr(input)?;
+    then_expr_with_context(input, false)
+}
+
+fn then_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+    let (input, first_cond) = while_expr_with_context(input, in_statement)?;
     let (input, then_part) = opt(
         preceded(
             expect_token(Token::Then),
@@ -262,7 +326,7 @@ fn then_expr(input: &str) -> ParseResult<Expr> {
                 block_expr,
                 many0(tuple((
                     expect_token(Token::Else),
-                    while_expr,
+                    |i| while_expr_with_context(i, in_statement),
                     expect_token(Token::Then),
                     block_expr
                 ))),
@@ -318,14 +382,19 @@ fn pipe_op(input: &str) -> ParseResult<PipeOp> {
     }
 }
 
+#[allow(dead_code)]
 fn binary_expr(input: &str) -> ParseResult<Expr> {
-    let (input, first) = call_expr(input)?;
+    binary_expr_with_context(input, false)
+}
+
+fn binary_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+    let (input, first) = call_expr_with_context(input, in_statement)?;
     
     // Try to parse binary operator and right operand
     let (input, rest) = many0(
         tuple((
             binary_op,
-            call_expr
+            |i| call_expr_with_context(i, in_statement)
         ))
     )(input)?;
     
@@ -341,14 +410,19 @@ fn binary_expr(input: &str) -> ParseResult<Expr> {
     Ok((input, expr))
 }
 
+#[allow(dead_code)]
 fn pipe_expr(input: &str) -> ParseResult<Expr> {
-    let (input, first) = binary_expr(input)?;
+    pipe_expr_with_context(input, false)
+}
+
+fn pipe_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+    let (input, first) = binary_expr_with_context(input, in_statement)?;
     let (input, pipes) = many0(
         tuple((
             pipe_op,
             alt((
                 map(ident, PipeTarget::Ident),
-                map(binary_expr, |e| PipeTarget::Expr(Box::new(e)))
+                map(|i| binary_expr_with_context(i, in_statement), |e| PipeTarget::Expr(Box::new(e)))
             ))
         ))
     )(input)?;
@@ -363,7 +437,12 @@ fn pipe_expr(input: &str) -> ParseResult<Expr> {
     Ok((input, expr))
 }
 
+#[allow(dead_code)]
 fn call_expr(input: &str) -> ParseResult<Expr> {
+    call_expr_with_context(input, false)
+}
+
+fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
     alt((
         // Multiple arguments with parentheses: (a,b,c) func
         map(
@@ -381,25 +460,46 @@ fn call_expr(input: &str) -> ParseResult<Expr> {
             })
         ),
         // Single expression or OSV style
-        map(
-            tuple((
-                simple_expr,
-                many0(simple_expr)
-            )),
-            |(first, rest)| {
-                if rest.is_empty() {
-                    first
-                } else {
-                    // OSV: obj subj.verb => subj.verb(obj)
-                    rest.into_iter().fold(first, |arg, func| {
-                        Expr::Call(CallExpr {
-                            function: Box::new(func),
-                            args: vec![Box::new(arg)]
-                        })
-                    })
+        move |input| {
+            let (input, first) = simple_expr(input)?;
+            
+            if in_statement {
+                // In statement context, be conservative about consuming more expressions
+                // Check if the next token might start a new statement
+                let (after_ws, _) = multispace0(input)?;
+                
+                // Peek at the next tokens to see if this is a new statement
+                if let Ok((_, Token::Val)) = lex_token(after_ws) {
+                    return Ok((input, first));
+                }
+                if let Ok((_, Token::Mut)) = lex_token(after_ws) {
+                    return Ok((input, first));
+                }
+                // Check for assignment pattern: ident =
+                if let Ok((after_ident, Token::Ident(_))) = lex_token(after_ws) {
+                    let (after_ws2, _) = multispace0(after_ident)?;
+                    if let Ok((_, Token::Assign)) = lex_token(after_ws2) {
+                        return Ok((input, first));
+                    }
                 }
             }
-        )
+            
+            // Otherwise, try to parse more expressions for OSV
+            let (input, rest) = many0(simple_expr)(input)?;
+            
+            if rest.is_empty() {
+                Ok((input, first))
+            } else {
+                // OSV: obj subj.verb => subj.verb(obj)
+                let result = rest.into_iter().fold(first, |arg, func| {
+                    Expr::Call(CallExpr {
+                        function: Box::new(func),
+                        args: vec![Box::new(arg)]
+                    })
+                });
+                Ok((input, result))
+            }
+        }
     ))(input)
 }
 
@@ -463,11 +563,27 @@ fn expression(input: &str) -> ParseResult<Expr> {
     then_expr(input)
 }
 
+fn expression_in_statement(input: &str) -> ParseResult<Expr> {
+    then_expr_with_context(input, true)
+}
+
+#[allow(dead_code)]
 fn statement(input: &str) -> ParseResult<Stmt> {
     alt((
         map(bind_decl, Stmt::Binding),
+        assignment_stmt,
         map(expression, |e| Stmt::Expr(Box::new(e)))
     ))(input)
+}
+
+fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
+    let (input, name) = ident(input)?;
+    let (input, _) = expect_token(Token::Assign)(input)?;
+    let (input, value) = expression(input)?;  // Use normal expression parsing
+    Ok((input, Stmt::Assignment(AssignStmt {
+        name,
+        value: Box::new(value)
+    })))
 }
 
 pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
@@ -484,6 +600,15 @@ pub fn parse_program(input: &str) -> ParseResult<Program> {
     let (input, _) = multispace0(input)?; // Skip initial whitespace
     let (input, declarations) = many0(preceded(multispace0, top_decl))(input)?;
     let (input, _) = multispace0(input)?; // Skip trailing whitespace
+    
+    // If we have remaining input but no declarations parsed, try to give a helpful error
+    if !input.is_empty() && declarations.is_empty() {
+        // Try to parse a single top_decl to get a better error message
+        if let Err(e) = top_decl(input) {
+            return Err(e);
+        }
+    }
+    
     Ok((input, Program { declarations }))
 }
 

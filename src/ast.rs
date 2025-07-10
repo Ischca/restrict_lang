@@ -226,7 +226,14 @@ pub struct BlockExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Binding(BindDecl),
+    Assignment(AssignStmt),
     Expr(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignStmt {
+    pub name: String,
+    pub value: Box<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

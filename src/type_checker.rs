@@ -59,7 +59,7 @@ pub enum TypedType {
 #[derive(Debug, Clone)]
 struct Variable {
     ty: TypedType,
-    _mutable: bool,
+    mutable: bool,
     used: bool,  // For affine type checking
 }
 
@@ -110,10 +110,13 @@ impl TypeChecker {
         // Search from innermost to outermost scope
         for scope in self.var_env.iter_mut().rev() {
             if let Some(var) = scope.get_mut(name) {
-                if var.used {
+                // Mutable variables can be used multiple times
+                if var.used && !var.mutable {
                     return Err(TypeError::AffineViolation(name.to_string()));
                 }
-                var.used = true;
+                if !var.mutable {
+                    var.used = true;
+                }
                 return Ok(var.ty.clone());
             }
         }
@@ -132,8 +135,38 @@ impl TypeChecker {
     
     fn bind_var(&mut self, name: String, ty: TypedType, mutable: bool) -> Result<(), TypeError> {
         let current_scope = self.var_env.last_mut().unwrap();
-        current_scope.insert(name, Variable { ty, _mutable: mutable, used: false });
+        current_scope.insert(name, Variable { ty, mutable, used: false });
         Ok(())
+    }
+    
+    fn lookup_var_for_assignment(&mut self, name: &str) -> Result<(TypedType, bool), TypeError> {
+        // Look up variable without marking it as used (for assignment target)
+        for scope in self.var_env.iter().rev() {
+            if let Some(var) = scope.get(name) {
+                return Ok((var.ty.clone(), var.mutable));
+            }
+        }
+        Err(TypeError::UndefinedVariable(name.to_string()))
+    }
+    
+    fn reassign_var(&mut self, name: &str, ty: &TypedType) -> Result<(), TypeError> {
+        // Find the variable and check if it's mutable
+        for scope in self.var_env.iter_mut().rev() {
+            if let Some(var) = scope.get_mut(name) {
+                if !var.mutable {
+                    return Err(TypeError::ImmutableReassignment(name.to_string()));
+                }
+                if &var.ty != ty {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", var.ty),
+                        found: format!("{:?}", ty),
+                    });
+                }
+                // Don't mark as used for reassignment
+                return Ok(());
+            }
+        }
+        Err(TypeError::UndefinedVariable(name.to_string()))
     }
     
     fn convert_type(&self, ty: &Type) -> Result<TypedType, TypeError> {
@@ -173,6 +206,11 @@ impl TypeChecker {
             self.check_top_decl(decl)?;
         }
         Ok(())
+    }
+    
+    // Wrapper function for compatibility
+    pub fn type_check(&mut self, program: &Program) -> Result<(), TypeError> {
+        self.check_program(program)
     }
     
     fn check_top_decl(&mut self, decl: &TopDecl) -> Result<(), TypeError> {
@@ -218,8 +256,21 @@ impl TypeChecker {
     
     fn check_bind_decl(&mut self, bind: &BindDecl) -> Result<(), TypeError> {
         let ty = self.check_expr(&bind.value)?;
-        self.bind_var(bind.name.clone(), ty, bind.mutable)?;
+        
+        // Check if this is a new binding or reassignment
+        if let Ok((_existing_ty, _is_mutable)) = self.lookup_var_for_assignment(&bind.name) {
+            // This is a reassignment
+            self.reassign_var(&bind.name, &ty)?;
+        } else {
+            // This is a new binding
+            self.bind_var(bind.name.clone(), ty, bind.mutable)?;
+        }
         Ok(())
+    }
+    
+    fn check_assignment(&mut self, assign: &AssignStmt) -> Result<(), TypeError> {
+        let value_ty = self.check_expr(&assign.value)?;
+        self.reassign_var(&assign.name, &value_ty)
     }
     
     fn check_impl_block(&mut self, impl_block: &ImplBlock) -> Result<(), TypeError> {
@@ -512,6 +563,7 @@ impl TypeChecker {
         for (i, stmt) in block.statements.iter().enumerate() {
             match stmt {
                 Stmt::Binding(bind) => self.check_bind_decl(bind)?,
+                Stmt::Assignment(assign) => self.check_assignment(assign)?,
                 Stmt::Expr(expr) => {
                     let ty = self.check_expr(expr)?;
                     // Keep track of the last expression's type
@@ -697,9 +749,22 @@ impl TypeChecker {
         Ok(result_ty)
     }
     
-    fn check_while_expr(&mut self, _while_expr: &WhileExpr) -> Result<TypedType, TypeError> {
+    fn check_while_expr(&mut self, while_expr: &WhileExpr) -> Result<TypedType, TypeError> {
+        // Check condition is boolean
+        let cond_type = self.check_expr(&while_expr.condition)?;
+        if cond_type != TypedType::Boolean {
+            return Err(TypeError::TypeMismatch {
+                expected: "Boolean".to_string(),
+                found: format!("{:?}", cond_type),
+            });
+        }
+        
+        // Check body in new scope
+        self.push_scope();
+        self.check_block_expr(&while_expr.body)?;
+        self.pop_scope();
+        
         // While loops always return Unit
-        // TODO: Check condition is boolean and body
         Ok(TypedType::Unit)
     }
     
@@ -707,6 +772,12 @@ impl TypeChecker {
         // TODO: Implement match expression type checking
         Ok(TypedType::Unit)
     }
+}
+
+// Standalone type_check function for public API
+pub fn type_check(program: &Program) -> Result<(), TypeError> {
+    let mut checker = TypeChecker::new();
+    checker.check_program(program)
 }
 
 #[cfg(test)]

@@ -231,8 +231,20 @@ impl TypeChecker {
         Ok(())
     }
     
-    fn check_context_decl(&mut self, _context: &ContextDecl) -> Result<(), TypeError> {
-        // TODO: Implement context checking
+    fn check_context_decl(&mut self, context: &ContextDecl) -> Result<(), TypeError> {
+        // Store context definition
+        let mut fields = HashMap::new();
+        for field in &context.fields {
+            let ty = self.convert_type(&field.ty)?;
+            fields.insert(field.name.clone(), ty);
+        }
+        
+        // Add to available contexts
+        self._contexts.push(context.name.clone());
+        
+        // Store as a special record type for field access
+        self.records.insert(context.name.clone(), RecordDef { fields });
+        
         Ok(())
     }
     
@@ -251,6 +263,9 @@ impl TypeChecker {
             Expr::FieldAccess(expr, field) => self.check_field_access(expr, field),
             Expr::Call(call) => self.check_call_expr(call),
             Expr::Block(block) => self.check_block_expr(block),
+            Expr::Binary(binary) => self.check_binary_expr(binary),
+            Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
+            Expr::With(with) => self.check_with_expr(with),
             _ => todo!("Type checking for {:?} not implemented", expr),
         }
     }
@@ -442,6 +457,104 @@ impl TypeChecker {
         
         self.pop_scope();
         Ok(result)
+    }
+    
+    fn check_binary_expr(&mut self, binary: &BinaryExpr) -> Result<TypedType, TypeError> {
+        let left_ty = self.check_expr(&binary.left)?;
+        let right_ty = self.check_expr(&binary.right)?;
+        
+        // Type check based on operator
+        match binary.op {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+                // Arithmetic operators require numeric types
+                match (&left_ty, &right_ty) {
+                    (TypedType::Int32, TypedType::Int32) => Ok(TypedType::Int32),
+                    (TypedType::Float64, TypedType::Float64) => Ok(TypedType::Float64),
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: "numeric types".to_string(),
+                        found: format!("{:?} and {:?}", left_ty, right_ty),
+                    })
+                }
+            }
+            BinaryOp::Eq | BinaryOp::Ne => {
+                // Equality operators work on same types
+                if left_ty == right_ty {
+                    Ok(TypedType::Boolean)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", left_ty),
+                        found: format!("{:?}", right_ty),
+                    })
+                }
+            }
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                // Comparison operators require numeric types
+                match (&left_ty, &right_ty) {
+                    (TypedType::Int32, TypedType::Int32) => Ok(TypedType::Boolean),
+                    (TypedType::Float64, TypedType::Float64) => Ok(TypedType::Boolean),
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: "numeric types".to_string(),
+                        found: format!("{:?} and {:?}", left_ty, right_ty),
+                    })
+                }
+            }
+        }
+    }
+    
+    fn check_pipe_expr(&mut self, pipe: &PipeExpr) -> Result<TypedType, TypeError> {
+        let expr_ty = self.check_expr(&pipe.expr)?;
+        
+        match &pipe.target {
+            PipeTarget::Ident(name) => {
+                // Pipe to binding: expr |> name
+                // This creates a new binding
+                self.bind_var(name.clone(), expr_ty.clone(), false)?;
+                Ok(expr_ty)
+            }
+            PipeTarget::Expr(target_expr) => {
+                // Pipe to expression: expr |> func
+                // This is like func(expr)
+                match &**target_expr {
+                    Expr::Ident(func_name) => {
+                        // Single argument function call
+                        let call = CallExpr {
+                            function: Box::new(Expr::Ident(func_name.clone())),
+                            args: vec![pipe.expr.clone()],
+                        };
+                        self.check_call_expr(&call)
+                    }
+                    _ => {
+                        // For now, just return the target expression's type
+                        self.check_expr(target_expr)
+                    }
+                }
+            }
+        }
+    }
+    
+    fn check_with_expr(&mut self, with: &WithExpr) -> Result<TypedType, TypeError> {
+        // Push contexts onto the stack
+        let original_len = self._contexts.len();
+        
+        // Verify all contexts exist and push them
+        for ctx_name in &with.contexts {
+            if !self.records.contains_key(ctx_name) {
+                return Err(TypeError::UnavailableContext(ctx_name.clone()));
+            }
+            self._contexts.push(ctx_name.clone());
+        }
+        
+        // Check the body with contexts available
+        let result = self.check_block_expr(&with.body)?;
+        
+        // Pop contexts (in reverse order)
+        self._contexts.truncate(original_len);
+        
+        Ok(result)
+    }
+    
+    fn _is_context_available(&self, name: &str) -> bool {
+        self._contexts.contains(&name.to_string())
     }
 }
 
@@ -654,5 +767,94 @@ mod tests {
             check_program_str(input),
             Err(TypeError::UndefinedFunction("add".to_string()))
         );
+    }
+    
+    #[test]
+    fn test_binary_arithmetic() {
+        let input = r#"
+            val x = 10 + 20
+            val y = 30 - 10
+            val z = 5 * 6
+            val w = 20 / 4
+        "#;
+        assert!(check_program_str(input).is_ok());
+    }
+    
+    #[test]
+    fn test_binary_comparison() {
+        let input = r#"
+            val a = 10 < 20
+            val b = 30 > 10
+            val c = 5 == 5
+            val d = 10 != 20
+        "#;
+        assert!(check_program_str(input).is_ok());
+    }
+    
+    #[test]
+    fn test_binary_type_mismatch() {
+        let input = r#"
+            val x = 10 + "hello"
+        "#;
+        assert!(matches!(
+            check_program_str(input),
+            Err(TypeError::TypeMismatch { .. })
+        ));
+    }
+    
+    #[test]
+    fn test_pipe_binding() {
+        let input = r#"
+            val x = 42 |> doubled
+            val y = doubled
+        "#;
+        assert!(check_program_str(input).is_ok());
+    }
+    
+    #[test]
+    fn test_pipe_function() {
+        let input = r#"
+            fun inc = x: Int { x }
+            val result = 42 |> inc
+        "#;
+        assert!(check_program_str(input).is_ok());
+    }
+    
+    #[test]
+    fn test_context_basic() {
+        let input = r#"
+            context DB { host: String port: Int }
+            
+            with DB {
+                val x = 42
+            }
+        "#;
+        assert!(check_program_str(input).is_ok());
+    }
+    
+    #[test]
+    fn test_context_unavailable() {
+        let input = r#"
+            val y = with DB {
+                val x = 42
+            }
+        "#;
+        assert_eq!(
+            check_program_str(input),
+            Err(TypeError::UnavailableContext("DB".to_string()))
+        );
+    }
+    
+    #[test]
+    fn test_multiple_contexts() {
+        let input = r#"
+            context DB { host: String }
+            context Cache { size: Int }
+            
+            with (DB, Cache) {
+                val x = 42
+            }
+        "#;
+        assert!(check_program_str(input).is_ok());
     }
 }

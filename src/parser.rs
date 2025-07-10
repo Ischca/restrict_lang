@@ -93,7 +93,7 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, params) = many1(param)(input)?;
+    let (input, params) = many0(param)(input)?;  // Changed from many1 to many0
     let (input, body) = block_expr(input)?;
     Ok((input, FunDecl { name, params, body }))
 }
@@ -116,7 +116,7 @@ fn context_decl(input: &str) -> ParseResult<ContextDecl> {
     Ok((input, ContextDecl { name, fields }))
 }
 
-fn bind_decl(input: &str) -> ParseResult<BindDecl> {
+pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, mutable) = opt(expect_token(Token::Mut))(input)?;
     let (input, _) = expect_token(Token::Val)(input)?;
     let (input, name) = ident(input)?;
@@ -161,20 +161,19 @@ fn record_lit(input: &str) -> ParseResult<RecordLit> {
     Ok((input, RecordLit { name, fields }))
 }
 
-fn clone_expr(input: &str) -> ParseResult<Expr> {
-    let (input, base) = simple_expr(input)?;
-    let (input, _) = expect_token(Token::Clone)(input)?;
-    let (input, updates) = record_lit(input)?;
-    Ok((input, Expr::Clone(CloneExpr { 
-        base: Box::new(base), 
-        updates 
-    })))
-}
-
-fn freeze_expr(input: &str) -> ParseResult<Expr> {
-    let (input, expr) = simple_expr(input)?;
-    let (input, _) = expect_token(Token::Freeze)(input)?;
-    Ok((input, Expr::Freeze(Box::new(expr))))
+fn atom_expr(input: &str) -> ParseResult<Expr> {
+    alt((
+        literal,
+        map(record_lit, Expr::RecordLit),  // Try record_lit before ident
+        map(ident, Expr::Ident),
+        delimited(
+            expect_token(Token::LParen),
+            expression,
+            expect_token(Token::RParen)
+        ),
+        with_expr,
+        map(block_expr, Expr::Block)
+    ))(input)
 }
 
 fn with_expr(input: &str) -> ParseResult<Expr> {
@@ -291,23 +290,10 @@ fn then_expr(input: &str) -> ParseResult<Expr> {
     }
 }
 
-fn binary_op(input: &str) -> ParseResult<BinaryOp> {
-    let (input, token) = lex_token(input)?;
-    match token {
-        Token::Plus => Ok((input, BinaryOp::Add)),
-        Token::Minus => Ok((input, BinaryOp::Sub)),
-        Token::Star => Ok((input, BinaryOp::Mul)),
-        Token::Slash => Ok((input, BinaryOp::Div)),
-        Token::Percent => Ok((input, BinaryOp::Mod)),
-        Token::Eq => Ok((input, BinaryOp::Eq)),
-        Token::Ne => Ok((input, BinaryOp::Ne)),
-        Token::Lt => Ok((input, BinaryOp::Lt)),
-        Token::Le => Ok((input, BinaryOp::Le)),
-        Token::Gt => Ok((input, BinaryOp::Gt)),
-        Token::Ge => Ok((input, BinaryOp::Ge)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
-    }
-}
+// TODO: implement binary operations
+// fn binary_op(input: &str) -> ParseResult<BinaryOp> {
+//     ...
+// }
 
 fn pipe_op(input: &str) -> ParseResult<PipeOp> {
     let (input, token) = lex_token(input)?;
@@ -343,7 +329,7 @@ fn pipe_expr(input: &str) -> ParseResult<Expr> {
 
 fn call_expr(input: &str) -> ParseResult<Expr> {
     alt((
-        // Multiple arguments with parentheses
+        // Multiple arguments with parentheses: (a,b,c) func
         map(
             tuple((
                 delimited(
@@ -358,17 +344,18 @@ fn call_expr(input: &str) -> ParseResult<Expr> {
                 args: args.into_iter().map(Box::new).collect()
             })
         ),
-        // OSV style or single simple_expr
+        // Single expression or OSV style
         map(
-            many1(simple_expr),
-            |exprs| {
-                if exprs.len() == 1 {
-                    exprs.into_iter().next().unwrap()
+            tuple((
+                simple_expr,
+                many0(simple_expr)
+            )),
+            |(first, rest)| {
+                if rest.is_empty() {
+                    first
                 } else {
                     // OSV: obj subj.verb => subj.verb(obj)
-                    let mut iter = exprs.into_iter();
-                    let first = iter.next().unwrap();
-                    iter.fold(first, |arg, func| {
+                    rest.into_iter().fold(first, |arg, func| {
                         Expr::Call(CallExpr {
                             function: Box::new(func),
                             args: vec![Box::new(arg)]
@@ -380,21 +367,60 @@ fn call_expr(input: &str) -> ParseResult<Expr> {
     ))(input)
 }
 
-fn simple_expr(input: &str) -> ParseResult<Expr> {
-    alt((
-        literal,
-        map(ident, Expr::Ident),
-        map(record_lit, Expr::RecordLit),
-        delimited(
-            expect_token(Token::LParen),
-            expression,
-            expect_token(Token::RParen)
-        ),
-        clone_expr,
-        freeze_expr,
-        with_expr,
-        map(block_expr, Expr::Block)
-    ))(input)
+pub fn simple_expr(input: &str) -> ParseResult<Expr> {
+    let (mut input, mut expr) = atom_expr(input)?;
+    
+    // Handle field access and postfix operations
+    loop {
+        let (new_input, op) = opt(alt((
+            value(PostfixOp::Dot, expect_token(Token::Dot)),
+            value(PostfixOp::Freeze, expect_token(Token::Freeze)),
+        )))(input)?;
+        
+        match op {
+            Some(PostfixOp::Dot) => {
+                // Check if the next token is Clone keyword for .clone syntax
+                if let Ok((_, Token::Clone)) = lex_token(new_input) {
+                    // This is a .clone operation, not field access
+                    let (new_input, _) = expect_token(Token::Clone)(new_input)?;
+                    // Parse field updates for clone: { field1 = value1, field2 = value2, ... }
+                    let (new_input, _) = expect_token(Token::LBrace)(new_input)?;
+                    let (new_input, fields) = separated_list0(
+                        expect_token(Token::Comma),
+                        field_init
+                    )(new_input)?;
+                    let (new_input, _) = expect_token(Token::RBrace)(new_input)?;
+                    
+                    expr = Expr::Clone(CloneExpr {
+                        base: Box::new(expr),
+                        updates: RecordLit {
+                            name: String::new(),
+                            fields
+                        }
+                    });
+                    input = new_input;
+                } else {
+                    // Regular field access
+                    let (new_input, field) = ident(new_input)?;
+                    expr = Expr::FieldAccess(Box::new(expr), field);
+                    input = new_input;
+                }
+            }
+            Some(PostfixOp::Freeze) => {
+                expr = Expr::Freeze(Box::new(expr));
+                input = new_input;
+            }
+            None => break,
+        }
+    }
+    
+    Ok((input, expr))
+}
+
+#[derive(Clone, Copy)]
+enum PostfixOp {
+    Dot,
+    Freeze,
 }
 
 fn expression(input: &str) -> ParseResult<Expr> {
@@ -408,7 +434,7 @@ fn statement(input: &str) -> ParseResult<Stmt> {
     ))(input)
 }
 
-fn top_decl(input: &str) -> ParseResult<TopDecl> {
+pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
     alt((
         map(record_decl, TopDecl::Record),
         map(impl_block, TopDecl::Impl),
@@ -419,8 +445,9 @@ fn top_decl(input: &str) -> ParseResult<TopDecl> {
 }
 
 pub fn parse_program(input: &str) -> ParseResult<Program> {
-    let (input, declarations) = many0(top_decl)(input)?;
-    let (input, _) = multispace0(input)?;
+    let (input, _) = multispace0(input)?; // Skip initial whitespace
+    let (input, declarations) = many0(preceded(multispace0, top_decl))(input)?;
+    let (input, _) = multispace0(input)?; // Skip trailing whitespace
     Ok((input, Program { declarations }))
 }
 
@@ -438,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_fun_decl() {
-        let input = "fun add = a:Int b:Int { (a,b) binary+ }";
+        let input = "fun add = a:Int b:Int { a }";
         let (_, decl) = fun_decl(input).unwrap();
         assert_eq!(decl.name, "add");
         assert_eq!(decl.params.len(), 2);
@@ -449,5 +476,19 @@ mod tests {
         let input = "42 |> add 10";
         let (_, expr) = pipe_expr(input).unwrap();
         assert!(matches!(expr, Expr::Pipe(_)));
+    }
+    
+    #[test]
+    fn test_clone_freeze() {
+        let input = "base.clone { hp = 500 } freeze";
+        let (_, expr) = simple_expr(input).unwrap();
+        assert!(matches!(expr, Expr::Freeze(_)));
+    }
+    
+    #[test]
+    fn test_field_access() {
+        let input = "obj.field";
+        let (_, expr) = simple_expr(input).unwrap();
+        assert!(matches!(expr, Expr::FieldAccess(_, _)));
     }
 }

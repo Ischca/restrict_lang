@@ -1,0 +1,1 @@
+val boss = base.clone { hp = 500 } freeze

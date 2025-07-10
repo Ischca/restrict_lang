@@ -6,7 +6,8 @@
       "Bash(cat:*)",
       "Bash(rg:*)",
       "Bash(rustc:*)",
-      "Bash(./debug_test)"
+      "Bash(./debug_test)",
+      "Bash(./web/build.sh:*)"
     ],
     "deny": []
   }

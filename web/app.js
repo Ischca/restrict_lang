@@ -209,33 +209,35 @@ function setButtonsDisabled(disabled) {
 function loadExample(exampleName) {
     const examples = {
         'hello': `// Hello World example
-fun main() => "Hello, World!".print()`,
+fun main = {
+    42
+}`,
         
         'function': `// Function definition example
-fun add(a: Int, b: Int): Int => a + b
+fun add = a: Int b: Int {
+    a + b
+}
 
-fun main() => {
-    val result = add(2, 3)
-    result.print()
+fun main = {
+    val result = (2, 3) add;
+    result
 }`,
         
         'pipe': `// Pipe operations example
-fun add(x: Int): Int => x + 3
-fun print(x: Int) => x.print()
+fun inc = x: Int {
+    x + 1
+}
 
-fun main() => {
-    5 |> add |> print
+fun main = {
+    42 |> inc
 }`,
         
         'record': `// Record type example
-record Point {
-    x: Int,
-    y: Int
-}
+record Point { x: Int, y: Int }
 
-fun main() => {
-    val p = Point { x: 10, y: 20 }
-    p.x.print()
+fun main = {
+    val p = Point { x = 10, y = 20 };
+    p
 }`
     };
     

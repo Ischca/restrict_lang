@@ -1,507 +1,296 @@
-# Restrict Language
+## Restrict Language ― 仕様書
 
-**スコープベースの静的型付け言語**  
-WASMにコンパイルされる
-
----
-
-## 組み込み型
-
-| 型             | 型表記          | 例                                 |
-| -------------- | --------------- | ---------------------------------- |
-| 整数型         | `Int`           | `10 let x: Int`                    |
-| 浮動小数点数型 | `Float`         | `10.0 let x: Float`                |
-| 真偽値型       | `Boolean`       | `false let x: Bool`                |
-| 文字列型       | `String`        | `"ten" let x: String`              |
-| 文字型         | `Char`          | `'c' let x: Char`                  |
-| 単位型         | `Unit`          | `() let x: Unit`                   |
-| オプション型   | `Option<T>`     | `Some(10) let x: Option<Int>`      |
-| タプル型       | `(T1, T2, ...)` | `(10, "ten") let x: (Int, String)` |
-| リスト型       | `List<T>`       | `[1, 2, 3] let x: List<Int>`       |
-| 配列型         | `Array<T>`      | `[1, 2, 3] let x: Array<Int>`      |
-| 関数型         | `T1 => T2`      | `n => n + 1 let x: Int => Int`     |
+*2025-07-10*
 
 ---
 
-## 特徴
+### 0. 目次
 
-### 語順
-
-Restrict言語は **OSV（Object-Subject-Verb）** 語順を採用しています。これは、**目的語**で始まり、**主語**が続き、**動詞**で終わる構造です。日本語のように主語が省略可能であり、以下のように記述します：
-
-```ocaml
-"Sam" human let sam
-"Orange" let orange
-
-orange sam.eat  // SamがOrangeを食べる
-```
-
-#### OSV語順のメリットとスコープベース・コンテキストバインドとの連携
-
-1. **可読性と直感性の向上**
-   - **オブジェクトの先行**: 最も重要なデータや対象を即座に把握できます。
-   - **文脈の明確化**: 操作対象が明確になり、コードの意図を迅速に理解できます。
-
-2. **一貫性と簡潔性**
-   - **一貫した構造**: コード全体に一貫性が生まれます。
-   - **スコープの合成と連結**: スコープの管理が直感的に行えます。
-
-3. **フォーカスの強調**
-   - **重要なオブジェクトの強調**: プログラマーが重要なデータに集中できます。
-   - **選択肢の限定**: 必要な操作に集中でき、生産性が向上します。
-
-### スコープベース
-
-Restrict言語では、全ての式が関数であり、全ての関数がスコープです。スコープは第一級オブジェクトとして扱われ、柔軟なスコープ管理と再利用性を提供します。
-
-#### スコープの第一級オブジェクト化
-
-スコープを第一級オブジェクトとして扱うことで、スコープ自体を変数や関数のように操作できます。これにより、スコープの合成や再利用が容易になり、コードのモジュール性が向上します。
-
-```ocaml
-fun limitedScope = @LimitedScope {
-    // 限定された操作のみが許可される
-}
-
-limitedScope {
-    // 限定された操作を実行
-}
-```
+1. コア概念 & 所有権モデル
+2. 型と値
+3. データ定義 - *record / clone / freeze*
+4. 変数束縛 & パイプ列
+5. 語順・演算子・関数
+6. 制御構文（後置動詞）
+7. コンテキスト束縛 & with 句
+8. 標準リソースブロック ― *Arena*
+9. ランタイム & コンパイルパス
+10. 予約語一覧
+11. BNF 定義
+12. 今後拡張フック
 
 ---
 
-## 制限を与える
+### 0. 設計理念 & 想定用途
 
-### アフィン変数
+| 指針                 | 詳細                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **① 迷いを削る“制限主義”**  | ・語順は OSV（Object-Subject-Verb）後置を原則。<br>・変数は **アフィン**（参照 0-1 回）。<br>・派生は **clone + freeze** で差分だけ許す。<br>→「どこで何が呼ばれ、何が共有されるか」を 10 秒で追える。 |
+| **② データフローの可視化**   | パイプ演算子 \`                                                                                                                              | >`＋ 束縛糖衣で **左→右** に値が流れる。<br>副作用はコンテキスト or`async then\` に押し込める。 |
+| **③ 静的安全 × 手軽さ**   | 値コピー禁止領域は型が守り、`clone` は明示。<br>GC なし／Arena ブロックで確実解放。                                                                                   |
+| **④ WASM ファースト**   | *ブラウザ*・*Cloudflare Workers*・*WASI* で同じバイナリを動かす。<br>WASM MVP + threads + (将来) SIMD/GPU backend が標準ターゲット。                                |
+| **⑤ Web ↔ ゲーム 両立** | ▸ **Web/Serverless**: コンテキスト束縛で安全に外部サービス。</br>▸ **ゲーム/リアルタイム**: Prototype+Freeze でデザイ
 
-全ての変数は**アフィン変数**であり、最大1回使用されることが保証されます。これにより、リソース管理が自動化され、バグの発生を防ぎます。
 
-### コンテキストバインド
+---
 
-**コンテキストバインド**により、特定のコンテキストを持つスコープからしか呼び出すことができないスコープを作成できます。これにより、操作の安全性とコンテキストの明確化が図られます。
+## 1. コア概念
 
-#### コンテキストの定義と使用
+| 概念            | 要旨                                         |
+| ------------- | ------------------------------------------ |
+| **値**         | 不変データ: リテラル / record / 関数 / コンテキスト / ブロック値 |
+| **参照**        | 値の場所ラベル。型・寿命を静的解析                          |
+| **束縛 (Bind)** | `Bind{name,value,mut?}` — 名前と値を 1 回だけ結合    |
+| **アフィン**      | 各束縛は 0-1 回参照。複製は `clone` 必須                |
+| **スコープ**      | レキシカル `{}` / パイプ列 / コンテキスト stack           |
 
-**コンテキスト**は、`context`キーワードを使用して静的に定義され、型システムに統合されています。コンテキストは、特定の制約や許可された操作を定義し、コンパイル時に検証されます。
+---
+
+## 2. 型と値
+
+- *基礎型* `Int32 Float64 Boolean String Char Unit`
+- *複合* `Option<T> Tuple<A,B> List<T> Array<T,N> Function`
+- *ユーザ* `record` / `context` インスタンス
+
+---
+
+## 3. データ定義 ― Prototype + Freeze
 
 ```ocaml
-context Transactional {
-    Datasource let ds
-    Connection let conn
-}
+record Enemy { hp: Int, atk: Int }
+
+val base  = Enemy { hp = 100, atk = 10 }    // open
+val boss  = base.clone { hp = 500 } freeze  // closed
 ```
 
-#### コンテキストバインドされた関数の定義
+* open record ⇒ `clone` で差分更新
+* `freeze` で closed record 型へ確定（以降フィールド追加不可）
 
-関数やスコープに対して、どのコンテキストから呼び出せるかを明示的に指定します。`@ContextName`というアノテーションを使用します。
-
-```ocaml
-fun save = @Transactional student: Student {
-    studentDaoScope { dao ->
-        if student.id == null {
-            student dao.insert then
-        } else {
-            student dao.update then
-        }
-    }
-}
-```
-
-#### コンテキスト内での関数呼び出し
-
-`with ContextName`を使用して、特定のコンテキストを持つスコープを作成し、その中でコンテキストバインドされた関数を呼び出します。
+`impl` でメソッド追加（仮想・継承なし）
 
 ```ocaml
-with Transactional {
-    student save
+impl Enemy {
+    fun attack = self: Enemy tgt: Player { tgt.damage self.atk }
 }
-```
-
-#### コンテキスト外での関数呼び出しの制限
-
-コンテキスト外からコンテキストバインドされた関数を呼び出そうとすると、コンパイル時にエラーが発生します。
-
-```ocaml
-fun main = {
-    student save  // エラー：Transactionalコンテキスト外からは呼び出せない
-}
-```
-
-#### コンテキストの合成と継承
-
-コンテキスト間で合成や継承を行うことで、柔軟な設計が可能です。ただし、コンテキストの継承が必要かどうかは議論の余地があります。
-
-```ocaml
-context BaseContext {
-    // 基本的な制約や定義
-}
-
-context ExtendedContext = BaseContext + {
-    // BaseContextを合成した追加の制約や定義
-}
+boss luke.attack
 ```
 
 ---
 
-### 提供の制限
+## 4. 変数束縛
 
-特定の型に定義された関数以外の呼び出しを制限するスコープを作成できます。これにより、スコープ内で許可された操作のみが実行可能となります。
+| 記法 | 等価展開         | 役割                               | 使用例                     |
+| --------------- | ------------- | ---------- | ------ |
+| `val x = e`     | `e val x`     | 宣言         |        |
+| `mut val x = e` | `e mut val x` | 再束縛        |        |
+| `e \|>  x`   | `val x = e`     | パイプ束縛（不変）                 | `fetch "/api" |> raw`      |
+| `e \|>> x`   | `mut val x = e` | パイプ束縛（再束縛・可変）         | `0 |>> counter`            |
+
+---
+
+## 5. 語順・演算子・関数
+
+* **OSV**: `obj subj.verb`
+* **インフィックス例外**: `+ - * / % == != < <= > >=`
+* **複数引数**: `(a,b,c) func`
+* **パイプ**: `expr |> name`（識別子なら束縛）
+
+関数は 1 引数カリー。
 
 ```ocaml
-fun function1 = @AllowedScope {
-    // 処理
-}
-
-fun function2 = @AllowedScope {
-    // 処理
-}
-
-fun restrictedScope = @AllowedScope fn: () => Unit {
-    function1
-    function2
-    fn
-}
-
-restrictedScope {
-    function1
-    function2
-}
+fun add = a:Int b:Int { (a,b) binary+ }
 ```
 
 ---
 
-## 実例
-
-### 単純な例
+## 6. 制御構文（後置動詞）
 
 ```ocaml
-"Hello, World!" print
-```
+cond then { … }                     // if
+else cond2 then { … } … else { … }
 
-```ocaml
-1 2 + print                 // 3
-"Hello" uppercase print     // HELLO
-```
+cond while { … }                    // loop
 
-### FizzBuzz
-
-```ocaml
-fun fizzBuzz = n: Int {
-    if n > 1 then {
-        n - 1 fizzBuzz
-    }
-
-    if n % 15 == 0 then "FizzBuzz"
-    else if n % 5 == 0 then "Buzz"
-    else if n % 3 == 0 then "Fizz"
-    else n
-    |> println
-}
-
-20 fizzBuzz
-```
-
----
-
-## スコープと関数
-
-### スコープ
-
-```ocaml
-// 無名スコープ
-{}
-```
-
-### 関数定義と呼び出し
-
-```ocaml
-fun greet = name {
-    "Hello, " + name print
-}
-
-"World" greet  // Hello, World
-```
-
-### 高階関数
-
-```ocaml
-fun sandwich = fn: () => Unit {
-    "start" println
-    fn
-    "end" println
-}
-
-{
-    "Hello" println
-} sandwich
-
-// 出力
-// start
-// Hello
-// end
-```
-
-### クロージャ
-
-```ocaml
-fun createCounter = {
-    mut let counter = 0
-    fun count = {
-        counter = counter + 1
-        counter
-    }
-    count
-}
-
-counter let createCounter
-counter print  // 1
-counter print  // 2
-counter print  // 3
-```
-
-### ネスト
-
-```ocaml
-fun scopeA = {
-    3 let numA
-}
-
-fun scopeB = {
-    4 let numB
-}
-
-scopeA {
-    numA print  // 3
-
-    scopeB {
-        numA print  // 3
-        numB print  // 4
-    }
-}
-```
-
-### 合成
-
-```ocaml
-fun scopeA = {
-    3 let numA
-}
-
-fun scopeB = {
-    4 let numB
-}
-
-scopeA + scopeB {
-    numA print  // 3
-    numB print  // 4
-}
-```
-
-### 連結
-
-```ocaml
-fun scopeA = {
-    3 let numA
-}
-
-fun scopeB = num: Int {
-    num print
-}
-
-scopeA
-15 scopeB  // 15
-
-scopeA {
-    numA + 10
-} scopeB  // 13
-```
-
-## 制御構文
-Restrict言語では、制御の分岐を **スコープ規則** として表現します。代表的な構文は以下の2種類です。
-
-1. **二分岐**：`then`/`else`
-2. **多分岐**：`match`
-
-### 1. 二分岐: `then` / `else`
-
-Restrictでは、ブール条件 (`Boolean`) に対する二分岐を **`then`** / **`else`** のペアで記述します。  
-**書式**:
-
-```ocaml
-cond then {
-    // cond が true の場合に実行されるスコープ
-} else {
-    // cond が false の場合に実行されるスコープ
-}
-```
-
-- **`cond`**：ブール値を返す式 (例: `n > 0`)  
-- **`then { ... }`**：`cond` が `true` の場合に評価されるブロック(スコープ)  
-- **`else { ... }`**：`cond` が `false` の場合に評価されるブロック(スコープ)
-
-#### 多段分岐 (チェーン)
-
-`then/else` は **「`else cond2 then { ... }`」** という形で多段分岐を連鎖できます。
-
-```ocaml
-cond1 then {
-    // cond1 == true
-} else cond2 then {
-    // cond1 == false && cond2 == true
-} else {
-    // 上記2つともfalseのとき
-}
-```
-
-複数の分岐が増えて可読性が下がる場合は、後述の `match` 構文を利用するのを推奨します。
-
-### 2. 多分岐: `match`
-
-複数のパターンを列挙し、どのパターンに一致したかで分岐する場合は **`match`** を使います。  
-基本的な書式は以下のとおりです。
-
-```ocaml
 expr match {
-    pattern1 => {
-        // pattern1 に合致した場合
-    }
-    pattern2 => {
-        // pattern2 に合致した場合
-    }
-    ...
-    else => {
-        // どのパターンにも合致しない場合
-    }
+    Pat1 => { … }
+    _    => { … }
 }
 ```
 
-- **オブジェクト(式) = `expr`**  
-- **動詞 = `match`**  
-- 波括弧 `{ ... }` の中に、複数の `pattern => { ... }` と、デフォルト処理として `else => { ... }` を記述します。
+各ブロックは式・型一致必須。
 
-#### パターン
+---
 
-`pattern` は将来的に **リテラル一致**・**型パターン**・**構造パターン**などをサポートする予定です（`n == 0` のような条件式を直接書く場合には二分岐チェーンでも対応可）。
-
-#### 使用例
+## 7. コンテキスト束縛 & **with 句**
 
 ```ocaml
-n match {
-    0 => {
-        "n is zero" println
-    }
-    1 => {
-        "n is one" println
-    }
-    else => {
-        "n is neither 0 nor 1" println
-    }
-}
+context Web { val db: JsonStore }
+
+fun getUser = @Web id:Int { ("users",id) Web.db.select }
+
+with Web {                     // コンテキストを push
+    42 getUser |> u
+}                              // pop  → 以降呼べない
 ```
 
-// for文
-for i in 0..9 step 2 {
-    i print
-}
-
-// while文
-0 mut let i
-while i < 10 {
-    i print
-    i = i + 1
-}
-```
+* コンパイラがブロック範囲で @Ctx 参照を静的許可。
+* `with (Ctx1, Ctx2) { … }` ― 複数 push も可（右端から pop）。
 
 ---
 
-## 内包表記
+## 8. 標準リソースブロック ― Arena
 
 ```ocaml
-// [2, 4, 6, 8, 10]
-[x for x in 1..10 if x % 2 == 0] let evenNumbers
+with Arena {                   // 高速一括 free
+    val tex = newTexture bytes
+}
+```
+
+Arena は `context Arena` として定義され、ブロック終端で確実に解放。
+
+---
+
+## 9. ランタイム & コンパイル
+
+```
+Lexer → Parser(糖衣解展) → AST
+ ├ Type + Affine Check
+ ├ Phase Check (open→freeze)
+ ├ IR  (linear)          → WASM gen (WASI+threads)
+ └ Diagnostics / LSP
+(SSA, SIMD backend は後フェーズ)
 ```
 
 ---
 
-## マイルストーン
+## 10. 予約語
 
-- 型推論の強化（コンテキストを含む）
-- 例外処理の導入
-- 並列処理のサポート
-- メタプログラミング機能
-- 継続渡しスタイル（CPS）の実装
-- コンパイラのセルフホスト化
-
----
-
-## 理論的裏付け
-
-### 認知負荷理論（Cognitive Load Theory）
-
-- **概要**: 人間の認知負荷を軽減し、効率的な情報処理を促進します。
-- **適用**: OSV語順やコンテキストバインドにより、開発者が必要な情報に集中しやすくなります。
-
-### 情報構造（Information Structure）
-
-- **概要**: 情報の焦点やトピックを明確化します。
-- **適用**: OSV語順とコンテキストの明示により、コードの意図が明確になります。
-
-### ソフトウェアアーキテクチャとデザインパターン
-
-- **コマンドパターン**: 操作対象を先に示すことで、操作の一貫性と再利用性を向上させます。
-- **データフローアーキテクチャ**: データの流れを直感的に理解できます。
-
-### フロー理論（Flow Theory）
-
-- **概要**: 開発者がフロー状態に入りやすくなります。
-- **適用**: コードの自然な流れと構造を提供します。
-
-### カテゴリ理論（Category Theory）
-
-- **概要**: スコープとコンテキストを数学的にモデル化します。
-- **適用**: スコープ管理とコンテキストの操作に一貫性と安全性をもたらします。
+`record  clone  freeze  impl  
+context  with  
+fun  val  mut  
+then  else  while  match  
+async  return  true  false  Unit`
 
 ---
 
-## 今後の展望
+## 11. **完全 BNF**
 
-### コンテキスト機能の拡張と最適化
+```ebnf
+Program      ::= (TopDecl)*                                     ;
 
-- **コンテキスト間の関係性の明確化**
-  - コンテキストの合成や包含を通じて、柔軟な設計を可能にします。
-  - コンテキストの継承が必要かどうかは、今後の議論で決定します。
+TopDecl      ::= RecordDecl | ImplBlock | ContextDecl
+               | FunDecl | BindDecl                             ;
 
-- **オーバーロードとネームシャドーイングの検討**
-  - コンテキストの合成時における名前の衝突やオーバーロードの扱いを明確に定義します。
+/* ---------- Records & Prototype ---------- */
+RecordDecl   ::= "record" Ident "{" FieldDecl* "}"              ;
+FieldDecl    ::= Ident ":" Type                                 ;
+CloneExpr    ::= Expr "clone" RecordLit                        ;  /* open T → open T */
+FreezeExpr   ::= Expr "freeze"                                 ;  /* open T → closed T */
+RecordLit    ::= Ident "{" FieldInit* "}"                      ;
+FieldInit    ::= Ident "=" Expr                                ;
+
+/* ---------- Impl (methods) --------------- */
+ImplBlock    ::= "impl" Ident "{" FunDecl* "}"                 ;
+
+/* ---------- Context ---------------------- */
+ContextDecl  ::= "context" Ident "{" FieldDecl* "}"            ;
+WithExpr     ::= "with" "("? IdentList ")"? BlockExpr          ;
+IdentList    ::= Ident ("," Ident)*                            ;
+
+/* ---------- Functions -------------------- */
+FunDecl      ::= "fun" Ident "=" ParamList BlockExpr           ;
+ParamList    ::= (Param)+                                      ;
+Param        ::= Ident ":" Type                                ;
+
+/* ---------- Bindings --------------------- */
+BindDecl     ::= ("val" | "mut" "val") Ident "=" Expr          ;
+PipeOp       ::= "|>" | "|>>" | "|"                            ;
+
+/* ---------- Expressions ------------------ */
+Expr         ::= ThenExpr                                      ;
+ThenExpr     ::= WhileExpr ( "then" BlockExpr
+                   ( "else" WhileExpr "then" BlockExpr )*
+                   ( "else" BlockExpr )? )?                    ;
+
+WhileExpr    ::= MatchExpr ( MatchExpr "while" BlockExpr )?    ;
+MatchExpr    ::= PipeExpr ( "match" MatchBlock )?              ;
+MatchBlock   ::= "{" (Pattern "=>" BlockExpr)+ "}"             ;
+
+PipeExpr     ::= CallExpr ( PipeOp CallExpr )*                 ;
+
+CallExpr     ::= SimpleExpr+                                   /* OSV */
+               | "(" ArgList ")" SimpleExpr                    ;
+ArgList      ::= Expr ("," Expr)*                              ;
+
+SimpleExpr   ::= Literal
+               | Ident
+               | RecordLit
+               | "(" Expr ")"
+               | CloneExpr
+               | FreezeExpr
+               | WithExpr
+               | BlockExpr                                     ;
+
+BlockExpr    ::= "{" Stmt* Expr? "}"                           ;
+
+Stmt         ::= BindDecl | Expr                               ;
+
+/* ---------- Types ------------------------ */
+Type         ::= Ident | Ident "<" TypeList ">"                ;
+TypeList     ::= Type ("," Type)*                              ;
+
+Literal      ::= IntLit | FloatLit | StringLit | CharLit | "true" | "false" | "Unit" ;
+```
+
+*字句規則（コメント, 文字列, 数値など）・パターンは割愛。*
 
 ---
 
-## 開発手順
+### 12. ランタイム構成と WASM 出力
 
-### 開発環境の設定
-
-このプロジェクトは、[Visual Studio Code Remote - Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)を使用して、コンテナ化された環境で開発を行います。
-
-1. [Visual Studio Code](https://code.visualstudio.com/)をインストール
-2. [Remote - Containers拡張機能](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)をインストール
-3. このリポジトリをクローン
-4. Visual Studio Codeでリポジトリを開く
-5. ウィンドウの左下にある緑色のボタンをクリックし、`Reopen in Container`を選択
-
-### ビルド
-
-```bash
-cargo build
+```
+┌───────────────┐
+│  Source .rl   │
+├───────────────┤
+│  Frontend     │  糖衣展開 → 型+アフィン → open/freeze チェック
+├───────────────┤
+│  Linear IR    │  (MVP)  ──▶  wasm32 (no-GC)       ┐
+│  (SSA phase)  │  (opt) ─▶  wasm32+SIMD / WebGPU ──┘
+└───────────────┘
 ```
 
-### 実行
+* **ランタイム GC は持たない**。閉じた record・Arena 解放で管理。
+* `async then` は **co-await トランスフォーマ**で CPS 化してから WASM の stack switch へ。
 
-```bash
-cargo run
-```
+---
 
-### テスト
+### 13. 制限のメリット・デメリット（開発者ガイド）
 
-```bash
-cargo test
-```
+| 項目                | 利点                  | 注意点 & 回避策                                      |
+| ----------------- | ------------------- | ---------------------------------------------- |
+| アフィン変数            | 所有権が一目で分かる・GC ゼロ    | 共有したいときは `clone` コストが発生。設計段階で最小化する。            |
+| 派生 = clone/freeze | デザイナが JSON で差分だけ書ける | `freeze` を忘れると open record が混入。CI で “未凍結チェック”。 |
+| OSV & 後置制御        | データフローが読み線一本        | 演算子は infix 例外。複雑算式は括弧 or パイプで分割する。             |
+| with コンテキスト       | 資源リークを静的排除          | ネスト過多は可読性低下 → Linter: 深さ 3 以上警告。               |
+
+---
+
+### 14. 標準ライブラリロードマップ
+
+| カテゴリ                 | v1.0 同梱                  | 後方互換        |
+| -------------------- | ------------------------ | ----------- |
+| **IO / HTTP / JSON** | ✔ (WASM std + thin-HTTP) | 安定          |
+| **async then**       | ✔ (CPS, thread fallback) | 安定          |
+| **Arena allocator**  | ✔                        | API 不変      |
+| **ECS モジュール**        | add-on (row 型)           | semver で別管理 |
+| **SIMD/GPU backend** | α 版                      | SSA IR を拡張  |
+
+---
+
+### 15. 未来の拡張フック
+
+| 機能                    | gate 名        | 導入指針                  |
+| --------------------- | ------------- | --------------------- |
+| Row 型 + コンポ自動 SoA     | `ecs_row`     | モジュールON/OFFで本体に影響させない |
+| yield キーワード (ブロック値明示) | `yield_block` | Linter 警告で済むなら見送り     |
+| Object Algebra モジュール  | `algebra`     | 高階型を別コンパイルステージで実装     |

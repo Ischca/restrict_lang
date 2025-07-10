@@ -266,6 +266,9 @@ impl TypeChecker {
             Expr::Binary(binary) => self.check_binary_expr(binary),
             Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
             Expr::With(with) => self.check_with_expr(with),
+            Expr::Then(then) => self.check_then_expr(then),
+            Expr::While(while_expr) => self.check_while_expr(while_expr),
+            Expr::Match(match_expr) => self.check_match_expr(match_expr),
             _ => todo!("Type checking for {:?} not implemented", expr),
         }
     }
@@ -555,6 +558,80 @@ impl TypeChecker {
     
     fn _is_context_available(&self, name: &str) -> bool {
         self._contexts.contains(&name.to_string())
+    }
+    
+    fn check_then_expr(&mut self, then: &ThenExpr) -> Result<TypedType, TypeError> {
+        // Check condition is boolean
+        let cond_ty = self.check_expr(&then.condition)?;
+        if cond_ty != TypedType::Boolean {
+            return Err(TypeError::TypeMismatch {
+                expected: "Boolean".to_string(),
+                found: format!("{:?}", cond_ty),
+            });
+        }
+        
+        // Check then branch
+        self.push_scope();
+        let then_ty = self.check_block_expr(&then.then_block)?;
+        self.pop_scope();
+        
+        // Check else-if branches
+        let mut result_ty = then_ty.clone();
+        for (else_cond, else_block) in &then.else_ifs {
+            let else_cond_ty = self.check_expr(else_cond)?;
+            if else_cond_ty != TypedType::Boolean {
+                return Err(TypeError::TypeMismatch {
+                    expected: "Boolean".to_string(),
+                    found: format!("{:?}", else_cond_ty),
+                });
+            }
+            
+            self.push_scope();
+            let else_if_ty = self.check_block_expr(else_block)?;
+            self.pop_scope();
+            
+            if else_if_ty != result_ty {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("{:?}", result_ty),
+                    found: format!("{:?}", else_if_ty),
+                });
+            }
+        }
+        
+        // Check else branch
+        if let Some(else_block) = &then.else_block {
+            self.push_scope();
+            let else_ty = self.check_block_expr(else_block)?;
+            self.pop_scope();
+            
+            if else_ty != result_ty {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("{:?}", result_ty),
+                    found: format!("{:?}", else_ty),
+                });
+            }
+        } else {
+            // No else branch - result must be Unit
+            if result_ty != TypedType::Unit {
+                return Err(TypeError::TypeMismatch {
+                    expected: "Unit (missing else branch)".to_string(),
+                    found: format!("{:?}", result_ty),
+                });
+            }
+        }
+        
+        Ok(result_ty)
+    }
+    
+    fn check_while_expr(&mut self, _while_expr: &WhileExpr) -> Result<TypedType, TypeError> {
+        // While loops always return Unit
+        // TODO: Check condition is boolean and body
+        Ok(TypedType::Unit)
+    }
+    
+    fn check_match_expr(&mut self, _match_expr: &MatchExpr) -> Result<TypedType, TypeError> {
+        // TODO: Implement match expression type checking
+        Ok(TypedType::Unit)
     }
 }
 

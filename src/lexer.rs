@@ -64,6 +64,7 @@ pub enum Token {
     Comma,          // ,
     Colon,          // :
     Dot,            // .
+    Semicolon,      // ;
     
     // Special
     Eof,
@@ -118,6 +119,7 @@ impl fmt::Display for Token {
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
             Token::Dot => write!(f, "."),
+            Token::Semicolon => write!(f, ";"),
             Token::Eof => write!(f, "EOF"),
         }
     }
@@ -243,6 +245,7 @@ fn delimiter(input: &str) -> IResult<&str, Token> {
         value(Token::Comma, char(',')),
         value(Token::Colon, char(':')),
         value(Token::Dot, char('.')),
+        value(Token::Semicolon, char(';')),
     ))(input)
 }
 
@@ -298,6 +301,20 @@ pub fn lex(input: &str) -> IResult<&str, Vec<Token>> {
     let (input, tokens) = many0(lex_token)(input)?;
     let (input, _) = skip(input)?;  // Skip trailing whitespace
     Ok((input, tokens))
+}
+
+// Wrapper function that tokenizes the entire input or returns an error
+pub fn lex_tokens(input: &str) -> Result<Vec<Token>, String> {
+    match lex(input) {
+        Ok((remaining, tokens)) => {
+            if !remaining.is_empty() {
+                Err(format!("Unexpected input at: {}", remaining))
+            } else {
+                Ok(tokens)
+            }
+        }
+        Err(e) => Err(format!("Lexing error: {:?}", e)),
+    }
 }
 
 #[cfg(test)]

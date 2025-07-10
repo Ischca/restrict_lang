@@ -66,9 +66,9 @@ fn test_function_call_wat_generation() {
 fn test_local_variables_wat_generation() {
     let source = r#"
         fun main = {
-            val a = 100
-            val b = 50
-            val result = a - b
+            val a = 100;
+            val b = 50;
+            val result = a - b;
             result
         }
     "#;
@@ -148,18 +148,18 @@ fn test_pipe_operator_wat_generation() {
 fn test_all_binary_operators() {
     let source = r#"
         fun test_ops = a: Int b: Int {
-            val add = 10 + 3
-            val sub = 10 - 3
-            val mul = 10 * 3
-            val div = 10 / 3
-            val mod = 10 % 3
-            val eq = 10 == 3
-            val ne = 10 != 3
-            val lt = 10 < 3
-            val le = 10 <= 3
-            val gt = 10 > 3
-            val ge = 10 >= 3
-            val result = 42
+            val add = 10 + 3;
+            val sub = 10 - 3;
+            val mul = 10 * 3;
+            val div = 10 / 3;
+            val mod = 10 % 3;
+            val eq = 10 == 3;
+            val ne = 10 != 3;
+            val lt = 10 < 3;
+            val le = 10 <= 3;
+            val gt = 10 > 3;
+            val ge = 10 >= 3;
+            val result = 42;
             result
         }
         
@@ -188,10 +188,10 @@ fn test_all_binary_operators() {
 fn test_multiple_locals() {
     let source = r#"
         fun main = {
-            val a = 10
-            val b = 5
-            val sum = a + b
-            val result = sum * 2
+            val a = 10;
+            val b = 5;
+            val sum = a + b;
+            val result = sum * 2;
             result
         }
     "#;

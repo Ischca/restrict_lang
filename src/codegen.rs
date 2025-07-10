@@ -256,6 +256,7 @@ impl WasmCodeGen {
         for stmt in &block.statements {
             match stmt {
                 Stmt::Binding(bind) => self.generate_binding(bind)?,
+                Stmt::Assignment(assign) => self.generate_assignment(assign)?,
                 Stmt::Expr(expr) => {
                     self.generate_expr(expr)?;
                     // Pop the result if it's not the last expression
@@ -287,6 +288,20 @@ impl WasmCodeGen {
         }
         
         self.output.push_str(&format!("    local.set ${}\n", bind.name));
+        
+        Ok(())
+    }
+    
+    fn generate_assignment(&mut self, assign: &AssignStmt) -> Result<(), CodeGenError> {
+        // Generate the value expression
+        self.generate_expr(&assign.value)?;
+        
+        // Store in local
+        if self.lookup_local(&assign.name).is_some() {
+            self.output.push_str(&format!("    local.set ${}\n", assign.name));
+        } else {
+            return Err(CodeGenError::UndefinedVariable(assign.name.clone()));
+        }
         
         Ok(())
     }
@@ -371,8 +386,8 @@ impl WasmCodeGen {
             Expr::Then(then) => {
                 self.generate_then_expr(then)?;
             }
-            Expr::While(_) => {
-                return Err(CodeGenError::NotImplemented("while loops".to_string()));
+            Expr::While(while_expr) => {
+                self.generate_while_expr(while_expr)?;
             }
             Expr::Match(_) => {
                 return Err(CodeGenError::NotImplemented("match expressions".to_string()));
@@ -542,6 +557,9 @@ impl WasmCodeGen {
                     let ty = self.infer_expr_type(&bind.value)?;
                     locals.push((bind.name.clone(), ty));
                 }
+                Stmt::Assignment(_) => {
+                    // Assignments don't create new locals
+                }
                 Stmt::Expr(expr) => {
                     // Check for nested blocks
                     if let Expr::Block(nested_block) = &**expr {
@@ -673,11 +691,51 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    fn generate_while_expr(&mut self, while_expr: &WhileExpr) -> Result<(), CodeGenError> {
+        // WASM loop structure:
+        // (loop $label
+        //   condition
+        //   (if
+        //     (then
+        //       body
+        //       (br $label)  ; continue loop
+        //     )
+        //   )
+        // )
+        
+        self.output.push_str("    (loop $while_loop\n");
+        
+        // Generate condition
+        self.generate_expr(&while_expr.condition)?;
+        
+        // If condition is true, execute body and continue loop
+        self.output.push_str("      (if\n");
+        self.output.push_str("        (then\n");
+        
+        // Generate body
+        self.push_scope();
+        self.generate_block(&while_expr.body)?;
+        self.output.push_str("          drop\n"); // Drop the body result
+        self.pop_scope();
+        
+        // Continue loop
+        self.output.push_str("          (br $while_loop)\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        
+        // While loops return unit (i32.const 0)
+        self.output.push_str("    i32.const 0\n");
+        
+        Ok(())
+    }
+    
     fn generate_block_contents(&mut self, block: &BlockExpr) -> Result<WasmType, CodeGenError> {
         // Generate statements
         for (i, stmt) in block.statements.iter().enumerate() {
             match stmt {
                 Stmt::Binding(bind) => self.generate_binding(bind)?,
+                Stmt::Assignment(assign) => self.generate_assignment(assign)?,
                 Stmt::Expr(expr) => {
                     self.generate_expr(expr)?;
                     // Pop the result if it's not the last expression
@@ -712,6 +770,12 @@ impl WasmCodeGen {
             Ok(WasmType::I32) // Default to i32 (Unit)
         }
     }
+}
+
+// Standalone generate function for public API
+pub fn generate(program: &Program) -> Result<String, CodeGenError> {
+    let mut codegen = WasmCodeGen::new();
+    codegen.generate(program)
 }
 
 #[cfg(test)]

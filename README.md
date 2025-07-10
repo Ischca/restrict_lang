@@ -81,10 +81,18 @@ boss luke.attack
 
 | 記法 | 等価展開         | 役割                               | 使用例                     |
 | --------------- | ------------- | ---------- | ------ |
-| `val x = e`     | `e val x`     | 宣言         |        |
-| `mut val x = e` | `e mut val x` | 再束縛        |        |
+| `val x = e`     | `e val x`     | 宣言（不変）     | `val x = 5`       |
+| `mut val x = e` | `e mut val x` | 宣言（可変）     | `mut val x = 5`   |
+| `x = e`         |               | 再代入（要mut）  | `x = x + 1`       |
 | `e \|>  x`   | `val x = e`     | パイプ束縛（不変）                 | `fetch "/api" |> raw`      |
-| `e \|>> x`   | `mut val x = e` | パイプ束縛（再束縛・可変）         | `0 |>> counter`            |
+| `e \|>> x`   | `mut val x = e` | パイプ束縛（可変）         | `0 |>> counter`            |
+
+**注意**: OSV構文のため、`val x = 5` の後に `x` が続く場合、`5 x` が関数呼び出しと解釈されます。このような場合はセミコロン`;`で文を区切ってください：
+```rl
+mut val x = 5;
+x = x + 1;
+x
+```
 
 ---
 

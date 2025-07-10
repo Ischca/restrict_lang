@@ -25,7 +25,8 @@ fn main() {
     let _tokens = match lex(&source) {
         Ok((remaining, tokens)) => {
             if !remaining.is_empty() {
-                eprintln!("Warning: Unparsed input remaining: {:?}", remaining);
+                eprintln!("Warning: Lexer unparsed input remaining: {:?}", remaining);
+                eprintln!("This might indicate a lexer issue.");
             }
             println!("Tokens: {:?}", tokens);
             tokens

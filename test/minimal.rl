@@ -1,1 +1,1 @@
-record Enemy { hp: Int }
+fun main = { 42 }

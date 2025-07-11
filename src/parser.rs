@@ -1,7 +1,6 @@
 use nom::{
     IResult,
     branch::alt,
-    character::complete::{char, multispace0},
     combinator::{map, opt, value},
     multi::{many0, many1, separated_list0},
     sequence::{preceded, tuple, delimited},
@@ -66,12 +65,9 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
 }
 
 fn param(input: &str) -> ParseResult<Param> {
-    let (input, context_bound) = opt(
-        preceded(
-            char('@'),
-            ident
-        )
-    )(input)?;
+    // For now, skip context bounds since we don't have @ token
+    let context_bound = None;
+    
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Colon)(input)?;
     let (input, ty) = parse_type(input)?;
@@ -87,10 +83,6 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
     let mut final_expr = None;
     
     loop {
-        // Skip whitespace
-        let (next_input, _) = multispace0(remaining)?;
-        remaining = next_input;
-        
         // Check if we've reached the closing brace
         if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
             remaining = after_brace;
@@ -119,8 +111,7 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
         let (after_expr, expr) = expression_in_statement(remaining)?;
         
         // Peek ahead to see if this is the final expression
-        let (next_input2, _) = multispace0(after_expr)?;
-        if let Ok((_, _)) = expect_token::<'_>(Token::RBrace)(next_input2) {
+        if let Ok((_, _)) = expect_token::<'_>(Token::RBrace)(after_expr) {
             // This is the final expression
             final_expr = Some(Box::new(expr));
             remaining = after_expr;
@@ -143,7 +134,7 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, params) = many0(param)(input)?;  // Changed from many1 to many0
+    let (input, params) = many0(param)(input)?;
     let (input, body) = block_expr(input)?;
     Ok((input, FunDecl { name, params, body }))
 }
@@ -279,7 +270,14 @@ fn with_expr(input: &str) -> ParseResult<Expr> {
 
 fn pattern(input: &str) -> ParseResult<Pattern> {
     alt((
-        value(Pattern::Wildcard, char('_')),
+        // Check for wildcard pattern
+        |input| {
+            let (input, token) = lex_token(input)?;
+            match token {
+                Token::Ident(s) if s == "_" => Ok((input, Pattern::Wildcard)),
+                _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+            }
+        },
         some_pattern,
         none_pattern,
         list_pattern,  // Try list patterns before literals
@@ -550,20 +548,16 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
             
             if in_statement {
                 // In statement context, be conservative about consuming more expressions
-                // Check if the next token might start a new statement
-                let (after_ws, _) = multispace0(input)?;
-                
                 // Peek at the next tokens to see if this is a new statement
-                if let Ok((_, Token::Val)) = lex_token(after_ws) {
+                if let Ok((_, Token::Val)) = lex_token(input) {
                     return Ok((input, first));
                 }
-                if let Ok((_, Token::Mut)) = lex_token(after_ws) {
+                if let Ok((_, Token::Mut)) = lex_token(input) {
                     return Ok((input, first));
                 }
                 // Check for assignment pattern: ident =
-                if let Ok((after_ident, Token::Ident(_))) = lex_token(after_ws) {
-                    let (after_ws2, _) = multispace0(after_ident)?;
-                    if let Ok((_, Token::Assign)) = lex_token(after_ws2) {
+                if let Ok((after_ident, Token::Ident(_))) = lex_token(input) {
+                    if let Ok((_, Token::Assign)) = lex_token(after_ident) {
                         return Ok((input, first));
                     }
                 }
@@ -673,18 +667,16 @@ fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
 
 pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
     alt((
+        map(fun_decl, TopDecl::Function),
         map(record_decl, TopDecl::Record),
         map(impl_block, TopDecl::Impl),
         map(context_decl, TopDecl::Context),
-        map(fun_decl, TopDecl::Function),
-        map(bind_decl, TopDecl::Binding)
+        map(bind_decl, TopDecl::Binding)  // bind_decl must be last as it accepts any identifier
     ))(input)
 }
 
 pub fn parse_program(input: &str) -> ParseResult<Program> {
-    let (input, _) = multispace0(input)?; // Skip initial whitespace
-    let (input, declarations) = many0(preceded(multispace0, top_decl))(input)?;
-    let (input, _) = multispace0(input)?; // Skip trailing whitespace
+    let (input, declarations) = many0(top_decl)(input)?;
     
     // If we have remaining input but no declarations parsed, try to give a helpful error
     if !input.is_empty() && declarations.is_empty() {

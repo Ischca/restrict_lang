@@ -148,17 +148,17 @@ fn test_pipe_operator_wat_generation() {
 fn test_all_binary_operators() {
     let source = r#"
         fun test_ops = {
-            val add = 10 + 3
-            val sub = 10 - 3
-            val mul = 10 * 3
-            val div = 10 / 3
-            val mod = 10 % 3
-            val eq = 10 == 3
-            val ne = 10 != 3
-            val lt = 10 < 3
-            val le = 10 <= 3
-            val gt = 10 > 3
-            val ge = 10 >= 3
+            val add = 10 + 3;
+            val sub = 10 - 3;
+            val mul = 10 * 3;
+            val div = 10 / 3;
+            val mod = 10 % 3;
+            val eq = 10 == 3;
+            val ne = 10 != 3;
+            val lt = 10 < 3;
+            val le = 10 <= 3;
+            val gt = 10 > 3;
+            val ge = 10 >= 3;
             42
         }
         

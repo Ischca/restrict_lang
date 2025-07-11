@@ -61,9 +61,11 @@ fn test_empty_array() {
 fn test_array_get() {
     let source = r#"
         fun main = {
-            val arr = [|10, 20, 30, 40, 50|];
-            val third = array_get arr 2;
-            third
+            with Arena {
+                val arr = [|10, 20, 30, 40, 50|];
+                val third = (arr, 2) array_get;
+                third
+            }
         }
     "#;
     
@@ -82,10 +84,12 @@ fn test_array_get() {
 fn test_array_set() {
     let source = r#"
         fun main = {
-            mut val arr = [|10, 20, 30, 40, 50|];
-            array_set arr 2 35;
-            val third = array_get arr 2;
-            third
+            with Arena {
+                mut val arr = [|10, 20, 30, 40, 50|];
+                (arr, 2, 35) array_set;
+                val third = (arr, 2) array_get;
+                third
+            }
         }
     "#;
     
@@ -104,13 +108,15 @@ fn test_array_set() {
 fn test_array_vs_list() {
     let source = r#"
         fun main = {
-            val list = [1, 2, 3];      // List literal
-            val arr = [|1, 2, 3|];     // Array literal
-            
-            val list_len = list list_length;
-            val arr_first = array_get arr 0;
-            
-            list_len + arr_first
+            with Arena {
+                val list = [1, 2, 3];      // List literal
+                val arr = [|1, 2, 3|];     // Array literal
+                
+                val list_len = list list_length;
+                val arr_first = (arr, 0) array_get;
+                
+                list_len + arr_first
+            }
         }
     "#;
     

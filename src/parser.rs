@@ -602,7 +602,21 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
             }
             
             // Otherwise, try to parse more expressions for OSV
-            let (input, rest) = many0(simple_expr)(input)?;
+            // But don't parse expressions that start with binary operators
+            let (input, rest) = many0(|input| {
+                // Peek at the next token
+                if let Ok((_, tok)) = lex_token(input) {
+                    match tok {
+                        // Don't parse if it starts with a binary operator
+                        Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
+                        Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge => {
+                            return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+                        }
+                        _ => {}
+                    }
+                }
+                simple_expr(input)
+            })(input)?;
             
             if rest.is_empty() {
                 Ok((input, first))
@@ -715,15 +729,6 @@ pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
 
 pub fn parse_program(input: &str) -> ParseResult<Program> {
     let (input, declarations) = many0(top_decl)(input)?;
-    
-    // If we have remaining input but no declarations parsed, try to give a helpful error
-    if !input.is_empty() && declarations.is_empty() {
-        // Try to parse a single top_decl to get a better error message
-        if let Err(e) = top_decl(input) {
-            return Err(e);
-        }
-    }
-    
     Ok((input, Program { declarations }))
 }
 

@@ -30,6 +30,8 @@ pub enum Token {
     True,
     False,
     Unit,
+    Some,
+    None,
     
     // Identifiers and Literals
     Ident(String),
@@ -61,6 +63,10 @@ pub enum Token {
     RBrace,         // }
     LParen,         // (
     RParen,         // )
+    LBracket,       // [
+    RBracket,       // ]
+    LArrayBracket,  // [|
+    RArrayBracket,  // |]
     Comma,          // ,
     Colon,          // :
     Dot,            // .
@@ -91,6 +97,8 @@ impl fmt::Display for Token {
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::Unit => write!(f, "Unit"),
+            Token::Some => write!(f, "Some"),
+            Token::None => write!(f, "None"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::IntLit(n) => write!(f, "{}", n),
             Token::FloatLit(n) => write!(f, "{}", n),
@@ -116,6 +124,10 @@ impl fmt::Display for Token {
             Token::RBrace => write!(f, "}}"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
+            Token::LBracket => write!(f, "["),
+            Token::RBracket => write!(f, "]"),
+            Token::LArrayBracket => write!(f, "[|"),
+            Token::RArrayBracket => write!(f, "|]"),
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
             Token::Dot => write!(f, "."),
@@ -163,6 +175,8 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "true" => Token::True,
         "false" => Token::False,
         "Unit" => Token::Unit,
+        "Some" => Token::Some,
+        "None" => Token::None,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))
@@ -219,7 +233,9 @@ fn operator(input: &str) -> IResult<&str, Token> {
     alt((
         value(Token::PipeMut, tag("|>>")),
         value(Token::Pipe, tag("|>")),
+        value(Token::RArrayBracket, tag("|]")),  // Check |] before |
         value(Token::Bar, tag("|")),
+        value(Token::LArrayBracket, tag("[|")),  // Check [| 
         value(Token::Arrow, tag("=>")),
         value(Token::Eq, tag("==")),
         value(Token::Ne, tag("!=")),
@@ -242,6 +258,8 @@ fn delimiter(input: &str) -> IResult<&str, Token> {
         value(Token::RBrace, char('}')),
         value(Token::LParen, char('(')),
         value(Token::RParen, char(')')),
+        value(Token::LBracket, char('[')),
+        value(Token::RBracket, char(']')),
         value(Token::Comma, char(',')),
         value(Token::Colon, char(':')),
         value(Token::Dot, char('.')),
@@ -352,6 +370,20 @@ mod tests {
             Token::Pipe,
             Token::Ident("add".to_string()),
             Token::IntLit(10),
+        ]);
+    }
+    
+    #[test]
+    fn test_array_brackets() {
+        let tokens = lex("[|1, 2, 3|]").unwrap().1;
+        assert_eq!(tokens, vec![
+            Token::LArrayBracket,
+            Token::IntLit(1),
+            Token::Comma,
+            Token::IntLit(2),
+            Token::Comma,
+            Token::IntLit(3),
+            Token::RArrayBracket,
         ]);
     }
     

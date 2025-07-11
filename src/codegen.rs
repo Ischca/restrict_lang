@@ -387,6 +387,73 @@ impl WasmCodeGen {
         self.output.push_str("    i32.load\n");
         self.output.push_str("  )\n");
         
+        // tail function - returns a new list without the first element
+        self.output.push_str("  (func $tail (param $list i32) (result i32)\n");
+        self.output.push_str("    (local $length i32)\n");
+        self.output.push_str("    (local $new_list i32)\n");
+        self.output.push_str("    (local $new_length i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Load original length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $length\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Check if list is empty\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; Return the same empty list\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        return\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Calculate new length\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    local.set $new_length\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate new list: 8 bytes header + (new_length * 4) bytes data\n");
+        self.output.push_str("    local.get $new_length\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_list\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Write new length\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    local.get $new_length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Write new capacity (same as length)\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $new_length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy elements from original list (skip first element)\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    ;; destination\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.const 12\n");  // 8 + 4 to skip first element
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    ;; source\n");
+        self.output.push_str("    local.get $new_length\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    ;; size\n");
+        self.output.push_str("    memory.copy\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("  )\n");
+        
         // Add list functions to function signatures
         self.functions.insert("list_length".to_string(), FunctionSig {
             _params: vec![WasmType::I32],
@@ -394,6 +461,10 @@ impl WasmCodeGen {
         });
         self.functions.insert("list_get".to_string(), FunctionSig {
             _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+        self.functions.insert("tail".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
             result: Some(WasmType::I32),
         });
         
@@ -773,6 +844,9 @@ impl WasmCodeGen {
             Expr::Ident(name) => {
                 if let Some(_idx) = self.lookup_local(name) {
                     self.output.push_str(&format!("    local.get ${}\n", name));
+                } else if self.functions.contains_key(name) {
+                    // It's a zero-argument function call
+                    self.output.push_str(&format!("    call ${}\n", name));
                 } else {
                     return Err(CodeGenError::UndefinedVariable(name.clone()));
                 }
@@ -1017,6 +1091,7 @@ impl WasmCodeGen {
         None
     }
     
+    #[allow(dead_code)]
     fn next_local_index(&self) -> u32 {
         let mut max_idx = 0;
         for scope in &self.locals {
@@ -1279,7 +1354,7 @@ impl WasmCodeGen {
         
         // Generate the body
         self.push_scope();
-        let result = self.generate_block(&with_expr.body)?;
+        let _result = self.generate_block(&with_expr.body)?;
         self.pop_scope();
         
         // Reset the arena

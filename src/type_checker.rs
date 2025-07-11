@@ -144,6 +144,12 @@ impl TypeChecker {
             return_type: TypedType::Unit,
         });
         
+        // tail function - returns tail of a list (generic version would be better)
+        self.functions.insert("tail".to_string(), FunctionDef {
+            params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::Int32)))],
+            return_type: TypedType::List(Box::new(TypedType::Int32)),
+        });
+        
         // Note: Arena is a built-in context but not added to _contexts by default
         // It only becomes available inside a "with Arena" block
     }
@@ -252,9 +258,47 @@ impl TypeChecker {
     }
     
     pub fn check_program(&mut self, program: &Program) -> Result<(), TypeError> {
+        // First pass: register all function signatures and record types
         for decl in &program.declarations {
-            self.check_top_decl(decl)?;
+            match decl {
+                TopDecl::Function(func) => {
+                    self.register_function_signature(func)?;
+                }
+                TopDecl::Record(record) => {
+                    self.check_record_decl(record)?;
+                }
+                _ => {}
+            }
         }
+        
+        // Second pass: check all declarations
+        for decl in &program.declarations {
+            match decl {
+                TopDecl::Record(_) => {
+                    // Already processed in first pass
+                }
+                _ => {
+                    self.check_top_decl(decl)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), TypeError> {
+        let mut param_types = Vec::new();
+        for param in &func.params {
+            let ty = self.convert_type(&param.ty)?;
+            param_types.push((param.name.clone(), ty));
+        }
+        
+        // For now, assume all functions return Int32 (will be refined during actual checking)
+        // This is just for forward reference resolution
+        self.functions.insert(func.name.clone(), FunctionDef {
+            params: param_types,
+            return_type: TypedType::Int32,
+        });
+        
         Ok(())
     }
     
@@ -390,7 +434,25 @@ impl TypeChecker {
             Expr::CharLit(_) => Ok(TypedType::Char),
             Expr::BoolLit(_) => Ok(TypedType::Boolean),
             Expr::Unit => Ok(TypedType::Unit),
-            Expr::Ident(name) => self.lookup_var(name),
+            Expr::Ident(name) => {
+                // First try as a variable
+                match self.lookup_var(name) {
+                    Ok(ty) => Ok(ty),
+                    Err(e) => {
+                        // If not a variable, check if it's a zero-argument function
+                        if let Some(func_def) = self.functions.get(name) {
+                            if func_def.params.is_empty() {
+                                // Zero-argument function can be referenced without parentheses
+                                Ok(func_def.return_type.clone())
+                            } else {
+                                Err(e)  // Return the original error (could be AffineViolation)
+                            }
+                        } else {
+                            Err(e)  // Return the original error
+                        }
+                    }
+                }
+            },
             Expr::RecordLit(record_lit) => self.check_record_lit(record_lit),
             Expr::Clone(clone_expr) => self.check_clone_expr(clone_expr),
             Expr::Freeze(expr) => self.check_freeze_expr(expr),

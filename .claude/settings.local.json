@@ -12,7 +12,11 @@
       "Bash(./target/debug/parser_debug)",
       "Bash(ls:*)",
       "Bash(RUST_BACKTRACE=1 cargo test test_local_variables_wat_generation --test compiler_tests)",
-      "Bash(./test_debug)"
+      "Bash(./test_debug)",
+      "Bash(find:*)",
+      "Bash(./test_parse_debug)",
+      "Bash(/tmp/minimal_test3:*)",
+      "Bash(/tmp/minimal_test5:*)"
     ],
     "deny": []
   }

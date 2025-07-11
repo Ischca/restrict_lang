@@ -40,9 +40,11 @@ fn test_list_length() {
 fn test_list_get() {
     let source = r#"
         fun main = {
-            val list = [10, 20, 30, 40, 50];
-            val second = list_get list 1;  // Get element at index 1
-            second
+            with Arena {
+                val list = [10, 20, 30, 40, 50];
+                val second = (list, 1) list_get;  // Get element at index 1
+                second
+            }
         }
     "#;
     
@@ -61,12 +63,14 @@ fn test_list_get() {
 fn test_list_operations_combined() {
     let source = r#"
         fun main = {
-            val nums = [5, 10, 15, 20];
-            val len = nums list_length;
-            val first = list_get nums 0;
-            val last_idx = len - 1;
-            mut val last = list_get nums last_idx;
-            first + last
+            with Arena {
+                mut val nums = [5, 10, 15, 20];
+                val len = nums list_length;
+                val first = (nums, 0) list_get;
+                val last_idx = len - 1;
+                mut val last = (nums, last_idx) list_get;
+                first + last
+            }
         }
     "#;
     

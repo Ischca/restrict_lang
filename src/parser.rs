@@ -1,7 +1,7 @@
 use nom::{
     IResult,
     branch::alt,
-    combinator::{cut, map, opt, value},
+    combinator::{map, opt, value},
     multi::{many0, many1, separated_list0},
     sequence::{preceded, tuple, delimited},
 };
@@ -55,6 +55,7 @@ fn field_decl(input: &str) -> ParseResult<FieldDecl> {
     Ok((input, FieldDecl { name, ty }))
 }
 
+#[allow(dead_code)]
 fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let (input, _) = expect_token(Token::Record)(input)?;
     let (input, name) = ident(input)?;
@@ -139,6 +140,7 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     Ok((input, FunDecl { name, params, body }))
 }
 
+#[allow(dead_code)]
 fn impl_block(input: &str) -> ParseResult<ImplBlock> {
     let (input, _) = expect_token(Token::Impl)(input)?;
     let (input, target) = ident(input)?;
@@ -148,6 +150,7 @@ fn impl_block(input: &str) -> ParseResult<ImplBlock> {
     Ok((input, ImplBlock { target, functions }))
 }
 
+#[allow(dead_code)]
 fn context_decl(input: &str) -> ParseResult<ContextDecl> {
     let (input, _) = expect_token(Token::Context)(input)?;
     let (input, name) = ident(input)?;
@@ -162,7 +165,7 @@ pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, _) = expect_token(Token::Val)(input)?;
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression(input)?;  // Use normal expression parsing
+    let (input, value) = expression(input)?;  // Use normal expression parsing for binding values
     Ok((input, BindDecl { 
         mutable: mutable.is_some(), 
         name, 
@@ -581,6 +584,21 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                         return Ok((input, first));
                     }
                 }
+                // Check for closing brace
+                if let Ok((_, Token::RBrace)) = lex_token(input) {
+                    return Ok((input, first));
+                }
+                // Don't consume more expressions if we see a binary operator coming
+                if let Ok((_, tok)) = lex_token(input) {
+                    match tok {
+                        Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
+                        Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge |
+                        Token::Pipe | Token::PipeMut | Token::Bar => {
+                            return Ok((input, first));
+                        }
+                        _ => {}
+                    }
+                }
             }
             
             // Otherwise, try to parse more expressions for OSV
@@ -678,7 +696,7 @@ fn statement(input: &str) -> ParseResult<Stmt> {
 fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression(input)?;  // Use normal expression parsing
+    let (input, value) = expression(input)?;  // Use normal expression parsing for assignment values
     Ok((input, Stmt::Assignment(AssignStmt {
         name,
         value: Box::new(value)
@@ -686,51 +704,12 @@ fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
 }
 
 pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
-    use nom::combinator::cut;
-    
     alt((
-        // Use cut after successfully matching the keyword to commit to that parser
-        |input| {
-            let (input, _) = expect_token(Token::Fun)(input)?;
-            cut(|input| {
-                let (input, name) = ident(input)?;
-                let (input, _) = expect_token(Token::Assign)(input)?;
-                let (input, params) = many0(param)(input)?;
-                let (input, body) = block_expr(input)?;
-                Ok((input, TopDecl::Function(FunDecl { name, params, body })))
-            })(input)
-        },
-        |input| {
-            let (input, _) = expect_token(Token::Record)(input)?;
-            cut(|input| {
-                let (input, name) = ident(input)?;
-                let (input, _) = expect_token(Token::LBrace)(input)?;
-                let (input, fields) = many0(field_decl)(input)?;
-                let (input, _) = expect_token(Token::RBrace)(input)?;
-                Ok((input, TopDecl::Record(RecordDecl { name, fields })))
-            })(input)
-        },
-        |input| {
-            let (input, _) = expect_token(Token::Impl)(input)?;
-            cut(|input| {
-                let (input, target) = ident(input)?;
-                let (input, _) = expect_token(Token::LBrace)(input)?;
-                let (input, functions) = many0(fun_decl)(input)?;
-                let (input, _) = expect_token(Token::RBrace)(input)?;
-                Ok((input, TopDecl::Impl(ImplBlock { target, functions })))
-            })(input)
-        },
-        |input| {
-            let (input, _) = expect_token(Token::Context)(input)?;
-            cut(|input| {
-                let (input, name) = ident(input)?;
-                let (input, _) = expect_token(Token::LBrace)(input)?;
-                let (input, fields) = many0(field_decl)(input)?;
-                let (input, _) = expect_token(Token::RBrace)(input)?;
-                Ok((input, TopDecl::Context(ContextDecl { name, fields })))
-            })(input)
-        },
-        map(bind_decl, TopDecl::Binding)  // bind_decl must be last as it accepts any identifier
+        map(fun_decl, TopDecl::Function),
+        map(record_decl, TopDecl::Record),
+        map(impl_block, TopDecl::Impl),
+        map(context_decl, TopDecl::Context),
+        map(bind_decl, TopDecl::Binding)
     ))(input)
 }
 

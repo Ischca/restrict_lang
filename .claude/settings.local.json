@@ -10,7 +10,9 @@
       "Bash(./web/build.sh:*)",
       "Bash(./debug_parser)",
       "Bash(./target/debug/parser_debug)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(RUST_BACKTRACE=1 cargo test test_local_variables_wat_generation --test compiler_tests)",
+      "Bash(./test_debug)"
     ],
     "deny": []
   }

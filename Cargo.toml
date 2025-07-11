@@ -39,6 +39,7 @@ path = "src/bin/trace_parser.rs"
 
 
 
+
 [dev-dependencies]
 pretty_assertions = "^1.3.0"
 quickcheck = "1.0"

@@ -1,7 +1,7 @@
 use nom::{
     IResult,
     branch::alt,
-    combinator::{map, opt, value},
+    combinator::{cut, map, opt, value},
     multi::{many0, many1, separated_list0},
     sequence::{preceded, tuple, delimited},
 };
@@ -200,6 +200,26 @@ fn record_lit(input: &str) -> ParseResult<RecordLit> {
     )(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
     Ok((input, RecordLit { name, fields }))
+}
+
+fn unary_expr(input: &str) -> ParseResult<Expr> {
+    alt((
+        // Handle unary minus
+        |input| {
+            let (input, _) = expect_token(Token::Minus)(input)?;
+            let (input, expr) = atom_expr(input)?;
+            // Convert to negative literal if it's an integer literal
+            match expr {
+                Expr::IntLit(n) => Ok((input, Expr::IntLit(-n))),
+                _ => Ok((input, Expr::Binary(BinaryExpr {
+                    left: Box::new(Expr::IntLit(0)),
+                    op: BinaryOp::Sub,
+                    right: Box::new(expr),
+                })))
+            }
+        },
+        atom_expr
+    ))(input)
 }
 
 fn atom_expr(input: &str) -> ParseResult<Expr> {
@@ -583,7 +603,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
 }
 
 pub fn simple_expr(input: &str) -> ParseResult<Expr> {
-    let (mut input, mut expr) = atom_expr(input)?;
+    let (mut input, mut expr) = unary_expr(input)?;
     
     // Handle field access and postfix operations
     loop {
@@ -666,11 +686,50 @@ fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
 }
 
 pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
+    use nom::combinator::cut;
+    
     alt((
-        map(fun_decl, TopDecl::Function),
-        map(record_decl, TopDecl::Record),
-        map(impl_block, TopDecl::Impl),
-        map(context_decl, TopDecl::Context),
+        // Use cut after successfully matching the keyword to commit to that parser
+        |input| {
+            let (input, _) = expect_token(Token::Fun)(input)?;
+            cut(|input| {
+                let (input, name) = ident(input)?;
+                let (input, _) = expect_token(Token::Assign)(input)?;
+                let (input, params) = many0(param)(input)?;
+                let (input, body) = block_expr(input)?;
+                Ok((input, TopDecl::Function(FunDecl { name, params, body })))
+            })(input)
+        },
+        |input| {
+            let (input, _) = expect_token(Token::Record)(input)?;
+            cut(|input| {
+                let (input, name) = ident(input)?;
+                let (input, _) = expect_token(Token::LBrace)(input)?;
+                let (input, fields) = many0(field_decl)(input)?;
+                let (input, _) = expect_token(Token::RBrace)(input)?;
+                Ok((input, TopDecl::Record(RecordDecl { name, fields })))
+            })(input)
+        },
+        |input| {
+            let (input, _) = expect_token(Token::Impl)(input)?;
+            cut(|input| {
+                let (input, target) = ident(input)?;
+                let (input, _) = expect_token(Token::LBrace)(input)?;
+                let (input, functions) = many0(fun_decl)(input)?;
+                let (input, _) = expect_token(Token::RBrace)(input)?;
+                Ok((input, TopDecl::Impl(ImplBlock { target, functions })))
+            })(input)
+        },
+        |input| {
+            let (input, _) = expect_token(Token::Context)(input)?;
+            cut(|input| {
+                let (input, name) = ident(input)?;
+                let (input, _) = expect_token(Token::LBrace)(input)?;
+                let (input, fields) = many0(field_decl)(input)?;
+                let (input, _) = expect_token(Token::RBrace)(input)?;
+                Ok((input, TopDecl::Context(ContextDecl { name, fields })))
+            })(input)
+        },
         map(bind_decl, TopDecl::Binding)  // bind_decl must be last as it accepts any identifier
     ))(input)
 }

@@ -1,0 +1,84 @@
+use restrict_lang::{parse_program, TypeChecker, generate};
+
+// シンプルなコンパイル関数
+fn compile_simple(source: &str) -> Result<String, String> {
+    // 最初と最後の空白を削除
+    let trimmed = source.trim();
+    
+    println!("Compiling: {:?}", trimmed);
+    
+    let (remaining, ast) = parse_program(trimmed)
+        .map_err(|e| format!("Parse error: {:?}", e))?;
+        
+    if !remaining.is_empty() {
+        return Err(format!("Unparsed input: {:?}", remaining));
+    }
+    
+    let mut type_checker = TypeChecker::new();
+    type_checker.check_program(&ast)
+        .map_err(|e| format!("Type error: {}", e))?;
+    
+    generate(&ast)
+        .map_err(|e| format!("Codegen error: {}", e))
+}
+
+#[test]
+fn test_empty_list_pattern() {
+    let src = r#"
+fun main = {
+    with Arena {
+        val lst = []
+        val result = (lst) match {
+            [] => { 42 }
+            _ => { 0 }
+        }
+        result
+    }
+}
+"#;
+    
+    let wat = compile_simple(src).unwrap();
+    assert!(wat.contains("i32.load"));
+}
+
+#[test]
+fn test_cons_pattern() {
+    let src = r#"
+fun main = {
+    with Arena {
+        val lst = [10, 20, 30]
+        val result = (lst) match {
+            [] => { 0 }
+            [head | tail] => { head + list_length(tail) }
+            _ => { -1 }
+        }
+        result
+    }
+}
+"#;
+    
+    let wat = compile_simple(src).unwrap();
+    assert!(wat.contains("i32.gt_s"));
+}
+
+#[test]
+fn test_exact_pattern() {
+    let src = r#"
+fun main = {
+    with Arena {
+        val lst = [1, 2, 3]
+        val result = (lst) match {
+            [] => { 0 }
+            [a] => { a }
+            [a, b] => { a + b }
+            [a, b, c] => { a + b + c }
+            _ => { -1 }
+        }
+        result
+    }
+}
+"#;
+    
+    let wat = compile_simple(src).unwrap();
+    assert!(wat.contains("i32.const 3"));
+}

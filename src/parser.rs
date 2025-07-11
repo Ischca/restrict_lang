@@ -214,6 +214,10 @@ fn record_lit(input: &str) -> ParseResult<RecordLit> {
 fn atom_expr(input: &str) -> ParseResult<Expr> {
     alt((
         literal,
+        some_expr,  // Try Some before other expressions
+        none_expr,  // Try None before ident
+        array_lit,  // Try array literal before list
+        list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
         map(ident, Expr::Ident),
         delimited(
@@ -224,6 +228,39 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         with_expr,
         map(block_expr, Expr::Block)
     ))(input)
+}
+
+fn some_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::Some)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, value) = expression(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Expr::Some(Box::new(value))))
+}
+
+fn none_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::None)(input)?;
+    Ok((input, Expr::None))
+}
+
+fn list_lit(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::LBracket)(input)?;
+    let (input, elements) = separated_list0(
+        expect_token(Token::Comma),
+        map(expression, Box::new)
+    )(input)?;
+    let (input, _) = expect_token(Token::RBracket)(input)?;
+    Ok((input, Expr::ListLit(elements)))
+}
+
+fn array_lit(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::LArrayBracket)(input)?;
+    let (input, elements) = separated_list0(
+        expect_token(Token::Comma),
+        map(expression, Box::new)
+    )(input)?;
+    let (input, _) = expect_token(Token::RArrayBracket)(input)?;
+    Ok((input, Expr::ArrayLit(elements)))
 }
 
 fn with_expr(input: &str) -> ParseResult<Expr> {
@@ -243,6 +280,9 @@ fn with_expr(input: &str) -> ParseResult<Expr> {
 fn pattern(input: &str) -> ParseResult<Pattern> {
     alt((
         value(Pattern::Wildcard, char('_')),
+        some_pattern,
+        none_pattern,
+        list_pattern,  // Try list patterns before literals
         map(literal, |expr| match expr {
             Expr::IntLit(n) => Pattern::Literal(Literal::Int(n)),
             Expr::FloatLit(f) => Pattern::Literal(Literal::Float(f)),
@@ -254,6 +294,51 @@ fn pattern(input: &str) -> ParseResult<Pattern> {
         }),
         map(ident, Pattern::Ident)
     ))(input)
+}
+
+fn some_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::Some)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, pattern) = pattern(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Some(Box::new(pattern))))
+}
+
+fn none_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::None)(input)?;
+    Ok((input, Pattern::None))
+}
+
+fn list_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::LBracket)(input)?;
+    
+    // Check for empty list pattern
+    if let Ok((input, _)) = expect_token::<'_>(Token::RBracket)(input) {
+        return Ok((input, Pattern::EmptyList));
+    }
+    
+    // Parse first element
+    let (input, first) = pattern(input)?;
+    
+    // Check if it's a cons pattern [head | tail]
+    if let Ok((input, _)) = expect_token::<'_>(Token::Bar)(input) {
+        let (input, tail) = pattern(input)?;
+        let (input, _) = expect_token(Token::RBracket)(input)?;
+        return Ok((input, Pattern::ListCons(Box::new(first), Box::new(tail))));
+    }
+    
+    // Otherwise it's an exact pattern [a, b, c]
+    let mut patterns = vec![Box::new(first)];
+    
+    // Parse remaining elements
+    let (input, mut rest) = separated_list0(
+        expect_token(Token::Comma),
+        map(pattern, Box::new)
+    )(input)?;
+    patterns.append(&mut rest);
+    
+    let (input, _) = expect_token(Token::RBracket)(input)?;
+    Ok((input, Pattern::ListExact(patterns)))
 }
 
 fn match_arm(input: &str) -> ParseResult<MatchArm> {

@@ -99,6 +99,16 @@ pub enum Expr {
     
     // Field access
     FieldAccess(Box<Expr>, String),
+    
+    // List literal
+    ListLit(Vec<Box<Expr>>),
+    
+    // Array literal
+    ArrayLit(Vec<Box<Expr>>),
+    
+    // Option constructors
+    Some(Box<Expr>),
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -151,6 +161,11 @@ pub enum Pattern {
     Literal(Literal),
     Ident(String),
     Record(String, Vec<(String, Pattern)>),
+    Some(Box<Pattern>),
+    None,
+    EmptyList,
+    ListCons(Box<Pattern>, Box<Pattern>),  // [head | tail]
+    ListExact(Vec<Box<Pattern>>),          // [a, b, c]
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -89,13 +89,63 @@ pub struct TypeChecker {
 
 impl TypeChecker {
     pub fn new() -> Self {
-        Self {
+        let mut checker = Self {
             var_env: vec![HashMap::new()],
             records: HashMap::new(),
             functions: HashMap::new(),
             methods: HashMap::new(),
             _contexts: Vec::new(),
-        }
+        };
+        
+        // Register built-in functions
+        checker.register_builtins();
+        
+        checker
+    }
+    
+    fn register_builtins(&mut self) {
+        // println function
+        self.functions.insert("println".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Unit,
+        });
+        
+        // list_length function
+        self.functions.insert("list_length".to_string(), FunctionDef {
+            params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::Int32)))],
+            return_type: TypedType::Int32,
+        });
+        
+        // list_get function
+        self.functions.insert("list_get".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::Int32))),
+                ("index".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+        });
+        
+        // array_get function
+        self.functions.insert("array_get".to_string(), FunctionDef {
+            params: vec![
+                ("array".to_string(), TypedType::Array(Box::new(TypedType::Int32), 0)), // Size 0 means any size
+                ("index".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+        });
+        
+        // array_set function
+        self.functions.insert("array_set".to_string(), FunctionDef {
+            params: vec![
+                ("array".to_string(), TypedType::Array(Box::new(TypedType::Int32), 0)),
+                ("index".to_string(), TypedType::Int32),
+                ("value".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Unit,
+        });
+        
+        // Note: Arena is a built-in context but not added to _contexts by default
+        // It only becomes available inside a "with Arena" block
     }
     
     fn push_scope(&mut self) {
@@ -353,6 +403,18 @@ impl TypeChecker {
             Expr::Then(then) => self.check_then_expr(then),
             Expr::While(while_expr) => self.check_while_expr(while_expr),
             Expr::Match(match_expr) => self.check_match_expr(match_expr),
+            Expr::ListLit(elements) => self.check_list_lit(elements),
+            Expr::ArrayLit(elements) => self.check_array_lit(elements),
+            Expr::Some(expr) => {
+                let inner_type = self.check_expr(expr)?;
+                Ok(TypedType::Option(Box::new(inner_type)))
+            },
+            Expr::None => {
+                // Type will be inferred from context
+                // For now, return a generic Option type
+                // This should be refined based on usage context
+                Ok(TypedType::Option(Box::new(TypedType::Unit)))
+            },
         }
     }
     
@@ -484,7 +546,21 @@ impl TypeChecker {
                     for (i, arg) in call.args.iter().enumerate() {
                         let expected_ty = &param_types[i];
                         let actual_ty = self.check_expr(arg)?;
-                        if &actual_ty != expected_ty {
+                        
+                        // Special handling for array types with size 0 (meaning any size)
+                        let types_match = match (expected_ty, &actual_ty) {
+                            (TypedType::Array(e_elem, 0), TypedType::Array(a_elem, _)) => {
+                                // Size 0 means any size array
+                                e_elem == a_elem
+                            }
+                            (TypedType::List(e_elem), TypedType::List(a_elem)) => {
+                                // For lists, just check element type
+                                e_elem == a_elem
+                            }
+                            _ => expected_ty == &actual_ty
+                        };
+                        
+                        if !types_match {
                             return Err(TypeError::TypeMismatch {
                                 expected: format!("{:?}", expected_ty),
                                 found: format!("{:?}", actual_ty),
@@ -667,10 +743,16 @@ impl TypeChecker {
         
         // Verify all contexts exist and push them
         for ctx_name in &with.contexts {
-            if !self.records.contains_key(ctx_name) {
+            // Check if it's a built-in context or a user-defined context
+            if ctx_name == "Arena" {
+                // Arena is a built-in context
+                self._contexts.push(ctx_name.clone());
+            } else if self.records.contains_key(ctx_name) {
+                // User-defined context
+                self._contexts.push(ctx_name.clone());
+            } else {
                 return Err(TypeError::UnavailableContext(ctx_name.clone()));
             }
-            self._contexts.push(ctx_name.clone());
         }
         
         // Check the body with contexts available
@@ -768,9 +850,313 @@ impl TypeChecker {
         Ok(TypedType::Unit)
     }
     
-    fn check_match_expr(&mut self, _match_expr: &MatchExpr) -> Result<TypedType, TypeError> {
-        // TODO: Implement match expression type checking
-        Ok(TypedType::Unit)
+    fn check_match_expr(&mut self, match_expr: &MatchExpr) -> Result<TypedType, TypeError> {
+        // Check the scrutinee expression
+        let scrutinee_type = self.check_expr(&match_expr.expr)?;
+        
+        // Check that we have at least one arm
+        if match_expr.arms.is_empty() {
+            return Err(TypeError::TypeMismatch {
+                expected: "at least one match arm".to_string(),
+                found: "no match arms".to_string(),
+            });
+        }
+        
+        // Check each arm and ensure all return the same type
+        let mut result_type = None;
+        
+        for arm in &match_expr.arms {
+            // Check pattern compatibility with scrutinee
+            self.check_pattern(&arm.pattern, &scrutinee_type)?;
+            
+            // Check the arm body
+            self.push_scope();
+            
+            // Bind pattern variables
+            self.bind_pattern_vars(&arm.pattern, &scrutinee_type)?;
+            
+            let arm_type = self.check_block_expr(&arm.body)?;
+            
+            self.pop_scope();
+            
+            // Ensure all arms have the same type
+            match &result_type {
+                None => result_type = Some(arm_type),
+                Some(expected) => {
+                    if expected != &arm_type {
+                        return Err(TypeError::TypeMismatch {
+                            expected: format!("{:?}", expected),
+                            found: format!("{:?}", arm_type),
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Check exhaustiveness (simple version - just check for wildcard or identifier)
+        let has_catch_all = match_expr.arms.iter().any(|arm| {
+            matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_))
+        });
+        
+        if !has_catch_all && !self.is_pattern_exhaustive(&match_expr.arms, &scrutinee_type) {
+            return Err(TypeError::TypeMismatch {
+                expected: "exhaustive patterns".to_string(),
+                found: "non-exhaustive patterns (add wildcard _ or identifier pattern)".to_string(),
+            });
+        }
+        
+        Ok(result_type.unwrap_or(TypedType::Unit))
+    }
+    
+    fn check_pattern(&self, pattern: &Pattern, expected_type: &TypedType) -> Result<(), TypeError> {
+        match pattern {
+            Pattern::Wildcard => Ok(()),
+            Pattern::Ident(_) => Ok(()), // Binds to any type
+            Pattern::Literal(lit) => {
+                let lit_type = match lit {
+                    Literal::Int(_) => TypedType::Int32,
+                    Literal::Float(_) => TypedType::Float64,
+                    Literal::String(_) => TypedType::String,
+                    Literal::Char(_) => TypedType::Char,
+                    Literal::Bool(_) => TypedType::Boolean,
+                    Literal::Unit => TypedType::Unit,
+                };
+                
+                if &lit_type != expected_type {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", expected_type),
+                        found: format!("{:?}", lit_type),
+                    });
+                }
+                Ok(())
+            }
+            Pattern::Record(name, fields) => {
+                if let TypedType::Record { name: record_name, .. } = expected_type {
+                    if name != record_name {
+                        return Err(TypeError::TypeMismatch {
+                            expected: record_name.clone(),
+                            found: name.clone(),
+                        });
+                    }
+                    
+                    // Check fields
+                    let record_def = self.records.get(name)
+                        .ok_or_else(|| TypeError::UnknownType(name.clone()))?;
+                    
+                    for (field_name, field_pattern) in fields {
+                        let field_type = record_def.fields.get(field_name)
+                            .ok_or_else(|| TypeError::UnknownField {
+                                record: name.clone(),
+                                field: field_name.clone(),
+                            })?;
+                        
+                        self.check_pattern(field_pattern, field_type)?;
+                    }
+                    Ok(())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "record type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+            Pattern::Some(inner_pattern) => {
+                if let TypedType::Option(inner_type) = expected_type {
+                    self.check_pattern(inner_pattern, inner_type)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "Option type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+            Pattern::None => {
+                if matches!(expected_type, TypedType::Option(_)) {
+                    Ok(())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "Option type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+            Pattern::EmptyList => {
+                if matches!(expected_type, TypedType::List(_)) {
+                    Ok(())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "List type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+            Pattern::ListCons(head_pattern, tail_pattern) => {
+                if let TypedType::List(element_type) = expected_type {
+                    // Check head pattern against element type
+                    self.check_pattern(head_pattern, element_type)?;
+                    // Check tail pattern against list type
+                    self.check_pattern(tail_pattern, expected_type)?;
+                    Ok(())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "List type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+            Pattern::ListExact(patterns) => {
+                if let TypedType::List(element_type) = expected_type {
+                    // Check each pattern against element type
+                    for pattern in patterns {
+                        self.check_pattern(pattern, element_type)?;
+                    }
+                    Ok(())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "List type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+        }
+    }
+    
+    fn bind_pattern_vars(&mut self, pattern: &Pattern, ty: &TypedType) -> Result<(), TypeError> {
+        match pattern {
+            Pattern::Wildcard => Ok(()),
+            Pattern::Ident(name) => {
+                self.bind_var(name.clone(), ty.clone(), false)?;
+                Ok(())
+            }
+            Pattern::Literal(_) => Ok(()),
+            Pattern::Record(_, fields) => {
+                if let TypedType::Record { name, .. } = ty {
+                    // Clone to avoid borrow issues
+                    let field_types: Vec<(String, TypedType)> = {
+                        let record_def = self.records.get(name).unwrap();
+                        fields.iter()
+                            .map(|(field_name, _)| {
+                                (field_name.clone(), record_def.fields.get(field_name).unwrap().clone())
+                            })
+                            .collect()
+                    };
+                    
+                    for ((_, field_pattern), (_, field_type)) in fields.iter().zip(field_types.iter()) {
+                        self.bind_pattern_vars(field_pattern, field_type)?;
+                    }
+                }
+                Ok(())
+            }
+            Pattern::Some(inner_pattern) => {
+                if let TypedType::Option(inner_type) = ty {
+                    self.bind_pattern_vars(inner_pattern, inner_type)
+                } else {
+                    Ok(())
+                }
+            }
+            Pattern::None => Ok(()),
+            Pattern::EmptyList => Ok(()),
+            Pattern::ListCons(head_pattern, tail_pattern) => {
+                if let TypedType::List(element_type) = ty {
+                    // Bind head pattern with element type
+                    self.bind_pattern_vars(head_pattern, element_type)?;
+                    // Bind tail pattern with list type
+                    self.bind_pattern_vars(tail_pattern, ty)?;
+                    Ok(())
+                } else {
+                    Ok(())
+                }
+            }
+            Pattern::ListExact(patterns) => {
+                if let TypedType::List(element_type) = ty {
+                    // Bind each pattern with element type
+                    for pattern in patterns {
+                        self.bind_pattern_vars(pattern, element_type)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+    
+    fn is_pattern_exhaustive(&self, arms: &[MatchArm], ty: &TypedType) -> bool {
+        // Simple exhaustiveness check
+        match ty {
+            TypedType::Boolean => {
+                // Check if we have both true and false patterns
+                let has_true = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Literal(Literal::Bool(true)))
+                });
+                let has_false = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Literal(Literal::Bool(false)))
+                });
+                has_true && has_false
+            }
+            TypedType::Option(_) => {
+                // Check if we have both Some and None patterns
+                let has_some = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Some(_))
+                });
+                let has_none = arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::None)
+                });
+                has_some && has_none
+            }
+            TypedType::Unit => {
+                // Unit only has one value
+                arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Literal(Literal::Unit))
+                })
+            }
+            _ => false, // For other types, require wildcard
+        }
+    }
+    
+    fn check_list_lit(&mut self, elements: &[Box<Expr>]) -> Result<TypedType, TypeError> {
+        if elements.is_empty() {
+            // Empty list - we can't infer the element type yet
+            // For now, we'll use a placeholder
+            return Ok(TypedType::List(Box::new(TypedType::Int32)));
+        }
+        
+        // Check all elements and ensure they have the same type
+        let first_type = self.check_expr(&elements[0])?;
+        
+        for element in elements.iter().skip(1) {
+            let element_type = self.check_expr(element)?;
+            if element_type != first_type {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("{:?}", first_type),
+                    found: format!("{:?}", element_type),
+                });
+            }
+        }
+        
+        Ok(TypedType::List(Box::new(first_type)))
+    }
+    
+    fn check_array_lit(&mut self, elements: &[Box<Expr>]) -> Result<TypedType, TypeError> {
+        if elements.is_empty() {
+            // Empty array - we can't infer the element type yet
+            // For now, we'll use a placeholder with size 0
+            return Ok(TypedType::Array(Box::new(TypedType::Int32), 0));
+        }
+        
+        // Check all elements and ensure they have the same type
+        let first_type = self.check_expr(&elements[0])?;
+        
+        for element in elements.iter().skip(1) {
+            let element_type = self.check_expr(element)?;
+            if element_type != first_type {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("{:?}", first_type),
+                    found: format!("{:?}", element_type),
+                });
+            }
+        }
+        
+        let size = elements.len();
+        Ok(TypedType::Array(Box::new(first_type), size))
     }
 }
 

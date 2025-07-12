@@ -298,7 +298,7 @@ fn comment(input: &str) -> IResult<&str, &str> {
     ))(input)
 }
 
-fn skip(input: &str) -> IResult<&str, ()> {
+pub fn skip(input: &str) -> IResult<&str, ()> {
     let mut input = input;
     loop {
         if let Ok((rest, _)) = alt((whitespace, comment))(input) {

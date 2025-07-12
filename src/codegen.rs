@@ -1,5 +1,5 @@
 use crate::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -41,6 +41,12 @@ pub struct WasmCodeGen {
     arena_stack: Vec<u32>,  // Stack of arena start addresses
     next_arena_addr: u32,   // Next available arena address
     default_arena: Option<u32>, // Default arena address
+    // Lambda management
+    lambda_counter: u32,      // Counter for generating unique lambda names
+    lambda_functions: Vec<String>, // Generated lambda function definitions
+    function_table: Vec<String>,   // Function table entries
+    in_lambda_with_captures: bool, // Whether we're generating code inside a lambda with captures
+    captured_vars: Vec<String>,    // List of captured variable names
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +79,11 @@ impl WasmCodeGen {
             arena_stack: Vec::new(),
             next_arena_addr: 0x8000, // Arena starts at 32KB
             default_arena: None,
+            lambda_counter: 0,
+            lambda_functions: Vec::new(),
+            function_table: Vec::new(),
+            in_lambda_with_captures: false,
+            captured_vars: Vec::new(),
         }
     }
     
@@ -129,6 +140,30 @@ impl WasmCodeGen {
                     // Records, contexts, etc. are compile-time only
                 }
             }
+        }
+        
+        // Generate lambda functions
+        if !self.lambda_functions.is_empty() {
+            self.output.push_str("\n  ;; Lambda functions\n");
+            for lambda_func in &self.lambda_functions {
+                self.output.push_str(lambda_func);
+            }
+        }
+        
+        // Generate function table for indirect calls
+        if !self.function_table.is_empty() {
+            self.output.push_str("\n  ;; Function table\n");
+            self.output.push_str("  (table ");
+            self.output.push_str(&self.function_table.len().to_string());
+            self.output.push_str(" funcref)\n");
+            
+            // Initialize table elements
+            self.output.push_str("  (elem (i32.const 0)");
+            for func_name in &self.function_table {
+                self.output.push_str(" $");
+                self.output.push_str(func_name);
+            }
+            self.output.push_str(")\n");
         }
         
         // Export main function if it exists
@@ -624,6 +659,7 @@ impl WasmCodeGen {
                 }
             },
             Type::Generic(_, _) => Err(CodeGenError::UnsupportedType("generic types".to_string())),
+            Type::Function(_, _) => Err(CodeGenError::UnsupportedType("function types".to_string())),
         }
     }
     
@@ -730,6 +766,11 @@ impl WasmCodeGen {
         
         self.output.push_str("    (local $tail_tmp i32)\n");
         self.add_local("tail_tmp", next_idx);
+        next_idx += 1;
+        
+        // Add temporary variable for closures
+        self.output.push_str("    (local $closure_tmp i32)\n");
+        self.add_local("closure_tmp", next_idx);
         next_idx += 1;
         
         // Hack: Add common pattern variable names
@@ -842,7 +883,10 @@ impl WasmCodeGen {
                 self.output.push_str("    i32.const 0\n");
             }
             Expr::Ident(name) => {
-                if let Some(_idx) = self.lookup_local(name) {
+                // Check if it's a captured variable in a lambda
+                if self.in_lambda_with_captures && self.captured_vars.contains(name) {
+                    self.output.push_str(&format!("    local.get ${}_captured\n", name));
+                } else if let Some(_idx) = self.lookup_local(name) {
                     self.output.push_str(&format!("    local.get ${}\n", name));
                 } else if self.functions.contains_key(name) {
                     // It's a zero-argument function call
@@ -947,6 +991,9 @@ impl WasmCodeGen {
                 self.output.push_str("    i32.const 0\n"); // None tag
                 self.output.push_str("    i32.const 0\n"); // Dummy value
             }
+            Expr::Lambda(lambda) => {
+                self.generate_lambda_expr(lambda)?;
+            }
         }
         Ok(())
     }
@@ -986,6 +1033,28 @@ impl WasmCodeGen {
             // First check if it's a regular function
             if self.functions.contains_key(func_name) {
                 self.output.push_str(&format!("    call ${}\n", func_name));
+            } else if let Some(_local_idx) = self.lookup_local(func_name) {
+                // It's a local variable - might be a closure or function index
+                // For now, assume it's a closure
+                // TODO: Track whether a variable holds a closure or plain function index
+                
+                // Push closure object as first argument
+                self.output.push_str(&format!("    local.get ${}\n", func_name));
+                
+                // Load function index from closure
+                self.output.push_str(&format!("    local.get ${}\n", func_name));
+                self.output.push_str("    i32.load\n"); // Load function index from offset 0
+                
+                // Generate type signature for call_indirect
+                let param_count = call.args.len() + 1; // +1 for closure parameter
+                self.output.push_str("    call_indirect (type ");
+                
+                // Generate type index - for simplicity, we'll inline the type
+                self.output.push_str("(func");
+                for _ in 0..param_count {
+                    self.output.push_str(" (param i32)");
+                }
+                self.output.push_str(" (result i32)))\n");
             } else {
                 // Try to find it as a method
                 // For methods, we need to determine the record type from the first argument
@@ -1043,7 +1112,20 @@ impl WasmCodeGen {
                 }
             }
         } else {
-            return Err(CodeGenError::NotImplemented("indirect calls".to_string()));
+            // Non-identifier function expression (e.g., field access, or complex expression)
+            // Generate the function expression to get the table index
+            self.generate_expr(&call.function)?;
+            
+            // Generate type signature for call_indirect
+            let param_count = call.args.len();
+            self.output.push_str("    call_indirect (type ");
+            
+            // Generate type index - for simplicity, we'll inline the type
+            self.output.push_str("(func");
+            for _ in 0..param_count {
+                self.output.push_str(" (param i32)");
+            }
+            self.output.push_str(" (result i32)))\n");
         }
         
         Ok(())
@@ -1089,6 +1171,10 @@ impl WasmCodeGen {
             }
         }
         None
+    }
+    
+    fn bind_local(&mut self, name: &str, idx: u32) {
+        self.add_local(name, idx);
     }
     
     #[allow(dead_code)]
@@ -1788,6 +1874,189 @@ impl WasmCodeGen {
             self.infer_expr_type(last_expr)
         } else {
             Ok(WasmType::I32) // Default to i32 (Unit)
+        }
+    }
+    
+    fn generate_lambda_expr(&mut self, lambda: &LambdaExpr) -> Result<(), CodeGenError> {
+        // Generate a unique name for this lambda
+        let lambda_name = format!("lambda_{}", self.lambda_counter);
+        self.lambda_counter += 1;
+        
+        // Add to function table
+        let table_index = self.function_table.len() as i32;
+        self.function_table.push(lambda_name.clone());
+        
+        // Collect free variables (variables used but not parameters)
+        let free_vars = self.collect_free_variables(lambda)?;
+        let has_captures = !free_vars.is_empty();
+        
+        // Generate the lambda function
+        let mut lambda_func = String::new();
+        
+        // Function signature
+        lambda_func.push_str(&format!("  (func ${}", lambda_name));
+        
+        // If we have captures, add closure parameter
+        if has_captures {
+            lambda_func.push_str(" (param $closure i32)");
+        }
+        
+        // Parameters
+        for param in &lambda.params {
+            lambda_func.push_str(&format!(" (param ${} i32)", param));
+        }
+        
+        // Result type - assume i32 for now
+        lambda_func.push_str(" (result i32)\n");
+        
+        // Local variables for captured values
+        if has_captures {
+            for (i, (var_name, _)) in free_vars.iter().enumerate() {
+                lambda_func.push_str(&format!("    (local ${}_captured i32)\n", var_name));
+            }
+            
+            // Load captured values from closure object
+            for (i, (var_name, _)) in free_vars.iter().enumerate() {
+                lambda_func.push_str(&format!("    local.get $closure\n"));
+                lambda_func.push_str(&format!("    i32.const {}\n", 4 + i * 4)); // Skip function index
+                lambda_func.push_str("    i32.add\n");
+                lambda_func.push_str("    i32.load\n");
+                lambda_func.push_str(&format!("    local.set ${}_captured\n", var_name));
+            }
+        }
+        
+        // Function body
+        // Save current state
+        let saved_function = self.current_function.clone();
+        let saved_output = std::mem::take(&mut self.output);
+        let saved_locals = self.locals.clone();
+        
+        // Generate lambda body
+        self.current_function = Some(lambda_name.clone());
+        self.locals = vec![HashMap::new()]; // Fresh scope for lambda
+        
+        // Bind captured variables with _captured suffix
+        let mut param_offset = if has_captures { 1 } else { 0 }; // Account for closure param
+        
+        for (var_name, _) in &free_vars {
+            // Map captured variable to its local
+            self.bind_local(var_name, self.locals[0].len() as u32);
+        }
+        
+        // Bind parameters
+        for param in &lambda.params {
+            self.bind_local(param, param_offset);
+            param_offset += 1;
+        }
+        
+        // Generate body expression with captured variable substitution
+        let saved_in_lambda = std::mem::replace(&mut self.in_lambda_with_captures, has_captures);
+        self.captured_vars = free_vars.iter().map(|(name, _)| name.clone()).collect();
+        
+        self.generate_expr(&lambda.body)?;
+        
+        self.in_lambda_with_captures = saved_in_lambda;
+        self.captured_vars.clear();
+        
+        let lambda_body = std::mem::take(&mut self.output);
+        lambda_func.push_str(&lambda_body);
+        
+        // Restore state
+        self.output = saved_output;
+        self.current_function = saved_function;
+        self.locals = saved_locals;
+        
+        lambda_func.push_str("  )\n");
+        
+        // Add to lambda functions list
+        self.lambda_functions.push(lambda_func);
+        
+        // Generate closure object if needed
+        if has_captures {
+            // Allocate closure object: 4 bytes for function index + 4 bytes per captured var
+            let closure_size = 4 + free_vars.len() * 4;
+            self.output.push_str(&format!("    i32.const {}\n", closure_size));
+            self.output.push_str("    call $allocate\n");
+            self.output.push_str("    local.tee $closure_tmp\n");
+            
+            // Store function table index
+            self.output.push_str("    local.get $closure_tmp\n");
+            self.output.push_str(&format!("    i32.const {}\n", table_index));
+            self.output.push_str("    i32.store\n");
+            
+            // Store captured values
+            for (i, (var_name, _)) in free_vars.iter().enumerate() {
+                self.output.push_str("    local.get $closure_tmp\n");
+                self.output.push_str(&format!("    i32.const {}\n", 4 + i * 4));
+                self.output.push_str("    i32.add\n");
+                self.output.push_str(&format!("    local.get ${}\n", var_name));
+                self.output.push_str("    i32.store\n");
+            }
+            
+            // Leave closure object on stack
+            self.output.push_str("    local.get $closure_tmp\n");
+        } else {
+            // No captures - just push the table index
+            self.output.push_str(&format!("    i32.const {}\n", table_index));
+        }
+        
+        Ok(())
+    }
+    
+    fn collect_free_variables(&self, lambda: &LambdaExpr) -> Result<Vec<(String, u32)>, CodeGenError> {
+        let mut free_vars = Vec::new();
+        let mut seen = HashSet::new();
+        
+        // Collect all variables used in the lambda body
+        self.collect_used_variables(&lambda.body, &mut seen);
+        
+        // Remove parameters from the set
+        for param in &lambda.params {
+            seen.remove(param);
+        }
+        
+        // Check which ones are available in current scope
+        for var_name in seen {
+            if let Some(idx) = self.lookup_local(&var_name) {
+                free_vars.push((var_name, idx));
+            }
+        }
+        
+        Ok(free_vars)
+    }
+    
+    fn collect_used_variables(&self, expr: &Expr, vars: &mut HashSet<String>) {
+        match expr {
+            Expr::Ident(name) => {
+                vars.insert(name.clone());
+            }
+            Expr::Binary(binary) => {
+                self.collect_used_variables(&binary.left, vars);
+                self.collect_used_variables(&binary.right, vars);
+            }
+            Expr::Block(block) => {
+                for stmt in &block.statements {
+                    match stmt {
+                        Stmt::Expr(e) => self.collect_used_variables(e, vars),
+                        Stmt::Binding(bind) => self.collect_used_variables(&bind.value, vars),
+                        Stmt::Assignment(assign) => self.collect_used_variables(&assign.value, vars),
+                    }
+                }
+                if let Some(e) = &block.expr {
+                    self.collect_used_variables(e, vars);
+                }
+            }
+            Expr::Call(call) => {
+                self.collect_used_variables(&call.function, vars);
+                for arg in &call.args {
+                    self.collect_used_variables(arg, vars);
+                }
+            }
+            Expr::Lambda(lambda) => {
+                // Don't collect from nested lambdas - they have their own scope
+            }
+            // Add other cases as needed
+            _ => {}
         }
     }
 }

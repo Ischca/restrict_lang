@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
+import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, ErrorAction, CloseAction, ErrorHandlerResult, CloseHandlerResult, Message } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
 
@@ -52,13 +52,17 @@ export function activateLanguageServer(context: vscode.ExtensionContext) {
 
         // Error handling
         errorHandler: {
-            error: (error, message, count) => {
+            error: (error: Error, message: Message | undefined, count: number | undefined): ErrorHandlerResult => {
                 console.error('Language server error:', error, message, count);
-                return vscode.LanguageClient.prototype.defaultErrorHandler.error(error, message, count);
+                // Return ErrorAction based on the severity
+                if ((count || 0) < 3) {
+                    return { action: ErrorAction.Continue };
+                }
+                return { action: ErrorAction.Shutdown };
             },
-            closed: () => {
+            closed: (): CloseHandlerResult => {
                 console.log('Language server connection closed');
-                return vscode.LanguageClient.prototype.defaultErrorHandler.closed();
+                return { action: CloseAction.DoNotRestart };
             }
         }
     };

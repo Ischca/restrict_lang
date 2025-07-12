@@ -1,0 +1,156 @@
+{
+    "Function Definition": {
+        "prefix": "fun",
+        "body": [
+            "fun ${1:function_name} = ${2:param}:${3:Type} {",
+            "\t${4:// function body}",
+            "\t$0",
+            "}"
+        ],
+        "description": "Define a function"
+    },
+    "Lambda Expression": {
+        "prefix": "lambda",
+        "body": [
+            "|${1:param}| ${2:body}$0"
+        ],
+        "description": "Create a lambda expression"
+    },
+    "Variable Binding": {
+        "prefix": "val",
+        "body": [
+            "val ${1:variable_name} = ${2:value}$0"
+        ],
+        "description": "Create a variable binding"
+    },
+    "Mutable Variable": {
+        "prefix": "mut",
+        "body": [
+            "val mut ${1:variable_name} = ${2:value}$0"
+        ],
+        "description": "Create a mutable variable"
+    },
+    "Record Definition": {
+        "prefix": "record",
+        "body": [
+            "record ${1:RecordName} {",
+            "\t${2:field_name}: ${3:Type},",
+            "\t$0",
+            "}"
+        ],
+        "description": "Define a record type"
+    },
+    "Record Instance": {
+        "prefix": "new",
+        "body": [
+            "${1:RecordName} {",
+            "\t${2:field_name}: ${3:value},",
+            "\t$0",
+            "}"
+        ],
+        "description": "Create a record instance"
+    },
+    "Impl Block": {
+        "prefix": "impl",
+        "body": [
+            "impl ${1:RecordName} {",
+            "\tfun ${2:method_name} = self:${1:RecordName} {",
+            "\t\t${3:// method body}",
+            "\t\t$0",
+            "\t}",
+            "}"
+        ],
+        "description": "Implement methods for a record"
+    },
+    "Match Expression": {
+        "prefix": "match",
+        "body": [
+            "${1:expression} match {",
+            "\t${2:pattern} => { ${3:result} }",
+            "\t_ => { ${4:default} }",
+            "\t$0",
+            "}"
+        ],
+        "description": "Pattern matching expression"
+    },
+    "Option Match": {
+        "prefix": "option",
+        "body": [
+            "${1:maybe_value} match {",
+            "\tSome(${2:value}) => { ${3:handle_some} }",
+            "\tNone => { ${4:handle_none} }",
+            "\t$0",
+            "}"
+        ],
+        "description": "Pattern match on Option type"
+    },
+    "List Match": {
+        "prefix": "listmatch",
+        "body": [
+            "${1:list} match {",
+            "\t[] => { ${2:empty_case} }",
+            "\t[${3:head} | ${4:tail}] => { ${5:cons_case} }",
+            "\t$0",
+            "}"
+        ],
+        "description": "Pattern match on List type"
+    },
+    "If Then Else": {
+        "prefix": "if",
+        "body": [
+            "if ${1:condition} { ${2:then_branch} } else { ${3:else_branch} }$0"
+        ],
+        "description": "Conditional expression"
+    },
+    "While Loop": {
+        "prefix": "while",
+        "body": [
+            "while ${1:condition} {",
+            "\t${2:// loop body}",
+            "\t$0",
+            "}"
+        ],
+        "description": "While loop"
+    },
+    "Arena Block": {
+        "prefix": "arena",
+        "body": [
+            "new_arena(${1:size}) {",
+            "\t${2:// allocations}",
+            "\t$0",
+            "}"
+        ],
+        "description": "Arena allocation block"
+    },
+    "Pipe Operation": {
+        "prefix": "pipe",
+        "body": [
+            "${1:value} |> ${2:function}$0"
+        ],
+        "description": "Pipe operation"
+    },
+    "Main Function": {
+        "prefix": "main",
+        "body": [
+            "fun main = {",
+            "\t${1:// program entry point}",
+            "\t$0",
+            "}"
+        ],
+        "description": "Main function template"
+    },
+    "List Literal": {
+        "prefix": "list",
+        "body": [
+            "[${1:element1}, ${2:element2}$0]"
+        ],
+        "description": "List literal"
+    },
+    "Array Literal": {
+        "prefix": "array",
+        "body": [
+            "[|${1:element1}, ${2:element2}$0|]"
+        ],
+        "description": "Array literal"
+    }
+}

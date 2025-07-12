@@ -34,11 +34,7 @@
                 "extensions": [
                     ".rl"
                 ],
-                "configuration": "./language-configuration.json",
-                "icon": {
-                    "light": "./icons/restrict-light.png",
-                    "dark": "./icons/restrict-dark.png"
-                }
+                "configuration": "./language-configuration.json"
             }
         ],
         "grammars": [

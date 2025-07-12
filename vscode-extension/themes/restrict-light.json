@@ -1,0 +1,167 @@
+{
+    "name": "Restrict Light",
+    "type": "light",
+    "colors": {
+        "editor.background": "#ffffff",
+        "editor.foreground": "#000000",
+        "activityBarBadge.background": "#007acc",
+        "sideBarTitle.foreground": "#6f6f6f"
+    },
+    "tokenColors": [
+        {
+            "scope": [
+                "comment",
+                "punctuation.definition.comment"
+            ],
+            "settings": {
+                "fontStyle": "italic",
+                "foreground": "#008000"
+            }
+        },
+        {
+            "scope": [
+                "keyword.control.restrict",
+                "keyword.declaration.restrict"
+            ],
+            "settings": {
+                "foreground": "#0000FF"
+            }
+        },
+        {
+            "scope": [
+                "keyword.other.restrict"
+            ],
+            "settings": {
+                "foreground": "#AF00DB"
+            }
+        },
+        {
+            "scope": [
+                "constant.language.boolean.restrict",
+                "constant.language.unit.restrict",
+                "constant.language.option.restrict"
+            ],
+            "settings": {
+                "foreground": "#0000FF"
+            }
+        },
+        {
+            "scope": [
+                "constant.numeric.integer.restrict",
+                "constant.numeric.float.restrict"
+            ],
+            "settings": {
+                "foreground": "#098658"
+            }
+        },
+        {
+            "scope": [
+                "string.quoted.double.restrict",
+                "string.quoted.single.restrict"
+            ],
+            "settings": {
+                "foreground": "#A31515"
+            }
+        },
+        {
+            "scope": [
+                "constant.character.escape.restrict"
+            ],
+            "settings": {
+                "foreground": "#EE0000"
+            }
+        },
+        {
+            "scope": [
+                "entity.name.function.definition.restrict",
+                "entity.name.function.restrict"
+            ],
+            "settings": {
+                "foreground": "#795E26"
+            }
+        },
+        {
+            "scope": [
+                "entity.name.function.call.restrict"
+            ],
+            "settings": {
+                "foreground": "#795E26"
+            }
+        },
+        {
+            "scope": [
+                "storage.type.primitive.restrict",
+                "storage.type.generic.restrict"
+            ],
+            "settings": {
+                "foreground": "#267F99"
+            }
+        },
+        {
+            "scope": [
+                "storage.type.user.restrict",
+                "entity.name.type.record.restrict",
+                "entity.name.type.impl.restrict",
+                "entity.name.type.restrict"
+            ],
+            "settings": {
+                "foreground": "#267F99"
+            }
+        },
+        {
+            "scope": [
+                "keyword.operator.pipe.restrict",
+                "keyword.operator.arrow.restrict"
+            ],
+            "settings": {
+                "foreground": "#AF00DB"
+            }
+        },
+        {
+            "scope": [
+                "keyword.operator.comparison.restrict",
+                "keyword.operator.arithmetic.restrict",
+                "keyword.operator.assignment.restrict"
+            ],
+            "settings": {
+                "foreground": "#000000"
+            }
+        },
+        {
+            "scope": [
+                "keyword.operator.lambda.begin.restrict",
+                "keyword.operator.lambda.end.restrict"
+            ],
+            "settings": {
+                "foreground": "#D73A49",
+                "fontStyle": "bold"
+            }
+        },
+        {
+            "scope": [
+                "variable.parameter.lambda.restrict"
+            ],
+            "settings": {
+                "foreground": "#001080",
+                "fontStyle": "italic"
+            }
+        },
+        {
+            "scope": [
+                "variable.other.field.restrict"
+            ],
+            "settings": {
+                "foreground": "#001080"
+            }
+        },
+        {
+            "scope": [
+                "keyword.control.pattern.restrict"
+            ],
+            "settings": {
+                "foreground": "#0000FF",
+                "fontStyle": "bold"
+            }
+        }
+    ]
+}

@@ -1,0 +1,250 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Restrict Language",
+    "scopeName": "source.restrict",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#characters"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#operators"
+        },
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#lambdas"
+        },
+        {
+            "include": "#records"
+        },
+        {
+            "include": "#patterns"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-slash.restrict",
+                    "begin": "//",
+                    "end": "$"
+                },
+                {
+                    "name": "comment.block.restrict",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.restrict",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.restrict",
+                            "match": "\\\\[\"'\\\\nrt]"
+                        }
+                    ]
+                }
+            ]
+        },
+        "characters": {
+            "patterns": [
+                {
+                    "name": "string.quoted.single.restrict",
+                    "begin": "'",
+                    "end": "'",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.restrict",
+                            "match": "\\\\[\"'\\\\nrt]"
+                        }
+                    ]
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.float.restrict",
+                    "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.integer.restrict",
+                    "match": "\\b\\d+\\b"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.restrict",
+                    "match": "\\b(if|then|else|while|match|with|return|async)\\b"
+                },
+                {
+                    "name": "keyword.declaration.restrict",
+                    "match": "\\b(record|impl|context|fun|val|mut)\\b"
+                },
+                {
+                    "name": "keyword.other.restrict",
+                    "match": "\\b(clone|freeze)\\b"
+                },
+                {
+                    "name": "constant.language.boolean.restrict",
+                    "match": "\\b(true|false)\\b"
+                },
+                {
+                    "name": "constant.language.unit.restrict",
+                    "match": "\\bUnit\\b"
+                },
+                {
+                    "name": "constant.language.option.restrict",
+                    "match": "\\b(Some|None)\\b"
+                }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.pipe.restrict",
+                    "match": "\\|>>?|\\|"
+                },
+                {
+                    "name": "keyword.operator.arrow.restrict", 
+                    "match": "=>|->|<-"
+                },
+                {
+                    "name": "keyword.operator.comparison.restrict",
+                    "match": "==|!=|<=|>=|<|>"
+                },
+                {
+                    "name": "keyword.operator.arithmetic.restrict",
+                    "match": "\\+|-|\\*|/|%"
+                },
+                {
+                    "name": "keyword.operator.assignment.restrict",
+                    "match": "="
+                },
+                {
+                    "name": "keyword.operator.array.restrict",
+                    "match": "\\[\\||\\|\\]"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.definition.restrict",
+                    "match": "(?<=fun\\s+)\\w+",
+                    "captures": {
+                        "0": {
+                            "name": "entity.name.function.restrict"
+                        }
+                    }
+                },
+                {
+                    "name": "entity.name.function.call.restrict",
+                    "match": "\\w+(?=\\()"
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "storage.type.primitive.restrict",
+                    "match": "\\b(Int32|Int|Float64|Boolean|String|Char|Unit)\\b"
+                },
+                {
+                    "name": "storage.type.generic.restrict",
+                    "match": "\\b(Option|List|Array)\\b"
+                },
+                {
+                    "name": "storage.type.user.restrict",
+                    "match": "\\b[A-Z]\\w*\\b"
+                }
+            ]
+        },
+        "lambdas": {
+            "patterns": [
+                {
+                    "name": "meta.lambda.restrict",
+                    "begin": "\\|",
+                    "end": "\\|",
+                    "beginCaptures": {
+                        "0": {
+                            "name": "keyword.operator.lambda.begin.restrict"
+                        }
+                    },
+                    "endCaptures": {
+                        "0": {
+                            "name": "keyword.operator.lambda.end.restrict"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "name": "variable.parameter.lambda.restrict",
+                            "match": "\\w+"
+                        },
+                        {
+                            "name": "punctuation.separator.parameter.restrict",
+                            "match": ","
+                        }
+                    ]
+                }
+            ]
+        },
+        "records": {
+            "patterns": [
+                {
+                    "name": "entity.name.type.record.restrict",
+                    "match": "(?<=record\\s+)\\w+",
+                    "captures": {
+                        "0": {
+                            "name": "entity.name.type.restrict"
+                        }
+                    }
+                },
+                {
+                    "name": "entity.name.type.impl.restrict",
+                    "match": "(?<=impl\\s+)\\w+",
+                    "captures": {
+                        "0": {
+                            "name": "entity.name.type.restrict"
+                        }
+                    }
+                },
+                {
+                    "name": "variable.other.field.restrict",
+                    "match": "(?<=\\.)\\w+"
+                }
+            ]
+        },
+        "patterns": {
+            "patterns": [
+                {
+                    "name": "keyword.control.pattern.restrict",
+                    "match": "\\b_\\b"
+                }
+            ]
+        }
+    }
+}

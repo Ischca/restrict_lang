@@ -1,0 +1,227 @@
+{
+    "name": "restrict-language",
+    "displayName": "Restrict Language",
+    "description": "Language support for Restrict Language (.rl files)",
+    "version": "0.1.0",
+    "publisher": "restrict-lang",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/your-username/restrict_lang"
+    },
+    "engines": {
+        "vscode": "^1.74.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Syntax Highlighting"
+    ],
+    "keywords": [
+        "restrict",
+        "functional",
+        "webassembly",
+        "affine types"
+    ],
+    "activationEvents": [],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "restrict",
+                "aliases": [
+                    "Restrict Language",
+                    "restrict"
+                ],
+                "extensions": [
+                    ".rl"
+                ],
+                "configuration": "./language-configuration.json",
+                "icon": {
+                    "light": "./icons/restrict-light.png",
+                    "dark": "./icons/restrict-dark.png"
+                }
+            }
+        ],
+        "grammars": [
+            {
+                "language": "restrict",
+                "scopeName": "source.restrict",
+                "path": "./syntaxes/restrict.tmLanguage.json"
+            }
+        ],
+        "snippets": [
+            {
+                "language": "restrict",
+                "path": "./snippets/restrict.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "restrict.compile",
+                "title": "Compile Restrict File",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.typeCheck",
+                "title": "Type Check Restrict File",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.showAST",
+                "title": "Show AST",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.gotoDefinition",
+                "title": "Go to Definition",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.findReferences",
+                "title": "Find All References",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.renameSymbol",
+                "title": "Rename Symbol",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.formatDocument",
+                "title": "Format Document",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.showHover",
+                "title": "Show Hover Info",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.showDocumentSymbols",
+                "title": "Show Document Symbols",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.showWorkspaceSymbols",
+                "title": "Show Workspace Symbols",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.showCodeActions",
+                "title": "Show Code Actions",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.showSignatureHelp",
+                "title": "Show Signature Help",
+                "category": "Restrict"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "restrict.compile",
+                "key": "ctrl+shift+b",
+                "when": "editorLangId == restrict"
+            },
+            {
+                "command": "restrict.typeCheck",
+                "key": "ctrl+shift+t",
+                "when": "editorLangId == restrict"
+            },
+            {
+                "command": "restrict.gotoDefinition",
+                "key": "f12",
+                "when": "editorLangId == restrict"
+            },
+            {
+                "command": "restrict.findReferences",
+                "key": "shift+f12",
+                "when": "editorLangId == restrict"
+            },
+            {
+                "command": "restrict.renameSymbol",
+                "key": "f2",
+                "when": "editorLangId == restrict"
+            },
+            {
+                "command": "restrict.formatDocument",
+                "key": "shift+alt+f",
+                "when": "editorLangId == restrict"
+            }
+        ],
+        "menus": {
+            "editor/context": [
+                {
+                    "when": "editorLangId == restrict",
+                    "command": "restrict.compile",
+                    "group": "restrict"
+                },
+                {
+                    "when": "editorLangId == restrict",
+                    "command": "restrict.typeCheck",
+                    "group": "restrict"
+                },
+                {
+                    "when": "editorLangId == restrict",
+                    "command": "restrict.showAST",
+                    "group": "restrict"
+                }
+            ]
+        },
+        "themes": [
+            {
+                "label": "Restrict Dark",
+                "uiTheme": "vs-dark",
+                "path": "./themes/restrict-dark.json"
+            },
+            {
+                "label": "Restrict Light",
+                "uiTheme": "vs",
+                "path": "./themes/restrict-light.json"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "Restrict Language",
+            "properties": {
+                "restrict.compilerPath": {
+                    "type": "string",
+                    "default": "restrict_lang",
+                    "description": "Path to the Restrict Language compiler"
+                },
+                "restrict.enableTypeChecking": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable automatic type checking"
+                },
+                "restrict.showWarnings": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show compiler warnings"
+                },
+                "restrict.languageServerPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Path to the Restrict Language Server (if different from compiler)"
+                },
+                "restrict.enableLSP": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable Language Server Protocol features"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^8.1.0"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.74.0",
+        "@types/node": "16.x",
+        "typescript": "^4.9.4"
+    }
+}

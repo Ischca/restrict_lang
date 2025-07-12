@@ -5,7 +5,7 @@ use nom::{
     multi::{many0, many1, separated_list0},
     sequence::{preceded, tuple, delimited},
 };
-use crate::lexer::{Token, lex_token};
+use crate::lexer::{Token, lex_token, skip};
 use crate::ast::*;
 
 type ParseResult<'a, T> = IResult<&'a str, T>;
@@ -205,6 +205,7 @@ fn record_lit(input: &str) -> ParseResult<RecordLit> {
     Ok((input, RecordLit { name, fields }))
 }
 
+#[allow(dead_code)]
 fn unary_expr(input: &str) -> ParseResult<Expr> {
     alt((
         // Handle unary minus
@@ -228,6 +229,7 @@ fn unary_expr(input: &str) -> ParseResult<Expr> {
 fn atom_expr(input: &str) -> ParseResult<Expr> {
     alt((
         literal,
+        lambda_expr,  // Try lambda before other expressions that use |
         some_expr,  // Try Some before other expressions
         none_expr,  // Try None before ident
         array_lit,  // Try array literal before list
@@ -275,6 +277,20 @@ fn array_lit(input: &str) -> ParseResult<Expr> {
     )(input)?;
     let (input, _) = expect_token(Token::RArrayBracket)(input)?;
     Ok((input, Expr::ArrayLit(elements)))
+}
+
+fn lambda_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::Bar)(input)?;
+    let (input, params) = separated_list0(
+        expect_token(Token::Comma),
+        ident
+    )(input)?;
+    let (input, _) = expect_token(Token::Bar)(input)?;
+    let (input, body) = expression(input)?;
+    Ok((input, Expr::Lambda(LambdaExpr {
+        params,
+        body: Box::new(body),
+    })))
 }
 
 fn with_expr(input: &str) -> ParseResult<Expr> {
@@ -635,10 +651,27 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
 }
 
 pub fn simple_expr(input: &str) -> ParseResult<Expr> {
-    let (mut input, mut expr) = unary_expr(input)?;
+    let (mut input, mut expr) = atom_expr(input)?;
     
-    // Handle field access and postfix operations
+    // Handle postfix operations
     loop {
+        // Check for direct function application: expr(args)
+        if let Ok((new_input, _)) = expect_token::<'_>(Token::LParen)(input) {
+            let (new_input, args) = separated_list0(
+                expect_token(Token::Comma),
+                expression
+            )(new_input)?;
+            let (new_input, _) = expect_token(Token::RParen)(new_input)?;
+            
+            expr = Expr::Call(CallExpr {
+                function: Box::new(expr),
+                args: args.into_iter().map(Box::new).collect(),
+            });
+            input = new_input;
+            continue;
+        }
+        
+        // Handle field access and other postfix operations
         let (new_input, op) = opt(alt((
             value(PostfixOp::Dot, expect_token(Token::Dot)),
             value(PostfixOp::Freeze, expect_token(Token::Freeze)),
@@ -728,6 +761,8 @@ pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
 }
 
 pub fn parse_program(input: &str) -> ParseResult<Program> {
+    // Skip leading whitespace/comments first
+    let (input, _) = opt(skip)(input)?;
     let (input, declarations) = many0(top_decl)(input)?;
     Ok((input, Program { declarations }))
 }

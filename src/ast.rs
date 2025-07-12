@@ -109,6 +109,9 @@ pub enum Expr {
     // Option constructors
     Some(Box<Expr>),
     None,
+    
+    // Lambda expression
+    Lambda(LambdaExpr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -252,9 +255,16 @@ pub struct AssignStmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct LambdaExpr {
+    pub params: Vec<String>,
+    pub body: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Named(String),
     Generic(String, Vec<Type>),
+    Function(Vec<Type>, Box<Type>),  // (param_types, return_type)
 }
 
 impl fmt::Display for Type {
@@ -270,6 +280,16 @@ impl fmt::Display for Type {
                     write!(f, "{}", param)?;
                 }
                 write!(f, ">")
+            }
+            Type::Function(params, ret) => {
+                write!(f, "(")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", param)?;
+                }
+                write!(f, ") -> {}", ret)
             }
         }
     }

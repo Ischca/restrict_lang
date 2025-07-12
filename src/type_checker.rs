@@ -39,6 +39,9 @@ pub enum TypeError {
     
     #[error("Context {0} is not available in this scope")]
     UnavailableContext(String),
+    
+    #[error("Unsupported feature: {0}")]
+    UnsupportedFeature(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -253,6 +256,10 @@ impl TypeChecker {
                     },
                     _ => Err(TypeError::UnknownType(format!("{}<{}>", name, params.len())))
                 }
+            },
+            Type::Function(_, _) => {
+                // TODO: Implement function type conversion
+                Err(TypeError::UnsupportedFeature("Function types not yet implemented".to_string()))
             }
         }
     }
@@ -427,6 +434,10 @@ impl TypeChecker {
     }
     
     fn check_expr(&mut self, expr: &Expr) -> Result<TypedType, TypeError> {
+        self.check_expr_with_expected(expr, None)
+    }
+    
+    fn check_expr_with_expected(&mut self, expr: &Expr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         match expr {
             Expr::IntLit(_) => Ok(TypedType::Int32),
             Expr::FloatLit(_) => Ok(TypedType::Float64),
@@ -459,7 +470,7 @@ impl TypeChecker {
             Expr::FieldAccess(expr, field) => self.check_field_access(expr, field),
             Expr::Call(call) => self.check_call_expr(call),
             Expr::Block(block) => self.check_block_expr(block),
-            Expr::Binary(binary) => self.check_binary_expr(binary),
+            Expr::Binary(binary) => self.check_binary_expr(binary, expected),
             Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
             Expr::With(with) => self.check_with_expr(with),
             Expr::Then(then) => self.check_then_expr(then),
@@ -468,15 +479,24 @@ impl TypeChecker {
             Expr::ListLit(elements) => self.check_list_lit(elements),
             Expr::ArrayLit(elements) => self.check_array_lit(elements),
             Expr::Some(expr) => {
-                let inner_type = self.check_expr(expr)?;
+                let expected_inner = if let Some(TypedType::Option(inner)) = expected {
+                    Some(inner.as_ref())
+                } else {
+                    None
+                };
+                let inner_type = self.check_expr_with_expected(expr, expected_inner)?;
                 Ok(TypedType::Option(Box::new(inner_type)))
             },
             Expr::None => {
-                // Type will be inferred from context
-                // For now, return a generic Option type
-                // This should be refined based on usage context
-                Ok(TypedType::Option(Box::new(TypedType::Unit)))
+                // Use expected type if available
+                if let Some(TypedType::Option(inner)) = expected {
+                    Ok(TypedType::Option(inner.clone()))
+                } else {
+                    // Default to Option<Unit> if no context
+                    Ok(TypedType::Option(Box::new(TypedType::Unit)))
+                }
             },
+            Expr::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
         }
     }
     
@@ -588,7 +608,42 @@ impl TypeChecker {
         // First check the function expression type
         match &*call.function {
             Expr::Ident(name) => {
-                // First try to find a regular function
+                // First check if it's a variable that holds a function
+                if let Ok(var_ty) = self.lookup_var(name) {
+                    match var_ty {
+                        TypedType::Function { params, return_type } => {
+                            // Check arity
+                            if call.args.len() != params.len() {
+                                return Err(TypeError::ArityMismatch {
+                                    expected: params.len(),
+                                    found: call.args.len(),
+                                });
+                            }
+                            
+                            // Check argument types
+                            for (i, arg) in call.args.iter().enumerate() {
+                                let expected_ty = &params[i];
+                                let actual_ty = self.check_expr_with_expected(arg, Some(expected_ty))?;
+                                if &actual_ty != expected_ty {
+                                    return Err(TypeError::TypeMismatch {
+                                        expected: format!("{:?}", expected_ty),
+                                        found: format!("{:?}", actual_ty),
+                                    });
+                                }
+                            }
+                            
+                            return Ok(*return_type);
+                        }
+                        _ => {
+                            return Err(TypeError::TypeMismatch {
+                                expected: "function".to_string(),
+                                found: format!("{:?}", var_ty),
+                            });
+                        }
+                    }
+                }
+                
+                // Otherwise try to find a regular function
                 if let Some(func_info) = self.functions.get(name) {
                     let expected_arity = func_info.params.len();
                     let return_type = func_info.return_type.clone();
@@ -607,7 +662,7 @@ impl TypeChecker {
                     // Check argument types
                     for (i, arg) in call.args.iter().enumerate() {
                         let expected_ty = &param_types[i];
-                        let actual_ty = self.check_expr(arg)?;
+                        let actual_ty = self.check_expr_with_expected(arg, Some(expected_ty))?;
                         
                         // Special handling for array types with size 0 (meaning any size)
                         let types_match = match (expected_ty, &actual_ty) {
@@ -657,7 +712,7 @@ impl TypeChecker {
                                         // Check argument types
                                         for (i, arg) in call.args.iter().enumerate() {
                                             let expected_ty = &param_types[i];
-                                            let actual_ty = self.check_expr(arg)?;
+                                            let actual_ty = self.check_expr_with_expected(arg, Some(expected_ty))?;
                                             if &actual_ty != expected_ty {
                                                 return Err(TypeError::TypeMismatch {
                                                     expected: format!("{:?}", expected_ty),
@@ -685,10 +740,38 @@ impl TypeChecker {
                 Ok(TypedType::Unit)
             }
             _ => {
-                // For other function expressions, just check they exist
-                let _func_ty = self.check_expr(&call.function)?;
-                // TODO: Check if it's actually a function type
-                Ok(TypedType::Unit)
+                // For other function expressions (including lambdas)
+                let func_ty = self.check_expr(&call.function)?;
+                
+                match func_ty {
+                    TypedType::Function { params, return_type } => {
+                        // Check arity
+                        if call.args.len() != params.len() {
+                            return Err(TypeError::ArityMismatch {
+                                expected: params.len(),
+                                found: call.args.len(),
+                            });
+                        }
+                        
+                        // Check argument types
+                        for (i, arg) in call.args.iter().enumerate() {
+                            let expected_ty = &params[i];
+                            let actual_ty = self.check_expr_with_expected(arg, Some(expected_ty))?;
+                            if &actual_ty != expected_ty {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: format!("{:?}", expected_ty),
+                                    found: format!("{:?}", actual_ty),
+                                });
+                            }
+                        }
+                        
+                        Ok(*return_type)
+                    }
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: "function".to_string(),
+                        found: format!("{:?}", func_ty),
+                    })
+                }
             }
         }
     }
@@ -726,9 +809,24 @@ impl TypeChecker {
         Ok(result)
     }
     
-    fn check_binary_expr(&mut self, binary: &BinaryExpr) -> Result<TypedType, TypeError> {
-        let left_ty = self.check_expr(&binary.left)?;
-        let right_ty = self.check_expr(&binary.right)?;
+    fn check_binary_expr(&mut self, binary: &BinaryExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
+        // For arithmetic ops, if we expect a certain numeric type, 
+        // propagate that expectation to both operands
+        let (expected_left, expected_right) = match binary.op {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+                // These return the same type as their operands
+                // So if we expect Int32 or Float64, both operands should be that type
+                match expected {
+                    Some(TypedType::Int32) => (Some(&TypedType::Int32), Some(&TypedType::Int32)),
+                    Some(TypedType::Float64) => (Some(&TypedType::Float64), Some(&TypedType::Float64)),
+                    _ => (None, None)
+                }
+            }
+            _ => (None, None)
+        };
+        
+        let left_ty = self.check_expr_with_expected(&binary.left, expected_left)?;
+        let right_ty = self.check_expr_with_expected(&binary.right, expected_right)?;
         
         // Type check based on operator
         match binary.op {
@@ -1219,6 +1317,60 @@ impl TypeChecker {
         
         let size = elements.len();
         Ok(TypedType::Array(Box::new(first_type), size))
+    }
+    
+    fn check_lambda_expr(&mut self, lambda: &LambdaExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
+        // Create a new scope for lambda parameters
+        self.push_scope();
+        
+        let mut param_types = Vec::new();
+        let expected_return_type = if let Some(TypedType::Function { params, return_type }) = expected {
+            // Use expected parameter types if available
+            if params.len() != lambda.params.len() {
+                return Err(TypeError::ArityMismatch {
+                    expected: params.len(),
+                    found: lambda.params.len(),
+                });
+            }
+            
+            for (i, param) in lambda.params.iter().enumerate() {
+                let param_type = params[i].clone();
+                param_types.push(param_type.clone());
+                self.bind_var(param.clone(), param_type, false)?;
+            }
+            
+            Some(return_type.as_ref())
+        } else {
+            // Otherwise, try to infer from body usage
+            // For now, default to Int32 for all parameters
+            for param in &lambda.params {
+                param_types.push(TypedType::Int32);
+                self.bind_var(param.clone(), TypedType::Int32, false)?;
+            }
+            None
+        };
+        
+        // Type check the body with expected return type
+        let body_type = self.check_expr_with_expected(&lambda.body, expected_return_type)?;
+        
+        // If we had an expected return type, verify it matches
+        if let Some(expected_ret) = expected_return_type {
+            if &body_type != expected_ret {
+                return Err(TypeError::TypeMismatch {
+                    expected: format!("{:?}", expected_ret),
+                    found: format!("{:?}", body_type),
+                });
+            }
+        }
+        
+        // Pop the lambda scope
+        self.pop_scope();
+        
+        // Return the function type
+        Ok(TypedType::Function {
+            params: param_types,
+            return_type: Box::new(body_type),
+        })
     }
 }
 

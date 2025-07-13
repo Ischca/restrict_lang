@@ -21,7 +21,14 @@
       "Bash(mkdir:*)",
       "Bash(./target/release/restrict_lang:*)",
       "Bash(npm run compile:*)",
-      "Bash(npx vsce:*)"
+      "Bash(npx vsce:*)",
+      "Bash(wat2wasm:*)",
+      "Bash(wasm2wat:*)",
+      "Bash(sed:*)",
+      "Bash(wasmtime:*)",
+      "Bash(wasm-validate:*)",
+      "Bash(true)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }

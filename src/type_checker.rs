@@ -61,6 +61,40 @@ pub enum TypedType {
 }
 
 #[derive(Debug, Clone)]
+pub struct TypeSubstitution {
+    // Maps type parameter names to concrete types
+    pub substitutions: HashMap<String, TypedType>,
+}
+
+impl TypeSubstitution {
+    pub fn new() -> Self {
+        Self {
+            substitutions: HashMap::new(),
+        }
+    }
+    
+    pub fn add(&mut self, type_param: String, concrete_type: TypedType) {
+        self.substitutions.insert(type_param, concrete_type);
+    }
+    
+    pub fn apply(&self, ty: &TypedType) -> TypedType {
+        match ty {
+            TypedType::TypeParam(name) => {
+                self.substitutions.get(name).unwrap_or(ty).clone()
+            }
+            TypedType::List(inner) => TypedType::List(Box::new(self.apply(inner))),
+            TypedType::Array(inner, size) => TypedType::Array(Box::new(self.apply(inner)), *size),
+            TypedType::Option(inner) => TypedType::Option(Box::new(self.apply(inner))),
+            TypedType::Function { params, return_type } => TypedType::Function {
+                params: params.iter().map(|p| self.apply(p)).collect(),
+                return_type: Box::new(self.apply(return_type)),
+            },
+            _ => ty.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Variable {
     ty: TypedType,
     mutable: bool,
@@ -72,10 +106,11 @@ struct RecordDef {
     fields: HashMap<String, TypedType>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FunctionDef {
     params: Vec<(String, TypedType)>,
     return_type: TypedType,
+    type_params: Vec<TypeParam>, // Store generic type parameters
 }
 
 pub struct TypeChecker {
@@ -154,12 +189,14 @@ impl TypeChecker {
         self.functions.insert("println".to_string(), FunctionDef {
             params: vec![("s".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
+            type_params: vec![],
         });
         
         // list_length function
         self.functions.insert("list_length".to_string(), FunctionDef {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::Int32)))],
             return_type: TypedType::Int32,
+            type_params: vec![],
         });
         
         // list_get function
@@ -169,6 +206,7 @@ impl TypeChecker {
                 ("index".to_string(), TypedType::Int32)
             ],
             return_type: TypedType::Int32,
+            type_params: vec![],
         });
         
         // array_get function
@@ -178,6 +216,7 @@ impl TypeChecker {
                 ("index".to_string(), TypedType::Int32)
             ],
             return_type: TypedType::Int32,
+            type_params: vec![],
         });
         
         // array_set function
@@ -188,12 +227,14 @@ impl TypeChecker {
                 ("value".to_string(), TypedType::Int32)
             ],
             return_type: TypedType::Unit,
+            type_params: vec![],
         });
         
         // tail function - returns tail of a list (generic version would be better)
         self.functions.insert("tail".to_string(), FunctionDef {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::Int32)))],
             return_type: TypedType::List(Box::new(TypedType::Int32)),
+            type_params: vec![],
         });
         
         // Note: Arena is a built-in context but not added to _contexts by default
@@ -274,6 +315,97 @@ impl TypeChecker {
                 self.get_type_bounds(param_name).contains(&trait_name.to_string())
             }
             _ => false, // Other types don't implement traits for now
+        }
+    }
+    
+    // Type unification for generic type inference
+    fn unify(&self, expected: &TypedType, actual: &TypedType, substitution: &mut TypeSubstitution) -> Result<(), TypeError> {
+        match (expected, actual) {
+            // If expected is a type parameter, bind it to the actual type
+            (TypedType::TypeParam(name), actual_ty) => {
+                if let Some(existing) = substitution.substitutions.get(name).cloned() {
+                    // Type parameter already bound, check consistency
+                    self.unify(&existing, actual_ty, substitution)
+                } else {
+                    // Bind the type parameter
+                    substitution.add(name.clone(), actual_ty.clone());
+                    Ok(())
+                }
+            }
+            // If actual is a type parameter, it should be bound already
+            (expected_ty, TypedType::TypeParam(name)) => {
+                if let Some(bound_type) = substitution.substitutions.get(name).cloned() {
+                    self.unify(expected_ty, &bound_type, substitution)
+                } else {
+                    // Reverse binding
+                    substitution.add(name.clone(), expected_ty.clone());
+                    Ok(())
+                }
+            }
+            // Same concrete types unify
+            (TypedType::Int32, TypedType::Int32) |
+            (TypedType::Float64, TypedType::Float64) |
+            (TypedType::Boolean, TypedType::Boolean) |
+            (TypedType::String, TypedType::String) |
+            (TypedType::Char, TypedType::Char) |
+            (TypedType::Unit, TypedType::Unit) => Ok(()),
+            
+            // Records must have same name and frozen status
+            (TypedType::Record { name: n1, frozen: f1 }, TypedType::Record { name: n2, frozen: f2 }) => {
+                if n1 == n2 && f1 == f2 {
+                    Ok(())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", expected),
+                        found: format!("{:?}", actual),
+                    })
+                }
+            }
+            
+            // List types must have same element type
+            (TypedType::List(e1), TypedType::List(e2)) => {
+                self.unify(e1, e2, substitution)
+            }
+            
+            // Option types must have same inner type
+            (TypedType::Option(e1), TypedType::Option(e2)) => {
+                self.unify(e1, e2, substitution)
+            }
+            
+            // Array types must have same element type and size
+            (TypedType::Array(e1, s1), TypedType::Array(e2, s2)) => {
+                if s1 == s2 {
+                    self.unify(e1, e2, substitution)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", expected),
+                        found: format!("{:?}", actual),
+                    })
+                }
+            }
+            
+            // Function types must have compatible parameters and return types
+            (TypedType::Function { params: p1, return_type: r1 }, 
+             TypedType::Function { params: p2, return_type: r2 }) => {
+                if p1.len() != p2.len() {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", expected),
+                        found: format!("{:?}", actual),
+                    });
+                }
+                
+                for (param1, param2) in p1.iter().zip(p2.iter()) {
+                    self.unify(param1, param2, substitution)?;
+                }
+                
+                self.unify(r1, r2, substitution)
+            }
+            
+            // All other combinations are type mismatches
+            _ => Err(TypeError::TypeMismatch {
+                expected: format!("{:?}", expected),
+                found: format!("{:?}", actual),
+            })
         }
     }
     
@@ -425,6 +557,7 @@ impl TypeChecker {
         self.functions.insert(func.name.clone(), FunctionDef {
             params: param_types,
             return_type: TypedType::Int32,
+            type_params: func.type_params.clone(),
         });
         
         self.pop_type_param_scope();
@@ -475,6 +608,7 @@ impl TypeChecker {
         self.functions.insert(func.name.clone(), FunctionDef {
             params: param_types,
             return_type,
+            type_params: func.type_params.clone(),
         });
         
         self.pop_scope();
@@ -536,6 +670,7 @@ impl TypeChecker {
             method_map.insert(func.name.clone(), FunctionDef {
                 params: param_types,
                 return_type,
+                type_params: func.type_params.clone(),
             });
             
             self.pop_scope();
@@ -711,6 +846,81 @@ impl TypeChecker {
         }
     }
     
+    // Check function call with generic type inference
+    fn check_function_call_with_inference(&mut self, func_info: &FunctionDef, call: &CallExpr) -> Result<TypedType, TypeError> {
+        let expected_arity = func_info.params.len();
+        
+        // Check arity
+        if call.args.len() != expected_arity {
+            return Err(TypeError::ArityMismatch {
+                expected: expected_arity,
+                found: call.args.len(),
+            });
+        }
+        
+        // If the function is not generic, use simple type checking
+        if func_info.type_params.is_empty() {
+            let param_types: Vec<TypedType> = func_info.params.iter()
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            
+            // Check argument types
+            for (i, arg) in call.args.iter().enumerate() {
+                let expected_ty = &param_types[i];
+                let actual_ty = self.check_expr_with_expected(arg, Some(expected_ty))?;
+                
+                // Special handling for array types with size 0 (meaning any size)
+                let types_match = match (expected_ty, &actual_ty) {
+                    (TypedType::Array(e_elem, 0), TypedType::Array(a_elem, _)) => {
+                        e_elem == a_elem
+                    }
+                    (TypedType::List(e_elem), TypedType::List(a_elem)) => {
+                        e_elem == a_elem
+                    }
+                    _ => expected_ty == &actual_ty
+                };
+                
+                if !types_match {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", expected_ty),
+                        found: format!("{:?}", actual_ty),
+                    });
+                }
+            }
+            
+            return Ok(func_info.return_type.clone());
+        }
+        
+        // For generic functions, perform type inference
+        let mut substitution = TypeSubstitution::new();
+        
+        // Infer types from arguments
+        for (i, arg) in call.args.iter().enumerate() {
+            let param_type = &func_info.params[i].1;
+            let actual_ty = self.check_expr(arg)?;
+            
+            // Unify parameter type with actual argument type
+            self.unify(param_type, &actual_ty, &mut substitution)?;
+        }
+        
+        // Check type bounds for inferred types
+        for type_param in &func_info.type_params {
+            if let Some(concrete_type) = substitution.substitutions.get(&type_param.name) {
+                for bound in &type_param.bounds {
+                    if !self.type_implements_trait(concrete_type, &bound.trait_name) {
+                        return Err(TypeError::UnsupportedFeature(
+                            format!("Type {:?} does not implement trait {}", concrete_type, bound.trait_name)
+                        ));
+                    }
+                }
+            }
+        }
+        
+        // Apply substitution to return type
+        let instantiated_return_type = substitution.apply(&func_info.return_type);
+        Ok(instantiated_return_type)
+    }
+    
     fn check_field_access(&mut self, expr: &Expr, field: &str) -> Result<TypedType, TypeError> {
         let ty = self.check_expr(expr)?;
         
@@ -771,48 +981,8 @@ impl TypeChecker {
                 }
                 
                 // Otherwise try to find a regular function
-                if let Some(func_info) = self.functions.get(name) {
-                    let expected_arity = func_info.params.len();
-                    let return_type = func_info.return_type.clone();
-                    let param_types: Vec<TypedType> = func_info.params.iter()
-                        .map(|(_, ty)| ty.clone())
-                        .collect();
-                    
-                    // Check arity
-                    if call.args.len() != expected_arity {
-                        return Err(TypeError::ArityMismatch {
-                            expected: expected_arity,
-                            found: call.args.len(),
-                        });
-                    }
-                    
-                    // Check argument types
-                    for (i, arg) in call.args.iter().enumerate() {
-                        let expected_ty = &param_types[i];
-                        let actual_ty = self.check_expr_with_expected(arg, Some(expected_ty))?;
-                        
-                        // Special handling for array types with size 0 (meaning any size)
-                        let types_match = match (expected_ty, &actual_ty) {
-                            (TypedType::Array(e_elem, 0), TypedType::Array(a_elem, _)) => {
-                                // Size 0 means any size array
-                                e_elem == a_elem
-                            }
-                            (TypedType::List(e_elem), TypedType::List(a_elem)) => {
-                                // For lists, just check element type
-                                e_elem == a_elem
-                            }
-                            _ => expected_ty == &actual_ty
-                        };
-                        
-                        if !types_match {
-                            return Err(TypeError::TypeMismatch {
-                                expected: format!("{:?}", expected_ty),
-                                found: format!("{:?}", actual_ty),
-                            });
-                        }
-                    }
-                    
-                    Ok(return_type)
+                if let Some(func_info) = self.functions.get(name).cloned() {
+                    return self.check_function_call_with_inference(&func_info, call);
                 } else {
                     // Try to find a method
                     // Check if the first argument is a record type

@@ -16,7 +16,7 @@ pub async fn run_project(args: Vec<String>) -> Result<()> {
     let wasm_path = build_dir.join(format!("{}.wasm", output_name));
     
     if !wasm_path.exists() {
-        bail!("Built WASM file not found. Run 'warden build' first.");
+        bail!("Built WASM file not found. Run 'warder build' first.");
     }
     
     // Determine runtime based on target

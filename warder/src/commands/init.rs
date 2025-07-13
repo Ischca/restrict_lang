@@ -70,8 +70,8 @@ restrict-lock.toml
     
     print_success(&format!("Initialized Restrict Language project '{}'", project_name));
     print_info("Next steps:");
-    println!("  warden build");
-    println!("  warden run");
+    println!("  warder build");
+    println!("  warder run");
     
     Ok(())
 }

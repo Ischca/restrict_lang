@@ -67,7 +67,7 @@ pub async fn doctor_check() -> Result<()> {
         if cache_size > 1_000_000_000 {
             // > 1GB
             warnings.push(format!(
-                "Cache directory is large: {} MB. Consider running 'warden clean'",
+                "Cache directory is large: {} MB. Consider running 'warder clean'",
                 cache_size / 1_000_000
             ));
         }

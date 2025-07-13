@@ -67,14 +67,14 @@ A new Restrict Language project.
 ## Getting Started
 
 ```bash
-warden build
-warden run
+warder build
+warder run
 ```
 
 ## Testing
 
 ```bash
-warden test
+warder test
 ```
 "#, name);
     fs::write(project_path.join("README.md"), readme_content)?;
@@ -82,8 +82,8 @@ warden test
     print_success(&format!("Created project '{}'", name));
     print_info(&format!("Next steps:"));
     println!("  cd {}", name);
-    println!("  warden build");
-    println!("  warden run");
+    println!("  warder build");
+    println!("  warder run");
     
     Ok(())
 }

@@ -5,12 +5,12 @@ A new Restrict Language project.
 ## Getting Started
 
 ```bash
-warden build
-warden run
+warder build
+warder run
 ```
 
 ## Testing
 
 ```bash
-warden test
+warder test
 ```

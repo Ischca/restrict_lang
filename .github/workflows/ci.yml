@@ -72,6 +72,9 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     
+    - name: Test Warder
+      run: cd warder && cargo test --verbose
+    
     - name: Run property tests
       run: cargo test property_tests --verbose
     
@@ -87,8 +90,13 @@ jobs:
     - name: Build release
       run: cargo build --release
     
+    - name: Build Warder release
+      run: cd warder && cargo build --release
+    
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: restrict-lang
-        path: target/release/restrict_lang
+        name: restrict-lang-tools
+        path: |
+          target/release/restrict_lang
+          warder/target/release/warder

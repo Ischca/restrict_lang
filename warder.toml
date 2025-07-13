@@ -1,0 +1,223 @@
+# Warder Project Configuration
+# This is the main configuration file for Warder-managed projects
+
+[project]
+name = "restrict_lang"
+version = "0.1.0"
+description = "Restrict Language with affine types for WebAssembly"
+authors = ["Restrict Lang Team"]
+license = "MIT"
+edition = "2021"
+
+# Repository information
+repository = "https://github.com/restrict-lang/restrict_lang"
+homepage = "https://restrict-lang.org"
+documentation = "https://docs.restrict-lang.org"
+
+# Build configuration
+[build]
+# Target architecture
+target = "wasm32-wasi"
+
+# Optimization level for release builds
+opt-level = "s" # Optimize for size
+
+# Enable component model
+component = true
+
+# Standard library path
+std-path = "./std"
+
+# Build cache configuration
+[build.cache]
+enabled = true
+directory = ".warder/cache"
+max-size = "1GB"
+
+# Dependencies
+[dependencies]
+# Standard library (built-in)
+std = { path = "./std", version = "0.1.0" }
+
+# External dependencies would go here
+# example_lib = { git = "https://github.com/example/lib", version = "1.0" }
+# wasm_component = { wasm = "https://registry.example.com/component.wasm" }
+
+# Development dependencies
+[dev-dependencies]
+# Test utilities
+test_utils = { path = "./test_utils", optional = true }
+
+# Registry configuration
+[registry]
+# Default registry for publishing packages
+default = "wardhub"
+
+# Registry URLs
+[registry.wardhub]
+url = "https://wardhub.io"
+api-url = "https://api.wardhub.io"
+
+[registry.local]
+url = "file://./local-registry"
+
+# Publishing configuration
+[publish]
+# Verify signatures before publishing
+verify = true
+
+# Include files in published package
+include = [
+    "src/**/*",
+    "std/**/*",
+    "examples/**/*",
+    "README.md",
+    "LICENSE",
+    "REFERENCE.md",
+]
+
+# Exclude files from published package
+exclude = ["target/**/*", ".git/**/*", "test/**/*", "*.wat", "*.wasm"]
+
+# Security configuration
+[security]
+# Cryptographic signatures
+signing = true
+signature-algorithm = "ed25519"
+
+# Dependency verification
+verify-dependencies = true
+
+# Sandbox configuration for running external code
+[security.sandbox]
+enabled = true
+network = false
+filesystem = "read-only"
+max-memory = "128MB"
+max-execution-time = "30s"
+
+# Caching configuration for external dependencies
+[cache]
+# Cache location
+directory = ".warder/cache"
+
+# Cache TTL for remote dependencies
+ttl = "7d"
+
+# Maximum cache size
+max-size = "1GB"
+
+# WASM runtime configuration
+[runtime]
+# Default runtime for executing WASM
+default = "wasmtime"
+
+# Runtime-specific configurations
+[runtime.wasmtime]
+optimizations = true
+cranelift-debug = false
+
+[runtime.wasmer]
+compiler = "cranelift"
+features = ["wasi"]
+
+# Component model configuration
+[component]
+# Enable WASM component model
+enabled = true
+
+# WIT (WebAssembly Interface Types) configuration
+wit-directory = "./wit"
+
+# Component composition
+[component.composition]
+# Auto-compose compatible components
+auto-compose = true
+
+# Composition strategy
+strategy = "link-time"
+
+# Testing configuration
+[test]
+# Test runner
+runner = "warder-test"
+
+# Test environment
+[test.environment]
+# Environment variables for tests
+RUST_LOG = "debug"
+RESTRICT_LANG_STD_PATH = "./std"
+
+# Test timeout
+timeout = "60s"
+
+# Parallel test execution
+parallel = true
+
+# Workspace configuration for multi-package projects
+[workspace]
+# Workspace members
+members = [".", "warder", "vscode-extension"]
+
+# Shared workspace dependencies
+[workspace.dependencies]
+# Shared development tools
+warder = { path = "warder" }
+
+# Linting and formatting
+[lint]
+# Enable linting
+enabled = true
+
+# Lint rules
+rules = ["unused-imports", "dead-code", "affine-violations", "memory-safety"]
+
+# Formatting configuration
+[format]
+# Code formatting style
+style = "restrict-lang"
+
+# Line width
+max-width = 100
+
+# Tab size
+tab-size = 4
+
+# Profile configurations for different build modes
+[profiles.dev]
+opt-level = 0
+debug = true
+overflow-checks = true
+
+[profiles.release]
+opt-level = "s"
+debug = false
+lto = true
+codegen-units = 1
+
+[profiles.test]
+opt-level = 1
+debug = true
+
+# Platform-specific configurations
+[platform.wasm32-wasi]
+linker = "wasm-ld"
+pre-link-args = ["--export-memory"]
+
+[platform.wasm32-unknown-unknown]
+linker = "wasm-ld"
+post-link-args = ["--no-entry"]
+
+# Hook configurations for build events
+[hooks]
+# Pre-build hooks
+pre-build = ["echo 'Starting build...'", "mkdir -p target/wasm"]
+
+# Post-build hooks
+post-build = ["echo 'Build completed!'", "ls -la target/"]
+
+# Pre-test hooks
+pre-test = ["echo 'Running tests...'"]
+
+# Post-test hooks
+post-test = ["echo 'Tests completed!'"]

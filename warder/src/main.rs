@@ -10,7 +10,7 @@ mod registry;
 use commands::*;
 
 #[derive(Parser)]
-#[command(name = "warden")]
+#[command(name = "warder")]
 #[command(about = "The official build tool and package manager for Restrict Language", long_about = None)]
 #[command(version)]
 struct Cli {

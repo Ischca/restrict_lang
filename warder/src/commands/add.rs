@@ -41,7 +41,7 @@ pub async fn add_dependency(
     save_manifest(&manifest)?;
     
     print_success(&format!("Added dependency '{}'", name));
-    print_info("Run 'warden build' to download and build dependencies");
+    print_info("Run 'warder build' to download and build dependencies");
     
     Ok(())
 }
@@ -56,7 +56,7 @@ pub fn remove_dependency(name: &str) -> Result<()> {
     save_manifest(&manifest)?;
     
     print_success(&format!("Removed dependency '{}'", name));
-    print_info("Run 'warden build' to update the project");
+    print_info("Run 'warder build' to update the project");
     
     Ok(())
 }

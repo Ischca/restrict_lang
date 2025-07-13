@@ -28,7 +28,8 @@
       "Bash(wasmtime:*)",
       "Bash(wasm-validate:*)",
       "Bash(true)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(mise run build:*)"
     ],
     "deny": []
   }

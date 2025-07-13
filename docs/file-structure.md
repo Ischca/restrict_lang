@@ -183,7 +183,7 @@ fun generate_id = Unit -> Int32 {
 }
 ```
 
-## Wardenとの統合
+## warderとの統合
 
 ### package.rl.toml の設定
 ```toml
@@ -205,16 +205,16 @@ output = "dist/"
 ### ビルドコマンド
 ```bash
 # プロジェクトのビルド
-warden build
+warder build
 
 # テストの実行
-warden test
+warder test
 
 # 特定モジュールのテスト
-warden test math
+warder test math
 
 # リリースビルド
-warden build --release
+warder build --release
 ```
 
 ## まとめ

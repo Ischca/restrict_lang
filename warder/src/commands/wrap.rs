@@ -49,7 +49,7 @@ pub fn wrap_wasm(
         print_info(&format!("Added WIT interface from {}", wit_path.display()));
     } else {
         print_warning("No WIT file provided. Consider adding one for better interoperability.");
-        print_info("You can generate a basic WIT template with 'warden wit-gen'");
+        print_info("You can generate a basic WIT template with 'warder wit-gen'");
     }
     
     // Calculate ABI hash

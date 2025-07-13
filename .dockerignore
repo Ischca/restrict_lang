@@ -1,0 +1,52 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+target/
+*.wasm
+*.wat
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node modules (for VS Code extension)
+vscode-extension/node_modules/
+vscode-extension/out/
+vscode-extension/*.vsix
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Documentation build
+docs/_build/
+
+# Coverage reports
+target/coverage/
+
+# Web artifacts
+web/pkg/
+
+# Test artifacts
+test/*.wat
+test/*.wasm
+examples/*.wat
+examples/*.wasm
+
+# Cargo lock for libraries (keep for applications)
+# Cargo.lock
+
+# Environment files
+.env
+.env.local

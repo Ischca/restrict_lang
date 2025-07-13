@@ -6,7 +6,10 @@ rust = "latest"
 
 [tasks.test]
 description = "Run all tests"
-run = "cargo test -- --nocapture"
+run = [
+  "cargo test -- --nocapture",
+  "cd warden && cargo test -- --nocapture"
+]
 
 [tasks.test-one]
 description = "Run specific test"
@@ -18,9 +21,23 @@ fi
 cargo test $TEST -- --nocapture
 """
 
+[tasks.build]
+description = "Build all components"
+run = [
+  "cargo build",
+  "cd warden && cargo build"
+]
+
+[tasks.build-release]
+description = "Build all components in release mode"
+run = [
+  "cargo build --release",
+  "cd warden && cargo build --release"
+]
+
 [tasks.watch]
 description = "Watch mode - auto recompile on changes"
-run = "cargo run -- watch test/"
+run = "cargo watch -x build -x test"
 
 [tasks.debug]
 description = "Debug specific file"
@@ -55,15 +72,25 @@ run = "cargo bench"
 
 [tasks.clean]
 description = "Clean generated files"
-run = ["rm -f test/*.wat", "cargo clean"]
+run = [
+  "cargo clean",
+  "cd warden && cargo clean",
+  "rm -f test/*.wat test/*.wasm examples/*.wat examples/*.wasm"
+]
 
 [tasks.fmt]
 description = "Format code"
-run = "cargo fmt"
+run = [
+  "cargo fmt",
+  "cd warden && cargo fmt"
+]
 
 [tasks.lint]
 description = "Lint code"
-run = "cargo clippy -- -D warnings"
+run = [
+  "cargo clippy -- -D warnings",
+  "cd warden && cargo clippy -- -D warnings"
+]
 
 [tasks.doc]
 description = "Generate documentation"
@@ -79,11 +106,6 @@ fi
 cargo run -- compile "$FILE" && wasmtime "test/$(basename "${FILE%.rl}").wat"
 """
 
-[tasks.dev]
-description = "Run development server with hot reload"
-depends = ["fmt", "lint"]
-run = "cargo watch -x 'test' -x 'run -- compile test/'"
-
 [tasks.ci]
 description = "Run full CI pipeline locally"
 run = [
@@ -91,21 +113,150 @@ run = [
   "mise run lint", 
   "mise run test",
   "mise run prop-test",
-  "mise run check"
+  "mise run check",
+  "mise run build-release"
 ]
 
 [tasks.setup]
 description = "Setup development environment"
 run = """
-# Install cargo-watch for development
-cargo install cargo-watch
+# Install cargo tools for development
+cargo install cargo-watch cargo-audit cargo-tarpaulin just --force
 
 # Install wasmtime for running WASM
-curl https://wasmtime.dev/install.sh -sSf | bash
+if ! command -v wasmtime &> /dev/null; then
+  curl https://wasmtime.dev/install.sh -sSf | bash
+fi
+
+# Install wasm-pack for WASM builds
+if ! command -v wasm-pack &> /dev/null; then
+  curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+fi
 
 echo "Development environment setup complete!"
 """
 
+# Warder-specific tasks
+[tasks.build-warder]
+description = "Build only Warder package manager"
+run = "cd warden && cargo build --release"
+
+[tasks.test-warder]
+description = "Test only Warder"
+run = "cd warden && cargo test -- --nocapture"
+
+[tasks.warder-new]
+description = "Create new project with Warder"
+run = """
+if [ -z "$PROJECT_NAME" ]; then
+  echo "Usage: PROJECT_NAME=my_project mise run warder-new"
+  exit 1
+fi
+./warden/target/release/warder new "$PROJECT_NAME"
+"""
+
+[tasks.warder-init]
+description = "Initialize Warder project in current directory"
+run = "./warden/target/release/warder init"
+
+[tasks.warder-build]
+description = "Build project with Warder"
+run = "./warden/target/release/warder build"
+
+[tasks.warder-test]
+description = "Test project with Warder"
+run = "./warden/target/release/warder test"
+
+[tasks.warder-doctor]
+description = "Check project health with Warder"
+run = "./warden/target/release/warder doctor"
+
+# Advanced build tasks
+[tasks.build-wasm]
+description = "Build WebAssembly target"
+run = "wasm-pack build --target web --out-dir web/pkg"
+
+[tasks.build-extension]
+description = "Build VS Code extension"
+run = [
+  "cd vscode-extension",
+  "npm install",
+  "npm run compile"
+]
+
+[tasks.package-extension]
+description = "Package VS Code extension"
+depends = ["build-extension"]
+run = [
+  "cd vscode-extension",
+  "npm run package"
+]
+
+# Cross-platform builds
+[tasks.build-linux]
+description = "Cross-compile for Linux"
+run = [
+  "cargo build --release --target x86_64-unknown-linux-gnu",
+  "cd warden && cargo build --release --target x86_64-unknown-linux-gnu"
+]
+
+[tasks.build-windows]
+description = "Cross-compile for Windows"
+run = [
+  "cargo build --release --target x86_64-pc-windows-gnu",
+  "cd warden && cargo build --release --target x86_64-pc-windows-gnu"
+]
+
+[tasks.build-macos]
+description = "Cross-compile for macOS"
+run = [
+  "cargo build --release --target x86_64-apple-darwin",
+  "cd warden && cargo build --release --target x86_64-apple-darwin"
+]
+
+# Security and quality
+[tasks.audit]
+description = "Security audit"
+run = [
+  "cargo audit",
+  "cd warden && cargo audit"
+]
+
+[tasks.coverage]
+description = "Generate test coverage report"
+run = "cargo tarpaulin --out Html --output-dir target/coverage"
+
+# Installation
+[tasks.install]
+description = "Install tools system-wide"
+depends = ["build-release"]
+run = """
+sudo cp target/release/restrict_lang /usr/local/bin/
+sudo cp warden/target/release/warder /usr/local/bin/
+echo "Tools installed to /usr/local/bin/"
+"""
+
+[tasks.uninstall]
+description = "Uninstall tools"
+run = """
+sudo rm -f /usr/local/bin/restrict_lang
+sudo rm -f /usr/local/bin/warder
+echo "Tools uninstalled"
+"""
+
+# Release preparation
+[tasks.release]
+description = "Prepare full release build"
+depends = ["clean", "fmt", "lint", "test", "audit", "build-release", "package-extension"]
+run = """
+echo "Release build complete!"
+echo "Artifacts:"
+echo "  - Compiler: target/release/restrict_lang"
+echo "  - Package Manager: warden/target/release/warder"
+echo "  - VS Code Extension: vscode-extension/*.vsix"
+"""
+
+# Quick development tasks
 [tasks.quick]
 description = "Quick test of a simple expression"
 run = """
@@ -113,3 +264,21 @@ echo "Enter Restrict Language expression:"
 read -r expr
 echo "$expr" | cargo run -- eval
 """
+
+# Docker tasks
+[tasks.docker-build]
+description = "Build Docker image"
+run = "docker build -t restrict_lang:0.1.0 ."
+
+[tasks.docker-test]
+description = "Run tests in Docker"
+run = "docker run --rm restrict_lang:0.1.0 cargo test"
+
+[tasks.dev]
+description = "Run development workflow"
+depends = ["fmt", "lint", "test"]
+run = "echo 'Development checks passed!'"
+
+[tasks.dev-watch]
+description = "Run development server with hot reload"
+run = "cargo watch -x 'build' -x 'test'"

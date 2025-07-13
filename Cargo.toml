@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "warden"]
+members = [".", "warder"]
 
 [package]
 name = "restrict_lang"
@@ -7,6 +7,9 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+chrono = { version = "0.4", features = ["serde"] }
 
 [dependencies]
 nom = "7.1.3"
@@ -38,13 +41,8 @@ path = "src/bin/debug_parser.rs"
 name = "trace_parser"
 path = "src/bin/trace_parser.rs"
 
-
-
-
-
-
-
-
+# Build script
+build = "build.rs"
 
 
 [dev-dependencies]

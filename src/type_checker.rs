@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use thiserror::Error;
 
@@ -57,6 +57,7 @@ pub enum TypedType {
     Option(Box<TypedType>),
     List(Box<TypedType>),
     Array(Box<TypedType>, usize),
+    TypeParam(String), // Generic type parameter
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,8 @@ struct FunctionDef {
 pub struct TypeChecker {
     // Variable environment (stack of scopes)
     var_env: Vec<HashMap<String, Variable>>,
+    // Type parameter environment (stack of scopes for generic types)
+    type_param_env: Vec<HashSet<String>>,
     // Record definitions
     records: HashMap<String, RecordDef>,
     // Function definitions
@@ -94,6 +97,7 @@ impl TypeChecker {
     pub fn new() -> Self {
         let mut checker = Self {
             var_env: vec![HashMap::new()],
+            type_param_env: vec![HashSet::new()],
             records: HashMap::new(),
             functions: HashMap::new(),
             methods: HashMap::new(),
@@ -165,6 +169,27 @@ impl TypeChecker {
         self.var_env.pop();
     }
     
+    fn push_type_param_scope(&mut self, type_params: &[String]) {
+        let mut type_param_scope = HashSet::new();
+        for param in type_params {
+            type_param_scope.insert(param.clone());
+        }
+        self.type_param_env.push(type_param_scope);
+    }
+    
+    fn pop_type_param_scope(&mut self) {
+        self.type_param_env.pop();
+    }
+    
+    fn is_type_param(&self, name: &str) -> bool {
+        for scope in self.type_param_env.iter().rev() {
+            if scope.contains(name) {
+                return true;
+            }
+        }
+        false
+    }
+    
     fn lookup_var(&mut self, name: &str) -> Result<TypedType, TypeError> {
         // Search from innermost to outermost scope
         for scope in self.var_env.iter_mut().rev() {
@@ -228,7 +253,7 @@ impl TypeChecker {
         Err(TypeError::UndefinedVariable(name.to_string()))
     }
     
-    fn convert_type(&self, ty: &Type) -> Result<TypedType, TypeError> {
+    fn convert_type(&mut self, ty: &Type) -> Result<TypedType, TypeError> {
         match ty {
             Type::Named(name) => match name.as_str() {
                 "Int" | "Int32" => Ok(TypedType::Int32),
@@ -238,8 +263,14 @@ impl TypeChecker {
                 "Char" => Ok(TypedType::Char),
                 "Unit" => Ok(TypedType::Unit),
                 _ => {
+                    // Check if it's a type parameter
+                    if self.is_type_param(name) {
+                        // For now, represent type parameters as a special TypedType
+                        // In a full implementation, we'd need a TypeParam variant
+                        Ok(TypedType::TypeParam(name.clone()))
+                    }
                     // Check if it's a record type
-                    if self.records.contains_key(name) {
+                    else if self.records.contains_key(name) {
                         Ok(TypedType::Record { name: name.clone(), frozen: false })
                     } else {
                         Err(TypeError::UnknownType(name.clone()))
@@ -293,6 +324,9 @@ impl TypeChecker {
     }
     
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), TypeError> {
+        // Push type parameter scope for generics
+        self.push_type_param_scope(&func.type_params);
+        
         let mut param_types = Vec::new();
         for param in &func.params {
             let ty = self.convert_type(&param.ty)?;
@@ -306,6 +340,7 @@ impl TypeChecker {
             return_type: TypedType::Int32,
         });
         
+        self.pop_type_param_scope();
         Ok(())
     }
     
@@ -321,6 +356,7 @@ impl TypeChecker {
             TopDecl::Binding(bind) => self.check_bind_decl(bind),
             TopDecl::Impl(impl_block) => self.check_impl_block(impl_block),
             TopDecl::Context(context) => self.check_context_decl(context),
+            TopDecl::Export(export_decl) => self.check_top_decl(&export_decl.item),
         }
     }
     
@@ -335,6 +371,9 @@ impl TypeChecker {
     }
     
     fn check_function_decl(&mut self, func: &FunDecl) -> Result<(), TypeError> {
+        // Push type parameter scope for generics
+        self.push_type_param_scope(&func.type_params);
+        
         self.push_scope();
         
         let mut param_types = Vec::new();
@@ -352,6 +391,7 @@ impl TypeChecker {
         });
         
         self.pop_scope();
+        self.pop_type_param_scope();
         Ok(())
     }
     

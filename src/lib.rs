@@ -5,6 +5,7 @@ pub mod type_checker;
 pub mod codegen;
 pub mod test_framework;
 pub mod debug_visualizer;
+pub mod module;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev_tools;
 #[cfg(not(target_arch = "wasm32"))]

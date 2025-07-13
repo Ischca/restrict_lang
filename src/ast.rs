@@ -2,7 +2,20 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    pub imports: Vec<ImportDecl>,
     pub declarations: Vec<TopDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportDecl {
+    pub module_path: Vec<String>,
+    pub items: ImportItems,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportItems {
+    All,                    // import module.*
+    Named(Vec<String>),     // import module.{foo, bar}
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,6 +25,12 @@ pub enum TopDecl {
     Context(ContextDecl),
     Function(FunDecl),
     Binding(BindDecl),
+    Export(ExportDecl),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportDecl {
+    pub item: Box<TopDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +60,7 @@ pub struct ContextDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunDecl {
     pub name: String,
+    pub type_params: Vec<String>, // Generic type parameters: <T, U, V>
     pub params: Vec<Param>,
     pub body: BlockExpr,
 }

@@ -32,6 +32,8 @@ pub enum Token {
     Unit,
     Some,
     None,
+    Import,
+    Export,
     
     // Identifiers and Literals
     Ident(String),
@@ -49,6 +51,7 @@ pub enum Token {
     Plus,           // +
     Minus,          // -
     Star,           // *
+    Asterisk,       // * (for import *)
     Slash,          // /
     Percent,        // %
     Eq,             // ==
@@ -99,6 +102,8 @@ impl fmt::Display for Token {
             Token::Unit => write!(f, "Unit"),
             Token::Some => write!(f, "Some"),
             Token::None => write!(f, "None"),
+            Token::Import => write!(f, "import"),
+            Token::Export => write!(f, "export"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::IntLit(n) => write!(f, "{}", n),
             Token::FloatLit(n) => write!(f, "{}", n),
@@ -112,6 +117,7 @@ impl fmt::Display for Token {
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
             Token::Star => write!(f, "*"),
+            Token::Asterisk => write!(f, "*"),
             Token::Slash => write!(f, "/"),
             Token::Percent => write!(f, "%"),
             Token::Eq => write!(f, "=="),
@@ -177,6 +183,8 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "Unit" => Token::Unit,
         "Some" => Token::Some,
         "None" => Token::None,
+        "import" => Token::Import,
+        "export" => Token::Export,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))

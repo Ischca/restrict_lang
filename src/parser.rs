@@ -2,7 +2,7 @@ use nom::{
     IResult,
     branch::alt,
     combinator::{map, opt, value},
-    multi::{many0, many1, separated_list0},
+    multi::{many0, many1, separated_list0, separated_list1},
     sequence::{preceded, tuple, delimited},
 };
 use crate::lexer::{Token, lex_token, skip};
@@ -134,10 +134,23 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
 fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
+    
+    // Parse optional generic type parameters: <T, U, V>
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            ident
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
+    
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, params) = many0(param)(input)?;
     let (input, body) = block_expr(input)?;
-    Ok((input, FunDecl { name, params, body }))
+    Ok((input, FunDecl { name, type_params, params, body }))
 }
 
 #[allow(dead_code)]
@@ -750,7 +763,48 @@ fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
     })))
 }
 
-pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
+fn import_decl(input: &str) -> ParseResult<ImportDecl> {
+    let (input, _) = expect_token(Token::Import)(input)?;
+    let (input, module_path) = separated_list1(
+        expect_token(Token::Dot),
+        ident
+    )(input)?;
+    
+    // Check for specific imports: .{foo, bar}
+    let (input, items) = if let Ok((input, _)) = expect_token(Token::Dot)(input) {
+        alt((
+            // import module.*
+            map(
+                expect_token(Token::Star),
+                |_| ImportItems::All
+            ),
+            // import module.{foo, bar}
+            map(
+                delimited(
+                    expect_token(Token::LBrace),
+                    separated_list0(expect_token(Token::Comma), ident),
+                    expect_token(Token::RBrace)
+                ),
+                ImportItems::Named
+            )
+        ))(input)?
+    } else {
+        // import module (imports all)
+        (input, ImportItems::All)
+    };
+    
+    Ok((input, ImportDecl { module_path, items }))
+}
+
+fn export_decl(input: &str) -> ParseResult<TopDecl> {
+    let (input, _) = expect_token(Token::Export)(input)?;
+    let (input, item) = top_decl_inner(input)?;
+    Ok((input, TopDecl::Export(ExportDecl {
+        item: Box::new(item)
+    })))
+}
+
+fn top_decl_inner(input: &str) -> ParseResult<TopDecl> {
     alt((
         map(fun_decl, TopDecl::Function),
         map(record_decl, TopDecl::Record),
@@ -760,11 +814,19 @@ pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
     ))(input)
 }
 
+pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
+    alt((
+        export_decl,
+        top_decl_inner
+    ))(input)
+}
+
 pub fn parse_program(input: &str) -> ParseResult<Program> {
     // Skip leading whitespace/comments first
     let (input, _) = opt(skip)(input)?;
+    let (input, imports) = many0(import_decl)(input)?;
     let (input, declarations) = many0(top_decl)(input)?;
-    Ok((input, Program { declarations }))
+    Ok((input, Program { imports, declarations }))
 }
 
 #[cfg(test)]

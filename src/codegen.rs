@@ -90,6 +90,9 @@ impl WasmCodeGen {
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
         self.output.push_str("(module\n");
         
+        // Process module imports first
+        self.generate_imports(&program.imports)?;
+        
         // Import WASI functions for I/O
         self.output.push_str("  ;; WASI imports\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
@@ -210,6 +213,9 @@ impl WasmCodeGen {
                 self.output.push_str(&format!("  (elem (i32.const {}) func ${})\n", i, func_name));
             }
         }
+        
+        // Generate module exports
+        self.generate_exports(program)?;
         
         // Export main function if it exists
         if self.functions.contains_key("main") {
@@ -2309,6 +2315,90 @@ impl WasmCodeGen {
             _params: vec![],
             result: Some(WasmType::I32),
         });
+        
+        Ok(())
+    }
+    
+    fn generate_imports(&mut self, imports: &[ImportDecl]) -> Result<(), CodeGenError> {
+        if imports.is_empty() {
+            return Ok(());
+        }
+        
+        self.output.push_str("\n  ;; Module imports\n");
+        
+        for import in imports {
+            let module_name = import.module_path.join(".");
+            
+            match &import.items {
+                ImportItems::All => {
+                    // Import all items from module (simplified implementation)
+                    self.output.push_str(&format!("  ;; Import all from {}\n", module_name));
+                    // In a real implementation, we'd need to resolve what "all" means
+                    // For now, we'll generate a placeholder comment
+                }
+                ImportItems::Named(items) => {
+                    for item in items {
+                        // Generate WebAssembly import for each named item
+                        // Assume functions for now
+                        self.output.push_str(&format!(
+                            "  (import \"{}\" \"{}\" (func ${} (param i32) (result i32)))\n",
+                            module_name, item, item
+                        ));
+                        
+                        // Register the imported function
+                        self.functions.insert(item.clone(), FunctionSig {
+                            _params: vec![WasmType::I32],
+                            result: Some(WasmType::I32),
+                        });
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn generate_exports(&mut self, program: &Program) -> Result<(), CodeGenError> {
+        let mut has_exports = false;
+        
+        for decl in &program.declarations {
+            if let TopDecl::Export(export_decl) = decl {
+                if !has_exports {
+                    self.output.push_str("\n  ;; Module exports\n");
+                    has_exports = true;
+                }
+                
+                match &*export_decl.item {
+                    TopDecl::Function(func) => {
+                        // Export function
+                        self.output.push_str(&format!(
+                            "  (export \"{}\" (func ${}))\n",
+                            func.name, func.name
+                        ));
+                    }
+                    TopDecl::Record(record) => {
+                        // Export record constructor (simplified)
+                        self.output.push_str(&format!(
+                            "  ;; Export record type: {}\n",
+                            record.name
+                        ));
+                        // In a real implementation, we'd export record-related functions
+                    }
+                    TopDecl::Binding(binding) => {
+                        // Export global binding
+                        self.output.push_str(&format!(
+                            "  ;; Export binding: {}\n",
+                            binding.name
+                        ));
+                        // In a real implementation, we'd export as global or memory location
+                    }
+                    _ => {
+                        // Other export types not implemented yet
+                        self.output.push_str("  ;; Unsupported export type\n");
+                    }
+                }
+            }
+        }
         
         Ok(())
     }

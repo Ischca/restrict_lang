@@ -3,7 +3,7 @@ use std::path::Path;
 use colored::*;
 use crate::parser::parse_program;
 use crate::type_checker::type_check;
-use crate::codegen::generate;
+use crate::codegen::WasmCodeGen;
 
 pub struct DevTools;
 
@@ -72,7 +72,8 @@ impl DevTools {
         };
         
         // Generate code
-        let wat = match generate(&ast) {
+        let mut codegen = WasmCodeGen::new();
+        let wat = match codegen.generate(&ast) {
             Ok(wat) => wat,
             Err(e) => {
                 eprintln!("{}", format!("Code generation error: {:?}", e).red());

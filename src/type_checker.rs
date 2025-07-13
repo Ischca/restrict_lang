@@ -268,13 +268,20 @@ impl TypeChecker {
         for param in type_params {
             type_param_scope.insert(param.name.clone());
             
-            // Collect bounds for this type parameter
+            // Collect trait bounds for this type parameter
             let bounds: Vec<String> = param.bounds.iter()
                 .map(|bound| bound.trait_name.clone())
                 .collect();
             
             if !bounds.is_empty() {
                 type_bounds_scope.insert(param.name.clone(), bounds);
+            }
+            
+            // Store derivation bound for later checking
+            if let Some(ref parent_type) = param.derivation_bound {
+                // Add derivation bound as a special constraint
+                let mut derivation_bounds = type_bounds_scope.entry(param.name.clone()).or_insert_with(Vec::new);
+                derivation_bounds.push(format!("__derivation_from:{}", parent_type));
             }
         }
         
@@ -921,12 +928,18 @@ impl TypeChecker {
         // Check type bounds for inferred types
         for type_param in &func_info.type_params {
             if let Some(concrete_type) = substitution.substitutions.get(&type_param.name) {
+                // Check trait bounds
                 for bound in &type_param.bounds {
                     if !self.type_implements_trait(concrete_type, &bound.trait_name) {
                         return Err(TypeError::UnsupportedFeature(
                             format!("Type {:?} does not implement trait {}", concrete_type, bound.trait_name)
                         ));
                     }
+                }
+                
+                // Check derivation bounds (T from ParentType)
+                if let Some(required_parent) = &type_param.derivation_bound {
+                    self.check_derivation_bound(concrete_type, required_parent)?;
                 }
             }
         }
@@ -2087,6 +2100,20 @@ impl TypeChecker {
         }
         
         Ok(depth)
+    }
+    
+    fn check_derivation_bounds_for_call(&self, func_def: &FunctionDef, arg_types: &[TypedType]) -> Result<(), TypeError> {
+        // Check derivation bounds for each type parameter
+        for (i, type_param) in func_def.type_params.iter().enumerate() {
+            if let Some(ref parent_type) = type_param.derivation_bound {
+                // Find the corresponding argument type
+                if i < arg_types.len() {
+                    let arg_type = &arg_types[i];
+                    self.check_derivation_bound(arg_type, parent_type)?;
+                }
+            }
+        }
+        Ok(())
     }
     
     fn check_prototype_clone_expr(&mut self, proto_clone: &PrototypeCloneExpr) -> Result<TypedType, TypeError> {

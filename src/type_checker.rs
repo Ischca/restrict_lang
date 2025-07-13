@@ -42,6 +42,15 @@ pub enum TypeError {
     
     #[error("Unsupported feature: {0}")]
     UnsupportedFeature(String),
+    
+    #[error("Type {0} is not derived from {1}")]
+    NotDerivedFrom(String, String),
+    
+    #[error("Cannot clone sealed prototype {0}")]
+    CannotCloneSealed(String),
+    
+    #[error("Derivation depth too deep: {0} > 3")]
+    DerivationTooDeep(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +61,7 @@ pub enum TypedType {
     String,
     Char,
     Unit,
-    Record { name: String, frozen: bool },
+    Record { name: String, frozen: bool, hash: Option<String>, parent_hash: Option<String> },
     Function { params: Vec<TypedType>, return_type: Box<TypedType> },
     Option(Box<TypedType>),
     List(Box<TypedType>),
@@ -128,6 +137,8 @@ pub struct TypeChecker {
     functions: HashMap<String, FunctionDef>,
     // Method implementations: record_name -> method_name -> function_def
     methods: HashMap<String, HashMap<String, FunctionDef>>,
+    // Prototype metadata: record_name -> (hash, parent_hash, sealed)
+    prototypes: HashMap<String, (String, Option<String>, bool)>,
     // Available contexts
     _contexts: Vec<String>,
 }
@@ -142,6 +153,7 @@ impl TypeChecker {
             records: HashMap::new(),
             functions: HashMap::new(),
             methods: HashMap::new(),
+            prototypes: HashMap::new(),
             _contexts: Vec::new(),
         };
         
@@ -351,7 +363,7 @@ impl TypeChecker {
             (TypedType::Unit, TypedType::Unit) => Ok(()),
             
             // Records must have same name and frozen status
-            (TypedType::Record { name: n1, frozen: f1 }, TypedType::Record { name: n2, frozen: f2 }) => {
+            (TypedType::Record { name: n1, frozen: f1, .. }, TypedType::Record { name: n2, frozen: f2, .. }) => {
                 if n1 == n2 && f1 == f2 {
                     Ok(())
                 } else {
@@ -490,7 +502,7 @@ impl TypeChecker {
                     }
                     // Check if it's a record type
                     else if self.records.contains_key(name) {
-                        Ok(TypedType::Record { name: name.clone(), frozen: false })
+                        Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None })
                     } else {
                         Err(TypeError::UnknownType(name.clone()))
                     }
@@ -654,7 +666,9 @@ impl TypeChecker {
                     // First parameter named 'self' should be the record type
                     TypedType::Record { 
                         name: target.clone(), 
-                        frozen: false  // Methods can be called on both frozen and unfrozen records
+                        frozen: false,  // Methods can be called on both frozen and unfrozen records
+                        hash: None,
+                        parent_hash: None
                     }
                 } else {
                     self.convert_type(&param.ty)?
@@ -759,6 +773,7 @@ impl TypeChecker {
                 }
             },
             Expr::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
+            Expr::PrototypeClone(proto_clone) => self.check_prototype_clone_expr(proto_clone),
         }
     }
     
@@ -787,14 +802,14 @@ impl TypeChecker {
             }
         }
         
-        Ok(TypedType::Record { name: record_lit.name.clone(), frozen: false })
+        Ok(TypedType::Record { name: record_lit.name.clone(), frozen: false, hash: None, parent_hash: None })
     }
     
     fn check_clone_expr(&mut self, clone_expr: &CloneExpr) -> Result<TypedType, TypeError> {
         let base_ty = self.check_expr(&clone_expr.base)?;
         
         match &base_ty {
-            TypedType::Record { name, frozen } => {
+            TypedType::Record { name, frozen, .. } => {
                 if *frozen {
                     return Err(TypeError::CloneFrozenRecord);
                 }
@@ -820,7 +835,7 @@ impl TypeChecker {
                         });
                     }
                 }
-                Ok(TypedType::Record { name: name.clone(), frozen: false })
+                Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None })
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "record".to_string(),
@@ -833,11 +848,11 @@ impl TypeChecker {
         let ty = self.check_expr(expr)?;
         
         match ty {
-            TypedType::Record { name, frozen } => {
+            TypedType::Record { name, frozen, hash, parent_hash } => {
                 if frozen {
                     return Err(TypeError::FreezeAlreadyFrozen);
                 }
-                Ok(TypedType::Record { name, frozen: true })
+                Ok(TypedType::Record { name, frozen: true, hash, parent_hash })
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "record".to_string(),
@@ -1975,5 +1990,140 @@ mod tests {
             }
         "#;
         assert!(check_program_str(input).is_ok());
+    }
+}
+
+impl TypeChecker {
+    // Prototype + Derivation-Bound implementation
+    fn check_derivation_bound(&self, concrete_type: &TypedType, required_parent: &str) -> Result<(), TypeError> {
+        match concrete_type {
+            TypedType::Record { name, hash, parent_hash, .. } => {
+                // Check if this record derives from the required parent
+                if self.is_derived_from(name, hash.as_ref(), parent_hash.as_ref(), required_parent)? {
+                    Ok(())
+                } else {
+                    Err(TypeError::NotDerivedFrom(name.clone(), required_parent.to_string()))
+                }
+            }
+            _ => {
+                // Non-record types cannot have derivation bounds
+                Err(TypeError::NotDerivedFrom(format!("{:?}", concrete_type), required_parent.to_string()))
+            }
+        }
+    }
+    
+    fn is_derived_from(&self, type_name: &str, _current_hash: Option<&String>, parent_hash: Option<&String>, target_parent: &str) -> Result<bool, TypeError> {
+        // Base case: check if current type is the target
+        if type_name == target_parent {
+            return Ok(true);
+        }
+        
+        // Check prototypes registry for derivation info
+        if let Some((_, prototype_parent_hash, _)) = self.prototypes.get(type_name) {
+            if let Some(parent_hash_val) = prototype_parent_hash {
+                // Find the parent type name by hash
+                for (parent_name, (parent_current_hash, _, _)) in &self.prototypes {
+                    if parent_current_hash == parent_hash_val {
+                        // Recursively check parent
+                        return self.is_derived_from(parent_name, Some(parent_current_hash), prototype_parent_hash.as_ref(), target_parent);
+                    }
+                }
+            }
+        }
+        
+        // Also check using the hash/parent_hash from the type itself
+        if let Some(parent_hash_val) = parent_hash {
+            for (parent_name, (parent_current_hash, _, _)) in &self.prototypes {
+                if parent_current_hash == parent_hash_val {
+                    return self.is_derived_from(parent_name, Some(parent_current_hash), None, target_parent);
+                }
+            }
+        }
+        
+        Ok(false)
+    }
+    
+    fn generate_prototype_hash(&self, record_name: &str, content: &str) -> String {
+        // Simple hash implementation (in production, use SHA-3)
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        record_name.hash(&mut hasher);
+        content.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+    
+    fn check_derivation_depth(&self, type_name: &str) -> Result<usize, TypeError> {
+        let mut depth = 0;
+        let mut current_type = type_name;
+        
+        loop {
+            if depth > 3 {
+                return Err(TypeError::DerivationTooDeep(depth));
+            }
+            
+            if let Some((_, parent_hash, _)) = self.prototypes.get(current_type) {
+                if let Some(parent_hash_val) = parent_hash {
+                    // Find parent by hash
+                    let mut found_parent = false;
+                    for (parent_name, (parent_current_hash, _, _)) in &self.prototypes {
+                        if parent_current_hash == parent_hash_val {
+                            current_type = parent_name;
+                            depth += 1;
+                            found_parent = true;
+                            break;
+                        }
+                    }
+                    if !found_parent {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        
+        Ok(depth)
+    }
+    
+    fn check_prototype_clone_expr(&mut self, proto_clone: &PrototypeCloneExpr) -> Result<TypedType, TypeError> {
+        // Check if base prototype exists
+        if !self.records.contains_key(&proto_clone.base) {
+            return Err(TypeError::UndefinedRecord(proto_clone.base.clone()));
+        }
+        
+        // Check if base is sealed
+        if let Some((_, _, sealed)) = self.prototypes.get(&proto_clone.base) {
+            if *sealed {
+                return Err(TypeError::CannotCloneSealed(proto_clone.base.clone()));
+            }
+        }
+        
+        // Check derivation depth
+        self.check_derivation_depth(&proto_clone.base)?;
+        
+        // Generate hash for the new prototype
+        let content = format!("{:?}", proto_clone); // Simplified content hash
+        let new_hash = self.generate_prototype_hash(&proto_clone.base, &content);
+        
+        // Get parent hash
+        let parent_hash = if let Some((hash, _, _)) = self.prototypes.get(&proto_clone.base) {
+            Some(hash.clone())
+        } else {
+            None
+        };
+        
+        // Check field updates (similar to clone expression)
+        // ... field checking logic ...
+        
+        Ok(TypedType::Record { 
+            name: format!("{}#{}", proto_clone.base, &new_hash[..8]), // Unique name
+            frozen: proto_clone.freeze_immediately, 
+            hash: Some(new_hash.clone()),
+            parent_hash 
+        })
     }
 }

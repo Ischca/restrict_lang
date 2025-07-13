@@ -1256,6 +1256,9 @@ impl WasmCodeGen {
             Expr::Lambda(lambda) => {
                 self.generate_lambda_expr(lambda)?;
             }
+            Expr::PrototypeClone(proto_clone) => {
+                self.generate_prototype_clone_expr(proto_clone)?;
+            }
         }
         Ok(())
     }
@@ -2399,6 +2402,69 @@ impl WasmCodeGen {
                 }
             }
         }
+        
+        Ok(())
+    }
+    
+    fn generate_prototype_clone_expr(&mut self, proto_clone: &PrototypeCloneExpr) -> Result<(), CodeGenError> {
+        // Generate prototype clone with hash metadata
+        // This is similar to regular clone but includes prototype metadata
+        
+        // For now, generate similar to regular clone
+        // In a full implementation, this would include hash generation and parent tracking
+        
+        // Calculate record size (simplified)
+        let field_count = proto_clone.updates.fields.len() + 3; // Base fields + metadata
+        let record_size = field_count * 4;
+        
+        // Allocate memory for the new prototype instance
+        self.output.push_str(&format!("    i32.const {} ;; prototype instance size\n", record_size));
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $clone_tmp\n");
+        
+        // Set prototype metadata (hash, parent_hash, sealed flag)
+        // In a real implementation, these would be computed values
+        self.output.push_str("    ;; Set prototype hash metadata\n");
+        self.output.push_str("    local.get $clone_tmp\n");
+        self.output.push_str("    i32.const 0x12345678 ;; placeholder hash\n");
+        self.output.push_str("    i32.store\n");
+        
+        // Set parent hash
+        self.output.push_str("    local.get $clone_tmp\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.const 0x87654321 ;; placeholder parent hash\n");
+        self.output.push_str("    i32.store\n");
+        
+        // Set sealed flag
+        self.output.push_str("    local.get $clone_tmp\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        if proto_clone.sealed {
+            self.output.push_str("    i32.const 1 ;; sealed\n");
+        } else {
+            self.output.push_str("    i32.const 0 ;; not sealed\n");
+        }
+        self.output.push_str("    i32.store\n");
+        
+        // Handle field updates (starting from offset 12)
+        for (field_index, field_init) in proto_clone.updates.fields.iter().enumerate() {
+            let field_offset = 12 + (field_index * 4); // After metadata
+            
+            // Store the target address first
+            self.output.push_str("    local.get $clone_tmp\n");
+            self.output.push_str(&format!("    i32.const {} ;; field offset for {}\n", field_offset, field_init.name));
+            self.output.push_str("    i32.add\n");
+            
+            // Generate the new value for this field
+            self.generate_expr(&field_init.value)?;
+            
+            // Store the new value at the correct field offset
+            self.output.push_str("    i32.store\n");
+        }
+        
+        // Return pointer to the new prototype instance
+        self.output.push_str("    local.get $clone_tmp\n");
         
         Ok(())
     }

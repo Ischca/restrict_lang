@@ -418,6 +418,157 @@ val user2 = clone(user)  // Deep copy
 val modified = User { ...user, name: "Bob" }  // Update syntax
 ```
 
+## Prototype + Freeze + Derivation-Bound System
+
+### Overview
+
+Restrict Language implements a unique inheritance system based on prototypes, freezing, and derivation bounds that provides safe inheritance without traditional class hierarchies or vtables.
+
+### Key Concepts
+
+- **Prototype**: Any value class (`record`/`val`/`fun`) that can be cloned with differential edits
+- **Freeze**: Makes a prototype immutable and assigns unique hash metadata
+- **Derivation-Bound**: Generic type parameters that require specific lineage: `<T from ParentType>`
+
+### Prototype Declaration and Inheritance
+
+```rust
+// Base prototype
+record Printable {
+    fun print = self:Self -> String { self.toString() }
+} freeze  // hash = H₀
+
+// Derived prototypes
+val Dog = Printable.clone {
+    fun print = self:Self -> String { "woof" }
+} freeze  // parent_hash = H₀, hash = H₁
+
+val Cat = Printable.clone {
+    fun print = self:Self -> String { "meow" }  
+} freeze  // parent_hash = H₀, hash = H₂
+
+// Further derivation
+val Puppy = Dog.clone {
+    fun print = self:Self -> String { "yip yip" }
+} freeze  // parent_hash = H₁, hash = H₃
+```
+
+### Freeze Metadata
+
+When a prototype is frozen, it receives:
+- `hash`: SHA-3 hash of the complete content
+- `parent_hash`: Hash of the immediate parent (if derived)
+- `sealed`: Optional flag preventing further derivation
+
+```rust
+record Animal {} freeze sealed  // Cannot be derived further
+```
+
+### Derivation-Bound Generics
+
+Generic functions can require specific prototype lineage:
+
+```rust
+fun println<T from Printable> = x:T -> Unit {
+    x.print() |> writeLine
+}
+
+fun debug<T from Printable> = x:T -> Unit {
+    "DEBUG: " + x.print() |> writeLine  
+}
+```
+
+**Type Checking**: The compiler performs DFS traversal of `parent_hash` chain to verify derivation.
+
+### Usage Examples
+
+```rust
+// This works - Dog derives from Printable
+val myDog = Dog { name: "Rex" }
+myDog |> println  // prints: woof
+
+// This fails - Int32 doesn't derive from Printable  
+42 |> println     // Error: type Int32 is not derived from Printable
+```
+
+### Advanced Features
+
+#### Capability Injection
+```rust
+record Testable {
+    fun mock = switcher {
+        case "test" => { "mock_response" }
+        case _ => { self.actual_behavior() }
+    }
+} freeze
+
+val MockService = Service.clone {
+    fun process = self:Self -> String { "mocked" }
+} freeze
+
+// Use in tests
+val service: Service from Testable = MockService {}
+```
+
+#### Lineage Introspection
+```rust
+fun get_lineage<T from Printable> = x:T -> List<Hash> {
+    // Returns chain: [current_hash, parent_hash, grandparent_hash, ...]
+    introspect_derivation_chain(x)
+}
+```
+
+### Safety Guarantees
+
+1. **Single Inheritance**: Each prototype has at most one parent
+2. **Immutable Hierarchy**: Frozen prototypes cannot be modified
+3. **Static Dispatch**: All method calls resolved at compile time
+4. **ABI Stability**: Hash-based identity ensures consistent interfaces
+
+### Memory Layout
+
+```
+Prototype Object:
+[hash: 32 bytes][parent_hash: 32 bytes][sealed: 1 byte][data...]
+
+Example - Dog instance:
+[H₁][H₀][false][name: "Rex"][print: fn_ptr]
+```
+
+### Integration with WebAssembly
+
+```wat
+;; Export functions include prototype hash
+(export "Printable$print" (func $printable_print))
+(export "Dog$print" (func $dog_print))  
+(export "Cat$print" (func $cat_print))
+
+;; Derivation check at runtime
+(func $check_derivation (param $obj i32) (param $required_hash i32) (result i32)
+  ;; DFS traversal through parent_hash chain
+)
+```
+
+### Best Practices
+
+1. **Shallow Hierarchies**: Keep derivation depth < 4 levels
+2. **Meaningful Names**: Prototype names should reflect capabilities
+3. **Composition over Inheritance**: Use multiple small prototypes
+4. **Test with Mocks**: Clone prototypes for testing scenarios
+
+```rust
+// Good: Shallow, focused hierarchy
+record Drawable {} freeze
+record Shape from Drawable {} freeze  
+record Circle from Shape {} freeze
+
+// Avoid: Deep hierarchies
+record A {} freeze
+record B from A {} freeze
+record C from B {} freeze
+record D from C {} freeze  // Warning: depth > 3
+```
+
 ## Lists and Arrays
 
 ### List Operations

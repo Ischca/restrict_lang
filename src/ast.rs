@@ -37,6 +37,9 @@ pub struct ExportDecl {
 pub struct RecordDecl {
     pub name: String,
     pub fields: Vec<FieldDecl>,
+    pub frozen: bool,
+    pub sealed: bool,
+    pub parent_hash: Option<String>, // Hash of parent prototype if cloned
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +72,7 @@ pub struct FunDecl {
 pub struct TypeParam {
     pub name: String,
     pub bounds: Vec<TypeBound>, // Type constraints: T: Display + Clone
+    pub derivation_bound: Option<String>, // T from ParentType
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,6 +111,7 @@ pub enum Expr {
     RecordLit(RecordLit),
     Clone(CloneExpr),
     Freeze(Box<Expr>),
+    PrototypeClone(PrototypeCloneExpr),
     
     // Control flow
     Then(ThenExpr),
@@ -161,6 +166,14 @@ pub struct FieldInit {
 pub struct CloneExpr {
     pub base: Box<Expr>,
     pub updates: RecordLit,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrototypeCloneExpr {
+    pub base: String, // Name of the prototype to clone
+    pub updates: RecordLit, // Differential updates
+    pub freeze_immediately: bool, // Whether to freeze after cloning
+    pub sealed: bool, // Whether to seal (prevent further derivation)
 }
 
 #[derive(Debug, Clone, PartialEq)]

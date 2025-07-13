@@ -83,6 +83,10 @@ pub struct TypeChecker {
     var_env: Vec<HashMap<String, Variable>>,
     // Type parameter environment (stack of scopes for generic types)
     type_param_env: Vec<HashSet<String>>,
+    // Type bounds environment: type_param -> required_traits
+    type_bounds_env: Vec<HashMap<String, Vec<String>>>,
+    // Trait implementations: type_name -> trait_names
+    trait_impls: HashMap<String, HashSet<String>>,
     // Record definitions
     records: HashMap<String, RecordDef>,
     // Function definitions
@@ -98,16 +102,51 @@ impl TypeChecker {
         let mut checker = Self {
             var_env: vec![HashMap::new()],
             type_param_env: vec![HashSet::new()],
+            type_bounds_env: vec![HashMap::new()],
+            trait_impls: HashMap::new(),
             records: HashMap::new(),
             functions: HashMap::new(),
             methods: HashMap::new(),
             _contexts: Vec::new(),
         };
         
-        // Register built-in functions
+        // Register built-in functions and traits
         checker.register_builtins();
+        checker.register_builtin_traits();
         
         checker
+    }
+    
+    fn register_builtin_traits(&mut self) {
+        // Register trait implementations for built-in types
+        
+        // Int32 implements Display, Clone, Debug
+        let mut int32_traits = HashSet::new();
+        int32_traits.insert("Display".to_string());
+        int32_traits.insert("Clone".to_string());
+        int32_traits.insert("Debug".to_string());
+        self.trait_impls.insert("Int32".to_string(), int32_traits);
+        
+        // String implements Display, Clone, Debug
+        let mut string_traits = HashSet::new();
+        string_traits.insert("Display".to_string());
+        string_traits.insert("Clone".to_string());
+        string_traits.insert("Debug".to_string());
+        self.trait_impls.insert("String".to_string(), string_traits);
+        
+        // Boolean implements Display, Clone, Debug
+        let mut bool_traits = HashSet::new();
+        bool_traits.insert("Display".to_string());
+        bool_traits.insert("Clone".to_string());
+        bool_traits.insert("Debug".to_string());
+        self.trait_impls.insert("Boolean".to_string(), bool_traits);
+        
+        // Float64 implements Display, Clone, Debug
+        let mut float_traits = HashSet::new();
+        float_traits.insert("Display".to_string());
+        float_traits.insert("Clone".to_string());
+        float_traits.insert("Debug".to_string());
+        self.trait_impls.insert("Float64".to_string(), float_traits);
     }
     
     fn register_builtins(&mut self) {
@@ -169,16 +208,30 @@ impl TypeChecker {
         self.var_env.pop();
     }
     
-    fn push_type_param_scope(&mut self, type_params: &[String]) {
+    fn push_type_param_scope(&mut self, type_params: &[TypeParam]) {
         let mut type_param_scope = HashSet::new();
+        let mut type_bounds_scope = HashMap::new();
+        
         for param in type_params {
-            type_param_scope.insert(param.clone());
+            type_param_scope.insert(param.name.clone());
+            
+            // Collect bounds for this type parameter
+            let bounds: Vec<String> = param.bounds.iter()
+                .map(|bound| bound.trait_name.clone())
+                .collect();
+            
+            if !bounds.is_empty() {
+                type_bounds_scope.insert(param.name.clone(), bounds);
+            }
         }
+        
         self.type_param_env.push(type_param_scope);
+        self.type_bounds_env.push(type_bounds_scope);
     }
     
     fn pop_type_param_scope(&mut self) {
         self.type_param_env.pop();
+        self.type_bounds_env.pop();
     }
     
     fn is_type_param(&self, name: &str) -> bool {
@@ -188,6 +241,40 @@ impl TypeChecker {
             }
         }
         false
+    }
+    
+    fn get_type_bounds(&self, type_param: &str) -> Vec<String> {
+        for scope in self.type_bounds_env.iter().rev() {
+            if let Some(bounds) = scope.get(type_param) {
+                return bounds.clone();
+            }
+        }
+        Vec::new()
+    }
+    
+    fn check_type_bounds(&self, type_param: &str, required_trait: &str) -> Result<(), TypeError> {
+        let bounds = self.get_type_bounds(type_param);
+        if bounds.contains(&required_trait.to_string()) {
+            Ok(())
+        } else {
+            Err(TypeError::UnsupportedFeature(
+                format!("Type parameter {} does not implement required trait {}", type_param, required_trait)
+            ))
+        }
+    }
+    
+    fn type_implements_trait(&self, ty: &TypedType, trait_name: &str) -> bool {
+        match ty {
+            TypedType::Int32 => self.trait_impls.get("Int32").map_or(false, |traits| traits.contains(trait_name)),
+            TypedType::String => self.trait_impls.get("String").map_or(false, |traits| traits.contains(trait_name)),
+            TypedType::Boolean => self.trait_impls.get("Boolean").map_or(false, |traits| traits.contains(trait_name)),
+            TypedType::Float64 => self.trait_impls.get("Float64").map_or(false, |traits| traits.contains(trait_name)),
+            TypedType::TypeParam(param_name) => {
+                // Check if the type parameter has the required trait bound
+                self.get_type_bounds(param_name).contains(&trait_name.to_string())
+            }
+            _ => false, // Other types don't implement traits for now
+        }
     }
     
     fn lookup_var(&mut self, name: &str) -> Result<TypedType, TypeError> {

@@ -60,9 +60,20 @@ pub struct ContextDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunDecl {
     pub name: String,
-    pub type_params: Vec<String>, // Generic type parameters: <T, U, V>
+    pub type_params: Vec<TypeParam>, // Generic type parameters with bounds: <T: Display, U: Clone>
     pub params: Vec<Param>,
     pub body: BlockExpr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParam {
+    pub name: String,
+    pub bounds: Vec<TypeBound>, // Type constraints: T: Display + Clone
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeBound {
+    pub trait_name: String, // e.g., "Display", "Clone", "Debug"
 }
 
 #[derive(Debug, Clone, PartialEq)]

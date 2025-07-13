@@ -1,0 +1,19 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="smallGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF6B35"/>
+      <stop offset="100%" style="stop-color:#C1440E"/>
+    </linearGradient>
+  </defs>
+  
+  <g transform="translate(32, 32)">
+    <polygon points="0,-22 19,-11 19,11 0,22 -19,11 -19,-11" 
+             fill="url(#smallGradient)"/>
+    
+    <!-- Simplified pipe operator -->
+    <g>
+      <rect x="-5" y="-8" width="2" height="16" fill="#FFFFFF"/>
+      <path d="M 0,-6 L 0,-2 L 4,0 L 0,2 L 0,6 L 7,0 Z" fill="#FFFFFF"/>
+    </g>
+  </g>
+</svg>

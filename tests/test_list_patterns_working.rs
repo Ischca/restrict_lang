@@ -67,7 +67,6 @@ fun main = {
 }
 
 #[test]
-#[ignore = "Parser issue with multi-line input"]
 fn test_exact_pattern() {
     let src = r#"
 fun main = {

@@ -18,11 +18,11 @@ fn type_check_program(source: &str) -> Result<(), String> {
 #[test]
 fn test_list_pattern_parse() {
     let input = r#"fun test = {
-    val lst = []
+    val lst = [];
     val result = (lst) match {
         [] => { 42 }
         _ => { 0 }
-    }
+    };
     result
 }"#;
     

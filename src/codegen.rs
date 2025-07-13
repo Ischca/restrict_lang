@@ -132,9 +132,11 @@ impl WasmCodeGen {
                 TopDecl::Impl(impl_block) => {
                     self.generate_impl_methods(impl_block)?;
                 }
-                TopDecl::Binding(_bind) => {
-                    // Global bindings are not supported yet
-                    return Err(CodeGenError::NotImplemented("global bindings".to_string()));
+                TopDecl::Binding(bind) => {
+                    // For now, we'll skip global bindings
+                    // In a full implementation, these would be stored in global memory
+                    // and initialized in a start function
+                    eprintln!("Warning: Global binding '{}' skipped (not yet supported)", bind.name);
                 }
                 _ => {
                     // Records, contexts, etc. are compile-time only

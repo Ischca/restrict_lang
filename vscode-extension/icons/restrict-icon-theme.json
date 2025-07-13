@@ -1,0 +1,19 @@
+{
+  "iconDefinitions": {
+    "_rl_file": {
+      "iconPath": "./file-icon.svg"
+    },
+    "_rl_file_light": {
+      "iconPath": "./file-icon.svg"
+    }
+  },
+  "fileExtensions": {
+    "rl": "_rl_file"
+  },
+  "light": {
+    "fileExtensions": {
+      "rl": "_rl_file_light"
+    }
+  },
+  "hidesExplorerArrows": false
+}

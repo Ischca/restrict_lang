@@ -8,36 +8,98 @@ import { RestrictSemanticTokensProvider, legend } from './semanticTokens';
 
 const execAsync = promisify(exec);
 
+// Global reference to diagnostics collection
+let diagnosticsCollection: vscode.DiagnosticCollection;
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('Restrict Language extension is now active!');
 
     // Initialize diagnostics collection
-    const diagnosticsCollection = vscode.languages.createDiagnosticCollection('restrict');
+    diagnosticsCollection = vscode.languages.createDiagnosticCollection('restrict');
     context.subscriptions.push(diagnosticsCollection);
 
-    // Store diagnostics collection in context for use in other functions
-    (context as any).diagnosticsCollection = diagnosticsCollection;
-
-    // Activate Language Server Protocol
-    try {
-        activateLanguageServer(context);
-        console.log('Language Server Protocol activated');
-    } catch (error) {
-        console.warn('Failed to activate Language Server Protocol:', error);
-        // Continue with basic functionality even if LSP fails
-    }
-
-    // Register commands
-    const compileCommand = vscode.commands.registerCommand('restrict.compile', () => {
-        compileCurrentFile();
+    // Commands will be handled by the Language Server when available
+    // Register command proxies that will delegate to LSP
+    const compileCommand = vscode.commands.registerCommand('restrict.compile', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== 'restrict') {
+            vscode.window.showErrorMessage('No active Restrict Language file');
+            return;
+        }
+        
+        // Check if LSP is enabled
+        const config = vscode.workspace.getConfiguration('restrict');
+        const enableLSP = config.get('enableLSP', false);
+        
+        if (enableLSP) {
+            // Use LSP command
+            const result = await vscode.commands.executeCommand('restrict.lsp.compile', editor.document.uri.toString()) as any;
+            if (result) {
+                if (result.success) {
+                    vscode.window.showInformationMessage(result.message || 'Compilation completed');
+                } else {
+                    vscode.window.showErrorMessage(result.message || 'Compilation failed');
+                }
+            }
+        } else {
+            // Fallback to direct compilation
+            compileCurrentFile();
+        }
     });
 
-    const typeCheckCommand = vscode.commands.registerCommand('restrict.typeCheck', () => {
-        typeCheckCurrentFile();
+    const typeCheckCommand = vscode.commands.registerCommand('restrict.typeCheck', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== 'restrict') {
+            vscode.window.showErrorMessage('No active Restrict Language file');
+            return;
+        }
+        
+        const config = vscode.workspace.getConfiguration('restrict');
+        const enableLSP = config.get('enableLSP', false);
+        
+        if (enableLSP) {
+            // Use LSP command
+            const result = await vscode.commands.executeCommand('restrict.lsp.typeCheck', editor.document.uri.toString()) as any;
+            if (result) {
+                if (result.success) {
+                    vscode.window.showInformationMessage(result.message || 'Type check passed');
+                } else {
+                    vscode.window.showErrorMessage(result.message || 'Type check failed');
+                }
+            }
+        } else {
+            // Fallback to direct type checking
+            typeCheckCurrentFile();
+        }
     });
 
-    const showASTCommand = vscode.commands.registerCommand('restrict.showAST', () => {
-        showAST();
+    const showASTCommand = vscode.commands.registerCommand('restrict.showAST', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.languageId !== 'restrict') {
+            vscode.window.showErrorMessage('No active Restrict Language file');
+            return;
+        }
+        
+        const config = vscode.workspace.getConfiguration('restrict');
+        const enableLSP = config.get('enableLSP', false);
+        
+        if (enableLSP) {
+            // Use LSP command
+            const result = await vscode.commands.executeCommand('restrict.lsp.showAST', editor.document.uri.toString()) as any;
+            if (result && result.success) {
+                // Show AST in a new document
+                const doc = await vscode.workspace.openTextDocument({
+                    content: result.ast,
+                    language: 'json'
+                });
+                await vscode.window.showTextDocument(doc);
+            } else {
+                vscode.window.showErrorMessage(result?.message || 'Failed to generate AST');
+            }
+        } else {
+            // Fallback to direct AST generation
+            showAST();
+        }
     });
 
     // Register document save handler for auto type checking
@@ -65,6 +127,22 @@ export function activate(context: vscode.ExtensionContext) {
         onSaveHandler,
         semanticTokensRegistration
     );
+
+    // Activate Language Server Protocol
+    const config = vscode.workspace.getConfiguration('restrict');
+    const enableLSP = config.get('enableLSP', true);
+    
+    if (enableLSP) {
+        try {
+            activateLanguageServer(context);
+            console.log('Language Server Protocol activated');
+        } catch (error) {
+            console.warn('Failed to activate Language Server Protocol:', error);
+            // Continue with basic functionality even if LSP fails
+        }
+    } else {
+        console.log('Language Server Protocol is disabled');
+    }
 }
 
 export function deactivate() {
@@ -85,7 +163,12 @@ async function compileCurrentFile() {
 
     const filePath = editor.document.fileName;
     const config = vscode.workspace.getConfiguration('restrict');
-    const compilerPath = config.get('compilerPath', 'restrict_lang');
+    let compilerPath = config.get('compilerPath') as string;
+    
+    // If no compiler path is configured, use 'restrict_lang' from PATH
+    if (!compilerPath) {
+        compilerPath = 'restrict_lang';
+    }
 
     try {
         vscode.window.showInformationMessage('Compiling Restrict file...');
@@ -123,21 +206,23 @@ async function typeCheckCurrentFile() {
 
 async function typeCheckFile(filePath: string, showMessage: boolean = false) {
     const config = vscode.workspace.getConfiguration('restrict');
-    const compilerPath = config.get('compilerPath', 'restrict_lang');
+    let compilerPath = config.get('compilerPath') as string;
+    
+    // If no compiler path is configured, use 'restrict_lang' from PATH
+    if (!compilerPath) {
+        compilerPath = 'restrict_lang';
+    }
 
     try {
         const { stdout, stderr } = await execAsync(`"${compilerPath}" --check "${filePath}"`);
         
         // Clear previous diagnostics
-        const diagnosticsCollection = getDiagnosticsCollection();
-        if (diagnosticsCollection) {
-            diagnosticsCollection.delete(vscode.Uri.file(filePath));
-        }
+        diagnosticsCollection.delete(vscode.Uri.file(filePath));
 
         if (stderr) {
             // Parse error messages and create diagnostics
             const diagnostics = parseErrorMessages(stderr);
-            if (diagnosticsCollection && diagnostics.length > 0) {
+            if (diagnostics.length > 0) {
                 diagnosticsCollection.set(vscode.Uri.file(filePath), diagnostics);
             }
             
@@ -170,7 +255,12 @@ async function showAST() {
 
     const filePath = editor.document.fileName;
     const config = vscode.workspace.getConfiguration('restrict');
-    const compilerPath = config.get('compilerPath', 'restrict_lang');
+    let compilerPath = config.get('compilerPath') as string;
+    
+    // If no compiler path is configured, use 'restrict_lang' from PATH
+    if (!compilerPath) {
+        compilerPath = 'restrict_lang';
+    }
 
     try {
         const { stdout, stderr } = await execAsync(`"${compilerPath}" --ast "${filePath}"`);
@@ -234,13 +324,4 @@ function parseErrorMessages(errorOutput: string): vscode.Diagnostic[] {
     return diagnostics;
 }
 
-function getDiagnosticsCollection(): vscode.DiagnosticCollection | undefined {
-    // This is a bit hacky, but we need to access the diagnostics collection
-    // stored in the extension context. In a real implementation, you might
-    // want to use a more robust pattern.
-    const extension = vscode.extensions.getExtension('restrict-lang.restrict-language');
-    if (extension && extension.isActive) {
-        return (extension.exports as any)?.diagnosticsCollection;
-    }
-    return undefined;
-}
+// getDiagnosticsCollection function is no longer needed since we use global reference

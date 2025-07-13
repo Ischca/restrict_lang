@@ -16,7 +16,12 @@
       "Bash(find:*)",
       "Bash(./test_parse_debug)",
       "Bash(/tmp/minimal_test3:*)",
-      "Bash(/tmp/minimal_test5:*)"
+      "Bash(/tmp/minimal_test5:*)",
+      "Bash(/tmp/test_parse_assign:*)",
+      "Bash(mkdir:*)",
+      "Bash(./target/release/restrict_lang:*)",
+      "Bash(npm run compile:*)",
+      "Bash(npx vsce:*)"
     ],
     "deny": []
   }

@@ -249,8 +249,296 @@ impl TypeChecker {
             type_params: vec![],
         });
         
+        // Standard library functions
+        self.register_std_math();
+        self.register_std_list();
+        self.register_std_option();
+        self.register_std_io();
+        self.register_std_prelude();
+        
         // Note: Arena is a built-in context but not added to _contexts by default
         // It only becomes available inside a "with Arena" block
+    }
+    
+    fn register_std_math(&mut self) {
+        use crate::ast::{TypeParam, TypeBound};
+        
+        // abs function
+        self.functions.insert("abs".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+        });
+        
+        // max function  
+        self.functions.insert("max".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+        });
+        
+        // min function
+        self.functions.insert("min".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+        });
+        
+        // pow function
+        self.functions.insert("pow".to_string(), FunctionDef {
+            params: vec![
+                ("base".to_string(), TypedType::Int32),
+                ("exp".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+        });
+        
+        // factorial function
+        self.functions.insert("factorial".to_string(), FunctionDef {
+            params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+        });
+        
+        // Float versions
+        self.functions.insert("abs_f".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Float64)],
+            return_type: TypedType::Float64,
+            type_params: vec![],
+        });
+        
+        self.functions.insert("max_f".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Float64),
+                ("b".to_string(), TypedType::Float64)
+            ],
+            return_type: TypedType::Float64,
+            type_params: vec![],
+        });
+        
+        self.functions.insert("min_f".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Float64),
+                ("b".to_string(), TypedType::Float64)
+            ],
+            return_type: TypedType::Float64,
+            type_params: vec![],
+        });
+    }
+    
+    fn register_std_list(&mut self) {
+        use crate::ast::{TypeParam, TypeBound};
+        
+        // Generic list functions
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+        };
+        
+        // list_is_empty<T>
+        self.functions.insert("list_is_empty".to_string(), FunctionDef {
+            params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
+            return_type: TypedType::Boolean,
+            type_params: vec![t_param.clone()],
+        });
+        
+        // list_head<T>
+        self.functions.insert("list_head".to_string(), FunctionDef {
+            params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
+            return_type: TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+        });
+        
+        // list_tail<T>
+        self.functions.insert("list_tail".to_string(), FunctionDef {
+            params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
+            return_type: TypedType::Option(Box::new(TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))),
+            type_params: vec![t_param.clone()],
+        });
+        
+        // list_reverse<T>
+        self.functions.insert("list_reverse".to_string(), FunctionDef {
+            params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+        });
+        
+        // list_prepend<T>
+        self.functions.insert("list_prepend".to_string(), FunctionDef {
+            params: vec![
+                ("item".to_string(), TypedType::TypeParam("T".to_string())),
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))
+            ],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+        });
+        
+        // list_append<T>
+        self.functions.insert("list_append".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("item".to_string(), TypedType::TypeParam("T".to_string()))
+            ],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+        });
+        
+        // list_concat<T>
+        self.functions.insert("list_concat".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("b".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))
+            ],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+        });
+        
+        // list_count<T>
+        self.functions.insert("list_count".to_string(), FunctionDef {
+            params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
+            return_type: TypedType::Int32,
+            type_params: vec![t_param.clone()],
+        });
+    }
+    
+    fn register_std_option(&mut self) {
+        use crate::ast::{TypeParam, TypeBound};
+        
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+        };
+        
+        // option_is_some<T>
+        self.functions.insert("option_is_some".to_string(), FunctionDef {
+            params: vec![("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))))],
+            return_type: TypedType::Boolean,
+            type_params: vec![t_param.clone()],
+        });
+        
+        // option_is_none<T>
+        self.functions.insert("option_is_none".to_string(), FunctionDef {
+            params: vec![("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))))],
+            return_type: TypedType::Boolean,
+            type_params: vec![t_param.clone()],
+        });
+        
+        // option_unwrap_or<T>
+        self.functions.insert("option_unwrap_or".to_string(), FunctionDef {
+            params: vec![
+                ("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("default".to_string(), TypedType::TypeParam("T".to_string()))
+            ],
+            return_type: TypedType::TypeParam("T".to_string()),
+            type_params: vec![t_param.clone()],
+        });
+    }
+    
+    fn register_std_io(&mut self) {
+        // print function
+        self.functions.insert("print".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+        });
+        
+        // print_int function
+        self.functions.insert("print_int".to_string(), FunctionDef {
+            params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+        });
+        
+        // print_float function
+        self.functions.insert("print_float".to_string(), FunctionDef {
+            params: vec![("f".to_string(), TypedType::Float64)],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+        });
+        
+        // eprint function
+        self.functions.insert("eprint".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+        });
+        
+        // eprintln function
+        self.functions.insert("eprintln".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+        });
+    }
+    
+    fn register_std_prelude(&mut self) {
+        use crate::ast::{TypeParam, TypeBound};
+        
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+        };
+        
+        // identity<T>
+        self.functions.insert("identity".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
+            return_type: TypedType::TypeParam("T".to_string()),
+            type_params: vec![t_param.clone()],
+        });
+        
+        // not function
+        self.functions.insert("not".to_string(), FunctionDef {
+            params: vec![("b".to_string(), TypedType::Boolean)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+        });
+        
+        // and function
+        self.functions.insert("and".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Boolean),
+                ("b".to_string(), TypedType::Boolean)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+        });
+        
+        // or function
+        self.functions.insert("or".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Boolean),
+                ("b".to_string(), TypedType::Boolean)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+        });
+        
+        // panic function
+        self.functions.insert("panic".to_string(), FunctionDef {
+            params: vec![("message".to_string(), TypedType::String)],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+        });
+        
+        // assert function
+        self.functions.insert("assert".to_string(), FunctionDef {
+            params: vec![
+                ("condition".to_string(), TypedType::Boolean),
+                ("message".to_string(), TypedType::String)
+            ],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+        });
     }
     
     fn push_scope(&mut self) {

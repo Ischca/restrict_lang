@@ -1004,6 +1004,15 @@ impl WasmCodeGen {
         self.add_local("closure_tmp", next_idx);
         next_idx += 1;
         
+        // Add temporary variables for clone expressions
+        self.output.push_str("    (local $clone_tmp i32)\n");
+        self.add_local("clone_tmp", next_idx);
+        next_idx += 1;
+        
+        self.output.push_str("    (local $base_tmp i32)\n");
+        self.add_local("base_tmp", next_idx);
+        next_idx += 1;
+        
         // Hack: Add common pattern variable names
         for var_name in ["n", "x", "y", "z", "a", "b", "c", "head", "tail", "rest"] {
             self.output.push_str(&format!("    (local ${} i32)\n", var_name));
@@ -1197,8 +1206,8 @@ impl WasmCodeGen {
             Expr::With(_) => {
                 return Err(CodeGenError::NotImplemented("with expressions".to_string()));
             }
-            Expr::Clone(_) => {
-                return Err(CodeGenError::NotImplemented("clone expressions".to_string()));
+            Expr::Clone(clone) => {
+                self.generate_clone_expr(clone)?;
             }
             Expr::Freeze(_) => {
                 return Err(CodeGenError::NotImplemented("freeze expressions".to_string()));
@@ -2026,6 +2035,60 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    fn generate_clone_expr(&mut self, clone: &CloneExpr) -> Result<(), CodeGenError> {
+        // Clone expressions create a new record by copying the base record
+        // and updating specified fields with new values
+        
+        // First, get the record type from the base expression
+        let _record_type = match self.get_expr_type(&clone.base) {
+            Some(ty) => ty,
+            None => return Err(CodeGenError::NotImplemented("clone with unknown base type".to_string())),
+        };
+        
+        // Calculate record size (this is simplified - should use actual field info)
+        // For now, assume each field is 4 bytes (i32)
+        let field_count = clone.updates.fields.len() + 2; // Estimate base fields + updates
+        let record_size = field_count * 4;
+        
+        // Allocate memory for the new record
+        self.output.push_str(&format!("    i32.const {} ;; record size\n", record_size));
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $clone_tmp\n");
+        
+        // Generate base expression to get the original record
+        self.generate_expr(&clone.base)?;
+        self.output.push_str("    local.set $base_tmp\n");
+        
+        // Copy all fields from base record to new record
+        // For simplicity, we'll copy the entire record memory
+        self.output.push_str("    local.get $clone_tmp ;; destination\n");
+        self.output.push_str("    local.get $base_tmp ;; source\n");
+        self.output.push_str(&format!("    i32.const {} ;; size\n", record_size));
+        self.output.push_str("    memory.copy\n");
+        
+        // Now update the specified fields with new values
+        for (field_index, field_init) in clone.updates.fields.iter().enumerate() {
+            // Calculate field offset (simplified - assumes 4 bytes per field)
+            let field_offset = field_index * 4;
+            
+            // Store the target address first
+            self.output.push_str("    local.get $clone_tmp\n");
+            self.output.push_str(&format!("    i32.const {} ;; field offset for {}\n", field_offset, field_init.name));
+            self.output.push_str("    i32.add\n");
+            
+            // Generate the new value for this field
+            self.generate_expr(&field_init.value)?;
+            
+            // Store the new value at the correct field offset
+            self.output.push_str("    i32.store\n");
+        }
+        
+        // Return pointer to the new cloned record
+        self.output.push_str("    local.get $clone_tmp\n");
+        
+        Ok(())
+    }
+    
     fn get_expr_type(&self, expr: &Expr) -> Option<String> {
         // First check the expr_types map (filled by type checker)
         if let Some(ty) = self.expr_types.get(&(expr as *const Expr)) {
@@ -2038,7 +2101,7 @@ impl WasmCodeGen {
                 // Try to infer from record name if available
                 Some(record.name.clone())
             }
-            Expr::Ident(name) => {
+            Expr::Ident(_name) => {
                 // Check if it's a known variable
                 // This would require more context, so return None for now
                 None

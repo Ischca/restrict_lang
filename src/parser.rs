@@ -62,7 +62,13 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
     let (input, fields) = many0(field_decl)(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
-    Ok((input, RecordDecl { name, fields }))
+    Ok((input, RecordDecl { 
+        name, 
+        fields, 
+        frozen: false, 
+        sealed: false, 
+        parent_hash: None 
+    }))
 }
 
 fn param(input: &str) -> ParseResult<Param> {
@@ -170,7 +176,7 @@ fn type_param(input: &str) -> ParseResult<TypeParam> {
     })(input)?;
     
     let bounds = bounds.unwrap_or_default();
-    Ok((input, TypeParam { name, bounds }))
+    Ok((input, TypeParam { name, bounds, derivation_bound: None }))
 }
 
 #[allow(dead_code)]

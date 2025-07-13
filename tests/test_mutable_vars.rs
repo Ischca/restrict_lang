@@ -16,9 +16,8 @@ fn compile(source: &str) -> Result<String, String> {
 }
 
 #[test]
-#[ignore = "Parser issue with OSV syntax"]
 fn test_simple_mutable_binding() {
-    let input = "fun test = { mut val x = 5 val result = x result }";
+    let input = "fun test = { mut val x = 5; val result = x; result }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("local.get"));
 }
@@ -35,11 +34,10 @@ fn test_mutable_reassignment() {
 }
 
 #[test]
-#[ignore = "Type checker not catching immutable reassignment"]
 fn test_immutable_reassignment_error() {
     let input = r#"fun test = {
-    val x = 5
-    x = 10
+    val x = 5;
+    x = 10;
     x
 }"#;
     let result = compile(input);
@@ -48,7 +46,7 @@ fn test_immutable_reassignment_error() {
     }
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.contains("ImmutableReassignment") || err.contains("cannot reassign immutable"), 
+    assert!(err.contains("ImmutableReassignment") || err.contains("Cannot reassign to immutable"), 
             "Expected immutable reassignment error but got: {}", err);
 }
 

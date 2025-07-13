@@ -7,6 +7,8 @@ pub mod test_framework;
 pub mod debug_visualizer;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev_tools;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lsp;
 pub mod web;
 
 pub use lexer::*;

@@ -1,5 +1,9 @@
 # Restrict Language Extension for Visual Studio Code
 
+<div align="center">
+  <img src="https://raw.githubusercontent.com/restrict-lang/restrict_lang/master/vscode-extension/images/icon.png" alt="Restrict Language Logo" width="128" height="128">
+</div>
+
 This extension provides rich language support for Restrict Language (.rl files) in Visual Studio Code.
 
 ## Features
@@ -51,7 +55,9 @@ Quick insertion of common Restrict Language patterns:
 
 ## Requirements
 
-- **Restrict Language Compiler**: You need the `restrict_lang` compiler installed and available in your PATH
+- **Restrict Language Compiler**: The `restrict_lang` compiler must be installed and available in your system PATH
+  - You can verify this by running: `restrict_lang --version`
+  - If not in PATH, configure the compiler path in VS Code settings (see Configuration section)
 - **Node.js**: Required for extension development (if building from source)
 - **TypeScript**: Required for extension development (if building from source)
 
@@ -69,7 +75,9 @@ The extension can be configured through VS Code settings:
 
 ### Settings
 
-- `restrict.compilerPath`: Path to the Restrict Language compiler (default: "restrict_lang")
+- `restrict.compilerPath`: Path to the Restrict Language compiler (default: empty, uses "restrict_lang" from PATH)
+  - Leave empty to use `restrict_lang` from system PATH
+  - Set to full path if compiler is not in PATH (e.g., "/usr/local/bin/restrict_lang")
 - `restrict.enableTypeChecking`: Enable automatic type checking on save (default: true)
 - `restrict.showWarnings`: Show compiler warnings in problems panel (default: true)
 

@@ -1,12 +1,17 @@
 {
     "name": "restrict-language",
     "displayName": "Restrict Language",
-    "description": "Language support for Restrict Language (.rl files)",
+    "description": "Language support for Restrict Language - A functional programming language with affine types for WebAssembly",
     "version": "0.1.0",
     "publisher": "restrict-lang",
+    "icon": "images/icon.png",
     "repository": {
         "type": "git",
-        "url": "https://github.com/your-username/restrict_lang"
+        "url": "https://github.com/restrict-lang/restrict_lang"
+    },
+    "homepage": "https://github.com/restrict-lang/restrict_lang#readme",
+    "bugs": {
+        "url": "https://github.com/restrict-lang/restrict_lang/issues"
     },
     "engines": {
         "vscode": "^1.74.0"
@@ -21,7 +26,12 @@
         "webassembly",
         "affine types"
     ],
-    "activationEvents": [],
+    "activationEvents": [
+        "onLanguage:restrict",
+        "onCommand:restrict.compile",
+        "onCommand:restrict.typeCheck",
+        "onCommand:restrict.showAST"
+    ],
     "main": "./out/extension.js",
     "contributes": {
         "languages": [
@@ -175,14 +185,21 @@
                 "path": "./themes/restrict-light.json"
             }
         ],
+        "iconThemes": [
+            {
+                "id": "restrict-icons",
+                "label": "Restrict File Icons",
+                "path": "./icons/restrict-icon-theme.json"
+            }
+        ],
         "configuration": {
             "type": "object",
             "title": "Restrict Language",
             "properties": {
                 "restrict.compilerPath": {
                     "type": "string",
-                    "default": "restrict_lang",
-                    "description": "Path to the Restrict Language compiler"
+                    "default": "",
+                    "description": "Path to the Restrict Language compiler (leave empty to use 'restrict_lang' from PATH)"
                 },
                 "restrict.enableTypeChecking": {
                     "type": "boolean",
@@ -210,14 +227,17 @@
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./"
+        "watch": "tsc -watch -p ./",
+        "package": "vsce package",
+        "publish": "vsce publish"
     },
     "dependencies": {
         "vscode-languageclient": "^8.1.0"
     },
     "devDependencies": {
-        "@types/vscode": "^1.74.0",
         "@types/node": "16.x",
+        "@types/vscode": "^1.74.0",
+        "sharp": "^0.34.3",
         "typescript": "^4.9.4"
     }
 }

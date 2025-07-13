@@ -5,21 +5,39 @@ import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, Er
 let client: LanguageClient;
 
 export function activateLanguageServer(context: vscode.ExtensionContext) {
-    // The server is implemented in Rust and should be built as a separate binary
+    // Check if LSP is enabled in configuration
     const config = vscode.workspace.getConfiguration('restrict');
+    const enableLSP = config.get('enableLSP', true);
+    
+    if (!enableLSP) {
+        console.log('Language Server Protocol is disabled in configuration');
+        return;
+    }
+
+    // The server is implemented in Rust and should be built as a separate binary
     let serverPath = config.get('languageServerPath') as string;
     
     if (!serverPath) {
-        // Try to find the language server in common locations
-        const possiblePaths = [
-            'restrict_lsp',
-            'restrict-lsp',
-            './target/release/restrict_lsp',
-            '../target/release/restrict_lsp'
-        ];
-        
         // For now, we'll use the compiler with LSP mode
-        serverPath = config.get('compilerPath', 'restrict_lang');
+        const defaultCompilerPath = path.resolve(__dirname, '..', '..', 'target', 'release', 'restrict_lang');
+        serverPath = config.get('compilerPath') as string;
+        
+        // If no config value or it's the default relative path, use our resolved absolute path
+        if (!serverPath || serverPath === '../target/release/restrict_lang') {
+            serverPath = defaultCompilerPath;
+        }
+    }
+    
+    // If the path is relative, resolve it from the workspace root (not the extension directory)
+    if (!path.isAbsolute(serverPath)) {
+        serverPath = path.resolve(__dirname, '..', '..', serverPath);
+    }
+
+    // Check if the server binary exists
+    if (!require('fs').existsSync(serverPath)) {
+        console.warn(`Language server binary not found at: ${serverPath}`);
+        vscode.window.showWarningMessage(`Restrict Language Server not found at ${serverPath}. LSP features will be unavailable.`);
+        return;
     }
 
     // Server options - how to start the language server
@@ -49,6 +67,12 @@ export function activateLanguageServer(context: vscode.ExtensionContext) {
 
         // Output channel for LSP communication debugging
         outputChannel: vscode.window.createOutputChannel('Restrict Language Server'),
+        
+        // Disable automatic command registration to avoid conflicts
+        initializationOptions: {
+            registerCommands: false
+        },
+
 
         // Error handling
         errorHandler: {
@@ -75,13 +99,22 @@ export function activateLanguageServer(context: vscode.ExtensionContext) {
         clientOptions
     );
 
-    // Register custom LSP commands
-    registerLSPCommands(context);
-
-    // Start the client (and server)
-    client.start().catch(error => {
+    // Start the client (and server) first
+    client.start().then(() => {
+        // Register custom LSP commands after the client has started
+        registerLSPCommands(context);
+        console.log('Language Server started successfully');
+    }).catch(error => {
         console.error('Failed to start language server:', error);
-        vscode.window.showErrorMessage(`Failed to start Restrict Language Server: ${error.message}`);
+        
+        // Check if it's a command registration conflict
+        if (error.message && error.message.includes('already exists')) {
+            console.warn('Command registration conflict detected - LSP may have conflicting commands');
+            // Don't show error to user, just log it
+            console.log('Continuing with existing command registrations');
+        } else {
+            vscode.window.showErrorMessage(`Failed to start Restrict Language Server: ${error.message}`);
+        }
     });
 
     // Register for disposal
@@ -96,6 +129,7 @@ export function deactivateLanguageServer(): Thenable<void> | undefined {
 }
 
 function registerLSPCommands(context: vscode.ExtensionContext) {
+    // These are additional LSP-specific commands that don't conflict with the main commands
     // Go to definition
     const gotoDefinition = vscode.commands.registerCommand('restrict.gotoDefinition', async () => {
         const editor = vscode.window.activeTextEditor;

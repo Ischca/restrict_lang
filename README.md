@@ -1,4 +1,17 @@
-## Restrict Language ― 仕様書
+<div align="center">
+  <img src="assets/logo.svg" alt="Restrict Language Logo" width="200" height="200">
+  
+  # Restrict Language
+  
+  **A functional programming language with affine types for WebAssembly**
+  
+  [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+  [![WASM](https://img.shields.io/badge/target-WebAssembly-orange.svg)](https://webassembly.org/)
+</div>
+
+---
+
+## 仕様書
 
 *2025-07-10*
 

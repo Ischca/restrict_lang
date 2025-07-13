@@ -34,6 +34,8 @@ pub enum Token {
     None,
     Import,
     Export,
+    Sealed,         // sealed
+    From,           // from
     
     // Identifiers and Literals
     Ident(String),
@@ -104,6 +106,8 @@ impl fmt::Display for Token {
             Token::None => write!(f, "None"),
             Token::Import => write!(f, "import"),
             Token::Export => write!(f, "export"),
+            Token::Sealed => write!(f, "sealed"),
+            Token::From => write!(f, "from"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::IntLit(n) => write!(f, "{}", n),
             Token::FloatLit(n) => write!(f, "{}", n),
@@ -185,6 +189,8 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "None" => Token::None,
         "import" => Token::Import,
         "export" => Token::Export,
+        "sealed" => Token::Sealed,
+        "from" => Token::From,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))

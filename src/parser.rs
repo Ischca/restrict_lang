@@ -62,11 +62,24 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
     let (input, fields) = many0(field_decl)(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
+    
+    // Check for freeze keyword
+    let (input, frozen) = opt(|input| {
+        expect_token(Token::Freeze)(input)
+    })(input)?;
+    let frozen = frozen.is_some();
+    
+    // Check for sealed keyword (can appear after freeze)
+    let (input, sealed) = opt(|input| {
+        expect_token(Token::Sealed)(input)
+    })(input)?;
+    let sealed = sealed.is_some();
+    
     Ok((input, RecordDecl { 
         name, 
         fields, 
-        frozen: false, 
-        sealed: false, 
+        frozen, 
+        sealed, 
         parent_hash: None 
     }))
 }
@@ -159,11 +172,18 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     Ok((input, FunDecl { name, type_params, params, body }))
 }
 
-// Parse a type parameter with optional bounds: T: Display + Clone
+// Parse a type parameter with optional bounds: T: Display + Clone and derivation bound: T from ParentType
 fn type_param(input: &str) -> ParseResult<TypeParam> {
     let (input, name) = ident(input)?;
     
-    // Parse optional bounds: : Display + Clone + Debug
+    // Parse optional derivation bound: from ParentType
+    let (input, derivation_bound) = opt(|input| {
+        let (input, _) = expect_token(Token::From)(input)?;
+        let (input, parent_name) = ident(input)?;
+        Ok((input, parent_name))
+    })(input)?;
+    
+    // Parse optional trait bounds: : Display + Clone + Debug
     let (input, bounds) = opt(|input| {
         let (input, _) = expect_token(Token::Colon)(input)?;
         separated_list1(
@@ -176,7 +196,7 @@ fn type_param(input: &str) -> ParseResult<TypeParam> {
     })(input)?;
     
     let bounds = bounds.unwrap_or_default();
-    Ok((input, TypeParam { name, bounds, derivation_bound: None }))
+    Ok((input, TypeParam { name, bounds, derivation_bound }))
 }
 
 #[allow(dead_code)]
@@ -271,6 +291,7 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         lambda_expr,  // Try lambda before other expressions that use |
         some_expr,  // Try Some before other expressions
         none_expr,  // Try None before ident
+        prototype_clone_expr,  // Try prototype clone before record
         array_lit,  // Try array literal before list
         list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
@@ -786,6 +807,35 @@ fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
     Ok((input, Stmt::Assignment(AssignStmt {
         name,
         value: Box::new(value)
+    })))
+}
+
+// Parse prototype clone expression: ParentType.clone { field: value } [freeze] [sealed]
+fn prototype_clone_expr(input: &str) -> ParseResult<Expr> {
+    let (input, base_name) = ident(input)?;
+    let (input, _) = expect_token(Token::Dot)(input)?;
+    let (input, _) = expect_token(Token::Clone)(input)?;
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+    let (input, fields) = many0(field_init)(input)?;
+    let (input, _) = expect_token(Token::RBrace)(input)?;
+    
+    // Check for freeze keyword
+    let (input, freeze_immediately) = opt(|input| {
+        expect_token(Token::Freeze)(input)
+    })(input)?;
+    let freeze_immediately = freeze_immediately.is_some();
+    
+    // Check for sealed keyword
+    let (input, sealed) = opt(|input| {
+        expect_token(Token::Sealed)(input)
+    })(input)?;
+    let sealed = sealed.is_some();
+    
+    Ok((input, Expr::PrototypeClone(PrototypeCloneExpr {
+        base: base_name.clone(),
+        updates: RecordLit { name: base_name, fields },
+        freeze_immediately,
+        sealed,
     })))
 }
 

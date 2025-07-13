@@ -1013,6 +1013,11 @@ impl WasmCodeGen {
         self.add_local("base_tmp", next_idx);
         next_idx += 1;
         
+        // Add temporary variable for freeze expressions
+        self.output.push_str("    (local $freeze_tmp i32)\n");
+        self.add_local("freeze_tmp", next_idx);
+        next_idx += 1;
+        
         // Hack: Add common pattern variable names
         for var_name in ["n", "x", "y", "z", "a", "b", "c", "head", "tail", "rest"] {
             self.output.push_str(&format!("    (local ${} i32)\n", var_name));
@@ -1209,8 +1214,8 @@ impl WasmCodeGen {
             Expr::Clone(clone) => {
                 self.generate_clone_expr(clone)?;
             }
-            Expr::Freeze(_) => {
-                return Err(CodeGenError::NotImplemented("freeze expressions".to_string()));
+            Expr::Freeze(expr) => {
+                self.generate_freeze_expr(expr)?;
             }
             Expr::None => {
                 // None is represented as 0
@@ -2085,6 +2090,55 @@ impl WasmCodeGen {
         
         // Return pointer to the new cloned record
         self.output.push_str("    local.get $clone_tmp\n");
+        
+        Ok(())
+    }
+    
+    fn generate_freeze_expr(&mut self, expr: &Expr) -> Result<(), CodeGenError> {
+        // Freeze expressions create a frozen copy of a record
+        // In our implementation, we'll add a "frozen" flag at the beginning of the record
+        
+        // Generate the expression to get the record to freeze
+        self.generate_expr(expr)?;
+        self.output.push_str("    local.set $freeze_tmp\n");
+        
+        // For simplicity, we'll assume the record layout is:
+        // [frozen_flag: i32][field1: i32][field2: i32]...
+        // If the record is already frozen, just return it
+        
+        // Check if already frozen (first 4 bytes should be 1 if frozen)
+        self.output.push_str("    local.get $freeze_tmp\n");
+        self.output.push_str("    i32.load ;; load frozen flag\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; Already frozen, return as-is\n");
+        self.output.push_str("        local.get $freeze_tmp\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Not frozen, create frozen copy\n");
+        
+        // Estimate record size (simplified)
+        let record_size = 20; // Assume 5 fields * 4 bytes each
+        
+        // Allocate new record
+        self.output.push_str(&format!("        i32.const {} ;; record size\n", record_size));
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.tee $clone_tmp\n");
+        
+        // Copy the entire record
+        self.output.push_str("        local.get $freeze_tmp ;; source\n");
+        self.output.push_str(&format!("        i32.const {} ;; size\n", record_size));
+        self.output.push_str("        memory.copy\n");
+        
+        // Set frozen flag to 1
+        self.output.push_str("        local.get $clone_tmp\n");
+        self.output.push_str("        i32.const 1 ;; frozen flag\n");
+        self.output.push_str("        i32.store\n");
+        
+        // Return the frozen record
+        self.output.push_str("        local.get $clone_tmp\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
         
         Ok(())
     }

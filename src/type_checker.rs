@@ -280,7 +280,7 @@ impl TypeChecker {
             // Store derivation bound for later checking
             if let Some(ref parent_type) = param.derivation_bound {
                 // Add derivation bound as a special constraint
-                let mut derivation_bounds = type_bounds_scope.entry(param.name.clone()).or_insert_with(Vec::new);
+                let derivation_bounds = type_bounds_scope.entry(param.name.clone()).or_insert_with(Vec::new);
                 derivation_bounds.push(format!("__derivation_from:{}", parent_type));
             }
         }

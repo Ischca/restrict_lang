@@ -291,7 +291,6 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         lambda_expr,  // Try lambda before other expressions that use |
         some_expr,  // Try Some before other expressions
         none_expr,  // Try None before ident
-        prototype_clone_expr,  // Try prototype clone before record
         array_lit,  // Try array literal before list
         list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
@@ -751,14 +750,23 @@ pub fn simple_expr(input: &str) -> ParseResult<Expr> {
                     )(new_input)?;
                     let (new_input, _) = expect_token(Token::RBrace)(new_input)?;
                     
-                    expr = Expr::Clone(CloneExpr {
+                    let mut clone_expr = Expr::Clone(CloneExpr {
                         base: Box::new(expr),
                         updates: RecordLit {
                             name: String::new(),
                             fields
                         }
                     });
-                    input = new_input;
+                    
+                    // Check if freeze follows the clone
+                    if let Ok((freeze_input, _)) = expect_token::<'_>(Token::Freeze)(new_input) {
+                        clone_expr = Expr::Freeze(Box::new(clone_expr));
+                        input = freeze_input;
+                    } else {
+                        input = new_input;
+                    }
+                    
+                    expr = clone_expr;
                 } else {
                     // Regular field access
                     let (new_input, field) = ident(new_input)?;

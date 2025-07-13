@@ -16,4 +16,10 @@ pub use lexer::*;
 pub use ast::*;
 pub use parser::*;
 pub use type_checker::*;
-pub use codegen::*;
+pub use codegen::{WasmCodeGen, CodeGenError};
+
+// Legacy convenience function for tests
+pub fn generate(program: &Program) -> Result<String, CodeGenError> {
+    let mut codegen = WasmCodeGen::new();
+    codegen.generate(program)
+}

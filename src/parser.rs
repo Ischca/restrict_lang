@@ -135,12 +135,12 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
     
-    // Parse optional generic type parameters: <T, U, V>
+    // Parse optional generic type parameters: <T: Display, U: Clone + Debug>
     let (input, type_params) = opt(|input| {
         let (input, _) = expect_token(Token::Lt)(input)?;
         let (input, params) = separated_list1(
             expect_token(Token::Comma),
-            ident
+            type_param
         )(input)?;
         let (input, _) = expect_token(Token::Gt)(input)?;
         Ok((input, params))
@@ -151,6 +151,26 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, params) = many0(param)(input)?;
     let (input, body) = block_expr(input)?;
     Ok((input, FunDecl { name, type_params, params, body }))
+}
+
+// Parse a type parameter with optional bounds: T: Display + Clone
+fn type_param(input: &str) -> ParseResult<TypeParam> {
+    let (input, name) = ident(input)?;
+    
+    // Parse optional bounds: : Display + Clone + Debug
+    let (input, bounds) = opt(|input| {
+        let (input, _) = expect_token(Token::Colon)(input)?;
+        separated_list1(
+            expect_token(Token::Plus), // + for trait bounds
+            |input| {
+                let (input, trait_name) = ident(input)?;
+                Ok((input, TypeBound { trait_name }))
+            }
+        )(input)
+    })(input)?;
+    
+    let bounds = bounds.unwrap_or_default();
+    Ok((input, TypeParam { name, bounds }))
 }
 
 #[allow(dead_code)]

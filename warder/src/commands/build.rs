@@ -56,7 +56,8 @@ pub async fn build_project(
     let wasm_output = build_dir.join(format!("{}.wasm", output_name));
     
     // Call restrict_lang compiler
-    let mut cmd = Command::new("restrict_lang");
+    let compiler = std::env::var("RESTRICT_LANG_BIN").unwrap_or_else(|_| "restrict_lang".to_string());
+    let mut cmd = Command::new(compiler);
     cmd.arg(&entry_path)
         .arg(&wasm_output);
     

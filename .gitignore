@@ -1,7 +1,10 @@
 /target
 
-# Generated WAT files
+# Generated files
 test/*.wat
+examples/*.wat
+*.wat
+output.txt
 
 # Editor files
 .vscode/
@@ -9,3 +12,31 @@ test/*.wat
 
 # OS files
 .DS_Store
+
+# Documentation build artifacts
+/docs/book/
+
+# VS Code extension build artifacts
+/vscode-extension/out/
+/vscode-extension/node_modules/
+/vscode-extension/*.vsix
+
+# Web build artifacts  
+/web/pkg/
+
+# Test projects
+/test-projects/
+/test-warden/
+/test-warder-project/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Local setup scripts
+setup-local.sh
+
+# Debug files
+test_debug.rs

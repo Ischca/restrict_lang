@@ -1,9 +1,0 @@
-# Restrict Language
-/dist/
-/.restrict-cache/
-restrict-lock.toml
-
-# Editor
-.vscode/
-.idea/
-*.swp

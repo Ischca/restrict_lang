@@ -1,3 +1,30 @@
+//! # Parser Module
+//!
+//! The parser transforms a stream of tokens into an Abstract Syntax Tree (AST).
+//! It implements Restrict Language's unique OSV (Object-Subject-Verb) syntax
+//! and handles affine type constraints during parsing.
+//!
+//! ## Key Features
+//!
+//! - **OSV Syntax**: Natural handling of pipe operators (`|>`, `|>>`)
+//! - **Pattern Matching**: Comprehensive pattern support including list patterns
+//! - **Generic Functions**: Type parameters with bounds and derivation constraints
+//! - **Prototype System**: Parsing of `clone` and `freeze` operations
+//!
+//! ## Example
+//!
+//! ```rust
+//! use restrict_lang::parser::parse_program;
+//!
+//! let input = r#"
+//!     fn main() {
+//!         "Hello, World!" |> println;
+//!     }
+//! "#;
+//! 
+//! let ast = parse_program(input).unwrap();
+//! ```
+
 use nom::{
     IResult,
     branch::alt,
@@ -8,8 +35,12 @@ use nom::{
 use crate::lexer::{Token, lex_token, skip};
 use crate::ast::*;
 
+/// Type alias for parser results.
 type ParseResult<'a, T> = IResult<&'a str, T>;
 
+/// Expects a specific token and consumes it.
+/// 
+/// Returns an error if the next token doesn't match.
 fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> {
     move |input| {
         let (input, token) = lex_token(input)?;
@@ -21,6 +52,13 @@ fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> 
     }
 }
 
+/// Parses an identifier.
+/// 
+/// # Example
+/// 
+/// ```
+/// // Parses: myVariable, userName, _private
+/// ```
 fn ident(input: &str) -> ParseResult<String> {
     let (input, token) = lex_token(input)?;
     match token {
@@ -29,6 +67,16 @@ fn ident(input: &str) -> ParseResult<String> {
     }
 }
 
+/// Parses a type expression.
+/// 
+/// Handles both simple types and generic types.
+/// 
+/// # Examples
+/// 
+/// ```
+/// // Simple types: i32, String, Point
+/// // Generic types: Vec<i32>, Map<String, Value>
+/// ```
 fn parse_type(input: &str) -> ParseResult<Type> {
     let (input, name) = ident(input)?;
     let (input, generics) = opt(

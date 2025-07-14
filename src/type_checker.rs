@@ -1,51 +1,95 @@
+//! # Type Checker Module
+//!
+//! Implements the affine type system for Restrict Language, ensuring memory safety
+//! without garbage collection. The type checker enforces that each value is used
+//! at most once, preventing use-after-free and double-free bugs.
+//!
+//! ## Key Features
+//!
+//! - **Affine Types**: Each binding can be used at most once
+//! - **Type Inference**: Bidirectional type checking with inference
+//! - **Generics**: Monomorphization of generic functions
+//! - **Prototype Checking**: Validates clone/freeze operations
+//! - **Pattern Exhaustiveness**: Ensures all cases are handled
+//!
+//! ## Example
+//!
+//! ```rust
+//! use restrict_lang::type_checker::TypeChecker;
+//! use restrict_lang::parser::parse_program;
+//!
+//! let program = parse_program(source).unwrap();
+//! let mut checker = TypeChecker::new();
+//! checker.check_program(&program)?;
+//! ```
+
 use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use thiserror::Error;
 
+/// Type checking errors.
+/// 
+/// These errors are designed to provide clear, actionable feedback
+/// about type system violations.
 #[derive(Debug, Error, PartialEq)]
 pub enum TypeError {
+    /// Variable not found in scope
     #[error("Undefined variable: {0}")]
     UndefinedVariable(String),
     
+    /// Type mismatch between expected and actual
     #[error("Type mismatch: expected {expected}, found {found}")]
     TypeMismatch { expected: String, found: String },
     
+    /// Attempt to use a value that has already been consumed
     #[error("Variable {0} has already been used (affine type violation)")]
     AffineViolation(String),
     
+    /// Attempt to mutate an immutable binding
     #[error("Cannot reassign to immutable variable {0}")]
     ImmutableReassignment(String),
     
+    /// Type name not found
     #[error("Unknown type: {0}")]
     UnknownType(String),
     
+    /// Field not found in record
     #[error("Unknown field {field} in record {record}")]
     UnknownField { record: String, field: String },
     
+    /// Attempt to clone a frozen (immutable) record
     #[error("Cannot clone a frozen record")]
     CloneFrozenRecord,
     
+    /// Attempt to freeze an already frozen record
     #[error("Cannot freeze an already frozen record")]
     FreezeAlreadyFrozen,
     
+    /// Record type not found
     #[error("Record {0} is not defined")]
     UndefinedRecord(String),
     
+    /// Function not found
     #[error("Function {0} is not defined")]
     UndefinedFunction(String),
     
+    /// Wrong number of function arguments
     #[error("Wrong number of arguments: expected {expected}, found {found}")]
     ArityMismatch { expected: usize, found: usize },
     
+    /// Context not available in current scope
     #[error("Context {0} is not available in this scope")]
     UnavailableContext(String),
     
+    /// Feature not yet implemented
     #[error("Unsupported feature: {0}")]
     UnsupportedFeature(String),
     
+    /// Type derivation constraint not satisfied
     #[error("Type {0} is not derived from {1}")]
     NotDerivedFrom(String, String),
     
+    /// Attempt to clone a sealed prototype
     #[error("Cannot clone sealed prototype {0}")]
     CannotCloneSealed(String),
     

@@ -1,3 +1,26 @@
+//! # Lexer Module
+//!
+//! The lexer tokenizes Restrict Language source code using the nom parser combinator library.
+//! It handles the unique OSV syntax, including the pipe operator `|>`, and supports
+//! affine type annotations and prototype-based features.
+//!
+//! ## Token Categories
+//!
+//! - **Keywords**: Language reserved words (`fn`, `let`, `clone`, `freeze`, etc.)
+//! - **Operators**: Including the distinctive pipe operators (`|>`, `|>>`)
+//! - **Literals**: Numbers, strings, characters, booleans
+//! - **Identifiers**: Variable and function names
+//! - **Delimiters**: Parentheses, braces, brackets
+//!
+//! ## Example
+//!
+//! ```rust
+//! use restrict_lang::lexer::tokenize;
+//!
+//! let input = r#""Hello, World!" |> println;"#;
+//! let tokens = tokenize(input).unwrap();
+//! ```
+
 use nom::{
     IResult,
     branch::alt,
@@ -9,45 +32,80 @@ use nom::{
 };
 use std::fmt;
 
+/// Token types in Restrict Language.
+/// 
+/// Each token represents a lexical unit in the source code.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Keywords
+    /// `record` keyword for type declarations
     Record,
+    /// `clone` keyword for cloning values
     Clone,
+    /// `freeze` keyword for creating immutable prototypes
     Freeze,
+    /// `impl` keyword for implementation blocks
     Impl,
+    /// `context` keyword for context declarations
     Context,
+    /// `with` keyword for resource management
     With,
+    /// `fn` keyword for function declarations
     Fun,
+    /// `let` keyword for bindings
     Val,
+    /// `mut` keyword for mutable bindings
     Mut,
+    /// `if` keyword (mapped from `then`)
     Then,
+    /// `else` keyword
     Else,
+    /// `while` keyword for loops
     While,
+    /// `match` keyword for pattern matching
     Match,
+    /// `async` keyword for asynchronous functions
     Async,
+    /// `return` keyword
     Return,
+    /// `true` boolean literal
     True,
+    /// `false` boolean literal
     False,
+    /// Unit type `()`
     Unit,
+    /// `Some` variant constructor
     Some,
+    /// `None` variant constructor
     None,
+    /// `import` keyword
     Import,
+    /// `export` keyword
     Export,
-    Sealed,         // sealed
-    From,           // from
+    /// `sealed` modifier for records
+    Sealed,
+    /// `from` keyword for derivation bounds
+    From,
     
     // Identifiers and Literals
+    /// Identifier (variable/function name)
     Ident(String),
+    /// Integer literal
     IntLit(i32),
+    /// Floating-point literal
     FloatLit(f64),
+    /// String literal
     StringLit(String),
+    /// Character literal
     CharLit(char),
     
     // Operators
-    Pipe,           // |>
-    PipeMut,        // |>>
-    Bar,            // |
+    /// Pipe operator `|>` for OSV syntax
+    Pipe,
+    /// Mutable pipe operator `|>>`
+    PipeMut,
+    /// Vertical bar `|` for patterns
+    Bar,
     Assign,         // =
     Arrow,          // =>
     Plus,           // +

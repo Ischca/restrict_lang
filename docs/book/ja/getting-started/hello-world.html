@@ -1,0 +1,487 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Hello, World! - The Restrict Language Programming Guide</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../theme/restrict-lang.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "coal";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Restrict Language Programming Guide</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/restrict-lang/restrict_lang" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/restrict-lang/restrict_lang/edit/main/docs/./ja/getting-started/hello-world.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="hello-world"><a class="header" href="#hello-world">Hello, World!</a></h1>
+<p>最初のRestrict Languageプログラムを書きましょう！このチュートリアルでは、伝統的な「Hello, World!」プログラムを作成し、Restrict Languageの基本的な構文とツールに慣れていきます。</p>
+<h2 id="新しいプロジェクトの作成"><a class="header" href="#新しいプロジェクトの作成">新しいプロジェクトの作成</a></h2>
+<p>Warderパッケージマネージャーを使用して新しいプロジェクトを作成します：</p>
+<pre><code class="language-bash">warder new hello-world
+cd hello-world
+</code></pre>
+<p>これにより、基本的なプロジェクト構造が作成されます：</p>
+<pre><code>hello-world/
+├── package.rl.toml    # パッケージ設定
+├── src/
+│   └── main.rl       # メインソースファイル
+└── tests/
+    └── main_test.rl  # テストファイル
+</code></pre>
+<h2 id="コードの記述"><a class="header" href="#コードの記述">コードの記述</a></h2>
+<p><code>src/main.rl</code>を開いて、以下のコードに置き換えます：</p>
+<pre><code class="language-restrict">// 最初のRestrict Languageプログラム
+fn main() {
+    "Hello, World!" |&gt; println
+}
+</code></pre>
+<p>このシンプルなプログラムを分解してみましょう：</p>
+<ol>
+<li><code>fn main()</code> - すべてのRestrictプログラムのエントリーポイント</li>
+<li><code>"Hello, World!"</code> - 文字列リテラル</li>
+<li><code>|&gt;</code> - パイプ演算子（OSV構文の核心）</li>
+<li><code>println</code> - 標準出力に出力する関数</li>
+</ol>
+<h2 id="プログラムの実行"><a class="header" href="#プログラムの実行">プログラムの実行</a></h2>
+<p>プログラムを実行するには：</p>
+<pre><code class="language-bash">warder run
+</code></pre>
+<p>以下の出力が表示されるはずです：</p>
+<pre><code>Hello, World!
+</code></pre>
+<h2 id="osv構文の理解"><a class="header" href="#osv構文の理解">OSV構文の理解</a></h2>
+<p>Restrict Languageは、日本語の文法に触発されたObject-Subject-Verb（OSV）の語順を使用します。従来のプログラミング言語との比較：</p>
+<pre><code class="language-restrict">// Restrict Language (OSV)
+"Hello, World!" |&gt; println
+
+// 従来のスタイル (SVO)
+// println("Hello, World!")
+</code></pre>
+<p>データが左から右に流れ、変換のチェーンが視覚的に明確になります。</p>
+<h2 id="プログラムの拡張"><a class="header" href="#プログラムの拡張">プログラムの拡張</a></h2>
+<p>より興味深いものにしてみましょう：</p>
+<pre><code class="language-restrict">fn main() {
+    // 名前を定義
+    let name = "Restrict"
+    
+    // 文字列を連結して出力
+    "Hello, " ++ name ++ "!" |&gt; println
+    
+    // 複数の操作をチェーン
+    name
+        |&gt; toUpperCase
+        |&gt; println
+}
+</code></pre>
+<h2 id="ユーザー入力の追加"><a class="header" href="#ユーザー入力の追加">ユーザー入力の追加</a></h2>
+<p>対話的にしてみましょう：</p>
+<pre><code class="language-restrict">use std::io::readLine;
+
+fn main() {
+    "あなたの名前は？ " |&gt; print
+    
+    let name = readLine()
+    
+    "こんにちは、" ++ name ++ "さん！" |&gt; println
+}
+</code></pre>
+<h2 id="アフィン型の実演"><a class="header" href="#アフィン型の実演">アフィン型の実演</a></h2>
+<p>Restrict Languageのアフィン型システムは、値が最大1回しか使用できないことを保証します：</p>
+<pre><code class="language-restrict">fn main() {
+    let message = "このメッセージは一度しか使えません"
+    
+    // 最初の使用 - OK
+    message |&gt; println
+    
+    // 二回目の使用 - コンパイルエラー！
+    // message |&gt; println  // エラー: messageは既に消費されています
+    
+    // 複数回使用する必要がある場合は、cloneを使用
+    let greeting = "Hello"
+    let greeting_copy = clone greeting
+    
+    greeting |&gt; println       // OK
+    greeting_copy |&gt; println  // OK
+}
+</code></pre>
+<h2 id="関数の作成"><a class="header" href="#関数の作成">関数の作成</a></h2>
+<p>プログラムをよりモジュラーにしましょう：</p>
+<pre><code class="language-restrict">// カスタムグリーティング関数
+fn greet(name: String) {
+    "Hello, " ++ name ++ "!" |&gt; println
+}
+
+// 時刻に基づいたグリーティング
+fn greetWithTime(name: String, hour: i32) {
+    let greeting = if hour &lt; 12 {
+        "おはよう"
+    } else if hour &lt; 18 {
+        "こんにちは"
+    } else {
+        "こんばんは"
+    }
+    
+    greeting ++ "、" ++ name ++ "さん！" |&gt; println
+}
+
+fn main() {
+    "World" |&gt; greet
+    
+    "Taro" |&gt; greetWithTime(9)   // おはよう、Taroさん！
+    "Yuki" |&gt; greetWithTime(15)  // こんにちは、Yukiさん！
+    "Hana" |&gt; greetWithTime(20)  // こんばんは、Hanaさん！
+}
+</code></pre>
+<h2 id="エラー処理"><a class="header" href="#エラー処理">エラー処理</a></h2>
+<p>Restrict LanguageはResult型を使用した明示的なエラー処理を推奨します：</p>
+<pre><code class="language-restrict">use std::fs::readFile;
+
+fn readGreeting(filename: String) -&gt; Result&lt;String, String&gt; {
+    filename
+        |&gt; readFile
+        |&gt; mapErr(|e| "ファイルを読み込めませんでした: " ++ e.toString())
+}
+
+fn main() {
+    let result = "greeting.txt" |&gt; readGreeting
+    
+    match result {
+        Ok(content) =&gt; content |&gt; println,
+        Err(error) =&gt; error |&gt; println
+    }
+}
+</code></pre>
+<h2 id="webassemblyへのコンパイル"><a class="header" href="#webassemblyへのコンパイル">WebAssemblyへのコンパイル</a></h2>
+<p>WebAssemblyモジュールとしてプログラムをコンパイル：</p>
+<pre><code class="language-bash">warder build --release
+</code></pre>
+<p>これにより、<code>target/wasm32-wasi/release/hello-world.wasm</code>にWebAssemblyモジュールが作成されます。</p>
+<h2 id="テストの作成"><a class="header" href="#テストの作成">テストの作成</a></h2>
+<p><code>tests/main_test.rl</code>にテストを追加：</p>
+<pre><code class="language-restrict">use std::testing::*;
+
+#[test]
+fn test_greeting() {
+    let greeting = createGreeting("World")
+    greeting |&gt; assertEquals("Hello, World!")
+}
+
+fn createGreeting(name: String) -&gt; String {
+    "Hello, " ++ name ++ "!"
+}
+</code></pre>
+<p>テストを実行：</p>
+<pre><code class="language-bash">warder test
+</code></pre>
+<h2 id="次のステップ"><a class="header" href="#次のステップ">次のステップ</a></h2>
+<p>おめでとうございます！最初のRestrict Languageプログラムを作成しました。ここで学んだこと：</p>
+<ul>
+<li>✅ Warderでプロジェクトを作成</li>
+<li>✅ OSV構文でコードを記述</li>
+<li>✅ プログラムを実行</li>
+<li>✅ アフィン型の理解</li>
+<li>✅ 関数とエラー処理</li>
+<li>✅ WebAssemblyへのコンパイル</li>
+<li>✅ テストの記述</li>
+</ul>
+<p>次に探求すること：</p>
+<ol>
+<li><a href="../guide/osv-order.html">OSV語順ガイド</a> - パイプ演算子をマスター</li>
+<li><a href="../guide/types.html">型システム</a> - アフィン型を深く理解</li>
+<li><a href="../guide/warder.html">Warderガイド</a> - 依存関係の管理を学ぶ</li>
+</ol>
+<h2 id="演習"><a class="header" href="#演習">演習</a></h2>
+<p>理解を深めるために、以下を試してみてください：</p>
+<ol>
+<li>ユーザーから2つの数値を読み取り、その合計を出力するプログラムを作成</li>
+<li>リストの要素を処理するためにパイプ演算子を使用</li>
+<li>カスタムエラー型でエラー処理を実装</li>
+</ol>
+<details>
+<summary>演習の解答</summary>
+<pre><code class="language-restrict">use std::io::readLine;
+use std::string::parse;
+
+// 演習 1: 数値の合計
+fn exercise1() {
+    "最初の数値を入力: " |&gt; print
+    let num1 = readLine() |&gt; parse::&lt;i32&gt; |&gt; unwrap()
+    
+    "二番目の数値を入力: " |&gt; print
+    let num2 = readLine() |&gt; parse::&lt;i32&gt; |&gt; unwrap()
+    
+    let sum = num1 + num2
+    "合計: " ++ sum.toString() |&gt; println
+}
+
+// 演習 2: リストの処理
+fn exercise2() {
+    [1, 2, 3, 4, 5]
+        |&gt; map(|n| n * 2)
+        |&gt; filter(|n| n &gt; 5)
+        |&gt; forEach(|n| n.toString() |&gt; println)
+}
+
+// 演習 3: カスタムエラー処理
+enum MathError {
+    DivisionByZero,
+    Overflow
+}
+
+fn safeDivide(a: i32, b: i32) -&gt; Result&lt;i32, MathError&gt; {
+    if b == 0 {
+        Err(MathError::DivisionByZero)
+    } else {
+        Ok(a / b)
+    }
+}
+
+fn exercise3() {
+    match safeDivide(10, 0) {
+        Ok(result) =&gt; "結果: " ++ result.toString() |&gt; println,
+        Err(MathError::DivisionByZero) =&gt; "エラー: ゼロ除算" |&gt; println,
+        Err(MathError::Overflow) =&gt; "エラー: オーバーフロー" |&gt; println
+    }
+}
+</code></pre>
+</details>
+<p>楽しいコーディングを！🦀</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../ja/getting-started/installation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../ja/guide/syntax.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../ja/getting-started/installation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../ja/guide/syntax.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+
+
+        <script>
+            window.playground_line_numbers = true;
+        </script>
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+        <script src="../../ace.js"></script>
+        <script src="../../mode-rust.js"></script>
+        <script src="../../editor.js"></script>
+        <script src="../../theme-dawn.js"></script>
+        <script src="../../theme-tomorrow_night.js"></script>
+
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
+
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../theme/restrict-lang.js"></script>
+
+
+    </div>
+    </body>
+</html>

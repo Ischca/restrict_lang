@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.release.outputs.upload_url }}
+      version: ${{ env.VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      
+      - name: Get version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+      
+      - name: Create Release
+        id: release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build-release:
+    name: Build Release
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          
+          # macOS Intel
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: darwin-x86_64
+          
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: darwin-aarch64
+          
+          # Windows
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+      
+      - name: Build
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          cd warder
+          cargo build --release --target ${{ matrix.target }}
+      
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/restrict_lang dist/
+          cp warder/target/${{ matrix.target }}/release/warder dist/
+          chmod +x dist/restrict_lang dist/warder
+          cd dist
+          tar czf ../restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.tar.gz *
+      
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item target\${{ matrix.target }}\release\restrict_lang.exe dist\
+          Copy-Item warder\target\${{ matrix.target }}\release\warder.exe dist\
+          Compress-Archive -Path dist\* -DestinationPath restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.zip
+      
+      - name: Upload Release Asset (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.tar.gz
+          asset_name: restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.tar.gz
+          asset_content_type: application/gzip
+      
+      - name: Upload Release Asset (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.zip
+          asset_name: restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.zip
+          asset_content_type: application/zip
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: [create-release, build-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Homebrew Formula
+        run: |
+          # This would typically update the homebrew tap repository
+          echo "TODO: Update homebrew formula with new version and SHA256"

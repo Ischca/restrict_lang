@@ -1,52 +1,98 @@
+//! # Code Generation Module
+//!
+//! Generates WebAssembly (WASM) code from the typed AST. The code generator
+//! produces WebAssembly Text Format (WAT) which can be compiled to binary WASM.
+//!
+//! ## Key Features
+//!
+//! - **Zero GC**: Direct memory management without garbage collection
+//! - **Affine Types**: Compile-time guarantees translate to efficient runtime
+//! - **Monomorphization**: Generic functions are specialized at compile time
+//! - **Arena Allocation**: Efficient memory management for temporary values
+//! - **Lambda Support**: First-class functions with closure capture
+//!
+//! ## Memory Layout
+//!
+//! The generated WASM uses a custom memory layout:
+//! - String constants are stored in a dedicated section
+//! - Arena allocation for temporary values
+//! - Stack-based local variables
+//!
+//! ## Example
+//!
+//! ```rust
+//! use restrict_lang::codegen::WasmCodeGen;
+//! use restrict_lang::parser::parse_program;
+//!
+//! let program = parse_program(source).unwrap();
+//! let mut codegen = WasmCodeGen::new();
+//! let wat = codegen.generate(&program)?;
+//! ```
+
 use crate::ast::*;
 use std::collections::HashMap;
 use thiserror::Error;
 
+/// Code generation errors.
 #[derive(Debug, Error)]
 pub enum CodeGenError {
+    /// Variable not found in current scope
     #[error("Undefined variable: {0}")]
     UndefinedVariable(String),
     
+    /// Function not found
     #[error("Undefined function: {0}")]
     UndefinedFunction(String),
     
+    /// Type cannot be represented in WASM
     #[error("Type not supported in WASM: {0}")]
     UnsupportedType(String),
     
+    /// Feature not yet implemented
     #[error("Feature not implemented: {0}")]
     NotImplemented(String),
 }
 
-/// WebAssembly Text Format (WAT) code generator
+/// WebAssembly Text Format (WAT) code generator.
+/// 
+/// Transforms a typed AST into executable WebAssembly code.
+/// The generator handles memory management, function calls,
+/// and the unique OSV syntax of Restrict Language.
 pub struct WasmCodeGen {
-    // Variable to local index mapping
+    /// Variable to local index mapping (scoped)
     locals: Vec<HashMap<String, u32>>,
-    // Function signatures
+    /// Function signatures for type checking
     functions: HashMap<String, FunctionSig>,
-    // Method signatures: record_name -> method_name -> function_sig
+    /// Method signatures: record_name -> method_name -> function_sig
     methods: HashMap<String, HashMap<String, FunctionSig>>,
-    // String constants pool
+    /// String constants pool for deduplication
     strings: Vec<String>,
-    // String constant offsets in memory
+    /// String constant offsets in linear memory
     string_offsets: HashMap<String, u32>,
-    // Next available memory offset
+    /// Next available memory offset for allocation
     next_mem_offset: u32,
-    // Current function context
+    /// Current function being generated
     current_function: Option<String>,
-    // Generated code
+    /// Generated WAT code output
     output: String,
-    // Type information for expressions (filled by external type checker)
+    /// Type information for expressions (from type checker)
     pub expr_types: HashMap<*const Expr, String>,
-    // Arena management
-    arena_stack: Vec<u32>,  // Stack of arena start addresses
-    next_arena_addr: u32,   // Next available arena address
-    default_arena: Option<u32>, // Default arena address
-    // Lambda management
-    lambda_counter: u32,      // Counter for generating unique lambda names
-    lambda_functions: Vec<String>, // Generated lambda function definitions
-    function_table: Vec<String>,   // Function table entries
-    in_lambda_with_captures: bool, // Whether we're generating code inside a lambda with captures
-    captured_vars: Vec<String>,    // List of captured variable names
+    /// Arena management for temporary allocations
+    arena_stack: Vec<u32>,
+    /// Next available arena address
+    next_arena_addr: u32,
+    /// Default arena for global allocations
+    default_arena: Option<u32>,
+    /// Counter for generating unique lambda names
+    lambda_counter: u32,
+    /// Generated lambda function definitions
+    lambda_functions: Vec<String>,
+    /// Function table entries for indirect calls
+    function_table: Vec<String>,
+    /// Whether we're inside a lambda with captures
+    in_lambda_with_captures: bool,
+    /// List of captured variable names in current lambda
+    captured_vars: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

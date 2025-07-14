@@ -1,0 +1,678 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Syntax Reference - The Restrict Language Programming Guide</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon.svg">
+        <link rel="shortcut icon" href="../../favicon.png">
+        <link rel="stylesheet" href="../../css/variables.css">
+        <link rel="stylesheet" href="../../css/general.css">
+        <link rel="stylesheet" href="../../css/chrome.css">
+        <link rel="stylesheet" href="../../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../theme/restrict-lang.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "coal";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">The Restrict Language Programming Guide</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/restrict-lang/restrict_lang" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/restrict-lang/restrict_lang/edit/main/docs/./en/guide/syntax.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="syntax-reference"><a class="header" href="#syntax-reference">Syntax Reference</a></h1>
+<p>This guide covers the complete syntax of Restrict Language, from basic expressions to advanced features.</p>
+<h2 id="comments"><a class="header" href="#comments">Comments</a></h2>
+<pre><code class="language-restrict">// Single-line comment
+
+/* 
+   Multi-line comment
+   Can span multiple lines
+*/
+
+/// Documentation comment for the following item
+/// Supports markdown formatting
+fn documented_function() { ... }
+</code></pre>
+<h2 id="identifiers-and-keywords"><a class="header" href="#identifiers-and-keywords">Identifiers and Keywords</a></h2>
+<h3 id="identifiers"><a class="header" href="#identifiers">Identifiers</a></h3>
+<p>Identifiers must start with a letter or underscore, followed by letters, digits, or underscores:</p>
+<pre><code class="language-restrict">let valid_name = 1;
+let _private = 2;
+let camelCase = 3;
+let snake_case = 4;
+let number123 = 5;
+</code></pre>
+<h3 id="keywords"><a class="header" href="#keywords">Keywords</a></h3>
+<p>The following are reserved keywords:</p>
+<pre><code>let mut fn type struct enum match if else while for 
+loop break continue return clone freeze derive from
+with as impl trait pub mod use import export true false
+</code></pre>
+<h2 id="literals"><a class="header" href="#literals">Literals</a></h2>
+<h3 id="numbers"><a class="header" href="#numbers">Numbers</a></h3>
+<pre><code class="language-restrict">// Integers
+let decimal = 42;
+let hex = 0xFF;
+let octal = 0o77;
+let binary = 0b1010;
+let with_underscores = 1_000_000;
+
+// Floating point
+let float = 3.14;
+let scientific = 2.5e-10;
+</code></pre>
+<h3 id="strings"><a class="header" href="#strings">Strings</a></h3>
+<pre><code class="language-restrict">// String literals
+let simple = "Hello, World!";
+let escaped = "Line 1\nLine 2\tTabbed";
+let unicode = "Unicode: \u{1F44B}";
+
+// Raw strings
+let raw = r"No escapes\n here";
+let raw_hashes = r#"Can contain "quotes""#;
+
+// Multiline strings
+let multiline = """
+    This is a
+    multiline string
+    with preserved formatting
+""";
+</code></pre>
+<h3 id="characters"><a class="header" href="#characters">Characters</a></h3>
+<pre><code class="language-restrict">let ch = 'a';
+let unicode_ch = '🦀';
+let escaped_ch = '\n';
+</code></pre>
+<h3 id="booleans"><a class="header" href="#booleans">Booleans</a></h3>
+<pre><code class="language-restrict">let yes = true;
+let no = false;
+</code></pre>
+<h2 id="variables-and-bindings"><a class="header" href="#variables-and-bindings">Variables and Bindings</a></h2>
+<h3 id="immutable-bindings"><a class="header" href="#immutable-bindings">Immutable Bindings</a></h3>
+<pre><code class="language-restrict">let x = 42;          // Type inference
+let y: i32 = 42;     // Explicit type
+let (a, b) = (1, 2); // Pattern destructuring
+</code></pre>
+<h3 id="mutable-bindings"><a class="header" href="#mutable-bindings">Mutable Bindings</a></h3>
+<pre><code class="language-restrict">let mut counter = 0;
+counter = counter + 1;  // Mutation allowed
+
+// Mutable pipe operator
+let mut data = getData();
+data |&gt;&gt; process;  // In-place mutation
+</code></pre>
+<h2 id="expressions"><a class="header" href="#expressions">Expressions</a></h2>
+<h3 id="arithmetic"><a class="header" href="#arithmetic">Arithmetic</a></h3>
+<pre><code class="language-restrict">let sum = 1 + 2;
+let difference = 5 - 3;
+let product = 4 * 3;
+let quotient = 10 / 2;
+let remainder = 7 % 3;
+let power = 2 ** 8;
+</code></pre>
+<h3 id="comparison"><a class="header" href="#comparison">Comparison</a></h3>
+<pre><code class="language-restrict">let equal = x == y;
+let not_equal = x != y;
+let less = x &lt; y;
+let greater = x &gt; y;
+let less_eq = x &lt;= y;
+let greater_eq = x &gt;= y;
+</code></pre>
+<h3 id="logical"><a class="header" href="#logical">Logical</a></h3>
+<pre><code class="language-restrict">let and_result = true &amp;&amp; false;
+let or_result = true || false;
+let not_result = !true;
+</code></pre>
+<h3 id="bitwise"><a class="header" href="#bitwise">Bitwise</a></h3>
+<pre><code class="language-restrict">let bit_and = 0b1100 &amp; 0b1010;  // 0b1000
+let bit_or = 0b1100 | 0b1010;   // 0b1110
+let bit_xor = 0b1100 ^ 0b1010;  // 0b0110
+let bit_not = ~0b1010;           // Bitwise NOT
+let shift_left = 1 &lt;&lt; 3;         // 8
+let shift_right = 8 &gt;&gt; 2;        // 2
+</code></pre>
+<h2 id="control-flow"><a class="header" href="#control-flow">Control Flow</a></h2>
+<h3 id="if-expressions"><a class="header" href="#if-expressions">If Expressions</a></h3>
+<pre><code class="language-restrict">// Basic if
+if condition {
+    doSomething()
+}
+
+// If-else
+let result = if x &gt; 0 {
+    "positive"
+} else if x &lt; 0 {
+    "negative"
+} else {
+    "zero"
+};
+
+// Pattern matching in conditions
+if let Some(value) = optional {
+    value |&gt; process
+}
+</code></pre>
+<h3 id="match-expressions"><a class="header" href="#match-expressions">Match Expressions</a></h3>
+<pre><code class="language-restrict">// Basic match
+let description = match number {
+    0 =&gt; "zero",
+    1 =&gt; "one",
+    2..=5 =&gt; "two to five",
+    _ =&gt; "other"
+};
+
+// Pattern matching with guards
+match value {
+    Some(x) if x &gt; 0 =&gt; x |&gt; process,
+    Some(x) =&gt; x |&gt; handleNegative,
+    None =&gt; defaultValue()
+}
+
+// Destructuring in patterns
+match point {
+    { x: 0, y: 0 } =&gt; "origin",
+    { x: 0, y } =&gt; "on y-axis at " ++ y.toString(),
+    { x, y: 0 } =&gt; "on x-axis at " ++ x.toString(),
+    { x, y } =&gt; "at (" ++ x.toString() ++ ", " ++ y.toString() ++ ")"
+}
+</code></pre>
+<h3 id="loops"><a class="header" href="#loops">Loops</a></h3>
+<pre><code class="language-restrict">// While loop
+while condition {
+    doWork()
+}
+
+// For loop over range
+for i in 0..10 {
+    i |&gt; println
+}
+
+// For loop over collection
+for item in list {
+    item |&gt; process
+}
+
+// Loop with break
+loop {
+    if done() {
+        break;
+    }
+    continue;
+}
+
+// Loop labels
+'outer: loop {
+    'inner: loop {
+        if condition {
+            break 'outer;
+        }
+    }
+}
+</code></pre>
+<h2 id="functions"><a class="header" href="#functions">Functions</a></h2>
+<h3 id="function-definitions"><a class="header" href="#function-definitions">Function Definitions</a></h3>
+<pre><code class="language-restrict">// Basic function
+fn add(x: i32, y: i32) -&gt; i32 {
+    x + y
+}
+
+// Generic function
+fn identity&lt;T&gt;(value: T) -&gt; T {
+    value
+}
+
+// Function with where clause
+fn process&lt;T&gt;(data: T) -&gt; String 
+    where T: ToString
+{
+    data.toString()
+}
+
+// OSV-style function calls
+42 |&gt; add(10);  // add(42, 10)
+"hello" |&gt; process;
+</code></pre>
+<h3 id="lambda-expressions"><a class="header" href="#lambda-expressions">Lambda Expressions</a></h3>
+<pre><code class="language-restrict">// Simple lambda
+let add_one = |x| x + 1;
+
+// With type annotations
+let multiply: fn(i32, i32) -&gt; i32 = |x, y| x * y;
+
+// Capturing variables
+let factor = 10;
+let scale = |x| x * factor;
+
+// In higher-order functions
+list |&gt; map(|x| x * 2) |&gt; filter(|x| x &gt; 10);
+</code></pre>
+<h2 id="types"><a class="header" href="#types">Types</a></h2>
+<h3 id="primitive-types"><a class="header" href="#primitive-types">Primitive Types</a></h3>
+<pre><code class="language-restrict">// Integers
+i8, i16, i32, i64, i128
+u8, u16, u32, u64, u128
+
+// Floating point
+f32, f64
+
+// Boolean
+bool
+
+// Character
+char
+
+// String (affine type)
+String
+</code></pre>
+<h3 id="compound-types"><a class="header" href="#compound-types">Compound Types</a></h3>
+<pre><code class="language-restrict">// Arrays (fixed size)
+let array: [i32; 5] = [1, 2, 3, 4, 5];
+
+// Slices (view into array)
+let slice: &amp;[i32] = &amp;array[1..4];
+
+// Tuples
+let tuple: (i32, String, bool) = (42, "hello", true);
+let (x, y, z) = tuple;  // Destructuring
+
+// Option type
+let some_value: Option&lt;i32&gt; = Some(42);
+let no_value: Option&lt;i32&gt; = None;
+
+// Result type
+let success: Result&lt;i32, String&gt; = Ok(42);
+let failure: Result&lt;i32, String&gt; = Err("error message");
+</code></pre>
+<h3 id="custom-types"><a class="header" href="#custom-types">Custom Types</a></h3>
+<pre><code class="language-restrict">// Structs
+struct Point {
+    x: f64,
+    y: f64
+}
+
+// Tuple structs
+struct Color(u8, u8, u8);
+
+// Enums
+enum Status {
+    Active,
+    Inactive,
+    Pending { since: DateTime }
+}
+
+// Type aliases
+type Distance = f64;
+type Callback = fn(Event) -&gt; bool;
+</code></pre>
+<h2 id="pattern-matching"><a class="header" href="#pattern-matching">Pattern Matching</a></h2>
+<h3 id="patterns"><a class="header" href="#patterns">Patterns</a></h3>
+<pre><code class="language-restrict">// Literal patterns
+match x {
+    0 =&gt; "zero",
+    1 =&gt; "one",
+    _ =&gt; "other"
+}
+
+// Variable patterns
+let Some(value) = optional;
+
+// Wildcard pattern
+let (first, _, third) = triple;
+
+// Range patterns
+match score {
+    0..=59 =&gt; "F",
+    60..=69 =&gt; "D",
+    70..=79 =&gt; "C",
+    80..=89 =&gt; "B",
+    90..=100 =&gt; "A",
+    _ =&gt; "Invalid"
+}
+
+// Struct patterns
+let Point { x, y } = point;
+let Point { x: px, y: py } = point;  // Rename
+
+// Guard clauses
+match value {
+    Some(x) if x &gt; 0 =&gt; "positive",
+    Some(x) if x &lt; 0 =&gt; "negative",
+    Some(_) =&gt; "zero",
+    None =&gt; "none"
+}
+</code></pre>
+<h2 id="modules-and-imports"><a class="header" href="#modules-and-imports">Modules and Imports</a></h2>
+<pre><code class="language-restrict">// Module definition
+mod math {
+    pub fn add(x: i32, y: i32) -&gt; i32 {
+        x + y
+    }
+    
+    pub mod advanced {
+        pub fn pow(base: f64, exp: f64) -&gt; f64 {
+            base ** exp
+        }
+    }
+}
+
+// Imports
+use std::collections::List;
+use math::add;
+use math::advanced::pow;
+
+// Import with alias
+use std::string::String as Str;
+
+// Glob imports
+use std::prelude::*;
+</code></pre>
+<h2 id="attributes"><a class="header" href="#attributes">Attributes</a></h2>
+<pre><code class="language-restrict">// Function attributes
+#[inline]
+fn fast_function() { ... }
+
+#[test]
+fn test_addition() {
+    assert_eq!(2 + 2, 4);
+}
+
+// Derive attributes
+#[derive(Debug, Clone)]
+struct Point { x: f64, y: f64 }
+
+// Module attributes
+#[cfg(test)]
+mod tests {
+    // Test module
+}
+</code></pre>
+<h2 id="special-syntax"><a class="header" href="#special-syntax">Special Syntax</a></h2>
+<h3 id="with-blocks-resource-management"><a class="header" href="#with-blocks-resource-management">With Blocks (Resource Management)</a></h3>
+<pre><code class="language-restrict">with file = openFile("data.txt") {
+    file |&gt; readContents |&gt; process;
+}  // file automatically closed
+
+with db = connectDatabase(url) {
+    db |&gt; query("SELECT * FROM users");
+}  // connection automatically closed
+</code></pre>
+<h3 id="clone-and-freeze"><a class="header" href="#clone-and-freeze">Clone and Freeze</a></h3>
+<pre><code class="language-restrict">// Clone creates a mutable copy
+let original = { x: 10, y: 20 };
+let mut copy = clone original;
+copy.x = 30;  // OK
+
+// Freeze creates an immutable prototype
+let prototype = freeze { x: 10, y: 20 };
+let instance = clone prototype;
+// prototype cannot be modified
+</code></pre>
+<h3 id="derivation-bounds"><a class="header" href="#derivation-bounds">Derivation Bounds</a></h3>
+<pre><code class="language-restrict">// Generic with derivation bound
+fn process&lt;T from Base&gt;(value: T) -&gt; Result&lt;String&gt; {
+    // T must be derived from Base prototype
+    value |&gt; validate |&gt; transform
+}
+</code></pre>
+<h2 id="operator-precedence"><a class="header" href="#operator-precedence">Operator Precedence</a></h2>
+<ol>
+<li>Member access: <code>.</code></li>
+<li>Function calls, array indexing</li>
+<li>Unary: <code>-</code>, <code>!</code>, <code>~</code></li>
+<li>Power: <code>**</code></li>
+<li>Multiplicative: <code>*</code>, <code>/</code>, <code>%</code></li>
+<li>Additive: <code>+</code>, <code>-</code></li>
+<li>Shift: <code>&lt;&lt;</code>, <code>&gt;&gt;</code></li>
+<li>Bitwise AND: <code>&amp;</code></li>
+<li>Bitwise XOR: <code>^</code></li>
+<li>Bitwise OR: <code>|</code></li>
+<li>Comparison: <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code></li>
+<li>Equality: <code>==</code>, <code>!=</code></li>
+<li>Logical AND: <code>&amp;&amp;</code></li>
+<li>Logical OR: <code>||</code></li>
+<li>Range: <code>..</code>, <code>..=</code></li>
+<li>Assignment: <code>=</code></li>
+<li>Pipe: <code>|&gt;</code>, <code>|&gt;&gt;</code></li>
+</ol>
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<p>This syntax reference covers the essential elements of Restrict Language. The syntax is designed to be:</p>
+<ul>
+<li><strong>Familiar</strong> to Rust programmers</li>
+<li><strong>Natural</strong> with OSV word order</li>
+<li><strong>Safe</strong> with affine types</li>
+<li><strong>Expressive</strong> for functional programming</li>
+</ul>
+<p>For more detailed examples and patterns, see the <a href="./README.html">Language Guide</a>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../en/guide/osv-order.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../../en/guide/types.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../en/guide/osv-order.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../../en/guide/types.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+
+
+        <script>
+            window.playground_line_numbers = true;
+        </script>
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+        <script src="../../ace.js"></script>
+        <script src="../../mode-rust.js"></script>
+        <script src="../../editor.js"></script>
+        <script src="../../theme-dawn.js"></script>
+        <script src="../../theme-tomorrow_night.js"></script>
+
+        <script src="../../elasticlunr.min.js"></script>
+        <script src="../../mark.min.js"></script>
+        <script src="../../searcher.js"></script>
+
+        <script src="../../clipboard.min.js"></script>
+        <script src="../../highlight.js"></script>
+        <script src="../../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../theme/restrict-lang.js"></script>
+
+
+    </div>
+    </body>
+</html>

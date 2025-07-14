@@ -5,6 +5,15 @@ members = [".", "warder"]
 name = "restrict_lang"
 version = "0.1.0"
 edition = "2021"
+authors = ["Restrict Language Team"]
+description = "A modern programming language for WebAssembly with affine types"
+documentation = "https://docs.restrict-lang.org"
+homepage = "https://restrict-lang.org"
+repository = "https://github.com/restrict-lang/restrict_lang"
+readme = "README.md"
+license = "MIT"
+keywords = ["wasm", "webassembly", "affine-types", "programming-language", "compiler"]
+categories = ["compilers", "development-tools", "wasm"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

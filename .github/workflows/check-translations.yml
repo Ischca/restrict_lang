@@ -1,0 +1,94 @@
+name: Check Documentation Translations
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**/*.md'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'docs/**/*.md'
+
+jobs:
+  check-translations:
+    name: Check Translation Synchronization
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Full history for file comparison
+      
+      - name: Check translation status
+        id: check
+        run: |
+          cd docs
+          chmod +x scripts/sync-translations.sh
+          
+          # Run the check and capture output
+          OUTPUT=$(./scripts/sync-translations.sh | tail -n 20)
+          echo "$OUTPUT"
+          
+          # Extract counts
+          MISSING=$(echo "$OUTPUT" | grep "Missing translations:" | awk '{print $3}')
+          OUTDATED=$(echo "$OUTPUT" | grep "Outdated translations:" | awk '{print $3}')
+          
+          echo "missing=$MISSING" >> $GITHUB_OUTPUT
+          echo "outdated=$OUTDATED" >> $GITHUB_OUTPUT
+          
+          # Set status
+          if [ "$MISSING" -gt 0 ] || [ "$OUTDATED" -gt 0 ]; then
+            echo "status=warning" >> $GITHUB_OUTPUT
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && steps.check.outputs.status == 'warning'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const missing = ${{ steps.check.outputs.missing }};
+            const outdated = ${{ steps.check.outputs.outdated }};
+            
+            const comment = `## 🌐 Translation Status
+            
+            This PR affects documentation. Please check the translation status:
+            
+            - **Missing translations**: ${missing}
+            - **Outdated translations**: ${outdated}
+            
+            Run \`mise run doc-check-translations\` locally to see details.
+            
+            ${missing > 0 || outdated > 0 ? '⚠️ Please update translations before merging.' : '✅ All translations are up to date!'}`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+      
+      - name: Create translation status badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          MISSING=${{ steps.check.outputs.missing }}
+          OUTDATED=${{ steps.check.outputs.outdated }}
+          TOTAL=16  # Approximate total number of doc files
+          
+          TRANSLATED=$((TOTAL - MISSING))
+          PERCENTAGE=$((TRANSLATED * 100 / TOTAL))
+          
+          if [ $PERCENTAGE -ge 90 ]; then
+            COLOR="brightgreen"
+          elif [ $PERCENTAGE -ge 70 ]; then
+            COLOR="yellow"
+          else
+            COLOR="red"
+          fi
+          
+          # This would typically update a badge service
+          echo "Translation coverage: $PERCENTAGE% ($COLOR)"

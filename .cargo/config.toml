@@ -1,0 +1,23 @@
+[build]
+rustdocflags = [
+    "--html-logo-url", "https://restrict-lang.org/logo.svg",
+    "--html-favicon-url", "https://restrict-lang.org/favicon.ico",
+    "--html-playground-url", "https://play.restrict-lang.org",
+    "--extend-css", "docs/theme/rustdoc-restrict.css"
+]
+
+[doc]
+browser = "open"
+
+# Alias for common commands
+[alias]
+# Build everything including docs
+build-all = "build --all-features"
+# Generate API documentation
+docs = "doc --all-features --no-deps --open"
+# Generate documentation with private items
+docs-private = "doc --all-features --no-deps --document-private-items --open"
+# Run all tests
+test-all = "test --all-features"
+# Check without building
+check-all = "check --all-features"

@@ -1,0 +1,221 @@
+/* Custom Rustdoc theme for Restrict Language */
+
+/* Brand colors */
+:root {
+    --restrict-primary: #2e7d32;
+    --restrict-primary-light: #4caf50;
+    --restrict-accent: #ff6b35;
+    --restrict-bg-light: #f5f5f5;
+    --restrict-border: #e0e0e0;
+}
+
+/* Dark theme adjustments */
+.dark {
+    --restrict-primary: #4caf50;
+    --restrict-primary-light: #66bb6a;
+    --restrict-bg-light: #2b2b2b;
+    --restrict-border: #4a4a4a;
+}
+
+/* Logo and branding */
+.sidebar .logo-container img {
+    max-width: 120px;
+}
+
+/* Syntax highlighting for Restrict Language */
+.language-restrict .hljs-keyword {
+    color: var(--restrict-primary);
+    font-weight: bold;
+}
+
+.language-restrict .hljs-operator {
+    color: var(--restrict-accent);
+    font-weight: bold;
+}
+
+/* Pipe operator emphasis */
+.language-restrict .pipe {
+    color: var(--restrict-primary);
+    font-weight: bold;
+    font-size: 1.1em;
+}
+
+/* Module documentation styling */
+.docblock h1 {
+    color: var(--restrict-primary);
+    border-bottom: 2px solid var(--restrict-primary);
+}
+
+.docblock h2 {
+    color: var(--restrict-primary-light);
+    margin-top: 2em;
+}
+
+/* Code examples */
+.docblock pre {
+    background: var(--restrict-bg-light);
+    border-left: 4px solid var(--restrict-primary);
+    margin: 1em 0;
+}
+
+/* Affine type warnings */
+.affine-warning {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 4px;
+    padding: 10px;
+    margin: 10px 0;
+}
+
+.affine-warning::before {
+    content: "⚡ Affine Type Note: ";
+    font-weight: bold;
+    color: var(--restrict-primary);
+}
+
+/* OSV syntax examples */
+.osv-example {
+    position: relative;
+    background: var(--restrict-bg-light);
+    padding: 15px;
+    border-radius: 4px;
+    margin: 15px 0;
+}
+
+.osv-example::before {
+    content: "OSV";
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    font-size: 0.8em;
+    color: var(--restrict-primary);
+    opacity: 0.7;
+}
+
+/* Function signatures with OSV style */
+.fn-sig {
+    font-family: monospace;
+    background: var(--restrict-bg-light);
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+/* Type constraints highlighting */
+.where-clause {
+    color: var(--restrict-primary);
+    font-style: italic;
+}
+
+/* Generic type parameters */
+.generic {
+    color: var(--restrict-accent);
+}
+
+/* Trait implementations */
+.impl-items {
+    border-left: 3px solid var(--restrict-primary-light);
+    padding-left: 15px;
+    margin: 15px 0;
+}
+
+/* Module tree styling */
+.sidebar .mod {
+    color: var(--restrict-primary);
+}
+
+/* Search results */
+.search-results .result-name {
+    color: var(--restrict-primary);
+}
+
+.search-results .result-description {
+    color: #666;
+}
+
+/* Table of contents */
+.sidebar-elems h3 {
+    color: var(--restrict-primary);
+    font-weight: bold;
+    margin-top: 1em;
+}
+
+/* Method documentation */
+.method {
+    border: 1px solid var(--restrict-border);
+    border-radius: 4px;
+    margin: 10px 0;
+    padding: 10px;
+}
+
+.method .fn-name {
+    color: var(--restrict-primary);
+    font-weight: bold;
+}
+
+/* Examples section */
+.example-wrap {
+    position: relative;
+    margin: 15px 0;
+}
+
+.example-wrap .tooltip {
+    background: var(--restrict-primary);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+/* Stability badges */
+.stab {
+    background: var(--restrict-accent);
+    color: white;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 0.85em;
+    margin-left: 10px;
+}
+
+.stab.unstable {
+    background: #ff6b35;
+}
+
+.stab.deprecated {
+    background: #e74c3c;
+}
+
+/* Source code links */
+.out-of-band {
+    color: var(--restrict-primary);
+}
+
+.out-of-band a {
+    color: var(--restrict-primary-light);
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+    .docblock pre {
+        font-size: 0.9em;
+        padding: 10px;
+    }
+    
+    .osv-example {
+        padding: 10px;
+    }
+}
+
+/* Print styles */
+@media print {
+    .sidebar,
+    .out-of-band,
+    .toggle-wrapper {
+        display: none;
+    }
+    
+    .docblock pre {
+        border-left-width: 2px;
+        page-break-inside: avoid;
+    }
+}

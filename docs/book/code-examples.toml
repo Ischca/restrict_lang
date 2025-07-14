@@ -1,0 +1,87 @@
+# Shared code examples configuration
+
+[hello-world]
+code = '''
+fn main() {
+    "Hello, World!" |> println
+}
+'''
+language = "restrict"
+
+[osv-basic]
+code = '''
+// Data flows naturally from left to right
+"hello, world"
+    |> split(", ")
+    |> map(|word| word |> capitalize)
+    |> join(" ")
+    |> println  // "Hello World"
+'''
+language = "restrict"
+
+[affine-example]
+code = '''
+// Affine types prevent use-after-move
+let message = "Hello"
+message |> println     // OK: first use
+// message |> println  // ERROR: already consumed
+
+// Use clone when multiple uses needed
+let original = "Hello"
+let copy = clone original
+original |> println    // OK
+copy |> println       // OK
+'''
+language = "restrict"
+
+[pattern-matching]
+code = '''
+match result {
+    Ok(value) => value |> process,
+    Err(error) => {
+        error |> logError
+        defaultValue()
+    }
+}
+'''
+language = "restrict"
+
+[warder-init]
+code = '''
+# Create a new project
+warder new my-awesome-app
+cd my-awesome-app
+
+# Add dependencies
+warder add http
+warder add json@1.0.0
+
+# Build and run
+warder build
+warder run
+'''
+language = "bash"
+
+[generic-function]
+code = '''
+// Generic function with type bounds
+fn map<T: Clone, U>(list: Vec<T>, f: fn(T) -> U) -> Vec<U> {
+    list
+        |> iter()
+        |> map(|item| f(clone item))
+        |> collect()
+}
+'''
+language = "restrict"
+
+[with-block]
+code = '''
+// Automatic resource management
+with file = openFile("data.txt") {
+    file
+        |> readContents
+        |> processData
+        |> saveResults
+}  // file automatically closed
+'''
+language = "restrict"

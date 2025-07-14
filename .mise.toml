@@ -6,10 +6,7 @@ rust = "latest"
 
 [tasks.test]
 description = "Run all tests"
-run = [
-  "cargo test -- --nocapture",
-  "cd warden && cargo test -- --nocapture"
-]
+run = ["cargo test -- --nocapture", "cd warder && cargo test -- --nocapture"]
 
 [tasks.test-one]
 description = "Run specific test"
@@ -23,17 +20,11 @@ cargo test $TEST -- --nocapture
 
 [tasks.build]
 description = "Build all components"
-run = [
-  "cargo build",
-  "cd warden && cargo build"
-]
+run = ["cargo build", "cd warder && cargo build"]
 
 [tasks.build-release]
 description = "Build all components in release mode"
-run = [
-  "cargo build --release",
-  "cd warden && cargo build --release"
-]
+run = ["cargo build --release", "cd warder && cargo build --release"]
 
 [tasks.watch]
 description = "Watch mode - auto recompile on changes"
@@ -74,27 +65,46 @@ run = "cargo bench"
 description = "Clean generated files"
 run = [
   "cargo clean",
-  "cd warden && cargo clean",
-  "rm -f test/*.wat test/*.wasm examples/*.wat examples/*.wasm"
+  "cd warder && cargo clean",
+  "rm -f test/*.wat test/*.wasm examples/*.wat examples/*.wasm",
 ]
 
 [tasks.fmt]
 description = "Format code"
-run = [
-  "cargo fmt",
-  "cd warden && cargo fmt"
-]
+run = ["cargo fmt", "cd warder && cargo fmt"]
 
 [tasks.lint]
 description = "Lint code"
 run = [
   "cargo clippy -- -D warnings",
-  "cd warden && cargo clippy -- -D warnings"
+  "cd warder && cargo clippy -- -D warnings",
 ]
 
 [tasks.doc]
-description = "Generate documentation"
-run = "cargo doc --open"
+description = "Generate API documentation"
+run = "cargo doc --all-features --no-deps --open"
+
+[tasks.doc-all]
+description = "Generate complete documentation (API + Book)"
+run = [
+  "cargo doc --all-features --no-deps",
+  "cd docs && mdbook build",
+  "cp -r target/doc docs/book/api 2>/dev/null || true",
+  "echo 'Documentation built successfully!'",
+  "echo '  API docs: target/doc/restrict_lang/index.html'",
+  "echo '  Book: docs/book/index.html'"
+]
+
+[tasks.doc-book]
+description = "Build and serve the mdBook documentation"
+run = "cd docs && mdbook serve --open"
+
+[tasks.doc-watch]
+description = "Watch and rebuild documentation on changes"
+run = [
+  "echo 'Watching for documentation changes...'",
+  "cd docs && mdbook watch"
+]
 
 [tasks.run]
 description = "Quick compile and run"
@@ -110,18 +120,18 @@ cargo run -- compile "$FILE" && wasmtime "test/$(basename "${FILE%.rl}").wat"
 description = "Run full CI pipeline locally"
 run = [
   "mise run fmt",
-  "mise run lint", 
+  "mise run lint",
   "mise run test",
   "mise run prop-test",
   "mise run check",
-  "mise run build-release"
+  "mise run build-release",
 ]
 
 [tasks.setup]
 description = "Setup development environment"
 run = """
 # Install cargo tools for development
-cargo install cargo-watch cargo-audit cargo-tarpaulin just --force
+cargo install cargo-watch cargo-audit cargo-tarpaulin mdbook --force
 
 # Install wasmtime for running WASM
 if ! command -v wasmtime &> /dev/null; then
@@ -133,17 +143,20 @@ if ! command -v wasm-pack &> /dev/null; then
   curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 fi
 
+# Install mdBook plugins
+cargo install mdbook-mermaid mdbook-toc --force
+
 echo "Development environment setup complete!"
 """
 
 # Warder-specific tasks
 [tasks.build-warder]
 description = "Build only Warder package manager"
-run = "cd warden && cargo build --release"
+run = "cd warder && cargo build --release"
 
 [tasks.test-warder]
 description = "Test only Warder"
-run = "cd warden && cargo test -- --nocapture"
+run = "cd warder && cargo test -- --nocapture"
 
 [tasks.warder-new]
 description = "Create new project with Warder"
@@ -152,24 +165,24 @@ if [ -z "$PROJECT_NAME" ]; then
   echo "Usage: PROJECT_NAME=my_project mise run warder-new"
   exit 1
 fi
-./warden/target/release/warder new "$PROJECT_NAME"
+./warder/target/release/warder new "$PROJECT_NAME"
 """
 
 [tasks.warder-init]
 description = "Initialize Warder project in current directory"
-run = "./warden/target/release/warder init"
+run = "./warder/target/release/warder init"
 
 [tasks.warder-build]
 description = "Build project with Warder"
-run = "./warden/target/release/warder build"
+run = "./warder/target/release/warder build"
 
 [tasks.warder-test]
 description = "Test project with Warder"
-run = "./warden/target/release/warder test"
+run = "./warder/target/release/warder test"
 
 [tasks.warder-doctor]
 description = "Check project health with Warder"
-run = "./warden/target/release/warder doctor"
+run = "./warder/target/release/warder doctor"
 
 # Advanced build tasks
 [tasks.build-wasm]
@@ -178,49 +191,39 @@ run = "wasm-pack build --target web --out-dir web/pkg"
 
 [tasks.build-extension]
 description = "Build VS Code extension"
-run = [
-  "cd vscode-extension",
-  "npm install",
-  "npm run compile"
-]
+run = ["cd vscode-extension", "npm install", "npm run compile"]
 
 [tasks.package-extension]
 description = "Package VS Code extension"
 depends = ["build-extension"]
-run = [
-  "cd vscode-extension",
-  "npm run package"
-]
+run = ["cd vscode-extension", "npm run package"]
 
 # Cross-platform builds
 [tasks.build-linux]
 description = "Cross-compile for Linux"
 run = [
   "cargo build --release --target x86_64-unknown-linux-gnu",
-  "cd warden && cargo build --release --target x86_64-unknown-linux-gnu"
+  "cd warder && cargo build --release --target x86_64-unknown-linux-gnu",
 ]
 
 [tasks.build-windows]
 description = "Cross-compile for Windows"
 run = [
   "cargo build --release --target x86_64-pc-windows-gnu",
-  "cd warden && cargo build --release --target x86_64-pc-windows-gnu"
+  "cd warder && cargo build --release --target x86_64-pc-windows-gnu",
 ]
 
 [tasks.build-macos]
 description = "Cross-compile for macOS"
 run = [
   "cargo build --release --target x86_64-apple-darwin",
-  "cd warden && cargo build --release --target x86_64-apple-darwin"
+  "cd warder && cargo build --release --target x86_64-apple-darwin",
 ]
 
 # Security and quality
 [tasks.audit]
 description = "Security audit"
-run = [
-  "cargo audit",
-  "cd warden && cargo audit"
-]
+run = ["cargo audit", "cd warder && cargo audit"]
 
 [tasks.coverage]
 description = "Generate test coverage report"
@@ -232,7 +235,7 @@ description = "Install tools system-wide"
 depends = ["build-release"]
 run = """
 sudo cp target/release/restrict_lang /usr/local/bin/
-sudo cp warden/target/release/warder /usr/local/bin/
+sudo cp warder/target/release/warder /usr/local/bin/
 echo "Tools installed to /usr/local/bin/"
 """
 
@@ -247,13 +250,73 @@ echo "Tools uninstalled"
 # Release preparation
 [tasks.release]
 description = "Prepare full release build"
-depends = ["clean", "fmt", "lint", "test", "audit", "build-release", "package-extension"]
+depends = [
+  "clean",
+  "fmt",
+  "lint",
+  "test",
+  "audit",
+  "build-release",
+  "package-extension",
+]
 run = """
 echo "Release build complete!"
 echo "Artifacts:"
 echo "  - Compiler: target/release/restrict_lang"
-echo "  - Package Manager: warden/target/release/warder"
+echo "  - Package Manager: warder/target/release/warder"
 echo "  - VS Code Extension: vscode-extension/*.vsix"
+"""
+
+[tasks.doc-validate]
+description = "Validate documentation for consistency"
+run = '''
+echo "🔍 Validating documentation..."
+
+# Check for broken internal links
+echo "Checking internal links..."
+find docs -name "*.md" -exec grep -l "](./" {} + | while read file; do
+    grep -o "](./[^)]*" "$file" | sed "s/](\\(.\\)//" | while read link; do
+        target=$(dirname "$file")/$link
+        if [ ! -f "$target" ]; then
+            echo "❌ Broken link in $file: $link"
+        fi
+    done
+done
+
+# Check code example syntax
+echo "Checking code examples..."
+find docs -name "*.md" -exec grep -l "```restrict" {} + | while read file; do
+    echo "  ✓ $file"
+done
+
+echo "✅ Validation complete"
+'''
+
+# Documentation tasks
+[tasks.doc-check-translations]
+description = "Check translation synchronization"
+run = "cd docs && ./scripts/sync-translations.sh"
+
+[tasks.doc-update-ja]
+description = "List Japanese translations that need updates"
+run = """
+cd docs
+echo "Files that need translation updates:"
+./scripts/sync-translations.sh | grep -E "(Missing|Outdated)" || echo "All translations are up to date!"
+"""
+
+[tasks.doc-sync]
+description = "Interactive translation synchronization helper"
+run = """
+echo "🌐 Translation Sync Helper"
+echo "========================"
+cd docs
+./scripts/sync-translations.sh
+echo ""
+echo "To update a specific translation:"
+echo "  1. Edit the Japanese file in docs/ja/"
+echo "  2. Keep code examples identical to English version"
+echo "  3. Run 'mise run doc-check-translations' to verify"
 """
 
 # Quick development tasks

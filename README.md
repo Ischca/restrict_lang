@@ -17,6 +17,23 @@ A statically-typed functional programming language that compiles to WebAssembly,
 
 ## 🚀 Quick Start
 
+### Using the Package Manager (Warder)
+
+```bash
+# Install warder (package manager)
+# TODO: Add installation instructions
+
+# Create a new project
+warder new my-project
+cd my-project
+
+# Build and run
+warder build
+warder run
+```
+
+### Manual Compilation
+
 ```bash
 # Clone the repository
 git clone https://github.com/restrict-lang/restrict_lang
@@ -26,7 +43,7 @@ cd restrict_lang
 cargo build --release
 
 # Compile your first program
-echo 'fun main = { val x = 42; x }' > hello.rl
+echo 'fun main = { "Hello, World!" |> println }' > hello.rl
 ./target/release/restrict_lang hello.rl
 
 # Run the generated WebAssembly
@@ -50,9 +67,22 @@ wasmtime hello.wat
 ```rust
 // hello.rl
 fun main = {
-    val message = "Hello, Restrict Language!";
-    val number = 42;
-    number  // Returns 42
+    "Hello, Restrict Language!" |> println
+}
+```
+
+### Basic Arithmetic
+
+```rust
+// arithmetic.rl
+fun add = x:Int y:Int {
+    x + y
+}
+
+fun main = {
+    val result = (10, 20) add
+    "Result: " |> println
+    result |> print_int
 }
 ```
 
@@ -65,7 +95,7 @@ val y = x    // x is consumed here
 // val z = x // Error: x already used!
 
 // Mutable variables can be reused
-val mut counter = 0
+mut val counter = 0
 counter = counter + 1  // OK
 counter = counter + 1  // OK
 ```
@@ -74,14 +104,13 @@ counter = counter + 1  // OK
 
 ```rust
 // Function definition
-fun add = x:Int, y:Int -> Int { x + y }
+fun add = x:Int y:Int { x + y }
 
 // OSV (Object-Subject-Verb) function calls
-val result = (5, 10) add      // Calls add(5, 10)
-val doubled = (21) double     // Calls double(21)
+val result = (5, 10) add      // Multiple arguments
 
-// Traditional syntax also works
-val result2 = add(5, 10)
+// Pipe operator for single arguments
+val doubled = 21 |> double
 ```
 
 ### Lambda Expressions and Closures
@@ -89,15 +118,15 @@ val result2 = add(5, 10)
 ```rust
 // Simple lambda
 val double = |x| x * 2
-val result = (21) double  // Returns 42
+val result = 21 |> double  // Returns 42
 
-// Closures capture variables
+// Closures capture variables (advanced feature - may have limitations)
 fun make_adder = n:Int {
     |x| x + n  // Captures 'n'
 }
 
-val add5 = make_adder(5)
-val result = (10) add5  // Returns 15
+val add5 = 5 |> make_adder
+val result = 10 |> add5  // Returns 15
 ```
 
 ### Pattern Matching
@@ -187,6 +216,9 @@ arena {
 - [ ] Higher-order functions (map, filter, fold)
 - [ ] String interpolation
 - [ ] Module system
+- [ ] Conditional expressions (`then`/`else` syntax parsing works, but runtime issues remain)
+- [ ] Recursive functions (basic parsing works, but execution has limitations)
+- [ ] Complex affine type usage (multiple variable references in expressions)
 
 ### 📋 Planned Features
 
@@ -195,6 +227,14 @@ arena {
 - [ ] Generics and parametric polymorphism
 - [ ] SIMD operations
 - [ ] WebGPU backend
+
+### ⚠️ Current Limitations
+
+- Conditional expressions (`then`/`else`) have parsing support but runtime limitations
+- Recursive functions are not fully supported yet
+- Complex pattern matching may not work in all cases
+- Some syntax features in examples may not be fully implemented
+- Use `mut val` instead of `val mut` for mutable variables
 
 ## 🔧 Architecture
 

@@ -245,6 +245,7 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "Unit" => Token::Unit,
         "Some" => Token::Some,
         "None" => Token::None,
+        "none" => Token::None,  // Allow lowercase for inference
         "import" => Token::Import,
         "export" => Token::Export,
         "sealed" => Token::Sealed,

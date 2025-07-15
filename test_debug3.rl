@@ -1,0 +1,2 @@
+fun foo = { 42 }
+fun main = { 0 }

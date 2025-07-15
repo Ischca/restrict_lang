@@ -45,6 +45,44 @@
 | **⑤ Web ↔ ゲーム 両立** | ▸ **Web/Serverless**: コンテキスト束縛で安全に外部サービス。</br>▸ **ゲーム/リアルタイム**: Prototype+Freeze でデザイ
 
 
+## 🚀 クイックスタート
+
+### Warder（パッケージマネージャー）を使用
+
+```bash
+# warderを使って新しいプロジェクトを作成
+warder new my-project
+cd my-project
+
+# ビルドして実行
+warder build
+warder run
+```
+
+### 基本的な例
+
+#### Hello World
+```rust
+// hello.rl
+fun main = {
+    "Hello, Restrict Language!" |> println
+}
+```
+
+#### 算術演算
+```rust
+// arithmetic.rl
+fun add = x:Int y:Int {
+    x + y
+}
+
+fun main = {
+    val result = (10, 20) add
+    "Result: " |> println
+    result |> print_int
+}
+```
+
 ---
 
 ## 1. コア概念
@@ -118,8 +156,8 @@ x
 
 関数は 1 引数カリー。
 
-```ocaml
-fun add = a:Int b:Int { (a,b) binary+ }
+```rust
+fun add = a:Int b:Int { a + b }
 ```
 
 ---
@@ -295,6 +333,28 @@ Literal      ::= IntLit | FloatLit | StringLit | CharLit | "true" | "false" | "U
 | with コンテキスト       | 資源リークを静的排除          | ネスト過多は可読性低下 → Linter: 深さ 3 以上警告。               |
 
 ---
+
+### 13. 現在の実装状況
+
+#### ✅ 動作確認済み機能
+- 基本的な関数定義と呼び出し
+- 算術演算（+, -, *, /）
+- 文字列の表示（println）
+- 整数の表示（print_int）
+- パッケージマネージャー（warder）
+- OSV構文による関数呼び出し
+- パイプ演算子（|>）
+
+#### 🚧 実装中・制限のある機能
+- 条件式（`then`/`else`構文の解析は可能だが実行時に制限）
+- 再帰関数（基本的な解析は可能だが実行に制限）
+- 複雑なアフィン型の使用（複数回参照での制限）
+- パターンマッチング（一部のケースで制限）
+
+#### ⚠️ 構文上の注意点
+- 可変変数は `mut val x = value` を使用（`val mut x = value` は無効）
+- 関数定義では `fun add = x:Int y:Int { x + y }` 形式を使用
+- 複雑な式では括弧やセミコロンで適切に区切る
 
 ### 14. 標準ライブラリロードマップ
 

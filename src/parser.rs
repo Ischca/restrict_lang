@@ -337,7 +337,7 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
     alt((
         literal,
         lambda_expr,  // Try lambda before other expressions that use |
-        some_expr,  // Try Some before other expressions
+        some_expr,  // Try Some before ident
         none_expr,  // Try None before ident
         array_lit,  // Try array literal before list
         list_lit,  // Try list literal before record
@@ -353,17 +353,26 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
     ))(input)
 }
 
+fn none_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::None)(input)?;
+    
+    // Check if we have a type parameter
+    if let Ok((input, _)) = expect_token::<'_>(Token::Lt)(input) {
+        let (input, ty) = parse_type(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, Expr::NoneTyped(ty)))
+    } else {
+        // Bare None - will use tagged union  
+        Ok((input, Expr::None))
+    }
+}
+
 fn some_expr(input: &str) -> ParseResult<Expr> {
     let (input, _) = expect_token(Token::Some)(input)?;
     let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, value) = expression(input)?;
+    let (input, expr) = expression(input)?;
     let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Expr::Some(Box::new(value))))
-}
-
-fn none_expr(input: &str) -> ParseResult<Expr> {
-    let (input, _) = expect_token(Token::None)(input)?;
-    Ok((input, Expr::None))
+    Ok((input, Expr::Some(Box::new(expr))))
 }
 
 fn list_lit(input: &str) -> ParseResult<Expr> {
@@ -762,21 +771,6 @@ pub fn simple_expr(input: &str) -> ParseResult<Expr> {
     
     // Handle postfix operations
     loop {
-        // Check for direct function application: expr(args)
-        if let Ok((new_input, _)) = expect_token::<'_>(Token::LParen)(input) {
-            let (new_input, args) = separated_list0(
-                expect_token(Token::Comma),
-                expression
-            )(new_input)?;
-            let (new_input, _) = expect_token(Token::RParen)(new_input)?;
-            
-            expr = Expr::Call(CallExpr {
-                function: Box::new(expr),
-                args: args.into_iter().map(Box::new).collect(),
-            });
-            input = new_input;
-            continue;
-        }
         
         // Handle field access and other postfix operations
         let (new_input, op) = opt(alt((
@@ -955,7 +949,7 @@ pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
 
 pub fn parse_program(input: &str) -> ParseResult<Program> {
     // Skip leading whitespace/comments first
-    let (input, _) = opt(skip)(input)?;
+    let (input, _) = skip(input)?;
     let (input, imports) = many0(import_decl)(input)?;
     let (input, declarations) = many0(top_decl)(input)?;
     Ok((input, Program { imports, declarations }))

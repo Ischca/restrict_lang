@@ -522,6 +522,9 @@ impl TypeChecker {
             return_type: TypedType::Unit,
             type_params: vec![],
         });
+        
+        // some function - wraps a value in Option::Some
+        // Note: We handle 'some' specially in check_call_expr to make it work with any type
     }
     
     fn register_std_prelude(&mut self) {
@@ -1113,6 +1116,11 @@ impl TypeChecker {
             },
             Expr::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
             Expr::PrototypeClone(proto_clone) => self.check_prototype_clone_expr(proto_clone),
+            Expr::NoneTyped(ty) => {
+                // Convert AST type to TypedType
+                let typed_type = self.convert_type(ty)?;
+                Ok(TypedType::Option(Box::new(typed_type)))
+            },
         }
     }
     
@@ -1338,6 +1346,31 @@ impl TypeChecker {
                             });
                         }
                     }
+                }
+                
+                // Handle special built-in function 'some'
+                if name == "some" {
+                    if call.args.len() != 1 {
+                        return Err(TypeError::ArityMismatch {
+                            expected: 1,
+                            found: call.args.len(),
+                        });
+                    }
+                    let arg_type = self.check_expr(&call.args[0])?;
+                    return Ok(TypedType::Option(Box::new(arg_type)));
+                }
+                
+                // Handle special built-in function 'none' (lowercase for inference)
+                if name == "none" {
+                    if call.args.len() != 0 {
+                        return Err(TypeError::ArityMismatch {
+                            expected: 0,
+                            found: call.args.len(),
+                        });
+                    }
+                    // For now, default to Option<Unit>
+                    // TODO: Implement proper type inference from context
+                    return Ok(TypedType::Option(Box::new(TypedType::Unit)));
                 }
                 
                 // Otherwise try to find a regular function

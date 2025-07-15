@@ -910,7 +910,15 @@ impl WasmCodeGen {
             .collect();
         
         // TODO: Determine return type from function body analysis
-        let result = None;  // For now, assume no return value
+        // For now, assume functions with expressions in their body return i32
+        // Exception: main function never returns a value
+        let result = if func.name == "main" {
+            None
+        } else if func.body.expr.is_some() {
+            Some(WasmType::I32)
+        } else {
+            None
+        };
         
         self.functions.insert(func.name.clone(), FunctionSig {
             _params: params,
@@ -1046,9 +1054,9 @@ impl WasmCodeGen {
         self.output.push_str("\n");
         
         // Declare all local variables
-        for (name, ty) in locals {
-            self.output.push_str(&format!("    (local ${} {})\n", name, self.wasm_type_str(ty)));
-            self.add_local(&name, next_idx);
+        for (name, ty) in &locals {
+            self.output.push_str(&format!("    (local ${} {})\n", name, self.wasm_type_str(*ty)));
+            self.add_local(name, next_idx);
             next_idx += 1;
         }
         
@@ -1091,11 +1099,16 @@ impl WasmCodeGen {
         self.add_local("freeze_tmp", next_idx);
         next_idx += 1;
         
-        // Hack: Add common pattern variable names
+        // Hack: Add common pattern variable names (only if not already declared)
         for var_name in ["n", "x", "y", "z", "a", "b", "c", "head", "tail", "rest"] {
-            self.output.push_str(&format!("    (local ${} i32)\n", var_name));
-            self.add_local(var_name, next_idx);
-            next_idx += 1;
+            // Check if this variable is already declared as a parameter or local
+            let already_parameter = func.params.iter().any(|p| p.name == var_name);
+            let already_local = locals.iter().any(|(name, _)| name == var_name);
+            if !already_parameter && !already_local {
+                self.output.push_str(&format!("    (local ${} i32)\n", var_name));
+                self.add_local(var_name, next_idx);
+                next_idx += 1;
+            }
         }
         
         // Initialize default arena for main function
@@ -1109,6 +1122,15 @@ impl WasmCodeGen {
         
         // Generate function body
         self.generate_block(&func.body)?;
+        
+        // Drop return value for main function if it leaves a value
+        if func.name == "main" && func.body.expr.is_some() {
+            if let Some(expr) = &func.body.expr {
+                if self.expr_leaves_value(expr) {
+                    self.output.push_str("    drop\n");
+                }
+            }
+        }
         
         // Reset default arena at the end of main
         if func.name == "main" && self.default_arena.is_some() {
@@ -1125,15 +1147,31 @@ impl WasmCodeGen {
     }
     
     fn generate_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
+        self.generate_block_internal(block, false)
+    }
+    
+    fn generate_block_as_expression(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
+        self.generate_block_internal(block, true)
+    }
+    
+    fn generate_block_internal(&mut self, block: &BlockExpr, as_expression: bool) -> Result<(), CodeGenError> {
         // Generate statements
-        for stmt in &block.statements {
+        for (i, stmt) in block.statements.iter().enumerate() {
+            let is_last_stmt = i == block.statements.len() - 1;
             match stmt {
                 Stmt::Binding(bind) => self.generate_binding(bind)?,
                 Stmt::Assignment(assign) => self.generate_assignment(assign)?,
                 Stmt::Expr(expr) => {
                     self.generate_expr(expr)?;
                     // Pop the result if it's not the last expression and the expression leaves a value
-                    if (block.expr.is_some() || stmt != block.statements.last().unwrap()) && self.expr_leaves_value(expr) {
+                    let should_drop = if as_expression {
+                        // In expression context, only drop if not the final value
+                        !is_last_stmt || block.expr.is_some()
+                    } else {
+                        // In statement context, drop unless it's the final expression
+                        (block.expr.is_some() || !is_last_stmt) && self.expr_leaves_value(expr)
+                    };
+                    if should_drop && self.expr_leaves_value(expr) {
                         self.output.push_str("    drop\n");
                     }
                 }
@@ -1143,8 +1181,8 @@ impl WasmCodeGen {
         // Generate return expression
         if let Some(expr) = &block.expr {
             self.generate_expr(expr)?;
-        } else if block.statements.is_empty() {
-            // Empty block returns 0 (Unit)
+        } else if block.statements.is_empty() && !as_expression {
+            // Empty block returns 0 (Unit) only in statement context
             self.output.push_str("    i32.const 0\n");
         }
         
@@ -1291,19 +1329,62 @@ impl WasmCodeGen {
                 self.generate_freeze_expr(expr)?;
             }
             Expr::None => {
-                // None is represented as 0
+                // Tagged union: allocate 8 bytes (4 for tag, 4 for padding)
+                self.output.push_str("    ;; None literal\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+                
+                // Store tag (0 for None)
                 self.output.push_str("    i32.const 0\n");
+                self.output.push_str("    i32.store\n");
+                
+                // Leave pointer on stack
+                self.output.push_str("    local.get $match_tmp\n");
             }
             Expr::Some(inner) => {
-                // For now, Some is just the value itself
-                // In a real implementation, we'd need tagged unions
+                // Generate the inner value first
                 self.generate_expr(inner)?;
+                
+                // Tagged union: allocate 8 bytes (4 for tag, 4 for value)
+                self.output.push_str("    ;; Some literal\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+                
+                // Store tag (1 for Some)
+                self.output.push_str("    i32.const 1\n");
+                self.output.push_str("    i32.store\n");
+                
+                // Store value at offset 4
+                self.output.push_str("    local.get $match_tmp\n");
+                self.output.push_str("    i32.const 4\n");
+                self.output.push_str("    i32.add\n");
+                // The value is already on the stack
+                self.output.push_str("    i32.store\n");
+                
+                // Leave pointer on stack
+                self.output.push_str("    local.get $match_tmp\n");
             }
             Expr::Lambda(lambda) => {
                 self.generate_lambda_expr(lambda)?;
             }
             Expr::PrototypeClone(proto_clone) => {
                 self.generate_prototype_clone_expr(proto_clone)?;
+            }
+            Expr::NoneTyped(_ty) => {
+                // Tagged union: allocate 8 bytes (4 for tag, 4 for padding)
+                self.output.push_str("    ;; None<T> literal\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+                
+                // Store tag (0 for None)
+                self.output.push_str("    i32.const 0\n");
+                self.output.push_str("    i32.store\n");
+                
+                // Leave pointer on stack
+                self.output.push_str("    local.get $match_tmp\n");
             }
         }
         Ok(())
@@ -1474,6 +1555,47 @@ impl WasmCodeGen {
         
         // Handle function call
         if let Expr::Ident(func_name) = &*call.function {
+            // Handle special built-in function 'some'
+            if func_name == "some" {
+                // Tagged union: allocate 8 bytes (4 for tag, 4 for value)
+                self.output.push_str("    ;; Some constructor\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+                
+                // Store tag (1 for Some)
+                self.output.push_str("    i32.const 1\n");
+                self.output.push_str("    i32.store\n");
+                
+                // Store value at offset 4
+                self.output.push_str("    local.get $match_tmp\n");
+                self.output.push_str("    i32.const 4\n");
+                self.output.push_str("    i32.add\n");
+                // The value is already on the stack from the argument
+                self.output.push_str("    i32.store\n");
+                
+                // Return pointer to the Option
+                self.output.push_str("    local.get $match_tmp\n");
+                return Ok(());
+            }
+            
+            // Handle special built-in function 'none'
+            if func_name == "none" {
+                // Tagged union: allocate 8 bytes (4 for tag, 4 for padding)
+                self.output.push_str("    ;; None constructor\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+                
+                // Store tag (0 for None)
+                self.output.push_str("    i32.const 0\n");
+                self.output.push_str("    i32.store\n");
+                
+                // Return pointer to the Option
+                self.output.push_str("    local.get $match_tmp\n");
+                return Ok(());
+            }
+            
             if self.functions.contains_key(func_name) {
                 self.output.push_str(&format!("    call ${}\n", func_name));
             } else {
@@ -1801,17 +1923,40 @@ impl WasmCodeGen {
     }
     
     fn resolve_generic_function_call(&self, name: &str, arg_expr: &Expr) -> Result<String, CodeGenError> {
-        // For now, we'll do simple type inference based on the expression
-        match arg_expr {
-            Expr::StringLit(_) => Ok(format!("{}_String", name)),
-            Expr::IntLit(_) => Ok(format!("{}_Int32", name)),
-            _ => {
-                // Try to get type from expr_types map
-                if let Some(type_name) = self.expr_types.get(&(arg_expr as *const Expr)) {
-                    Ok(format!("{}_{}", name, type_name))
-                } else {
-                    // Default to Int32 for now
-                    Ok(format!("{}_Int32", name))
+        // For built-in functions, use the original name for string types
+        if name == "println" {
+            match arg_expr {
+                Expr::StringLit(_) => Ok("println".to_string()),
+                Expr::IntLit(_) => Ok("print_int".to_string()),
+                _ => {
+                    // Try to get type from expr_types map
+                    if let Some(type_name) = self.expr_types.get(&(arg_expr as *const Expr)) {
+                        if type_name == "String" {
+                            Ok("println".to_string())
+                        } else if type_name == "Int32" || type_name == "Int" {
+                            Ok("print_int".to_string())
+                        } else {
+                            Ok("println".to_string())
+                        }
+                    } else {
+                        // Default to println
+                        Ok("println".to_string())
+                    }
+                }
+            }
+        } else {
+            // For user-defined generic functions, use specialized names
+            match arg_expr {
+                Expr::StringLit(_) => Ok(format!("{}_String", name)),
+                Expr::IntLit(_) => Ok(format!("{}_Int32", name)),
+                _ => {
+                    // Try to get type from expr_types map
+                    if let Some(type_name) = self.expr_types.get(&(arg_expr as *const Expr)) {
+                        Ok(format!("{}_{}", name, type_name))
+                    } else {
+                        // Default to Int32 for now
+                        Ok(format!("{}_Int32", name))
+                    }
                 }
             }
         }
@@ -1889,7 +2034,7 @@ impl WasmCodeGen {
             self.output.push_str("    local.get $match_tmp\n");
             let bindings = self.generate_pattern_match(&arm.pattern)?;
             
-            self.output.push_str("    (if\n");
+            self.output.push_str("    (if (result i32)\n");
             self.output.push_str("      (then\n");
             
             // Apply bindings
@@ -1898,9 +2043,9 @@ impl WasmCodeGen {
                 self.output.push_str(&format!("        local.set ${}\n", name));
             }
             
-            // Generate arm body
+            // Generate arm body as expression (match arms should produce values)
             self.push_scope();
-            self.generate_block(&arm.body)?;
+            self.generate_block_as_expression(&arm.body)?;
             self.pop_scope();
             
             self.output.push_str("      )\n");
@@ -2026,8 +2171,35 @@ impl WasmCodeGen {
             Pattern::Record(_, _) => {
                 return Err(CodeGenError::NotImplemented("record patterns".to_string()));
             }
-            Pattern::Some(_) | Pattern::None => {
-                return Err(CodeGenError::NotImplemented("option patterns".to_string()));
+            Pattern::Some(inner_pattern) => {
+                // Check if tag is 1 (Some)
+                self.output.push_str("    local.tee $match_tmp ;; save for value extraction\n");
+                self.output.push_str("    i32.load ;; load tag\n");
+                self.output.push_str("    i32.const 1 ;; Some tag\n");
+                self.output.push_str("    i32.eq\n");
+                
+                // If tag matches, match the inner pattern
+                self.output.push_str("    (if (result i32)\n");
+                self.output.push_str("      (then\n");
+                self.output.push_str("        local.get $match_tmp\n");
+                self.output.push_str("        i32.const 4\n");
+                self.output.push_str("        i32.add\n");
+                self.output.push_str("        i32.load ;; load value from offset 4\n");
+                
+                let inner_bindings = self.generate_pattern_match(inner_pattern)?;
+                bindings.extend(inner_bindings);
+                
+                self.output.push_str("      )\n");
+                self.output.push_str("      (else\n");
+                self.output.push_str("        i32.const 0 ;; tag mismatch\n");
+                self.output.push_str("      )\n");
+                self.output.push_str("    )\n");
+            }
+            Pattern::None => {
+                // Check if tag is 0 (None)
+                self.output.push_str("    i32.load ;; load tag\n");
+                self.output.push_str("    i32.const 0 ;; None tag\n");
+                self.output.push_str("    i32.eq\n");
             }
         }
         

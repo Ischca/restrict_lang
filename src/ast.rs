@@ -358,6 +358,8 @@ pub enum Expr {
     Some(Box<Expr>),
     /// None variant of Option type
     None,
+    /// None variant with explicit type (e.g., `none<Int>`)
+    NoneTyped(Type),
     
     // Lambda expression
     /// Anonymous function (e.g., `|x| x + 1`)

@@ -29,7 +29,10 @@
       "Bash(wasm-validate:*)",
       "Bash(true)",
       "Bash(git add:*)",
-      "Bash(mise run build:*)"
+      "Bash(mise run build:*)",
+      "Bash(~/.local/bin/warder:*)",
+      "Bash(RUST_BACKTRACE=1 cargo run --bin restrict_lang test_tiny.rl)",
+      "Bash(./target/debug/restrict_lang:*)"
     ],
     "deny": []
   }

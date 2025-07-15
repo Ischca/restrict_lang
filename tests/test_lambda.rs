@@ -136,7 +136,7 @@ fn test_lambda_not_confused_with_list_pattern() {
         val lst = [1, 2, 3];
         val f = |x| x + 1;
         lst match {
-            [head | tail] => { f(head) }
+            [head | tail] => { head f }
             [] => { 0 }
         }
     }"#;
@@ -147,20 +147,20 @@ fn test_lambda_not_confused_with_list_pattern() {
 }
 
 #[test]
-fn test_lambda_call_immediately() {
-    // Due to OSV syntax, (|x| x * 2)(21) is parsed as 21 applied to the lambda
-    // which is: (|x| x * 2) 21 => 21 (|x| x * 2)
-    let input = "val result = (|x| x * 2)(21)";
+fn test_lambda_call_osv_syntax() {
+    // OSV syntax: 21 applied to lambda function
+    // which is: 21 (|x| x * 2)
+    let input = "val result = 21 (|x| x * 2)";
     let (_, program) = parse_program(input).unwrap();
     
     match &program.declarations[0] {
         TopDecl::Binding(bind) => {
             match &*bind.value {
                 Expr::Call(call) => {
-                    // Due to OSV, the function is 21 and the lambda is the argument
-                    assert!(matches!(&*call.function, Expr::IntLit(21)));
+                    // In OSV syntax, the function is the lambda and 21 is the argument
+                    assert!(matches!(&*call.function, Expr::Lambda(_)));
                     assert_eq!(call.args.len(), 1);
-                    assert!(matches!(&*call.args[0], Expr::Lambda(_)));
+                    assert!(matches!(&*call.args[0], Expr::IntLit(21)));
                 }
                 _ => panic!("Expected call expression"),
             }

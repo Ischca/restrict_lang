@@ -111,7 +111,23 @@ async fn main() {
     let ast = match parse_program(&source) {
         Ok((remaining, ast)) => {
             if !remaining.is_empty() && !check_only && !show_ast {
-                eprintln!("Warning: Unparsed input remaining: {:?}", remaining);
+                eprintln!("Warning: Unparsed input remaining at position {}", source.len() - remaining.len());
+                
+                // Show context around the unparsed position
+                let pos = source.len() - remaining.len();
+                let start = pos.saturating_sub(40);
+                let end = (pos + 40).min(source.len());
+                
+                eprintln!("Context:");
+                eprintln!("  {}", &source[start..pos]);
+                eprintln!("  {}^--- Parsing stopped here", " ".repeat(pos - start));
+                eprintln!("  {}", &source[pos..end]);
+                
+                // If AST is empty, this is likely a complete parse failure
+                if ast.declarations.is_empty() && ast.imports.is_empty() {
+                    eprintln!("\nError: Failed to parse any declarations. Check syntax around the indicated position.");
+                    std::process::exit(1);
+                }
             }
             if show_ast {
                 println!("{:#?}", ast);
@@ -123,7 +139,23 @@ async fn main() {
             ast
         },
         Err(e) => {
-            eprintln!("Parsing error: {:?}", e);
+            match e {
+                nom::Err::Error(e) | nom::Err::Failure(e) => {
+                    let pos = source.len() - e.input.len();
+                    eprintln!("Parsing error at position {}: {:?}", pos, e.code);
+                    
+                    // Show context
+                    let start = pos.saturating_sub(40);
+                    let end = (pos + 40).min(source.len());
+                    eprintln!("Context:");
+                    eprintln!("  {}", &source[start..pos]);
+                    eprintln!("  {}^--- Error here", " ".repeat(pos - start));
+                    eprintln!("  {}", &source[pos..end]);
+                }
+                nom::Err::Incomplete(_) => {
+                    eprintln!("Parsing error: Incomplete input");
+                }
+            }
             std::process::exit(1);
         }
     };

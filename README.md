@@ -147,16 +147,25 @@ numbers match {
     [a, b] => { "exactly two" }
     _ => { "other" }
 }
+
+// Record pattern matching
+record Point { x: Int y: Int }
+val point = Point { x: 10 y: 20 }
+point match {
+    Point { x: 0 y: 0 } => { "origin" }
+    Point { x y } => { x + y }  // Destructure both fields
+    _ => { "unknown" }
+}
 ```
 
 ### Records and Methods
 
 ```rust
-// Record definition
+// Record definition (fields are space-separated)
 record Person {
-    name: String,
-    age: Int,
-    email: String,
+    name: String
+    age: Int
+    email: String
 }
 
 // Method implementation
@@ -170,8 +179,8 @@ impl Person {
     }
 }
 
-// Usage
-val alice = Person { name: "Alice", age: 30, email: "alice@example.com" }
+// Usage (fields are space-separated)
+val alice = Person { name: "Alice" age: 30 email: "alice@example.com" }
 val greeting = alice.greet()  // "Hello, Alice!"
 val adult = alice.is_adult()  // true
 ```
@@ -184,7 +193,7 @@ val arena = new_arena(1024)  // 1KB arena
 
 arena {
     val big_list = [1, 2, 3, /* many elements */]
-    val user = Person { name: "Bob", age: 25, email: "bob@test.com" }
+    val user = Person { name: "Bob" age: 25 email: "bob@test.com" }
     
     // Process data...
     // All memory automatically freed when leaving scope

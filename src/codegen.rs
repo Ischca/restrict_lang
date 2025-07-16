@@ -2168,8 +2168,46 @@ impl WasmCodeGen {
                 self.output.push_str("      )\n");
                 self.output.push_str("    )\n");
             }
-            Pattern::Record(_, _) => {
-                return Err(CodeGenError::NotImplemented("record patterns".to_string()));
+            Pattern::Record(_record_name, field_patterns) => {
+                // For record patterns, we need to:
+                // 1. Save the record pointer
+                // 2. Extract and match each field pattern
+                // 3. Combine the match results
+                
+                // Save the record pointer
+                self.output.push_str("    local.set $match_tmp\n");
+                
+                // We need to match all fields and AND the results
+                let mut all_bindings = Vec::new();
+                let mut field_offset = 0;
+                let mut first_field = true;
+                
+                for (_field_name, field_pattern) in field_patterns {
+                    // Load the field value
+                    self.output.push_str("    local.get $match_tmp\n");
+                    self.output.push_str(&format!("    i32.const {}\n", field_offset));
+                    self.output.push_str("    i32.add\n");
+                    self.output.push_str("    i32.load\n");
+                    
+                    // Match the field pattern
+                    let field_bindings = self.generate_pattern_match(field_pattern)?;
+                    all_bindings.extend(field_bindings);
+                    
+                    // If not the first field, AND with previous result
+                    if !first_field {
+                        self.output.push_str("    i32.and\n");
+                    }
+                    first_field = false;
+                    
+                    field_offset += 4; // Assume all fields are i32 for now
+                }
+                
+                // If there were no fields, just push 1
+                if first_field {
+                    self.output.push_str("    i32.const 1 ;; empty record pattern always matches\n");
+                }
+                
+                return Ok(all_bindings);
             }
             Pattern::Some(inner_pattern) => {
                 // Check if tag is 1 (Some)

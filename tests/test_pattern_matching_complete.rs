@@ -107,27 +107,28 @@ fn test_list_pattern_matching() {
 #[test]
 fn test_record_pattern_matching() {
     let source = r#"
-        record Point { x: Int, y: Int }
+        record Point { x: Int y: Int }
         
         fun quadrant = p: Point {
             p match {
-                Point { x: 0, y: 0 } => { 0 }
-                Point { x, y } => {
+                Point { x: 0 y: 0 } => { 0 }
+                Point { x y } => {
                     x > 0 then {
                         y > 0 then { 1 } else { 4 }
                     } else {
                         y > 0 then { 2 } else { 3 }
                     }
                 }
+                _ => { -1 }
             }
         }
         
         fun main = {
-            val origin = Point { x: 0, y: 0 };
-            val p1 = Point { x: 10, y: 20 };
-            val p2 = Point { x: -10, y: 20 };
-            val p3 = Point { x: -10, y: -20 };
-            val p4 = Point { x: 10, y: -20 };
+            val origin = Point { x: 0 y: 0 };
+            val p1 = Point { x: 10 y: 20 };
+            val p2 = Point { x: -10 y: 20 };
+            val p3 = Point { x: -10 y: -20 };
+            val p4 = Point { x: 10 y: -20 };
             
             origin quadrant |> print_int;
             p1 quadrant |> print_int;
@@ -137,8 +138,15 @@ fn test_record_pattern_matching() {
         }
     "#;
     
-    let wat = compile_and_test(source).unwrap();
-    assert!(wat.contains("(func $quadrant"));
+    match compile_and_test(source) {
+        Ok(wat) => {
+            if !wat.contains("(func $quadrant") {
+                println!("Generated WAT:\n{}", wat);
+                panic!("Expected to find (func $quadrant but it wasn't found");
+            }
+        },
+        Err(e) => panic!("Compilation failed: {}", e)
+    };
 }
 
 #[test]

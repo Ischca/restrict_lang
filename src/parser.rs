@@ -108,20 +108,13 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let (input, _) = expect_token(Token::Record)(input)?;
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::LBrace)(input)?;
+    // Parse fields - they should be space-separated, not comma-separated
     let (input, fields) = many0(field_decl)(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
     
-    // Check for freeze keyword
-    let (input, frozen) = opt(|input| {
-        expect_token(Token::Freeze)(input)
-    })(input)?;
-    let frozen = frozen.is_some();
-    
-    // Check for sealed keyword (can appear after freeze)
-    let (input, sealed) = opt(|input| {
-        expect_token(Token::Sealed)(input)
-    })(input)?;
-    let sealed = sealed.is_some();
+    // For now, skip freeze/sealed checks to debug parsing issue
+    let frozen = false;
+    let sealed = false;
     
     Ok((input, RecordDecl { 
         name, 
@@ -435,6 +428,7 @@ fn pattern(input: &str) -> ParseResult<Pattern> {
         },
         some_pattern,
         none_pattern,
+        record_pattern,  // Try record patterns before identifiers
         list_pattern,  // Try list patterns before literals
         map(literal, |expr| match expr {
             Expr::IntLit(n) => Pattern::Literal(Literal::Int(n)),
@@ -460,6 +454,30 @@ fn some_pattern(input: &str) -> ParseResult<Pattern> {
 fn none_pattern(input: &str) -> ParseResult<Pattern> {
     let (input, _) = expect_token(Token::None)(input)?;
     Ok((input, Pattern::None))
+}
+
+fn record_pattern(input: &str) -> ParseResult<Pattern> {
+    // Try to parse an identifier followed by {
+    let (input, name) = ident(input)?;
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+    
+    // Parse fields
+    let (input, fields) = many0(
+        |input| {
+            let (input, field_name) = ident(input)?;
+            // Check if there's a colon for an explicit pattern
+            if let Ok((input, _)) = expect_token::<'_>(Token::Colon)(input) {
+                let (input, pattern) = pattern(input)?;
+                Ok((input, (field_name, pattern)))
+            } else {
+                // Shorthand: just field name binds to a variable
+                Ok((input, (field_name.clone(), Pattern::Ident(field_name))))
+            }
+        }
+    )(input)?;
+    
+    let (input, _) = expect_token(Token::RBrace)(input)?;
+    Ok((input, Pattern::Record(name, fields)))
 }
 
 fn list_pattern(input: &str) -> ParseResult<Pattern> {

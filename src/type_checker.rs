@@ -1094,8 +1094,8 @@ impl TypeChecker {
             Expr::Then(then) => self.check_then_expr(then),
             Expr::While(while_expr) => self.check_while_expr(while_expr),
             Expr::Match(match_expr) => self.check_match_expr(match_expr),
-            Expr::ListLit(elements) => self.check_list_lit(elements),
-            Expr::ArrayLit(elements) => self.check_array_lit(elements),
+            Expr::ListLit(elements) => self.check_list_lit(elements, expected),
+            Expr::ArrayLit(elements) => self.check_array_lit(elements, expected),
             Expr::Some(expr) => {
                 let expected_inner = if let Some(TypedType::Option(inner)) = expected {
                     Some(inner.as_ref())
@@ -1467,6 +1467,10 @@ impl TypeChecker {
     }
     
     fn check_block_expr(&mut self, block: &BlockExpr) -> Result<TypedType, TypeError> {
+        self.check_block_expr_with_expected(block, None)
+    }
+    
+    fn check_block_expr_with_expected(&mut self, block: &BlockExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         self.push_scope();
         
         let mut last_expr_type = None;
@@ -1486,7 +1490,7 @@ impl TypeChecker {
         }
         
         let result = if let Some(expr) = &block.expr {
-            self.check_expr(expr)?
+            self.check_expr_with_expected(expr, expected)?
         } else if let Some(ty) = last_expr_type {
             // If no explicit return expression but last statement was an expression,
             // use its type as the block's type
@@ -1725,7 +1729,13 @@ impl TypeChecker {
             // Bind pattern variables
             self.bind_pattern_vars(&arm.pattern, &scrutinee_type)?;
             
-            let arm_type = self.check_block_expr(&arm.body)?;
+            // Use expected type from previous arms if available
+            let expected_arm_type = result_type.as_ref();
+            let arm_type = if let Some(expected) = expected_arm_type {
+                self.check_block_expr_with_expected(&arm.body, Some(expected))?
+            } else {
+                self.check_block_expr(&arm.body)?
+            };
             
             self.pop_scope();
             
@@ -1962,11 +1972,15 @@ impl TypeChecker {
         }
     }
     
-    fn check_list_lit(&mut self, elements: &[Box<Expr>]) -> Result<TypedType, TypeError> {
+    fn check_list_lit(&mut self, elements: &[Box<Expr>], expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         if elements.is_empty() {
-            // Empty list - we can't infer the element type yet
-            // For now, we'll use a placeholder
-            return Ok(TypedType::List(Box::new(TypedType::Int32)));
+            // Empty list - infer from expected type if available
+            if let Some(TypedType::List(elem_type)) = expected {
+                return Ok(TypedType::List(elem_type.clone()));
+            } else {
+                // For now, default to List<Int32> if no context
+                return Ok(TypedType::List(Box::new(TypedType::Int32)));
+            }
         }
         
         // Check all elements and ensure they have the same type
@@ -1985,11 +1999,15 @@ impl TypeChecker {
         Ok(TypedType::List(Box::new(first_type)))
     }
     
-    fn check_array_lit(&mut self, elements: &[Box<Expr>]) -> Result<TypedType, TypeError> {
+    fn check_array_lit(&mut self, elements: &[Box<Expr>], expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         if elements.is_empty() {
-            // Empty array - we can't infer the element type yet
-            // For now, we'll use a placeholder with size 0
-            return Ok(TypedType::Array(Box::new(TypedType::Int32), 0));
+            // Empty array - infer from expected type if available
+            if let Some(TypedType::Array(elem_type, _)) = expected {
+                return Ok(TypedType::Array(elem_type.clone(), 0));
+            } else {
+                // For now, default to Array<Int32, 0> if no context
+                return Ok(TypedType::Array(Box::new(TypedType::Int32), 0));
+            }
         }
         
         // Check all elements and ensure they have the same type
@@ -2032,15 +2050,17 @@ impl TypeChecker {
             Some(return_type.as_ref())
         } else {
             // Otherwise, try to infer from body usage
-            // For now, default to Int32 for all parameters
+            // First, try simple inference from body
             for param in &lambda.params {
-                param_types.push(TypedType::Int32);
-                self.bind_var(param.clone(), TypedType::Int32, false)?;
+                let inferred_type = self.infer_param_type_from_usage(param, &lambda.body);
+                param_types.push(inferred_type.clone());
+                self.bind_var(param.clone(), inferred_type, false)?;
             }
+            
             None
         };
         
-        // Type check the body with expected return type
+        // Type check the body with inferred parameter types
         let body_type = self.check_expr_with_expected(&lambda.body, expected_return_type)?;
         
         // If we had an expected return type, verify it matches
@@ -2061,6 +2081,103 @@ impl TypeChecker {
             params: param_types,
             return_type: Box::new(body_type),
         })
+    }
+    
+    fn infer_param_type_from_usage(&self, param_name: &str, expr: &Expr) -> TypedType {
+        // Analyze the expression to infer the parameter type
+        match expr {
+            Expr::Binary(bin) => {
+                // Check if the parameter is used in this binary expression
+                let uses_param = self.expr_uses_param(&bin.left, param_name) || 
+                                self.expr_uses_param(&bin.right, param_name);
+                
+                if uses_param {
+                    match bin.op {
+                        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                            // Check if the other operand is a float literal
+                            if self.expr_contains_float(&bin.left) || self.expr_contains_float(&bin.right) {
+                                return TypedType::Float64;
+                            }
+                            // Default to Int32 for arithmetic
+                            TypedType::Int32
+                        }
+                        BinaryOp::Gt | BinaryOp::Lt | BinaryOp::Ge | BinaryOp::Le => {
+                            // Comparison operators work with numeric types
+                            // Check for float literals
+                            if self.expr_contains_float(&bin.left) || self.expr_contains_float(&bin.right) {
+                                return TypedType::Float64;
+                            }
+                            TypedType::Int32
+                        }
+                        _ => TypedType::Int32
+                    }
+                } else {
+                    // Recursively check sub-expressions
+                    let left_type = self.infer_param_type_from_usage(param_name, &bin.left);
+                    if !matches!(left_type, TypedType::Int32) {
+                        return left_type;
+                    }
+                    self.infer_param_type_from_usage(param_name, &bin.right)
+                }
+            }
+            Expr::Block(block) => {
+                // Check all statements in the block
+                for stmt in &block.statements {
+                    if let Stmt::Expr(expr) = stmt {
+                        let inferred = self.infer_param_type_from_usage(param_name, expr);
+                        if !matches!(inferred, TypedType::Int32) {
+                            return inferred;
+                        }
+                    }
+                }
+                // Check the final expression if present
+                if let Some(final_expr) = &block.expr {
+                    self.infer_param_type_from_usage(param_name, &**final_expr)
+                } else {
+                    TypedType::Int32
+                }
+            }
+            _ => TypedType::Int32 // Default fallback
+        }
+    }
+    
+    fn expr_uses_param(&self, expr: &Expr, param_name: &str) -> bool {
+        match expr {
+            Expr::Ident(name) => name == param_name,
+            Expr::Binary(bin) => {
+                self.expr_uses_param(&bin.left, param_name) || 
+                self.expr_uses_param(&bin.right, param_name)
+            }
+            Expr::Block(block) => {
+                block.statements.iter().any(|stmt| {
+                    if let Stmt::Expr(e) = stmt {
+                        self.expr_uses_param(e, param_name)
+                    } else {
+                        false
+                    }
+                }) || block.expr.as_ref().map_or(false, |e| self.expr_uses_param(&**e, param_name))
+            }
+            _ => false
+        }
+    }
+    
+    fn expr_contains_float(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::FloatLit(_) => true,
+            Expr::Binary(bin) => {
+                self.expr_contains_float(&bin.left) || self.expr_contains_float(&bin.right)
+            }
+            Expr::Block(block) => {
+                block.statements.iter().any(|stmt| {
+                    if let Stmt::Expr(e) = stmt {
+                        self.expr_contains_float(e)
+                    } else {
+                        false
+                    }
+                }) || block.expr.as_ref().map_or(false, |e| self.expr_contains_float(&**e))
+            }
+            _ => false
+        }
     }
 }
 

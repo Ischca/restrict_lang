@@ -76,7 +76,6 @@ fn test_lambda_param_inference_comparison() {
 }
 
 #[test]
-#[ignore = "Float inference not yet implemented"]
 fn test_lambda_float_inference() {
     // Test inference of Float64 from literal
     let input = r#"fun test = {

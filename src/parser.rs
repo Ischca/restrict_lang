@@ -69,29 +69,59 @@ fn ident(input: &str) -> ParseResult<String> {
 
 /// Parses a type expression.
 /// 
-/// Handles both simple types and generic types.
+/// Handles both simple types, generic types, and temporal types.
 /// 
 /// # Examples
 /// 
 /// ```
 /// // Simple types: i32, String, Point
 /// // Generic types: Vec<i32>, Map<String, Value>
+/// // Temporal types: File<~f>, Transaction<~tx, ~db>
 /// ```
 fn parse_type(input: &str) -> ParseResult<Type> {
     let (input, name) = ident(input)?;
-    let (input, generics) = opt(
+    let (input, type_params) = opt(
         delimited(
             expect_token(Token::Lt),
             separated_list0(
                 expect_token(Token::Comma),
-                parse_type
+                alt((
+                    // Parse temporal parameter (~f)
+                    map(
+                        preceded(expect_token(Token::Tilde), ident),
+                        |name| (name, true)  // (name, is_temporal)
+                    ),
+                    // Parse regular type parameter
+                    map(parse_type, |ty| {
+                        match ty {
+                            Type::Named(n) => (n, false),
+                            _ => panic!("Complex types not supported as parameters yet")
+                        }
+                    })
+                ))
             ),
             expect_token(Token::Gt)
         )
     )(input)?;
     
-    match generics {
-        Some(params) => Ok((input, Type::Generic(name, params))),
+    match type_params {
+        Some(params) => {
+            // Check if all are temporal
+            let all_temporal = params.iter().all(|(_, is_temporal)| *is_temporal);
+            let all_regular = params.iter().all(|(_, is_temporal)| !*is_temporal);
+            
+            if all_temporal {
+                // All temporal: File<~f>
+                Ok((input, Type::Temporal(name, params.into_iter().map(|(n, _)| n).collect())))
+            } else if all_regular {
+                // All regular types: Vec<String>
+                let types = params.into_iter().map(|(n, _)| Type::Named(n)).collect();
+                Ok((input, Type::Generic(name, types)))
+            } else {
+                // Mixed not supported yet
+                Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+            }
+        }
         None => Ok((input, Type::Named(name)))
     }
 }
@@ -107,6 +137,29 @@ fn field_decl(input: &str) -> ParseResult<FieldDecl> {
 fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let (input, _) = expect_token(Token::Record)(input)?;
     let (input, name) = ident(input)?;
+    
+    // Parse optional type parameters: <T, ~f>
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            type_param
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
+    
+    // Parse optional temporal constraints: where ~tx within ~db
+    let (input, temporal_constraints) = opt(|input| {
+        let (input, _) = expect_token(Token::Where)(input)?;
+        separated_list1(
+            expect_token(Token::Comma),
+            temporal_constraint
+        )(input)
+    })(input)?;
+    let temporal_constraints = temporal_constraints.unwrap_or_default();
+    
     let (input, _) = expect_token(Token::LBrace)(input)?;
     // Parse fields - they should be space-separated, not comma-separated
     let (input, fields) = many0(field_decl)(input)?;
@@ -118,11 +171,23 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     
     Ok((input, RecordDecl { 
         name, 
+        type_params,
+        temporal_constraints,
         fields, 
         frozen, 
         sealed, 
         parent_hash: None 
     }))
+}
+
+// Parse a temporal constraint: ~tx within ~db
+fn temporal_constraint(input: &str) -> ParseResult<TemporalConstraint> {
+    let (input, _) = expect_token(Token::Tilde)(input)?;
+    let (input, inner) = ident(input)?;
+    let (input, _) = expect_token(Token::Within)(input)?;
+    let (input, _) = expect_token(Token::Tilde)(input)?;
+    let (input, outer) = ident(input)?;
+    Ok((input, TemporalConstraint { inner, outer }))
 }
 
 fn param(input: &str) -> ParseResult<Param> {
@@ -195,7 +260,7 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
     
-    // Parse optional generic type parameters: <T: Display, U: Clone + Debug>
+    // Parse optional generic type parameters: <T: Display, U: Clone + Debug, ~t>
     let (input, type_params) = opt(|input| {
         let (input, _) = expect_token(Token::Lt)(input)?;
         let (input, params) = separated_list1(
@@ -209,13 +274,45 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, params) = many0(param)(input)?;
+    
+    // Parse optional temporal constraints: where ~tx within ~db
+    let (input, temporal_constraints) = opt(|input| {
+        let (input, _) = expect_token(Token::Where)(input)?;
+        separated_list1(
+            expect_token(Token::Comma),
+            temporal_constraint
+        )(input)
+    })(input)?;
+    let temporal_constraints = temporal_constraints.unwrap_or_default();
+    
     let (input, body) = block_expr(input)?;
-    Ok((input, FunDecl { name, type_params, params, body }))
+    Ok((input, FunDecl { 
+        name, 
+        type_params, 
+        temporal_constraints,
+        params, 
+        body 
+    }))
 }
 
 // Parse a type parameter with optional bounds: T: Display + Clone and derivation bound: T from ParentType
+// Also supports temporal type parameters: ~t
 fn type_param(input: &str) -> ParseResult<TypeParam> {
+    // Check if this is a temporal type parameter
+    let (input, is_temporal) = opt(expect_token(Token::Tilde))(input)?;
+    let is_temporal = is_temporal.is_some();
+    
     let (input, name) = ident(input)?;
+    
+    // Temporal parameters don't have trait bounds or derivation bounds
+    if is_temporal {
+        return Ok((input, TypeParam { 
+            name, 
+            bounds: vec![], 
+            derivation_bound: None, 
+            is_temporal: true 
+        }));
+    }
     
     // Parse optional derivation bound: from ParentType
     let (input, derivation_bound) = opt(|input| {
@@ -237,7 +334,7 @@ fn type_param(input: &str) -> ParseResult<TypeParam> {
     })(input)?;
     
     let bounds = bounds.unwrap_or_default();
-    Ok((input, TypeParam { name, bounds, derivation_bound }))
+    Ok((input, TypeParam { name, bounds, derivation_bound, is_temporal: false }))
 }
 
 #[allow(dead_code)]
@@ -250,10 +347,24 @@ fn impl_block(input: &str) -> ParseResult<ImplBlock> {
     Ok((input, ImplBlock { target, functions }))
 }
 
-#[allow(dead_code)]
 fn context_decl(input: &str) -> ParseResult<ContextDecl> {
     let (input, _) = expect_token(Token::Context)(input)?;
     let (input, name) = ident(input)?;
+    
+    // Parse optional type parameters (including temporal): <~fs>
+    let (input, _type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            type_param
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    
+    // TODO: Handle type parameters in context declaration
+    // For now, we'll ignore them until we update the ContextDecl struct
+    
     let (input, _) = expect_token(Token::LBrace)(input)?;
     let (input, fields) = many0(field_decl)(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
@@ -959,6 +1070,8 @@ fn top_decl_inner(input: &str) -> ParseResult<TopDecl> {
 }
 
 pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
+    // Skip whitespace/comments before parsing a top-level declaration
+    let (input, _) = skip(input)?;
     alt((
         export_decl,
         top_decl_inner

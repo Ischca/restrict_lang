@@ -86,6 +86,10 @@ pub enum Token {
     Sealed,
     /// `from` keyword for derivation bounds
     From,
+    /// `within` keyword for temporal constraints
+    Within,
+    /// `where` keyword for constraints
+    Where,
     
     // Identifiers and Literals
     /// Identifier (variable/function name)
@@ -120,6 +124,9 @@ pub enum Token {
     Le,             // <=
     Gt,             // >
     Ge,             // >=
+    
+    // Temporal
+    Tilde,          // ~ (for temporal type variables)
     
     // Delimiters
     LBrace,         // {
@@ -166,6 +173,8 @@ impl fmt::Display for Token {
             Token::Export => write!(f, "export"),
             Token::Sealed => write!(f, "sealed"),
             Token::From => write!(f, "from"),
+            Token::Within => write!(f, "within"),
+            Token::Where => write!(f, "where"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::IntLit(n) => write!(f, "{}", n),
             Token::FloatLit(n) => write!(f, "{}", n),
@@ -188,6 +197,7 @@ impl fmt::Display for Token {
             Token::Le => write!(f, "<="),
             Token::Gt => write!(f, ">"),
             Token::Ge => write!(f, ">="),
+            Token::Tilde => write!(f, "~"),
             Token::LBrace => write!(f, "{{"),
             Token::RBrace => write!(f, "}}"),
             Token::LParen => write!(f, "("),
@@ -250,6 +260,8 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "export" => Token::Export,
         "sealed" => Token::Sealed,
         "from" => Token::From,
+        "within" => Token::Within,
+        "where" => Token::Where,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))
@@ -322,6 +334,7 @@ fn operator(input: &str) -> IResult<&str, Token> {
         value(Token::Percent, tag("%")),
         value(Token::Lt, tag("<")),
         value(Token::Gt, tag(">")),
+        value(Token::Tilde, tag("~")),
     ))(input)
 }
 
@@ -457,6 +470,34 @@ mod tests {
             Token::Comma,
             Token::IntLit(3),
             Token::RArrayBracket,
+        ]);
+    }
+    
+    #[test]
+    fn test_temporal_tilde() {
+        let tokens = lex("record File<~f> { }").unwrap().1;
+        assert_eq!(tokens, vec![
+            Token::Record,
+            Token::Ident("File".to_string()),
+            Token::Lt,
+            Token::Tilde,
+            Token::Ident("f".to_string()),
+            Token::Gt,
+            Token::LBrace,
+            Token::RBrace,
+        ]);
+    }
+    
+    #[test]
+    fn test_temporal_constraints() {
+        let tokens = lex("where ~tx within ~db").unwrap().1;
+        assert_eq!(tokens, vec![
+            Token::Where,
+            Token::Tilde,
+            Token::Ident("tx".to_string()),
+            Token::Within,
+            Token::Tilde,
+            Token::Ident("db".to_string()),
         ]);
     }
     

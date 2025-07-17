@@ -112,11 +112,25 @@ pub struct ExportDecl {
 ///     host: String,
 ///     port: i32
 /// }
+/// 
+/// // Record with temporal parameters
+/// record File<~f> {
+///     handle: FileHandle
+/// }
+/// 
+/// // Record with temporal constraints
+/// record Transaction<~tx, ~db> where ~tx within ~db {
+///     db: Database<~db>
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordDecl {
     /// Name of the record type
     pub name: String,
+    /// Type parameters (including temporal parameters)
+    pub type_params: Vec<TypeParam>,
+    /// Temporal constraints (e.g., ~tx within ~db)
+    pub temporal_constraints: Vec<TemporalConstraint>,
     /// Fields in the record
     pub fields: Vec<FieldDecl>,
     /// Whether this record is frozen (immutable prototype)
@@ -194,6 +208,17 @@ pub struct ContextDecl {
 /// fn display<T: ToString>(value: T) {
 ///     value |> toString |> println;
 /// }
+/// 
+/// // With temporal parameters
+/// fn readFile<~io>(file: File<~io>) -> String {
+///     file.read()
+/// }
+/// 
+/// // With temporal constraints
+/// fn beginTx<~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db>
+/// where ~tx within ~db {
+///     // ...
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunDecl {
@@ -201,6 +226,8 @@ pub struct FunDecl {
     pub name: String,
     /// Generic type parameters with bounds: `<T: Display, U: Clone>`
     pub type_params: Vec<TypeParam>,
+    /// Temporal constraints (e.g., ~tx within ~db)
+    pub temporal_constraints: Vec<TemporalConstraint>,
     /// Function parameters
     pub params: Vec<Param>,
     /// Function body
@@ -218,6 +245,8 @@ pub struct FunDecl {
 /// <T: Clone>       // With trait bound
 /// <T: Clone + Display>  // Multiple bounds
 /// <T from Animal>  // Derivation bound
+/// <~t>             // Temporal type parameter
+/// <~tx, ~db> where ~tx within ~db  // Temporal with constraints
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
@@ -227,6 +256,8 @@ pub struct TypeParam {
     pub bounds: Vec<TypeBound>,
     /// Derivation bound (e.g., `T from ParentType`)
     pub derivation_bound: Option<String>,
+    /// Whether this is a temporal type parameter (starts with ~)
+    pub is_temporal: bool,
 }
 
 /// Type bound constraint for generic parameters.
@@ -658,6 +689,7 @@ pub enum Type {
     Named(String),
     Generic(String, Vec<Type>),
     Function(Vec<Type>, Box<Type>),  // (param_types, return_type)
+    Temporal(String, Vec<String>),    // Type with temporal parameters (e.g., File<~f>)
 }
 
 impl fmt::Display for Type {
@@ -684,6 +716,16 @@ impl fmt::Display for Type {
                 }
                 write!(f, ") -> {}", ret)
             }
+            Type::Temporal(name, temporals) => {
+                write!(f, "{}<", name)?;
+                for (i, temporal) in temporals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "~{}", temporal)?;
+                }
+                write!(f, ">")
+            }
         }
     }
 }
@@ -704,4 +746,20 @@ impl fmt::Display for BinaryOp {
             BinaryOp::Ge => write!(f, ">="),
         }
     }
+}
+
+/// Temporal constraint expressing relationships between temporal variables.
+/// 
+/// # Example
+/// 
+/// ```restrict
+/// where ~tx within ~db    // Transaction lifetime within database lifetime
+/// where ~a within ~b      // General containment relationship
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemporalConstraint {
+    /// The inner temporal variable (e.g., ~tx)
+    pub inner: String,
+    /// The outer temporal variable (e.g., ~db)
+    pub outer: String,
 }

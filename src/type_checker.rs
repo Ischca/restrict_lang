@@ -95,6 +95,18 @@ pub enum TypeError {
     
     #[error("Derivation depth too deep: {0} > 3")]
     DerivationTooDeep(usize),
+    
+    /// Temporal constraint violation
+    #[error("Temporal constraint violation: {0}")]
+    TemporalConstraintViolation(String),
+    
+    /// Temporal variable escapes its scope
+    #[error("Temporal variable {0} escapes its scope")]
+    TemporalEscape(String),
+    
+    /// Invalid temporal constraint
+    #[error("Invalid temporal constraint: {0} within {1}")]
+    InvalidTemporalConstraint(String, String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,12 +123,29 @@ pub enum TypedType {
     List(Box<TypedType>),
     Array(Box<TypedType>, usize),
     TypeParam(String), // Generic type parameter
+    Temporal { base_type: Box<TypedType>, temporals: Vec<String> }, // Type with temporal parameters
 }
 
 #[derive(Debug, Clone)]
 pub struct TypeSubstitution {
     // Maps type parameter names to concrete types
     pub substitutions: HashMap<String, TypedType>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TemporalConstraint {
+    pub inner: String,  // ~tx
+    pub outer: String,  // ~db (where ~tx within ~db)
+}
+
+#[derive(Debug, Clone)]
+pub struct TemporalContext {
+    // Active temporal variables in current scope
+    pub active_temporals: HashSet<String>,
+    // Temporal constraints (inner within outer)
+    pub constraints: Vec<TemporalConstraint>,
+    // Parent scope's temporals (for nested scopes)
+    pub parent_temporals: Option<Box<TemporalContext>>,
 }
 
 impl TypeSubstitution {
@@ -142,6 +171,10 @@ impl TypeSubstitution {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 return_type: Box::new(self.apply(return_type)),
             },
+            TypedType::Temporal { base_type, temporals } => TypedType::Temporal {
+                base_type: Box::new(self.apply(base_type)),
+                temporals: temporals.clone(),
+            },
             _ => ty.clone(),
         }
     }
@@ -157,6 +190,8 @@ struct Variable {
 #[derive(Debug)]
 struct RecordDef {
     fields: HashMap<String, TypedType>,
+    type_params: Vec<TypeParam>,
+    temporal_constraints: Vec<TemporalConstraint>,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +199,7 @@ struct FunctionDef {
     params: Vec<(String, TypedType)>,
     return_type: TypedType,
     type_params: Vec<TypeParam>, // Store generic type parameters
+    temporal_constraints: Vec<TemporalConstraint>,
 }
 
 pub struct TypeChecker {
@@ -185,6 +221,8 @@ pub struct TypeChecker {
     prototypes: HashMap<String, (String, Option<String>, bool)>,
     // Available contexts
     _contexts: Vec<String>,
+    // Temporal context for tracking temporal variables and constraints
+    temporal_context: TemporalContext,
 }
 
 impl TypeChecker {
@@ -199,6 +237,11 @@ impl TypeChecker {
             methods: HashMap::new(),
             prototypes: HashMap::new(),
             _contexts: Vec::new(),
+            temporal_context: TemporalContext {
+                active_temporals: HashSet::new(),
+                constraints: Vec::new(),
+                parent_temporals: None,
+            },
         };
         
         // Register built-in functions and traits
@@ -246,6 +289,7 @@ impl TypeChecker {
             params: vec![("s".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // list_length function
@@ -253,6 +297,7 @@ impl TypeChecker {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::Int32)))],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // list_get function
@@ -263,6 +308,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // array_get function
@@ -273,6 +319,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // array_set function
@@ -284,6 +331,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // tail function - returns tail of a list (generic version would be better)
@@ -291,6 +339,7 @@ impl TypeChecker {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::Int32)))],
             return_type: TypedType::List(Box::new(TypedType::Int32)),
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // Standard library functions
@@ -312,6 +361,7 @@ impl TypeChecker {
             params: vec![("x".to_string(), TypedType::Int32)],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // max function  
@@ -322,6 +372,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // min function
@@ -332,6 +383,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // pow function
@@ -342,6 +394,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // factorial function
@@ -349,6 +402,7 @@ impl TypeChecker {
             params: vec![("n".to_string(), TypedType::Int32)],
             return_type: TypedType::Int32,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // Float versions
@@ -356,6 +410,7 @@ impl TypeChecker {
             params: vec![("x".to_string(), TypedType::Float64)],
             return_type: TypedType::Float64,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         self.functions.insert("max_f".to_string(), FunctionDef {
@@ -365,6 +420,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Float64,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         self.functions.insert("min_f".to_string(), FunctionDef {
@@ -374,6 +430,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Float64,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
     }
     
@@ -385,6 +442,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            is_temporal: false,
         };
         
         // list_is_empty<T>
@@ -392,6 +450,7 @@ impl TypeChecker {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
             return_type: TypedType::Boolean,
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // list_head<T>
@@ -399,6 +458,7 @@ impl TypeChecker {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
             return_type: TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // list_tail<T>
@@ -406,6 +466,7 @@ impl TypeChecker {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
             return_type: TypedType::Option(Box::new(TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // list_reverse<T>
@@ -413,6 +474,7 @@ impl TypeChecker {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
             return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // list_prepend<T>
@@ -423,6 +485,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // list_append<T>
@@ -433,6 +496,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // list_concat<T>
@@ -443,6 +507,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // list_count<T>
@@ -450,6 +515,7 @@ impl TypeChecker {
             params: vec![("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))))],
             return_type: TypedType::Int32,
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
     }
     
@@ -460,6 +526,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            is_temporal: false,
         };
         
         // option_is_some<T>
@@ -467,6 +534,7 @@ impl TypeChecker {
             params: vec![("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))))],
             return_type: TypedType::Boolean,
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // option_is_none<T>
@@ -474,6 +542,7 @@ impl TypeChecker {
             params: vec![("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))))],
             return_type: TypedType::Boolean,
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // option_unwrap_or<T>
@@ -484,6 +553,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::TypeParam("T".to_string()),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
     }
     
@@ -493,6 +563,7 @@ impl TypeChecker {
             params: vec![("s".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // print_int function
@@ -500,6 +571,7 @@ impl TypeChecker {
             params: vec![("n".to_string(), TypedType::Int32)],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // print_float function
@@ -507,6 +579,7 @@ impl TypeChecker {
             params: vec![("f".to_string(), TypedType::Float64)],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // eprint function
@@ -514,6 +587,7 @@ impl TypeChecker {
             params: vec![("s".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // eprintln function
@@ -521,6 +595,7 @@ impl TypeChecker {
             params: vec![("s".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // some function - wraps a value in Option::Some
@@ -534,6 +609,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            is_temporal: false,
         };
         
         // identity<T>
@@ -541,6 +617,7 @@ impl TypeChecker {
             params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
             return_type: TypedType::TypeParam("T".to_string()),
             type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
         });
         
         // not function
@@ -548,6 +625,7 @@ impl TypeChecker {
             params: vec![("b".to_string(), TypedType::Boolean)],
             return_type: TypedType::Boolean,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // and function
@@ -558,6 +636,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Boolean,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // or function
@@ -568,6 +647,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Boolean,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // panic function
@@ -575,6 +655,7 @@ impl TypeChecker {
             params: vec![("message".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
         
         // assert function
@@ -585,6 +666,7 @@ impl TypeChecker {
             ],
             return_type: TypedType::Unit,
             type_params: vec![],
+            temporal_constraints: vec![],
         });
     }
     
@@ -755,6 +837,20 @@ impl TypeChecker {
                 self.unify(r1, r2, substitution)
             }
             
+            // Temporal types must have compatible base types
+            // For now, we ignore temporal parameters in unification
+            (TypedType::Temporal { base_type: b1, .. }, TypedType::Temporal { base_type: b2, .. }) => {
+                self.unify(b1, b2, substitution)
+            }
+            
+            // Allow unifying a temporal type with its base type
+            (TypedType::Temporal { base_type, .. }, other) => {
+                self.unify(base_type, other, substitution)
+            }
+            (other, TypedType::Temporal { base_type, .. }) => {
+                self.unify(other, base_type, substitution)
+            }
+            
             // All other combinations are type mismatches
             _ => Err(TypeError::TypeMismatch {
                 expected: format!("{:?}", expected),
@@ -865,6 +961,14 @@ impl TypeChecker {
                 // TODO: Implement function type conversion
                 Err(TypeError::UnsupportedFeature("Function types not yet implemented".to_string()))
             }
+            Type::Temporal(name, temporals) => {
+                // Convert base type and wrap with temporal parameters
+                let base_type = self.convert_type(&Type::Named(name.clone()))?;
+                Ok(TypedType::Temporal {
+                    base_type: Box::new(base_type),
+                    temporals: temporals.clone(),
+                })
+            }
         }
     }
     
@@ -912,6 +1016,12 @@ impl TypeChecker {
             params: param_types,
             return_type: TypedType::Int32,
             type_params: func.type_params.clone(),
+            temporal_constraints: func.temporal_constraints.iter()
+                .map(|c| TemporalConstraint {
+                    inner: c.inner.clone(),
+                    outer: c.outer.clone(),
+                })
+                .collect(),
         });
         
         self.pop_type_param_scope();
@@ -935,18 +1045,79 @@ impl TypeChecker {
     }
     
     fn check_record_decl(&mut self, record: &RecordDecl) -> Result<(), TypeError> {
+        // Register temporal type parameters
+        for type_param in &record.type_params {
+            if type_param.is_temporal {
+                self.temporal_context.active_temporals.insert(type_param.name.clone());
+            }
+        }
+        
+        // Register temporal constraints
+        for constraint in &record.temporal_constraints {
+            self.temporal_context.constraints.push(TemporalConstraint {
+                inner: constraint.inner.clone(),
+                outer: constraint.outer.clone(),
+            });
+            // Validate constraint: both temporals should be defined
+            if !self.temporal_context.active_temporals.contains(&constraint.inner) ||
+               !self.temporal_context.active_temporals.contains(&constraint.outer) {
+                return Err(TypeError::InvalidTemporalConstraint(
+                    constraint.inner.clone(),
+                    constraint.outer.clone()
+                ));
+            }
+        }
+        
         let mut fields = HashMap::new();
         for field in &record.fields {
             let ty = self.convert_type(&field.ty)?;
             fields.insert(field.name.clone(), ty);
         }
-        self.records.insert(record.name.clone(), RecordDef { fields });
+        
+        self.records.insert(record.name.clone(), RecordDef { 
+            fields,
+            type_params: record.type_params.clone(),
+            temporal_constraints: record.temporal_constraints.iter()
+                .map(|c| TemporalConstraint {
+                    inner: c.inner.clone(),
+                    outer: c.outer.clone(),
+                })
+                .collect(),
+        });
+        
+        // Clear temporal context for this record
+        self.temporal_context.active_temporals.clear();
+        self.temporal_context.constraints.clear();
+        
         Ok(())
     }
     
     fn check_function_decl(&mut self, func: &FunDecl) -> Result<(), TypeError> {
-        // Push type parameter scope for generics
+        // Push type parameter scope for generics (including temporal parameters)
         self.push_type_param_scope(&func.type_params);
+        
+        // Register temporal type parameters
+        for type_param in &func.type_params {
+            if type_param.is_temporal {
+                self.temporal_context.active_temporals.insert(type_param.name.clone());
+            }
+        }
+        
+        // Register temporal constraints
+        for constraint in &func.temporal_constraints {
+            self.temporal_context.constraints.push(TemporalConstraint {
+                inner: constraint.inner.clone(),
+                outer: constraint.outer.clone(),
+            });
+            // Validate constraint
+            if !self.temporal_context.active_temporals.contains(&constraint.inner) ||
+               !self.temporal_context.active_temporals.contains(&constraint.outer) {
+                return Err(TypeError::InvalidTemporalConstraint(
+                    constraint.inner.clone(),
+                    constraint.outer.clone()
+                ));
+            }
+        }
         
         self.push_scope();
         
@@ -959,14 +1130,37 @@ impl TypeChecker {
         
         let return_type = self.check_block_expr(&func.body)?;
         
+        // Check for temporal escape in return type
+        eprintln!("DEBUG check_function_decl: return_type = {:?}", return_type);
+        eprintln!("DEBUG check_function_decl: active_temporals = {:?}", self.temporal_context.active_temporals);
+        if let TypedType::Temporal { temporals, .. } = &return_type {
+            for temporal in temporals {
+                if self.temporal_context.active_temporals.contains(temporal) {
+                    // Temporal variable from function scope escaping
+                    return Err(TypeError::TemporalEscape(temporal.clone()));
+                }
+            }
+        }
+        
         self.functions.insert(func.name.clone(), FunctionDef {
             params: param_types,
             return_type,
             type_params: func.type_params.clone(),
+            temporal_constraints: func.temporal_constraints.iter()
+                .map(|c| TemporalConstraint {
+                    inner: c.inner.clone(),
+                    outer: c.outer.clone(),
+                })
+                .collect(),
         });
         
         self.pop_scope();
         self.pop_type_param_scope();
+        
+        // Clear temporal context
+        self.temporal_context.active_temporals.clear();
+        self.temporal_context.constraints.clear();
+        
         Ok(())
     }
     
@@ -1027,6 +1221,12 @@ impl TypeChecker {
                 params: param_types,
                 return_type,
                 type_params: func.type_params.clone(),
+                temporal_constraints: func.temporal_constraints.iter()
+                    .map(|c| TemporalConstraint {
+                        inner: c.inner.clone(),
+                        outer: c.outer.clone(),
+                    })
+                    .collect(),
             });
             
             self.pop_scope();
@@ -1046,7 +1246,11 @@ impl TypeChecker {
         self._contexts.push(context.name.clone());
         
         // Store as a special record type for field access
-        self.records.insert(context.name.clone(), RecordDef { fields });
+        self.records.insert(context.name.clone(), RecordDef { 
+            fields,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
         
         Ok(())
     }
@@ -1126,10 +1330,10 @@ impl TypeChecker {
     
     fn check_record_lit(&mut self, record_lit: &RecordLit) -> Result<TypedType, TypeError> {
         // First check if record exists and collect field types
-        let field_types: HashMap<String, TypedType> = {
+        let (field_types, type_params): (HashMap<String, TypedType>, Vec<TypeParam>) = {
             let record_def = self.records.get(&record_lit.name)
                 .ok_or_else(|| TypeError::UndefinedRecord(record_lit.name.clone()))?;
-            record_def.fields.clone()
+            (record_def.fields.clone(), record_def.type_params.clone())
         };
         
         // Check that all fields are present and have correct types
@@ -1149,7 +1353,42 @@ impl TypeChecker {
             }
         }
         
-        Ok(TypedType::Record { name: record_lit.name.clone(), frozen: false, hash: None, parent_hash: None })
+        // Create the base record type
+        let base_type = TypedType::Record { 
+            name: record_lit.name.clone(), 
+            frozen: false, 
+            hash: None, 
+            parent_hash: None 
+        };
+        
+        // If the record has temporal parameters, wrap it in a Temporal type
+        let temporal_params: Vec<String> = type_params.iter()
+            .filter(|p| p.is_temporal)
+            .map(|p| {
+                // If we're in a function/context with active temporal parameters,
+                // map the record's temporal to the current scope's temporal
+                if !self.temporal_context.active_temporals.is_empty() {
+                    // For now, use the first active temporal parameter
+                    // In a full implementation, we'd have proper mapping/inference
+                    let mapped = self.temporal_context.active_temporals.iter().next().unwrap().clone();
+                    eprintln!("DEBUG check_record_lit: mapping {} -> {}", p.name, mapped);
+                    mapped
+                } else {
+                    // No active temporals, use the parameter name as is
+                    eprintln!("DEBUG check_record_lit: no active temporals, using {}", p.name);
+                    p.name.clone()
+                }
+            })
+            .collect();
+            
+        if !temporal_params.is_empty() {
+            Ok(TypedType::Temporal {
+                base_type: Box::new(base_type),
+                temporals: temporal_params,
+            })
+        } else {
+            Ok(base_type)
+        }
     }
     
     fn check_clone_expr(&mut self, clone_expr: &CloneExpr) -> Result<TypedType, TypeError> {
@@ -1292,7 +1531,13 @@ impl TypeChecker {
     fn check_field_access(&mut self, expr: &Expr, field: &str) -> Result<TypedType, TypeError> {
         let ty = self.check_expr(expr)?;
         
-        match &ty {
+        // Handle temporal types by unwrapping to the base type
+        let base_ty = match &ty {
+            TypedType::Temporal { base_type, .. } => base_type.as_ref(),
+            _ => &ty,
+        };
+        
+        match base_ty {
             TypedType::Record { name, .. } => {
                 let record_def = self.records.get(name).unwrap();
                 record_def.fields.get(field)

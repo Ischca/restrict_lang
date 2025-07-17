@@ -955,6 +955,10 @@ impl WasmCodeGen {
                 }
             }
             Type::Function(_, _) => Ok(WasmType::I32), // Function pointers
+            Type::Temporal(name, _temporals) => {
+                // Temporal types are treated like their base type
+                self.convert_type(&Type::Named(name.clone()))
+            }
         }
     }
     
@@ -980,6 +984,7 @@ impl WasmCodeGen {
         let string_func = FunDecl {
             name: "println_String".to_string(),
             type_params: vec![],
+            temporal_constraints: vec![],
             params: vec![Param {
                 name: func.params[0].name.clone(),
                 ty: Type::Named("String".to_string()),
@@ -998,6 +1003,7 @@ impl WasmCodeGen {
         let int_func = FunDecl {
             name: "println_Int32".to_string(),
             type_params: vec![],
+            temporal_constraints: vec![],
             params: vec![Param {
                 name: func.params[0].name.clone(),
                 ty: Type::Named("Int32".to_string()),

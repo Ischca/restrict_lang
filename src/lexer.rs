@@ -90,6 +90,12 @@ pub enum Token {
     Within,
     /// `where` keyword for constraints
     Where,
+    /// `lifetime` keyword for temporal scope
+    Lifetime,
+    /// `await` keyword for async operations
+    Await,
+    /// `spawn` keyword for spawning tasks
+    Spawn,
     
     // Identifiers and Literals
     /// Identifier (variable/function name)
@@ -175,6 +181,9 @@ impl fmt::Display for Token {
             Token::From => write!(f, "from"),
             Token::Within => write!(f, "within"),
             Token::Where => write!(f, "where"),
+            Token::Lifetime => write!(f, "lifetime"),
+            Token::Await => write!(f, "await"),
+            Token::Spawn => write!(f, "spawn"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::IntLit(n) => write!(f, "{}", n),
             Token::FloatLit(n) => write!(f, "{}", n),
@@ -262,6 +271,9 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "from" => Token::From,
         "within" => Token::Within,
         "where" => Token::Where,
+        "lifetime" => Token::Lifetime,
+        "await" => Token::Await,
+        "spawn" => Token::Spawn,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))

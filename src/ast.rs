@@ -224,6 +224,8 @@ pub struct ContextDecl {
 pub struct FunDecl {
     /// Function name
     pub name: String,
+    /// Whether this is an async function
+    pub is_async: bool,
     /// Generic type parameters with bounds: `<T: Display, U: Clone>`
     pub type_params: Vec<TypeParam>,
     /// Temporal constraints (e.g., ~tx within ~db)
@@ -368,6 +370,10 @@ pub enum Expr {
     /// With expression for resource management
     With(WithExpr),
     
+    // Lifetime scope
+    /// With lifetime expression for temporal scope management
+    WithLifetime(WithLifetimeExpr),
+    
     // Block
     /// Block expression containing multiple statements
     Block(BlockExpr),
@@ -395,6 +401,12 @@ pub enum Expr {
     // Lambda expression
     /// Anonymous function (e.g., `|x| x + 1`)
     Lambda(LambdaExpr),
+    
+    // Async operations
+    /// Await expression (e.g., `future await`)
+    Await(Box<Expr>),
+    /// Spawn expression (e.g., `spawn(|| computeAsync())`)
+    Spawn(Box<Expr>),
 }
 
 /// Record literal for creating record instances.
@@ -656,6 +668,28 @@ pub enum PipeTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithExpr {
     pub contexts: Vec<String>,
+    pub body: BlockExpr,
+}
+
+/// With lifetime expression for temporal scope management.
+/// 
+/// # Example
+/// 
+/// ```restrict
+/// with lifetime<~f> {
+///     val file = File.open("data.txt");
+///     file.read()
+/// }  // file automatically cleaned up
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct WithLifetimeExpr {
+    /// Lifetime parameter (e.g., "f" for ~f)
+    pub lifetime: String,
+    /// Anonymous lifetime if no name provided
+    pub anonymous: bool,
+    /// Temporal constraints for this lifetime
+    pub constraints: Vec<TemporalConstraint>,
+    /// Body of the lifetime scope
     pub body: BlockExpr,
 }
 

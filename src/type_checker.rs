@@ -25,6 +25,7 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::ast::*;
+use crate::lifetime_inference::LifetimeInference;
 use thiserror::Error;
 
 /// Type checking errors.
@@ -148,6 +149,16 @@ pub struct TemporalContext {
     pub parent_temporals: Option<Box<TemporalContext>>,
 }
 
+impl Default for TemporalContext {
+    fn default() -> Self {
+        Self {
+            active_temporals: HashSet::new(),
+            constraints: Vec::new(),
+            parent_temporals: None,
+        }
+    }
+}
+
 impl TypeSubstitution {
     pub fn new() -> Self {
         Self {
@@ -223,6 +234,8 @@ pub struct TypeChecker {
     _contexts: Vec<String>,
     // Temporal context for tracking temporal variables and constraints
     temporal_context: TemporalContext,
+    // AsyncRuntime context stack for tracking async scopes
+    async_runtime_stack: Vec<String>, // Stack of async lifetime names
 }
 
 impl TypeChecker {
@@ -242,11 +255,13 @@ impl TypeChecker {
                 constraints: Vec::new(),
                 parent_temporals: None,
             },
+            async_runtime_stack: Vec::new(),
         };
         
         // Register built-in functions and traits
         checker.register_builtins();
         checker.register_builtin_traits();
+        checker.register_async_runtime_builtins();
         
         checker
     }
@@ -281,6 +296,102 @@ impl TypeChecker {
         float_traits.insert("Clone".to_string());
         float_traits.insert("Debug".to_string());
         self.trait_impls.insert("Float64".to_string(), float_traits);
+    }
+    
+    /// AsyncRuntime context management methods
+    
+    /// Enter a new AsyncRuntime context with the given lifetime
+    fn enter_async_runtime(&mut self, lifetime: &str) -> Result<(), TypeError> {
+        // Verify that the lifetime is in the current temporal scope
+        if !self.temporal_context.active_temporals.contains(lifetime) {
+            return Err(TypeError::UndefinedVariable(format!("Lifetime ~{} not in scope", lifetime)));
+        }
+        
+        // Push the async runtime onto the stack
+        self.async_runtime_stack.push(lifetime.to_string());
+        Ok(())
+    }
+    
+    /// Exit the current AsyncRuntime context
+    fn exit_async_runtime(&mut self) -> Result<String, TypeError> {
+        self.async_runtime_stack.pop()
+            .ok_or_else(|| TypeError::UnsupportedFeature("No AsyncRuntime context to exit".to_string()))
+    }
+    
+    /// Get the current AsyncRuntime context lifetime if available
+    fn current_async_runtime(&self) -> Option<&String> {
+        self.async_runtime_stack.last()
+    }
+    
+    /// Check if we're currently in an AsyncRuntime context
+    fn is_in_async_runtime(&self) -> bool {
+        !self.async_runtime_stack.is_empty()
+    }
+    
+    /// Register AsyncRuntime context operations
+    fn register_async_runtime_builtins(&mut self) {
+        // spawn operation: (() -> T) -> Task<T, ~async>
+        self.functions.insert("spawn".to_string(), FunctionDef {
+            params: vec![("task".to_string(), TypedType::Function {
+                params: vec![],
+                return_type: Box::new(TypedType::TypeParam("T".to_string())),
+            })],
+            return_type: TypedType::Temporal {
+                base_type: Box::new(TypedType::Record {
+                    name: "Task".to_string(),
+                    frozen: false,
+                    hash: None,
+                    parent_hash: None,
+                }),
+                temporals: vec!["async".to_string()],
+            },
+            type_params: vec![TypeParam {
+                name: "T".to_string(),
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: false,
+            }],
+            temporal_constraints: vec![],
+        });
+        
+        // await operation: Task<T, ~async> -> T
+        self.functions.insert("await".to_string(), FunctionDef {
+            params: vec![("task".to_string(), TypedType::Temporal {
+                base_type: Box::new(TypedType::Record {
+                    name: "Task".to_string(),
+                    frozen: false,
+                    hash: None,
+                    parent_hash: None,
+                }),
+                temporals: vec!["async".to_string()],
+            })],
+            return_type: TypedType::TypeParam("T".to_string()),
+            type_params: vec![TypeParam {
+                name: "T".to_string(),
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: false,
+            }],
+            temporal_constraints: vec![],
+        });
+        
+        // channel operation: () -> (Sender<T, ~async>, Receiver<T, ~async>)
+        self.functions.insert("channel".to_string(), FunctionDef {
+            params: vec![],
+            return_type: TypedType::Record {
+                name: "Channel".to_string(),
+                frozen: false,
+                hash: None,
+                parent_hash: None,
+            },
+            type_params: vec![TypeParam {
+                name: "T".to_string(),
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: false,
+            }],
+            temporal_constraints: vec![],
+        });
     }
     
     fn register_builtins(&mut self) {
@@ -973,6 +1084,21 @@ impl TypeChecker {
     }
     
     pub fn check_program(&mut self, program: &Program) -> Result<(), TypeError> {
+        // Run lifetime inference if needed
+        if self.needs_lifetime_inference(program) {
+            let mut lifetime_inference = LifetimeInference::new();
+            match lifetime_inference.infer_program(program) {
+                Ok(_annotations) => {
+                    // TODO: Apply inferred lifetimes to the program
+                    // For now, we just proceed with manual annotations
+                }
+                Err(e) => {
+                    // Convert inference error to type error
+                    return Err(TypeError::TemporalConstraintViolation(e));
+                }
+            }
+        }
+        
         // First pass: register all function signatures and record types
         for decl in &program.declarations {
             match decl {
@@ -998,6 +1124,27 @@ impl TypeChecker {
             }
         }
         Ok(())
+    }
+    
+    /// Check if the program needs lifetime inference
+    fn needs_lifetime_inference(&self, program: &Program) -> bool {
+        // Check if any declaration uses temporal types without explicit lifetimes
+        for decl in &program.declarations {
+            match decl {
+                TopDecl::Record(record) => {
+                    if record.type_params.iter().any(|p| p.is_temporal) {
+                        return true;
+                    }
+                }
+                TopDecl::Function(func) => {
+                    if func.type_params.iter().any(|p| p.is_temporal) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
     
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), TypeError> {
@@ -1131,8 +1278,6 @@ impl TypeChecker {
         let return_type = self.check_block_expr(&func.body)?;
         
         // Check for temporal escape in return type
-        eprintln!("DEBUG check_function_decl: return_type = {:?}", return_type);
-        eprintln!("DEBUG check_function_decl: active_temporals = {:?}", self.temporal_context.active_temporals);
         if let TypedType::Temporal { temporals, .. } = &return_type {
             for temporal in temporals {
                 if self.temporal_context.active_temporals.contains(temporal) {
@@ -1295,6 +1440,7 @@ impl TypeChecker {
             Expr::Binary(binary) => self.check_binary_expr(binary, expected),
             Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
             Expr::With(with) => self.check_with_expr(with),
+            Expr::WithLifetime(with_lifetime) => self.check_with_lifetime_expr(with_lifetime),
             Expr::Then(then) => self.check_then_expr(then),
             Expr::While(while_expr) => self.check_while_expr(while_expr),
             Expr::Match(match_expr) => self.check_match_expr(match_expr),
@@ -1320,6 +1466,8 @@ impl TypeChecker {
             },
             Expr::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
             Expr::PrototypeClone(proto_clone) => self.check_prototype_clone_expr(proto_clone),
+            Expr::Await(expr) => self.check_await_expr(expr),
+            Expr::Spawn(expr) => self.check_spawn_expr(expr),
             Expr::NoneTyped(ty) => {
                 // Convert AST type to TypedType
                 let typed_type = self.convert_type(ty)?;
@@ -1330,10 +1478,10 @@ impl TypeChecker {
     
     fn check_record_lit(&mut self, record_lit: &RecordLit) -> Result<TypedType, TypeError> {
         // First check if record exists and collect field types
-        let (field_types, type_params): (HashMap<String, TypedType>, Vec<TypeParam>) = {
+        let (field_types, type_params, temporal_constraints): (HashMap<String, TypedType>, Vec<TypeParam>, Vec<TemporalConstraint>) = {
             let record_def = self.records.get(&record_lit.name)
                 .ok_or_else(|| TypeError::UndefinedRecord(record_lit.name.clone()))?;
-            (record_def.fields.clone(), record_def.type_params.clone())
+            (record_def.fields.clone(), record_def.type_params.clone(), record_def.temporal_constraints.clone())
         };
         
         // Check that all fields are present and have correct types
@@ -1350,6 +1498,40 @@ impl TypeChecker {
                     expected: format!("{:?}", expected_ty),
                     found: format!("{:?}", actual_ty),
                 });
+            }
+        }
+        
+        // Validate temporal constraints
+        for constraint in &temporal_constraints {
+            // Map the record's temporal parameters to the current scope's temporals
+            let mut mapped_inner = constraint.inner.clone();
+            let mut mapped_outer = constraint.outer.clone();
+            
+            // If we're in a temporal context, use the active temporals
+            if !self.temporal_context.active_temporals.is_empty() {
+                // For now, assume simple mapping based on order
+                // In a full implementation, we'd have proper mapping/inference
+                let active_temporals: Vec<String> = self.temporal_context.active_temporals.iter().cloned().collect();
+                let record_temporals: Vec<String> = type_params.iter()
+                    .filter(|p| p.is_temporal)
+                    .map(|p| p.name.clone())
+                    .collect();
+                
+                for (i, record_temporal) in record_temporals.iter().enumerate() {
+                    if i < active_temporals.len() {
+                        if constraint.inner == *record_temporal {
+                            mapped_inner = active_temporals[i].clone();
+                        }
+                        if constraint.outer == *record_temporal {
+                            mapped_outer = active_temporals[i].clone();
+                        }
+                    }
+                }
+            }
+            
+            // Check if the constraint is satisfied in the current context
+            if !self.is_lifetime_within(&mapped_inner, &mapped_outer) {
+                return Err(TypeError::InvalidTemporalConstraint(mapped_inner, mapped_outer));
             }
         }
         
@@ -1370,12 +1552,9 @@ impl TypeChecker {
                 if !self.temporal_context.active_temporals.is_empty() {
                     // For now, use the first active temporal parameter
                     // In a full implementation, we'd have proper mapping/inference
-                    let mapped = self.temporal_context.active_temporals.iter().next().unwrap().clone();
-                    eprintln!("DEBUG check_record_lit: mapping {} -> {}", p.name, mapped);
-                    mapped
+                    self.temporal_context.active_temporals.iter().next().unwrap().clone()
                 } else {
                     // No active temporals, use the parameter name as is
-                    eprintln!("DEBUG check_record_lit: no active temporals, using {}", p.name);
                     p.name.clone()
                 }
             })
@@ -1605,6 +1784,39 @@ impl TypeChecker {
                     return Ok(TypedType::Option(Box::new(arg_type)));
                 }
                 
+                // Handle spawn operation - requires AsyncRuntime context
+                if name == "spawn" {
+                    println!("DEBUG: Checking spawn, is_in_async_runtime: {}, stack: {:?}", self.is_in_async_runtime(), self.async_runtime_stack);
+                    if !self.is_in_async_runtime() {
+                        return Err(TypeError::UnsupportedFeature("spawn can only be used within an AsyncRuntime context".to_string()));
+                    }
+                    
+                    if call.args.len() != 1 {
+                        return Err(TypeError::ArityMismatch {
+                            expected: 1,
+                            found: call.args.len(),
+                        });
+                    }
+                    
+                    return self.check_spawn_expr(&call.args[0]);
+                }
+                
+                // Handle await operation - requires AsyncRuntime context
+                if name == "await" {
+                    if !self.is_in_async_runtime() {
+                        return Err(TypeError::UnsupportedFeature("await can only be used within an AsyncRuntime context".to_string()));
+                    }
+                    
+                    if call.args.len() != 1 {
+                        return Err(TypeError::ArityMismatch {
+                            expected: 1,
+                            found: call.args.len(),
+                        });
+                    }
+                    
+                    return self.check_await_expr(&call.args[0]);
+                }
+                
                 // Handle special built-in function 'none' (lowercase for inference)
                 if name == "none" {
                     if call.args.len() != 0 {
@@ -1620,6 +1832,11 @@ impl TypeChecker {
                 
                 // Otherwise try to find a regular function
                 if let Some(func_info) = self.functions.get(name).cloned() {
+                    // For spawn and await, we need to check AsyncRuntime context even if they're registered builtins
+                    if name == "spawn" || name == "await" {
+                        // These were already handled above, so this shouldn't happen
+                        return Err(TypeError::UnsupportedFeature("Internal error: spawn/await should be handled earlier".to_string()));
+                    }
                     return self.check_function_call_with_inference(&func_info, call);
                 } else {
                     // Try to find a method
@@ -1846,6 +2063,15 @@ impl TypeChecker {
             if ctx_name == "Arena" {
                 // Arena is a built-in context
                 self._contexts.push(ctx_name.clone());
+            } else if ctx_name.starts_with("AsyncRuntime") {
+                // AsyncRuntime context with lifetime parameter
+                // Extract lifetime from AsyncRuntime<~async>
+                if let Some(lifetime) = self.extract_async_runtime_lifetime(ctx_name) {
+                    self.enter_async_runtime(&lifetime)?;
+                } else {
+                    return Err(TypeError::UnavailableContext(format!("Invalid AsyncRuntime syntax: {}", ctx_name)));
+                }
+                self._contexts.push(ctx_name.clone());
             } else if self.records.contains_key(ctx_name) {
                 // User-defined context
                 self._contexts.push(ctx_name.clone());
@@ -1857,7 +2083,12 @@ impl TypeChecker {
         // Check the body with contexts available
         let result = self.check_block_expr(&with.body)?;
         
-        // Pop contexts (in reverse order)
+        // Pop contexts (in reverse order) and exit AsyncRuntime contexts
+        for ctx_name in with.contexts.iter().rev() {
+            if ctx_name.starts_with("AsyncRuntime") {
+                self.exit_async_runtime()?;
+            }
+        }
         self._contexts.truncate(original_len);
         
         Ok(result)
@@ -1865,6 +2096,262 @@ impl TypeChecker {
     
     fn _is_context_available(&self, name: &str) -> bool {
         self._contexts.contains(&name.to_string())
+    }
+    
+    /// Extract lifetime from AsyncRuntime<~lifetime> syntax
+    fn extract_async_runtime_lifetime(&self, ctx_name: &str) -> Option<String> {
+        // Parse "AsyncRuntime<~async>" to extract "async"
+        if ctx_name.starts_with("AsyncRuntime<~") && ctx_name.ends_with(">") {
+            let start = "AsyncRuntime<~".len();
+            let end = ctx_name.len() - 1;
+            if start < end {
+                return Some(ctx_name[start..end].to_string());
+            }
+        }
+        None
+    }
+    
+    /// Check if a temporal variable is in scope (including parent scopes).
+    fn is_temporal_in_scope(&self, temporal: &str) -> bool {
+        if self.temporal_context.active_temporals.contains(temporal) {
+            return true;
+        }
+        
+        // Check parent scopes
+        let mut current = &self.temporal_context.parent_temporals;
+        while let Some(parent) = current {
+            if parent.active_temporals.contains(temporal) {
+                return true;
+            }
+            current = &parent.parent_temporals;
+        }
+        
+        false
+    }
+    
+    /// Check if inner lifetime is within outer lifetime according to constraints.
+    fn is_lifetime_within(&self, inner: &str, outer: &str) -> bool {
+        // Direct constraint check
+        for constraint in &self.temporal_context.constraints {
+            if constraint.inner == inner && constraint.outer == outer {
+                return true;
+            }
+        }
+        
+        // Check parent contexts
+        let mut current = &self.temporal_context.parent_temporals;
+        while let Some(parent) = current {
+            for constraint in &parent.constraints {
+                if constraint.inner == inner && constraint.outer == outer {
+                    return true;
+                }
+            }
+            current = &parent.parent_temporals;
+        }
+        
+        // If inner and outer are the same, it's trivially true
+        inner == outer
+    }
+    
+    /// Validate temporal constraints when creating temporal types.
+    fn validate_temporal_constraints(&self, temporals: &[String]) -> Result<(), TypeError> {
+        // For now, just check that all temporals are in scope
+        for temporal in temporals {
+            if !self.is_temporal_in_scope(temporal) {
+                return Err(TypeError::TemporalConstraintViolation(
+                    format!("Temporal variable {} is not in scope", temporal)
+                ));
+            }
+        }
+        Ok(())
+    }
+    
+    /// Check await expression.
+    /// For now, await is treated as a built-in function.
+    fn check_await_expr(&mut self, expr: &Expr) -> Result<TypedType, TypeError> {
+        // Verify we're in an AsyncRuntime context
+        if !self.is_in_async_runtime() {
+            return Err(TypeError::UnsupportedFeature("await can only be used within an AsyncRuntime context".to_string()));
+        }
+        
+        // Check the expression being awaited
+        let task_type = self.check_expr(expr)?;
+        
+        // Get the current async runtime lifetime
+        let async_lifetime = self.current_async_runtime()
+            .ok_or_else(|| TypeError::UnsupportedFeature("No AsyncRuntime context available".to_string()))?
+            .clone();
+        
+        // Verify that we have a Task<T, ~async> type
+        match &task_type {
+            TypedType::Temporal { base_type, temporals } => {
+                // Check if base_type is a Task record
+                if let TypedType::Record { name, .. } = base_type.as_ref() {
+                    if name == "Task" {
+                        // Check if the temporals include the current async lifetime
+                        if temporals.contains(&async_lifetime) {
+                            // For Task<T, ~async>, we need to extract T
+                            // This is a simplified version - in a full implementation
+                            // we'd look up the Task record definition to get the payload type
+                            // For now, assume the task contains the result type
+                            let result_type = self.get_task_result_type(base_type)?;
+                            Ok(result_type)
+                        } else {
+                            Err(TypeError::TypeMismatch {
+                                expected: format!("Task<T, ~{}>", async_lifetime),
+                                found: format!("Task with temporals: {:?}", temporals),
+                            })
+                        }
+                    } else {
+                        Err(TypeError::TypeMismatch {
+                            expected: format!("Task<T, ~{}>", async_lifetime),
+                            found: format!("{:?}", task_type),
+                        })
+                    }
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: format!("Task<T, ~{}>", async_lifetime),
+                        found: format!("{:?}", task_type),
+                    })
+                }
+            }
+            TypedType::Record { name, .. } if name == "Task" => {
+                // Handle non-temporal Task for backwards compatibility
+                // In a full implementation, this would be an error
+                let result_type = self.get_task_result_type(&task_type)?;
+                Ok(result_type)
+            }
+            _ => Err(TypeError::TypeMismatch {
+                expected: format!("Task<T, ~{}>", async_lifetime),
+                found: format!("{:?}", task_type),
+            })
+        }
+    }
+    
+    /// Check spawn expression.
+    /// For now, spawn is treated as a built-in function.
+    fn check_spawn_expr(&mut self, expr: &Expr) -> Result<TypedType, TypeError> {
+        // Verify we're in an AsyncRuntime context
+        if !self.is_in_async_runtime() {
+            return Err(TypeError::UnsupportedFeature("spawn can only be used within an AsyncRuntime context".to_string()));
+        }
+        
+        // Check the expression being spawned (should be a lambda or async function)
+        let func_type = self.check_expr(expr)?;
+        
+        // Extract the return type from the function being spawned
+        let _return_type = match &func_type {
+            TypedType::Function { return_type, .. } => return_type.as_ref().clone(),
+            _ => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "function".to_string(),
+                    found: format!("{:?}", func_type),
+                });
+            }
+        };
+        
+        // Get the current async runtime lifetime
+        let async_lifetime = self.current_async_runtime()
+            .ok_or_else(|| TypeError::UnsupportedFeature("No AsyncRuntime context available".to_string()))?
+            .clone();
+        
+        // Return Task<T, ~async> where T is the return type of the spawned function
+        Ok(TypedType::Temporal {
+            base_type: Box::new(TypedType::Record {
+                name: "Task".to_string(),
+                frozen: false,
+                hash: None,
+                parent_hash: None,
+            }),
+            temporals: vec![async_lifetime],
+        })
+    }
+    
+    
+    /// Helper method to extract the result type from a Task type.
+    /// This is a simplified implementation that assumes Task<T> contains T.
+    fn get_task_result_type(&self, task_type: &TypedType) -> Result<TypedType, TypeError> {
+        // For now, this is a simplified implementation
+        // In a full implementation, we'd look up the Task record definition
+        // and extract the type parameter T
+        match task_type {
+            TypedType::Record { name, .. } if name == "Task" => {
+                // For now, we'll return Int32 as a placeholder
+                // In a real implementation, we'd extract the generic parameter T
+                // from the Task<T> record definition
+                Ok(TypedType::Int32)
+            }
+            _ => Err(TypeError::TypeMismatch {
+                expected: "Task".to_string(),
+                found: format!("{:?}", task_type),
+            })
+        }
+    }
+    
+    /// Check a with lifetime expression.
+    /// 
+    /// Creates a new temporal scope for the lifetime of the block.
+    fn check_with_lifetime_expr(&mut self, with_lifetime: &WithLifetimeExpr) -> Result<TypedType, TypeError> {
+        // Save current temporal context
+        let saved_context = self.temporal_context.clone();
+        
+        // Create new temporal scope
+        let new_context = TemporalContext {
+            active_temporals: saved_context.active_temporals.clone(),
+            constraints: saved_context.constraints.clone(),
+            parent_temporals: Some(Box::new(saved_context)),
+        };
+        
+        // Add the lifetime to active temporals
+        let mut active_temporals = new_context.active_temporals;
+        active_temporals.insert(with_lifetime.lifetime.clone());
+        
+        // Add new constraints from the with lifetime expression
+        let mut constraints = new_context.constraints;
+        
+        // Validate and add constraints
+        for constraint in &with_lifetime.constraints {
+            // Verify that the outer lifetime is in scope
+            if constraint.outer != with_lifetime.lifetime {
+                // The outer lifetime must be from parent scope
+                if !self.is_temporal_in_scope(&constraint.outer) {
+                    return Err(TypeError::InvalidTemporalConstraint(
+                        constraint.inner.clone(),
+                        constraint.outer.clone()
+                    ));
+                }
+            }
+            
+            constraints.push(TemporalConstraint {
+                inner: constraint.inner.clone(),
+                outer: constraint.outer.clone(),
+            });
+        }
+        
+        self.temporal_context = TemporalContext {
+            active_temporals,
+            constraints,
+            parent_temporals: new_context.parent_temporals,
+        };
+        
+        // Check the body with the new temporal scope
+        let result = self.check_block_expr(&with_lifetime.body)?;
+        
+        // Check that the result doesn't escape the temporal scope
+        if let TypedType::Temporal { temporals, .. } = &result {
+            for temporal in temporals {
+                if temporal == &with_lifetime.lifetime {
+                    return Err(TypeError::TemporalEscape(temporal.clone()));
+                }
+            }
+        }
+        
+        // Restore temporal context
+        if let Some(parent) = self.temporal_context.parent_temporals.take() {
+            self.temporal_context = *parent;
+        }
+        
+        Ok(result)
     }
     
     fn check_then_expr(&mut self, then: &ThenExpr) -> Result<TypedType, TypeError> {

@@ -72,6 +72,9 @@ pub mod type_checker;
 /// Code generation module for producing WebAssembly output
 pub mod codegen;
 
+/// Lifetime inference module for Temporal Affine Types
+pub mod lifetime_inference;
+
 /// Test framework for property-based testing
 pub mod test_framework;
 

@@ -881,6 +881,12 @@ impl WasmCodeGen {
             Expr::With(with) => {
                 self.collect_strings_from_block(&with.body)?;
             }
+            Expr::WithLifetime(with_lifetime) => {
+                self.collect_strings_from_block(&with_lifetime.body)?;
+            }
+            Expr::Await(_) | Expr::Spawn(_) => {
+                // No strings in await/spawn expressions themselves
+            }
             Expr::Clone(clone) => {
                 self.collect_strings_from_expr(&clone.base)?;
                 for field in &clone.updates.fields {
@@ -997,6 +1003,7 @@ impl WasmCodeGen {
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
             },
+            is_async: false,
         };
         
         // Generate println_Int32 specialization
@@ -1016,6 +1023,7 @@ impl WasmCodeGen {
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
             },
+            is_async: false,
         };
         
         // Generate the specialized functions
@@ -1223,6 +1231,51 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    fn generate_temporal_scope(&mut self, lifetime: &str, body: &BlockExpr) -> Result<(), CodeGenError> {
+        // Create a new arena for this temporal scope
+        let arena_addr = self.next_arena_addr;
+        self.next_arena_addr += 0x1000; // Reserve 4KB for each arena
+        
+        // Push arena onto stack
+        self.arena_stack.push(arena_addr);
+        
+        // Generate arena initialization
+        self.output.push_str(&format!("    ;; Initialize temporal scope arena for {}\n", lifetime));
+        self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+        self.output.push_str("    call $arena_init\n");
+        self.output.push_str("    drop\n"); // Drop arena address as we track it internally
+        
+        // Set this arena as current
+        self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+        self.output.push_str("    global.set $current_arena\n");
+        
+        // Generate the body expressions
+        self.generate_block_as_expression(body)?;
+        
+        // Clean up arena at scope end
+        self.output.push_str(&format!("    ;; Clean up temporal scope arena for {}\n", lifetime));
+        self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+        self.output.push_str("    call $arena_reset\n");
+        
+        // Restore previous arena if any
+        self.arena_stack.pop();
+        if let Some(prev_arena) = self.arena_stack.last() {
+            self.output.push_str(&format!("    ;; Restore previous arena\n"));
+            self.output.push_str(&format!("    i32.const {}\n", prev_arena));
+            self.output.push_str("    global.set $current_arena\n");
+        } else if let Some(default_arena) = self.default_arena {
+            self.output.push_str(&format!("    ;; Restore default arena\n"));
+            self.output.push_str(&format!("    i32.const {}\n", default_arena));
+            self.output.push_str("    global.set $current_arena\n");
+        } else {
+            // No arena to restore
+            self.output.push_str("    i32.const 0\n");
+            self.output.push_str("    global.set $current_arena\n");
+        }
+        
+        Ok(())
+    }
+    
     fn generate_expr(&mut self, expr: &Expr) -> Result<(), CodeGenError> {
         match expr {
             Expr::IntLit(n) => {
@@ -1327,6 +1380,12 @@ impl WasmCodeGen {
             }
             Expr::With(_) => {
                 return Err(CodeGenError::NotImplemented("with expressions".to_string()));
+            }
+            Expr::WithLifetime(with_lifetime) => {
+                self.generate_temporal_scope(&with_lifetime.lifetime, &with_lifetime.body)?;
+            }
+            Expr::Await(_) | Expr::Spawn(_) => {
+                return Err(CodeGenError::NotImplemented("async operations".to_string()));
             }
             Expr::Clone(clone) => {
                 self.generate_clone_expr(clone)?;
@@ -1827,6 +1886,9 @@ impl WasmCodeGen {
             }
             Expr::With(with) => {
                 self.collect_locals_from_block(&with.body, locals)?;
+            }
+            Expr::WithLifetime(with_lifetime) => {
+                self.collect_locals_from_block(&with_lifetime.body, locals)?;
             }
             Expr::Lambda(lambda) => {
                 // Lambda parameters are locals within the lambda, not in outer scope

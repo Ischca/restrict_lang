@@ -74,22 +74,26 @@ fn test_temporal_inference() {
 #[test]
 fn test_temporal_escape_error() {
     // Should error when trying to return temporal outside its scope
-    let input = r#"
-    record File<~f> {
-        handle: Int32
+    let input = r#"record File<~f> {
+    handle: Int32
+}
+
+fun leakFile<~io> = {
+    val file = File { handle = 1 };  // file: File<~io>
+    file  // ERROR: Cannot return File<~io> outside ~io
+}
+
+fun main = {
+    Unit
+}"#;
+    
+    let (remaining, program) = parse_program(input).unwrap();
+    
+    // Debug: Check if all declarations were parsed
+    if !remaining.trim().is_empty() {
+        panic!("Parser failed to parse all declarations. Remaining: {:?}", remaining);
     }
     
-    fun leakFile<~io> = {
-        val file = File { handle: 1 };  // file: File<~io>
-        file  // ERROR: Cannot return File<~io> outside ~io
-    }
-    
-    fun main = {
-        Unit
-    }
-    "#;
-    
-    let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => panic!("Expected type error, but checking succeeded"),

@@ -32,7 +32,13 @@
       "Bash(mise run build:*)",
       "Bash(~/.local/bin/warder:*)",
       "Bash(RUST_BACKTRACE=1 cargo run --bin restrict_lang test_tiny.rl)",
-      "Bash(./target/debug/restrict_lang:*)"
+      "Bash(./target/debug/restrict_lang:*)",
+      "Bash(./test_parser_multi)",
+      "Bash(./test_debug_escape)",
+      "Bash(./test_name_issue)",
+      "Bash(./test_parser_check)",
+      "Bash(RUST_BACKTRACE=1 cargo test test_basic_lifetime_inference -- --nocapture)",
+      "Bash(./test_lexer_debug)"
     ],
     "deny": []
   }

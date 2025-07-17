@@ -43,11 +43,13 @@ type ParseResult<'a, T> = IResult<&'a str, T>;
 /// Returns an error if the next token doesn't match.
 fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> {
     move |input| {
+        let original_input = input;
         let (input, token) = lex_token(input)?;
         if token == expected {
             Ok((input, ()))
         } else {
-            Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+            // Return error with the original input to allow backtracking
+            Err(nom::Err::Error(nom::error::Error::new(original_input, nom::error::ErrorKind::Tag)))
         }
     }
 }
@@ -60,10 +62,11 @@ fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> 
 /// // Parses: myVariable, userName, _private
 /// ```
 fn ident(input: &str) -> ParseResult<String> {
+    let original_input = input;
     let (input, token) = lex_token(input)?;
     match token {
         Token::Ident(name) => Ok((input, name)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+        _ => Err(nom::Err::Error(nom::error::Error::new(original_input, nom::error::ErrorKind::Tag)))
     }
 }
 
@@ -209,6 +212,10 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
     let mut final_expr = None;
     
     loop {
+        // Skip whitespace and comments before each statement/expression
+        let (rest, _) = skip(remaining)?;
+        remaining = rest;
+        
         // Check if we've reached the closing brace
         if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
             remaining = after_brace;
@@ -257,6 +264,10 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
 }
 
 fn fun_decl(input: &str) -> ParseResult<FunDecl> {
+    // Check for optional async keyword
+    let (input, is_async) = opt(expect_token(Token::Async))(input)?;
+    let is_async = is_async.is_some();
+    
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
     
@@ -287,7 +298,8 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     
     let (input, body) = block_expr(input)?;
     Ok((input, FunDecl { 
-        name, 
+        name,
+        is_async,
         type_params, 
         temporal_constraints,
         params, 
@@ -515,6 +527,13 @@ fn lambda_expr(input: &str) -> ParseResult<Expr> {
 
 fn with_expr(input: &str) -> ParseResult<Expr> {
     let (input, _) = expect_token(Token::With)(input)?;
+    
+    // Check if this is a lifetime expression
+    if let Ok((remaining, _)) = expect_token(Token::Lifetime)(input) {
+        return with_lifetime_expr(input);
+    }
+    
+    // Otherwise, parse as context expression
     let (input, contexts) = alt((
         delimited(
             expect_token(Token::LParen),
@@ -525,6 +544,56 @@ fn with_expr(input: &str) -> ParseResult<Expr> {
     ))(input)?;
     let (input, body) = block_expr(input)?;
     Ok((input, Expr::With(WithExpr { contexts, body })))
+}
+
+/// Parses a with lifetime expression.
+/// 
+/// # Examples
+/// 
+/// ```
+/// with lifetime<~f> { ... }
+/// with lifetime { ... }  // anonymous lifetime
+/// ```
+fn with_lifetime_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::Lifetime)(input)?;
+    
+    // Parse optional lifetime parameter
+    let (input, lifetime_opt) = opt(
+        delimited(
+            expect_token(Token::Lt),
+            preceded(expect_token(Token::Tilde), ident),
+            expect_token(Token::Gt)
+        )
+    )(input)?;
+    
+    let (lifetime, anonymous) = match lifetime_opt {
+        Some(name) => (name, false),
+        None => {
+            // For now, use a simple placeholder. In practice, this would be 
+            // handled by the type checker's lifetime inference
+            ("_anon".to_string(), true)
+        },
+    };
+    
+    // Parse optional where clause with temporal constraints
+    let (input, constraints) = opt(preceded(
+        expect_token(Token::Where),
+        separated_list1(
+            expect_token(Token::Comma),
+            temporal_constraint
+        )
+    ))(input)?;
+    
+    let constraints = constraints.unwrap_or_default();
+    
+    let (input, body) = block_expr(input)?;
+    
+    Ok((input, Expr::WithLifetime(WithLifetimeExpr {
+        lifetime,
+        anonymous,
+        constraints,
+        body,
+    })))
 }
 
 fn pattern(input: &str) -> ParseResult<Pattern> {
@@ -1072,17 +1141,50 @@ fn top_decl_inner(input: &str) -> ParseResult<TopDecl> {
 pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
     // Skip whitespace/comments before parsing a top-level declaration
     let (input, _) = skip(input)?;
-    alt((
-        export_decl,
-        top_decl_inner
-    ))(input)
+    
+    // Try export_decl first, but if it fails, make sure we have the right input
+    match export_decl(input) {
+        Ok(result) => Ok(result),
+        Err(_) => {
+            // export_decl failed, try top_decl_inner with the original input
+            top_decl_inner(input)
+        }
+    }
 }
 
 pub fn parse_program(input: &str) -> ParseResult<Program> {
     // Skip leading whitespace/comments first
     let (input, _) = skip(input)?;
     let (input, imports) = many0(import_decl)(input)?;
-    let (input, declarations) = many0(top_decl)(input)?;
+    
+    // Parse declarations with proper whitespace handling
+    let mut input = input;
+    let mut declarations = Vec::new();
+    
+    loop {
+        // Skip whitespace before each declaration
+        let (rest, _) = skip(input)?;
+        
+        // If nothing left after skipping whitespace, we're done
+        if rest.is_empty() {
+            input = rest;
+            break;
+        }
+        
+        // Try to parse a top-level declaration
+        match top_decl(rest) {
+            Ok((remaining, decl)) => {
+                declarations.push(decl);
+                input = remaining;
+            }
+            Err(_) => {
+                // No more declarations to parse
+                input = rest;
+                break;
+            }
+        }
+    }
+    
     Ok((input, Program { imports, declarations }))
 }
 

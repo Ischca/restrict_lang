@@ -136,7 +136,6 @@ fn field_decl(input: &str) -> ParseResult<FieldDecl> {
     Ok((input, FieldDecl { name, ty }))
 }
 
-#[allow(dead_code)]
 fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let (input, _) = expect_token(Token::Record)(input)?;
     let (input, name) = ident(input)?;
@@ -1157,35 +1156,35 @@ pub fn parse_program(input: &str) -> ParseResult<Program> {
     let (input, _) = skip(input)?;
     let (input, imports) = many0(import_decl)(input)?;
     
-    // Parse declarations with proper whitespace handling
-    let mut input = input;
+    // Parse declarations  
+    let mut remaining = input;
     let mut declarations = Vec::new();
     
     loop {
-        // Skip whitespace before each declaration
-        let (rest, _) = skip(input)?;
+        // Skip any whitespace/comments first
+        let (rest, _) = skip(remaining)?;
         
         // If nothing left after skipping whitespace, we're done
         if rest.is_empty() {
-            input = rest;
+            remaining = rest;
             break;
         }
         
-        // Try to parse a top-level declaration
+        // Try to parse a declaration
         match top_decl(rest) {
-            Ok((remaining, decl)) => {
+            Ok((rest2, decl)) => {
                 declarations.push(decl);
-                input = remaining;
+                remaining = rest2;
             }
             Err(_) => {
-                // No more declarations to parse
-                input = rest;
+                // If we can't parse more declarations, leave remaining as is
+                remaining = rest;
                 break;
             }
         }
     }
     
-    Ok((input, Program { imports, declarations }))
+    Ok((remaining, Program { imports, declarations }))
 }
 
 #[cfg(test)]

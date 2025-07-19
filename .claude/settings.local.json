@@ -38,7 +38,8 @@
       "Bash(./test_name_issue)",
       "Bash(./test_parser_check)",
       "Bash(RUST_BACKTRACE=1 cargo test test_basic_lifetime_inference -- --nocapture)",
-      "Bash(./test_lexer_debug)"
+      "Bash(./test_lexer_debug)",
+      "Bash(./test_arena_output)"
     ],
     "deny": []
   }

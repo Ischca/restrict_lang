@@ -1240,7 +1240,7 @@ impl WasmCodeGen {
         self.arena_stack.push(arena_addr);
         
         // Generate arena initialization
-        self.output.push_str(&format!("    ;; Initialize temporal scope arena for {}\n", lifetime));
+        self.output.push_str(&format!("    ;; Initialize temporal scope arena for {} at address 0x{:x}\n", lifetime, arena_addr));
         self.output.push_str(&format!("    i32.const {}\n", arena_addr));
         self.output.push_str("    call $arena_init\n");
         self.output.push_str("    drop\n"); // Drop arena address as we track it internally

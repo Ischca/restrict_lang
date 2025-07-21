@@ -19,7 +19,7 @@ fn compile_and_test(source: &str) -> Result<String, String> {
 #[test]
 fn test_simple_match_some_none() {
     let source = r#"
-        fun test_option = opt: Int? {
+        fun test_option = opt: Int32? {
             opt match {
                 Some(n) => { n }
                 None => { 0 }
@@ -53,7 +53,7 @@ fn test_simple_match_some_none() {
 #[test]
 fn test_nested_pattern_match() {
     let source = r#"
-        fun test_nested = opt: Int?? {
+        fun test_nested = opt: Int32?? {
             opt match {
                 Some(Some(n)) => { n }
                 Some(None) => { -1 }
@@ -107,7 +107,7 @@ fn test_list_pattern_matching() {
 #[test]
 fn test_record_pattern_matching() {
     let source = r#"
-        record Point { x: Int y: Int }
+        record Point { x: Int32 y: Int32 }
         
         fun quadrant = p: Point {
             p match {
@@ -152,7 +152,7 @@ fn test_record_pattern_matching() {
 #[test]
 fn test_wildcard_pattern() {
     let source = r#"
-        fun handle_option = opt: Int? {
+        fun handle_option = opt: Int32? {
             opt match {
                 Some(_) => { 1 }
                 None => { 0 }
@@ -174,7 +174,7 @@ fn test_wildcard_pattern() {
 #[test]
 fn test_pattern_match_with_guards() {
     let source = r#"
-        fun classify = n: Int {
+        fun classify = n: Int32 {
             n match {
                 x then x < 0 => { -1 }
                 0 => { 0 }
@@ -197,7 +197,7 @@ fn test_pattern_match_with_guards() {
 #[test] 
 fn test_exhaustive_pattern_checking() {
     let source = r#"
-        fun incomplete = opt: Int? {
+        fun incomplete = opt: Int32? {
             opt match {
                 Some(n) => { n }
                 // Missing None case
@@ -217,7 +217,7 @@ fn test_exhaustive_pattern_checking() {
 #[test]
 fn test_pattern_binding_affine_types() {
     let source = r#"
-        fun test_affine = opt: Int? {
+        fun test_affine = opt: Int32? {
             opt match {
                 Some(n) => { n + n }  // Error: n used twice
                 None => { 0 }
@@ -300,7 +300,7 @@ fn test_multiple_pattern_variables() {
 #[test]
 fn test_pattern_match_osv_syntax() {
     let source = r#"
-        fun process = x: Int {
+        fun process = x: Int32 {
             x match {
                 0 => { "zero" }
                 n => { "non-zero" }
@@ -342,7 +342,7 @@ fn test_pattern_match_with_complex_expressions() {
 #[test]
 fn test_match_return_different_types() {
     let source = r#"
-        fun test_types = opt: Int? {
+        fun test_types = opt: Int32? {
             opt match {
                 Some(n) => { n }
                 None => { "zero" }  // Type error: different return types

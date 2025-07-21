@@ -1,10 +1,15 @@
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn compile(input: &str) -> Result<String, String> {
-    let (_, program) = parse_program(input)
+    let (remaining, program) = parse_program(input)
         .map_err(|e| format!("Parse error: {:?}", e))?;
     
     println!("Parsed {} declarations:", program.declarations.len());
+    println!("Remaining input: {} chars", remaining.len());
+    if !remaining.trim().is_empty() {
+        println!("Remaining: {:?}", remaining);
+    }
+    
     for (i, decl) in program.declarations.iter().enumerate() {
         match decl {
             restrict_lang::TopDecl::Function(f) => {
@@ -48,7 +53,13 @@ fun main = {
     }
 }"#;
     
-    let wat = compile(input).unwrap();
+    let wat = match compile(input) {
+        Ok(wat) => wat,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            panic!("Compilation failed: {}", e);
+        }
+    };
     
     // Debug: Save WAT to file for inspection
     std::fs::write("debug_wat_output.wat", &wat).unwrap();
@@ -68,32 +79,37 @@ fun main = {
 
 #[test]
 fn test_nested_temporal_scope_memory() {
-    let input = r#"
-    record Buffer<~b> {
-        data: String
-        size: Int32
-    }
-    
-    fun main = {
-        with lifetime<~level1> {
-            val buf1 = Buffer { data = "Level 1", size = 7 };
+    let input = r#"record Buffer<~b> {
+    data: String
+    size: Int32
+}
+
+fun main = {
+    with lifetime<~level1> {
+        val buf1 = Buffer { data = "Level 1", size = 7 };
+        
+        with lifetime<~level2> {
+            val buf2 = Buffer { data = "Level 2", size = 7 };
             
-            with lifetime<~level2> {
-                val buf2 = Buffer { data = "Level 2", size = 7 };
-                
-                with lifetime<~level3> {
-                    val buf3 = Buffer { data = "Level 3", size = 7 };
-                    buf3.size
-                };
-                
-                buf2.size
+            with lifetime<~level3> {
+                val buf3 = Buffer { data = "Level 3", size = 7 };
+                buf3.size
             };
             
-            buf1.size
-        }
-    }"#;
+            buf2.size
+        };
+        
+        buf1.size
+    }
+}"#;
     
-    let wat = compile(input).unwrap();
+    let wat = match compile(input) {
+        Ok(wat) => wat,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            panic!("Compilation failed: {}", e);
+        }
+    };
     
     // Verify proper arena stack management
     assert!(wat.contains("Initialize temporal scope arena for level1"));
@@ -108,16 +124,21 @@ fn test_nested_temporal_scope_memory() {
 
 #[test]
 fn test_temporal_scope_with_allocations() {
-    let input = r#"
-    fun main = {
-        with lifetime<~temp> {
-            val list = [1, 2, 3, 4, 5];
-            val opt = Some(42);
-            list |> length
-        }
-    }"#;
+    let input = r#"fun main = {
+    with lifetime<~temp> {
+        val list = [1, 2, 3, 4, 5];
+        val opt = Some(42);
+        list |> length
+    }
+}"#;
     
-    let wat = compile(input).unwrap();
+    let wat = match compile(input) {
+        Ok(wat) => wat,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            panic!("Compilation failed: {}", e);
+        }
+    };
     
     // Check that allocations use the temporal arena
     assert!(wat.contains("call $allocate")); // List and Option allocations
@@ -127,21 +148,26 @@ fn test_temporal_scope_with_allocations() {
 
 #[test]
 fn test_temporal_scope_return_value() {
-    let input = r#"
-    fun process<~p> = {
-        with lifetime<~local> {
-            val temp = 100;
-            temp + 42
-        }
+    let input = r#"fun process<~p> = {
+    with lifetime<~local> {
+        val temp = 100;
+        temp + 42
     }
+}
+
+fun main = {
+    with lifetime<~main> {
+        process
+    }
+}"#;
     
-    fun main = {
-        with lifetime<~main> {
-            process()
+    let wat = match compile(input) {
+        Ok(wat) => wat,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            panic!("Compilation failed: {}", e);
         }
-    }"#;
-    
-    let wat = compile(input).unwrap();
+    };
     
     // Verify that values can be returned from temporal scopes
     assert!(wat.contains("Initialize temporal scope arena for local"));
@@ -152,17 +178,16 @@ fn test_temporal_scope_return_value() {
 
 #[test]
 fn test_async_runtime_with_arena() {
-    let input = r#"
-    fun compute<~async> = n: Int32 {
-        n * 2
+    let input = r#"fun compute<~async> = n: Int32 {
+    n * 2
+}
+
+fun main = {
+    with AsyncRuntime<~async> {
+        val task = 21 |> compute |> spawn;
+        task |> await
     }
-    
-    fun main = {
-        with AsyncRuntime<~async> {
-            val task = spawn compute(21);
-            await task
-        }
-    }"#;
+}"#;
     
     match compile(input) {
         Ok(wat) => {
@@ -179,24 +204,29 @@ fn test_async_runtime_with_arena() {
 
 #[test]
 fn test_temporal_memory_bounds() {
-    let input = r#"
-    record Large<~l> {
-        data1: Int32
-        data2: Int32
-        data3: Int32
-        data4: Int32
+    let input = r#"record Large<~l> {
+    data1: Int32
+    data2: Int32
+    data3: Int32
+    data4: Int32
+}
+
+fun main = {
+    with lifetime<~scope> {
+        val item1 = Large { data1 = 1, data2 = 2, data3 = 3, data4 = 4 };
+        val item2 = Large { data1 = 5, data2 = 6, data3 = 7, data4 = 8 };
+        val item3 = Large { data1 = 9, data2 = 10, data3 = 11, data4 = 12 };
+        item1.data1 + item2.data2 + item3.data3
     }
+}"#;
     
-    fun main = {
-        with lifetime<~scope> {
-            val item1 = Large { data1 = 1, data2 = 2, data3 = 3, data4 = 4 };
-            val item2 = Large { data1 = 5, data2 = 6, data3 = 7, data4 = 8 };
-            val item3 = Large { data1 = 9, data2 = 10, data3 = 11, data4 = 12 };
-            item1.data1 + item2.data2 + item3.data3
+    let wat = match compile(input) {
+        Ok(wat) => wat,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            panic!("Compilation failed: {}", e);
         }
-    }"#;
-    
-    let wat = compile(input).unwrap();
+    };
     
     // Verify memory allocation within arena bounds
     assert!(wat.contains("call $allocate"));

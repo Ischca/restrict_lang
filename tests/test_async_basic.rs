@@ -262,7 +262,7 @@ fn test_async_runtime_with_channels() {
         with lifetime<~async> {
             with AsyncRuntime<~async> {
                 // Create channel
-                val ch = channel();
+                val ch = channel;
                 
                 // Spawn task
                 val task = spawn { User { id = 1, name = "Worker" } };

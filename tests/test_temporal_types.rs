@@ -13,7 +13,7 @@ fn test_temporal_type_basic() {
     }
     
     fun main = {
-        val file = File { handle: 1 };
+        val file = File { handle = 1 };
         (file) readFile
     }"#;
     
@@ -37,7 +37,7 @@ fn test_temporal_constraint_within() {
     
     fun beginTx<~db, ~tx> = db: Database<~db> -> Transaction<~tx, ~db>
     where ~tx within ~db {
-        Transaction { db: db, txId: 1 }
+        Transaction { db = db, txId = 1 }
     }
     "#;
     
@@ -115,7 +115,7 @@ fn test_temporal_with_context() {
     
     fun main = {
         with FileSystem {
-            val file = open("test.txt");  // file: File<~fs>
+            val file = "test.txt" |> open;  // file: File<~fs>
             file.handle
         }  // file cleaned up here
     }

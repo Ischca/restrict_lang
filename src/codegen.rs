@@ -93,6 +93,12 @@ pub struct WasmCodeGen {
     in_lambda_with_captures: bool,
     /// List of captured variable names in current lambda
     captured_vars: Vec<String>,
+    /// Record definitions: record_name -> fields
+    records: HashMap<String, Vec<(String, Type)>>,
+    /// Record field offsets: record_name -> field_name -> offset
+    record_field_offsets: HashMap<String, HashMap<String, u32>>,
+    /// Variable types: var_name -> type_name (e.g., "Point", "Buffer")
+    var_types: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +136,9 @@ impl WasmCodeGen {
             function_table: Vec::new(),
             in_lambda_with_captures: false,
             captured_vars: Vec::new(),
+            records: HashMap::new(),
+            record_field_offsets: HashMap::new(),
+            var_types: HashMap::new(),
         }
     }
     
@@ -198,6 +207,13 @@ impl WasmCodeGen {
         
         // Generate array operation functions
         self.generate_array_functions()?;
+        
+        // Collect record definitions first
+        for decl in &program.declarations {
+            if let TopDecl::Record(record) = decl {
+                self.register_record_definition(record)?;
+            }
+        }
         
         // Collect all function signatures first
         for decl in &program.declarations {
@@ -939,6 +955,34 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    fn register_record_definition(&mut self, record: &RecordDecl) -> Result<(), CodeGenError> {
+        let mut fields = Vec::new();
+        let mut field_offsets = HashMap::new();
+        let mut offset = 0u32;
+        
+        for field in &record.fields {
+            fields.push((field.name.clone(), field.ty.clone()));
+            field_offsets.insert(field.name.clone(), offset);
+            
+            // Calculate field size based on type
+            let field_size = match &field.ty {
+                Type::Named(name) => match name.as_str() {
+                    "Int32" | "Boolean" | "Char" => 4,
+                    "Float64" => 8,
+                    _ => 4, // Pointers are 4 bytes
+                },
+                _ => 4, // Default to pointer size
+            };
+            
+            offset += field_size;
+        }
+        
+        self.records.insert(record.name.clone(), fields);
+        self.record_field_offsets.insert(record.name.clone(), field_offsets);
+        
+        Ok(())
+    }
+    
     fn generate_record_methods(&mut self, _record: &RecordDecl) -> Result<(), CodeGenError> {
         // Records don't have methods in the current AST
         Ok(())
@@ -1204,6 +1248,12 @@ impl WasmCodeGen {
     }
     
     fn generate_binding(&mut self, bind: &BindDecl) -> Result<(), CodeGenError> {
+        // Infer type of the value for variable tracking
+        if let Expr::RecordLit(record_lit) = bind.value.as_ref() {
+            // Record the type of the variable for field access later
+            self.var_types.insert(bind.name.clone(), record_lit.name.clone());
+        }
+        
         // Generate the value expression
         self.generate_expr(&bind.value)?;
         
@@ -1313,38 +1363,84 @@ impl WasmCodeGen {
                 self.generate_block(block)?;
             }
             Expr::RecordLit(record_lit) => {
-                // For now, we'll use a simple implementation
-                // Allocate memory and store fields
-                // In a real implementation, we'd have a proper memory allocator
+                // Allocate memory for the record
+                let field_count = record_lit.fields.len();
+                let record_size = field_count * 4; // Simplified: 4 bytes per field
                 
-                // For simplicity, use a fixed address (this is not production-ready!)
-                self.output.push_str("    i32.const 1024\n"); // Base address
+                self.output.push_str(&format!("    i32.const {}\n", record_size));
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $list_tmp\n"); // Save address
+                
+                // Get field offset map for this record type
+                let offsets_map = self.record_field_offsets.get(&record_lit.name).cloned();
                 
                 // Store each field value
-                let mut offset = 0;
                 for field in &record_lit.fields {
-                    self.output.push_str("    i32.const 1024\n");
+                    self.output.push_str("    local.get $list_tmp\n");
+                    
+                    // Use the registered field offset if available
+                    let offset = offsets_map
+                        .as_ref()
+                        .and_then(|offsets| offsets.get(&field.name))
+                        .copied()
+                        .unwrap_or_else(|| {
+                            // Fallback: calculate based on field position
+                            record_lit.fields.iter()
+                                .position(|f| f.name == field.name)
+                                .unwrap_or(0) as u32 * 4
+                        });
+                    
                     self.output.push_str(&format!("    i32.const {}\n", offset));
                     self.output.push_str("    i32.add\n");
                     self.generate_expr(&field.value)?;
                     self.output.push_str("    i32.store\n");
-                    offset += 4; // Assume all fields are i32
                 }
                 
                 // Return the base address
-                self.output.push_str("    i32.const 1024\n");
+                self.output.push_str("    local.get $list_tmp\n");
             }
             Expr::FieldAccess(obj_expr, field) => {
                 // Generate object expression
                 self.generate_expr(obj_expr)?;
                 
-                // For now, assume simple field offset calculation
-                // In a real implementation, we'd need type information
-                let field_offset = match field.as_str() {
-                    "x" => 0,
-                    "y" => 4,
-                    _ => return Err(CodeGenError::NotImplemented(format!("field access for {}", field))),
+                // Get the type of the object expression
+                let record_name = if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                    // For identifiers, look up the type from var_types
+                    self.var_types.get(var_name)
+                        .ok_or_else(|| CodeGenError::NotImplemented(
+                            format!("field access on unknown variable: {}", var_name)
+                        ))?
+                        .clone()
+                } else if let Some(obj_type) = self.expr_types.get(&(obj_expr.as_ref() as *const Expr)) {
+                    // Fallback to expr_types if available
+                    if let Some(name) = obj_type.strip_suffix(&format!("<~{}>", field)) {
+                        name.to_string()
+                    } else if obj_type.contains('<') {
+                        // Handle generic types like Point<~p>
+                        if let Some(idx) = obj_type.find('<') {
+                            obj_type[..idx].to_string()
+                        } else {
+                            obj_type.clone()
+                        }
+                    } else {
+                        obj_type.clone()
+                    }
+                } else if let Expr::RecordLit(record_lit) = obj_expr.as_ref() {
+                    // Direct record literal
+                    record_lit.name.clone()
+                } else {
+                    return Err(CodeGenError::NotImplemented(
+                        format!("field access for {}", field)
+                    ));
                 };
+                
+                // Look up the field offset
+                let field_offset = self.record_field_offsets
+                    .get(&record_name)
+                    .and_then(|fields| fields.get(field))
+                    .ok_or_else(|| CodeGenError::NotImplemented(
+                        format!("field access for {} in record {}", field, record_name)
+                    ))?;
                 
                 self.output.push_str(&format!("    i32.const {}\n", field_offset));
                 self.output.push_str("    i32.add\n");

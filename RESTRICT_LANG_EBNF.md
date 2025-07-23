@@ -1,13 +1,18 @@
 # Restrict Language EBNF (Extended Backus-Naur Form)
+Version: v-1.0 candidate
 
 ## 1. Lexical Elements
 
 ```ebnf
+(* Basic Characters *)
+any_char        = [\u0001-\u10FFFF] ;  (* any Unicode char except NUL *)
+                                       (* lexer implements Unicode categories: L*, N*, etc. *)
+
 (* Whitespace and Comments *)
-whitespace      = " " | "\t" | "\n" | "\r" ;
-line_comment    = "//" { any_char - "\n" } "\n" ;
-block_comment   = "/*" { any_char - "*/" } "*/" ;
-comment         = line_comment | block_comment ;
+space           = " " | "\t" | "\r" | "\n" ;
+line_comment    = "//" { any_char ^ "\n" } "\n" ;
+block_comment   = "/*" { any_char ^ "*/" } "*/" ;  (* no nested comments *)
+lexeme_gap      = { space | line_comment | block_comment } ;  (* ZeroOrMore *)
 
 (* Identifiers and Keywords *)
 letter          = "a".."z" | "A".."Z" ;
@@ -17,253 +22,285 @@ ident_continue  = ident_start | digit ;
 identifier      = ident_start { ident_continue } ;
 
 keyword         = "fun" | "val" | "mut" | "record" | "context" | "enum"
-                | "match" | "then" | "else" | "temporal" | "where"
-                | "within" | "spawn" | "await" | "clone" | "freeze"
-                | "impl" | "pub" | "import" | "as" | "fatal" ;
+                | "match" | "then" | "else" | "temporal" | "where" | "within"
+                | "spawn" | "await" | "clone" | "freeze" | "pub" | "import"
+                | "as" | "fatal" ;
+                (* reserved for future: "macro", "effect", "trait", "type" *)
 
-(* Literals *)
+(* Numeric Literals *)
 decimal_digit   = "0".."9" ;
 hex_digit       = decimal_digit | "a".."f" | "A".."F" ;
-underscore      = "_" ;
+int_literal     = "0x" hex_digit { hex_digit | "_" }
+                | decimal_digit { decimal_digit | "_" } ;
 
-int_literal     = decimal_digit { decimal_digit | underscore }
-                | "0x" hex_digit { hex_digit | underscore } ;
-
-float_literal   = decimal_digit { decimal_digit | underscore } "." 
-                  decimal_digit { decimal_digit | underscore }
+float_literal   = decimal_digit { decimal_digit | "_" } "." decimal_digit { decimal_digit | "_" }
                   [ ("e" | "E") [ "+" | "-" ] decimal_digit { decimal_digit } ] ;
 
+(* String and Character Literals *)
 escape_seq      = "\\" ( "n" | "r" | "t" | "\\" | "\"" | "'" ) ;
-string_literal  = "\"" { any_char - "\"" - "\\" | escape_seq } "\"" ;
-char_literal    = "'" ( any_char - "'" - "\\" | escape_seq ) "'" ;
+string_literal  = "\"" { any_char ^ "\"" ^ "\\" | escape_seq } "\"" ;
+char_literal    = "'"  ( any_char ^ "'" ^ "\\" | escape_seq ) "'" ;
 
+(* Boolean and Unit *)
 boolean_literal = "true" | "false" ;
+unit_literal    = "()" ;
 
 (* Operators *)
-binary_op       = "+" | "-" | "*" | "/" | "%" 
-                | "<" | "<=" | ">" | ">=" | "==" | "!="
-                | "&&" | "||" ;
-
-unary_op        = "!" | "-" ;
-pipe_op         = "|>" ;
-assign_op       = "=" ;
+multiplicative_op = "*" | "/" | "%" ;
+additive_op       = "+" | "-" ;
+relational_op     = "<" | "<=" | ">" | ">=" ;
+equality_op       = "==" | "!=" ;
+logical_and_op    = "&&" ;
+logical_or_op     = "||" ;
+unary_op          = "!" | "-" ;
+pipe_op           = "|>" ;
+assign_op         = "=" ;
 ```
 
-## 2. Types
+## 2. Types and Constraints
 
 ```ebnf
-(* Basic Types *)
-type            = simple_type | generic_type | temporal_type | function_type ;
+(* Type Expressions *)
+type                = simple_type | generic_type | temporal_type | func_type ;
 
-simple_type     = identifier ;
+simple_type         = identifier ;
+generic_type        = identifier "<" type { "," type } ">" ;
+temporal_var        = "~" identifier ;
+temporal_type       = simple_type "<" temporal_var ">" ;
+                      (* TAT: temporal types auto-cleanup when scope ends *)
 
-generic_type    = identifier "<" type_list ">" ;
+func_type           = "|" [ type { "," type } ] "|" "->" type ;
 
-temporal_type   = type "<" temporal_var ">" ;
-
-temporal_var    = "~" identifier ;
-
-function_type   = "|" [ param_type_list ] "|" "->" type ;
-
-param_type_list = type { "," type } ;
-
-type_list       = type { "," type } ;
-
-(* Type Constraints *)
+(* Temporal Constraints *)
 temporal_constraint = temporal_var "within" temporal_var ;
-
-where_clause    = "where" temporal_constraint { "," temporal_constraint } ;
+where_clause        = "where" temporal_constraint { "," temporal_constraint } ;
 ```
 
 ## 3. Expressions
 
 ```ebnf
+(* Expression Hierarchy - Lowest to Highest Precedence *)
+expression          = pipe_expr ;
+
+pipe_expr           = logical_or_expr { pipe_op logical_or_expr } ;
+
+logical_or_expr     = logical_and_expr { logical_or_op logical_and_expr } ;
+
+logical_and_expr    = equality_expr { logical_and_op equality_expr } ;
+
+equality_expr       = relational_expr { equality_op relational_expr } ;
+
+relational_expr     = additive_expr { relational_op additive_expr } ;
+
+additive_expr       = multiplicative_expr { additive_op multiplicative_expr } ;
+
+multiplicative_expr = call_expr { multiplicative_op call_expr } ;
+
+call_expr           = unary_expr [ call_expr ] ;  (* right associative for OSV *)
+                                                  (* a b c parses as a (b c) *)
+
+unary_expr          = [ unary_op ] postfix_expr ;
+
+postfix_expr        = primary_expr { postfix_suffix } ;
+
+postfix_suffix      = field_access | clone_suffix | await_suffix ;
+                      (* precedence: field > clone > await *)
+
+field_access        = "." identifier ;
+clone_suffix        = "." "clone" [ record_literal ] [ "freeze" ] ;
+await_suffix        = "await" ;
+
 (* Primary Expressions *)
-expression      = binary_expr | primary_expr ;
+primary_expr        = literal
+                    | identifier
+                    | "(" expression ")"
+                    | lambda_expr
+                    | block_expr
+                    | match_expr
+                    | then_else_expr
+                    | record_literal
+                    | scope_expr ;
 
-primary_expr    = literal
-                | identifier
-                | "(" expression ")"
-                | block_expr
-                | lambda_expr
-                | match_expr
-                | then_else_expr
-                | record_literal
-                | field_access
-                | method_call
-                | function_call
-                | clone_expr
-                | environment_expr ;
+(* Literals *)
+literal             = int_literal | float_literal | string_literal
+                    | char_literal | boolean_literal | unit_literal
+                    | list_literal | range_literal ;
 
-literal         = int_literal | float_literal | string_literal 
-                | char_literal | boolean_literal | "()" | list_literal ;
-
-list_literal    = "[" [ expression { "," expression } ] "]" ;
-
-(* Binary and Unary Expressions *)
-binary_expr     = primary_expr [ binary_op primary_expr | pipe_expr ] ;
-
-pipe_expr       = pipe_op primary_expr [ pipe_expr ] ;
-
-unary_expr      = unary_op primary_expr ;
-
-(* Block Expression *)
-block_expr      = "{" { statement } [ expression ] "}" ;
+list_literal        = "[" [ expression { "," expression } ] "]" ;
+range_literal       = "[" expression ".." expression "]" ;  (* closed interval Range<T> *)
 
 (* Lambda Expression *)
-lambda_expr     = "|" [ param_list ] "|" ( expression | block_expr ) ;
+lambda_expr         = "|" [ param_list ] "|" ( expression | block_expr ) ;
+param_list          = param { "," param } ;
+param               = identifier [ ":" type ] ;
 
-param_list      = param { "," param } ;
-
-param           = identifier [ ":" type ] ;
-
-(* Match Expression *)
-match_expr      = expression "match" "{" match_arm { match_arm } "}" ;
-
-match_arm       = pattern "=>" ( expression | block_expr ) ;
-
-pattern         = literal_pattern
-                | ident_pattern
-                | record_pattern
-                | list_pattern
-                | wildcard_pattern ;
-
-literal_pattern = literal ;
-ident_pattern   = identifier ;
-wildcard_pattern = "_" ;
-
-record_pattern  = identifier "{" [ field_pattern { "," field_pattern } ] "}" ;
-field_pattern   = identifier [ "=" pattern ] ;
-
-list_pattern    = "[" [ pattern { "," pattern } ] "]"
-                | "[" pattern "|" pattern "]" ;
+(* Block Expression *)
+block_expr          = "{" { statement } [ expression ] "}" ;
+                      (* implicit Unit if no final expression *)
 
 (* Conditional Expression *)
-then_else_expr  = expression "then" block_expr "else" block_expr ;
+then_else_expr      = expression lexeme_gap "then" lexeme_gap block_expr 
+                      lexeme_gap "else" lexeme_gap block_expr ;
 
-(* Record and Field Access *)
-record_literal  = identifier "{" [ field_init { "," field_init } ] "}" ;
+(* Match Expression *)
+match_expr          = expression "match" "{" match_arm { match_arm } "}" ;
+match_arm           = pattern "=>" ( expression | block_expr ) ;
 
-field_init      = identifier "=" expression ;
+(* Patterns *)
+pattern             = "_"                    (* wildcard *)
+                    | identifier             (* variable *)
+                    | literal               (* literal *)
+                    | record_pattern        (* record *)
+                    | list_pattern ;        (* list *)
 
-field_access    = expression "." identifier ;
+record_pattern      = identifier "{" [ field_pattern { "," field_pattern } ] "}" ;
+field_pattern       = identifier [ "=" pattern ] ;
 
-(* Method and Function Call *)
-method_call     = expression "." identifier "(" [ arg_list ] ")" ;
+list_pattern        = "[" [ pattern { "," pattern } ] "]"
+                    | "[" pattern "|" pattern "]" ;
 
-function_call   = expression expression  (* OSV syntax *)
-                | identifier "(" [ arg_list ] ")" ;  (* traditional syntax *)
+(* Record Literal *)
+record_literal      = identifier "{" [ field_init { "," field_init } ] "}" ;
+field_init          = identifier "=" expression ;
 
-arg_list        = expression { "," expression } ;
+(* Scope Expression *)
+scope_expr          = scope_value block_expr ;
+scope_value         = identifier                      (* context name *)
+                    | identifier record_literal       (* context with init *)
+                    | "temporal" temporal_var         (* temporal scope *)
+                    | "Arena" ;                       (* arena scope *)
 
-(* Clone Expression *)
-clone_expr      = expression ".clone" [ record_literal ] [ "freeze" ] ;
-
-(* Environment Expression *)
-environment_expr = environment_value block_expr ;
-
-environment_value = identifier [ record_literal ]
-                  | "temporal" temporal_var
-                  | "Arena"
-                  | "AsyncRuntime" ;
+(* Reserved for future extensions *)
+(* macro_expr       = "macro" "!" ... ; *)
+(* effect_expr      = "effect" "{" ... "}" ; *)
 ```
 
 ## 4. Statements
 
 ```ebnf
-statement       = val_decl | assignment | expression ";" ;
+statement           = val_decl 
+                    | assignment 
+                    | temporal_decl
+                    | expression [ ";" ] ;  (* semicolon optional *)
+                                           (* type checker enforces purity *)
 
-val_decl        = [ "mut" ] "val" identifier [ ":" type ] "=" expression ;
+val_decl            = "val" [ "mut" ] identifier [ ":" type ] "=" expression ;
+                      (* affine: each binding used at most once *)
 
-assignment      = identifier "=" expression ;
+assignment          = identifier "=" expression ;
+
+temporal_decl       = "temporal" temporal_var [ where_clause ] ;
+                      (* standalone declaration only *)
+                      (* for scope use: temporal ~t { ... } *)
 ```
 
 ## 5. Declarations
 
 ```ebnf
-(* Top Level *)
-program         = { top_level_decl } ;
+(* Program Structure *)
+program             = { top_decl } ;
 
-top_level_decl  = function_decl
-                | record_decl
-                | context_decl
-                | enum_decl
-                | impl_decl
-                | import_decl ;
+top_decl            = function_decl 
+                    | record_decl 
+                    | context_decl
+                    | enum_decl 
+                    | import_decl ;
+                    (* reserved: macro_decl, trait_decl, type_decl *)
 
 (* Function Declaration *)
-function_decl   = { context_annotation } [ "pub" ] "fun" identifier ":" 
-                  function_signature "=" block_expr ;
+function_decl       = { context_ann } [ "pub" ] "fun" identifier ":" 
+                      function_signature "=" block_expr ;
 
-function_signature = [ type_params ] "(" [ param_def_list ] ")" 
-                    [ "->" type ] [ where_clause ] ;
+function_signature  = [ type_params ] param_block [ "->" type ] [ where_clause ] ;
 
-type_params     = "<" type_param_list ">" ;
+type_params         = "<" type_param { "," type_param } ">" ;
+type_param          = identifier | temporal_var ;
 
-type_param_list = type_param { "," type_param } ;
+param_block         = "(" [ param_def { "," param_def } ] ")" ;
+param_def           = identifier ":" type ;
 
-type_param      = identifier | temporal_var ;
-
-param_def_list  = param_def { "," param_def } ;
-
-param_def       = identifier ":" type ;
-
-context_annotation = "@" identifier ;
+context_ann         = "@" identifier ;  (* multiple @Context on separate lines *)
+                                       (* type checker handles set semantics *)
 
 (* Record Declaration *)
-record_decl     = "record" identifier [ type_params ] "{" 
-                  { field_decl } "}" ;
+record_decl         = "record" identifier [ type_params ] "{" 
+                      field_decl { field_decl } "}" ;
 
-field_decl      = identifier ":" type ;
+field_decl          = identifier ":" type [ "," | "\n" ] ;
 
 (* Context Declaration *)
-context_decl    = "context" identifier [ type_params ] "{" 
-                  { field_decl } "}" ;
+context_decl        = "context" identifier [ type_params ] "{" 
+                      field_decl { field_decl } "}" ;
 
 (* Enum Declaration *)
-enum_decl       = "enum" identifier [ type_params ] "{" 
-                  variant { variant } "}" ;
+enum_decl           = "enum" identifier [ type_params ] "{" 
+                      variant { variant } "}" ;
 
-variant         = identifier [ variant_data ] ;
-
-variant_data    = "(" type { "," type } ")"
-                | "{" field_decl { field_decl } "}" ;
-
-(* Implementation Block - deprecated but still parsed *)
-impl_decl       = "impl" identifier [ type_params ] "{" 
-                  { function_decl } "}" ;
+variant             = identifier [ variant_data ] ;
+variant_data        = "(" type { "," type } ")"
+                    | "{" field_decl { field_decl } "}" ;
 
 (* Import Declaration *)
-import_decl     = "import" string_literal "as" identifier ;
+import_decl         = "import" string_literal "as" identifier ;
 ```
 
-## 6. Special Forms
+## 6. Complete Grammar Entry Point
 
 ```ebnf
-(* Temporal Declarations *)
-temporal_decl   = "temporal" temporal_var [ where_clause ] ;
-
-(* Range Literal *)
-range_literal   = "[" expression ".." expression "]" ;
-
-(* Fatal Expression *)
-fatal_expr      = "fatal" expression ;
-
-(* Spawn and Await *)
-spawn_expr      = "spawn" block_expr ;
-await_expr      = "await" expression ;
+restrict_program    = program ;
 ```
 
-## 7. Complete Grammar Entry Point
+## Notes and Design Decisions
 
-```ebnf
-restrict_program = program ;
-```
+### Operator Precedence (Highest to Lowest)
+1. Postfix operations: `.field`, `.clone`, `await`
+2. Unary: `!`, `-`
+3. OSV call: `a b` (right associative)
+4. Multiplicative: `*`, `/`, `%`
+5. Additive: `+`, `-`
+6. Relational: `<`, `<=`, `>`, `>=`
+7. Equality: `==`, `!=`
+8. Logical AND: `&&`
+9. Logical OR: `||`
+10. Pipe: `|>` (left associative)
 
-## Notes
+### Language Philosophy
+- **OSV (Object-Subject-Verb)**: Natural function composition
+- **Affine Types**: Each value used at most once
+- **TAT (Temporal Affine Types)**: Automatic resource cleanup
+- **No Side Effects**: Expression statements must be pure
+- **Simplicity**: Reduce cognitive load for developers
 
-1. **OSV Syntax**: Function calls use Object-Subject-Verb order: `object function` or with pipe: `object |> function`
-2. **Environment Scopes**: `X { ... }` creates an environment where X is present
-3. **Temporal Variables**: Prefixed with `~` and represent lifetimes
-4. **Context Annotations**: Functions use `@Context` to require specific contexts
-5. **No `with` keyword**: Environments are created directly with `Context { ... }`
+### Implementation Notes
+- Lexer handles Unicode categories (L*, N*, etc.)
+- Parser uses precedence climbing or similar for operators
+- Type checker enforces affine constraints
+- Code generator handles temporal cleanup
+
+### Reserved for Future Extensions
+- `macro`: Macro system
+- `effect`: Effect handlers
+- `trait`: Trait system
+- `type`: Type aliases
+
+### Edge Cases and Clarifications
+- Nested comments not supported: `/* /* */ */` is invalid
+- OSV precedence: `a + b c` parses as `(a + b) c`
+- Postfix chain: `x.field.clone await` applies left-to-right
+- Pure expressions: `x + y;` allowed only if type checker confirms no side effects
+
+### Testing Considerations
+- Complex OSV chains: `Database { temporal ~t { a |> b c } }`
+- Multiple contexts: `@Database @Logger @Audit fun f: ...`
+- Deep nesting: Scope expressions within match arms
+- Unicode identifiers: Future consideration
+
+## Resolved Issues (Q1-Q19)
+
+All previous issues (Q1-Q15) resolved in v-0.6.
+
+Additional clarifications:
+- Q16: OSV vs binary precedence clarified with annotations
+- Q17: temporal_decl limited to standalone declarations
+- Q18: Future extensions reserved in comments
+- Q19: Affine/TAT semantics noted in relevant sections

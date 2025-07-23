@@ -28,15 +28,15 @@ record Transaction<~tx, ~db> where ~tx within ~db {
 }
 
 // Function that reads a file within a temporal scope
-fun readFileContent<~io> = file: File<~io> {
+fun readFileContent: <~io>(file: File<~io>) -> String = {
     // File is valid here because we're within ~io scope
     file.path |> println;
     "File content here"  // Simplified
 }
 
 // Function with temporal constraint
-fun beginTransaction<~db, ~tx> = db: Database<~db> -> Transaction<~tx, ~db>
-where ~tx within ~db {
+fun beginTransaction: <~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db>
+where ~tx within ~db = {
     Transaction { 
         db: db, 
         txId: 42  // Simplified transaction ID
@@ -44,7 +44,7 @@ where ~tx within ~db {
 }
 
 // Example of using temporals with callback pattern
-fun processFile = filename: String {
+fun processFile: (filename: String) = {
     with FileSystem {
         // FileSystem.open creates a File<~fs> that's only valid in callback
         FileSystem.open(filename) { file ->
@@ -58,7 +58,7 @@ fun processFile = filename: String {
 }
 
 // Example of nested temporal scopes
-fun databaseTransaction = {
+fun databaseTransaction: () = {
     with Database {  // Creates ~db scope
         val db = Database { connection: 1 };
         
@@ -73,14 +73,14 @@ fun databaseTransaction = {
 }
 
 // Main function demonstrating temporal types
-fun main = {
+fun main: () = {
     "=== Temporal Types Demo ===" |> println;
     
     // Process a file with automatic cleanup
     "test.txt" |> processFile;
     
     // Run a database transaction
-    databaseTransaction();
+    databaseTransaction;
     
     "All resources cleaned up!" |> println;
 }

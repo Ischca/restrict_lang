@@ -8,11 +8,11 @@ fn test_temporal_type_basic() {
         handle: Int32  // Simplified for now
     }
     
-    fun readFile<~io> = file: File<~io> {
+    fun readFile: <~io>(file: File<~io>) -> Int32 = {
         42  // Dummy return
     }
     
-    fun main = {
+    fun main: () = {
         val file = File { handle = 1 };
         (file) readFile
     }"#;
@@ -35,8 +35,8 @@ fn test_temporal_constraint_within() {
         txId: Int32
     }
     
-    fun beginTx<~db, ~tx> = db: Database<~db> -> Transaction<~tx, ~db>
-    where ~tx within ~db {
+    fun beginTx: <~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db>
+    where ~tx within ~db = {
         Transaction { db = db, txId = 1 }
     }
     "#;

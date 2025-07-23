@@ -46,6 +46,7 @@ fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> 
         let original_input = input;
         let (input, token) = lex_token(input)?;
         if token == expected {
+            let (input, _) = skip(input)?; // Skip trailing whitespace after token
             Ok((input, ()))
         } else {
             // Return error with the original input to allow backtracking
@@ -263,12 +264,16 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
 }
 
 fn fun_decl(input: &str) -> ParseResult<FunDecl> {
+    // Skip leading whitespace
+    let (input, _) = skip(input)?;
+    
     // Check for optional async keyword
     let (input, is_async) = opt(expect_token(Token::Async))(input)?;
     let is_async = is_async.is_some();
     
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
+    let (input, _) = expect_token(Token::Colon)(input)?;
     
     // Parse optional generic type parameters: <T: Display, U: Clone + Debug, ~t>
     let (input, type_params) = opt(|input| {
@@ -282,8 +287,19 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     })(input)?;
     let type_params = type_params.unwrap_or_default();
     
-    let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, params) = many0(param)(input)?;
+    // Parse parameter list: (x: Int32, y: Int32)
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, params) = separated_list0(
+        expect_token(Token::Comma),
+        param
+    )(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    
+    // Parse optional return type: -> ReturnType
+    let (input, _return_type) = opt(|input| {
+        let (input, _) = expect_token(Token::ThinArrow)(input)?;
+        parse_type(input)
+    })(input)?;
     
     // Parse optional temporal constraints: where ~tx within ~db
     let (input, temporal_constraints) = opt(|input| {
@@ -295,7 +311,9 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     })(input)?;
     let temporal_constraints = temporal_constraints.unwrap_or_default();
     
+    let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, body) = block_expr(input)?;
+    
     Ok((input, FunDecl { 
         name,
         is_async,
@@ -1201,7 +1219,7 @@ mod tests {
 
     #[test]
     fn test_fun_decl() {
-        let input = "fun add = a:Int b:Int { a }";
+        let input = "fun add: (a:Int, b:Int) -> Int = { a }";
         let (_, decl) = fun_decl(input).unwrap();
         assert_eq!(decl.name, "add");
         assert_eq!(decl.params.len(), 2);
@@ -1226,5 +1244,26 @@ mod tests {
         let input = "obj.field";
         let (_, expr) = simple_expr(input).unwrap();
         assert!(matches!(expr, Expr::FieldAccess(_, _)));
+    }
+    
+    #[test]
+    fn test_temporal_constraint() {
+        let input = "~tx within ~db";
+        let (_, constraint) = temporal_constraint(input).unwrap();
+        assert_eq!(constraint.inner, "tx");
+        assert_eq!(constraint.outer, "db");
+    }
+    
+    #[test]
+    fn test_with_lifetime() {
+        let input = "with lifetime<~f> { 42 }";
+        let (_, expr) = with_expr(input).unwrap();
+        if let Expr::WithLifetime(ref wl) = expr {
+            assert_eq!(wl.lifetime, "f");
+            assert!(!wl.anonymous);
+            assert!(wl.constraints.is_empty());
+        } else {
+            panic!("Expected WithLifetime expression");
+        }
     }
 }

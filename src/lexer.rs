@@ -118,6 +118,7 @@ pub enum Token {
     Bar,
     Assign,         // =
     Arrow,          // =>
+    ThinArrow,      // ->
     Plus,           // +
     Minus,          // -
     Star,           // *
@@ -194,6 +195,7 @@ impl fmt::Display for Token {
             Token::Bar => write!(f, "|"),
             Token::Assign => write!(f, "="),
             Token::Arrow => write!(f, "=>"),
+            Token::ThinArrow => write!(f, "->"),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
             Token::Star => write!(f, "*"),
@@ -333,6 +335,7 @@ fn operator(input: &str) -> IResult<&str, Token> {
         value(Token::RArrayBracket, tag("|]")),  // Check |] before |
         value(Token::Bar, tag("|")),
         value(Token::LArrayBracket, tag("[|")),  // Check [| 
+        value(Token::ThinArrow, tag("->")),
         value(Token::Arrow, tag("=>")),
         value(Token::Eq, tag("==")),
         value(Token::Ne, tag("!=")),

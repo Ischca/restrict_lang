@@ -39,7 +39,10 @@
       "Bash(./test_parser_check)",
       "Bash(RUST_BACKTRACE=1 cargo test test_basic_lifetime_inference -- --nocapture)",
       "Bash(./test_lexer_debug)",
-      "Bash(./test_arena_output)"
+      "Bash(./test_arena_output)",
+      "Bash(/opt/homebrew/bin/cargo build)",
+      "Bash(./compile_clean.sh:*)",
+      "Bash(/usr/bin/env cargo build)"
     ],
     "deny": []
   }

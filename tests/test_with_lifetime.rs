@@ -66,7 +66,7 @@ fn test_with_lifetime_escape_error() {
     match checker.check_program(&program) {
         Ok(_) => panic!("Expected temporal escape error"),
         Err(e) => {
-            assert!(matches!(e, restrict_lang::TypeError::TemporalEscape(_)));
+            assert!(matches!(e, restrict_lang::TypeError::TemporalEscape { .. }));
             println!("Got expected error: {:?}", e);
         }
     }

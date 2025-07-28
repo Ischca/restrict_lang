@@ -102,8 +102,8 @@ pub enum TypeError {
     TemporalConstraintViolation(String),
     
     /// Temporal variable escapes its scope
-    #[error("Temporal variable {0} escapes its scope")]
-    TemporalEscape(String),
+    #[error("{message}")]
+    TemporalEscape { temporal: String, message: String },
     
     /// Invalid temporal constraint
     #[error("Invalid temporal constraint: {0} within {1}")]
@@ -1073,6 +1073,9 @@ impl TypeChecker {
                 Err(TypeError::UnsupportedFeature("Function types not yet implemented".to_string()))
             }
             Type::Temporal(name, temporals) => {
+                // Validate temporal constraints before creating the type
+                self.validate_temporal_constraints(temporals)?;
+                
                 // Convert base type and wrap with temporal parameters
                 let base_type = self.convert_type(&Type::Named(name.clone()))?;
                 Ok(TypedType::Temporal {
@@ -1282,7 +1285,10 @@ impl TypeChecker {
             for temporal in temporals {
                 if self.temporal_context.active_temporals.contains(temporal) {
                     // Temporal variable from function scope escaping
-                    return Err(TypeError::TemporalEscape(temporal.clone()));
+                    return Err(TypeError::TemporalEscape {
+                        temporal: temporal.clone(),
+                        message: format!("Temporal parameter {} escapes function scope", temporal)
+                    });
                 }
             }
         }
@@ -2155,7 +2161,7 @@ impl TypeChecker {
     
     /// Validate temporal constraints when creating temporal types.
     fn validate_temporal_constraints(&self, temporals: &[String]) -> Result<(), TypeError> {
-        // For now, just check that all temporals are in scope
+        // Check that all temporals are in scope
         for temporal in temporals {
             if !self.is_temporal_in_scope(temporal) {
                 return Err(TypeError::TemporalConstraintViolation(
@@ -2163,6 +2169,55 @@ impl TypeChecker {
                 ));
             }
         }
+        
+        // Validate constraint transitivity
+        // If we have constraints A within B and B within C, then A must be within C
+        let constraints = &self.temporal_context.constraints;
+        
+        // Build a map of direct constraints
+        let mut within_map: HashMap<String, HashSet<String>> = HashMap::new();
+        for constraint in constraints {
+            within_map.entry(constraint.inner.clone())
+                .or_insert_with(HashSet::new)
+                .insert(constraint.outer.clone());
+        }
+        
+        // Compute transitive closure
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let mut updates: Vec<(String, String)> = Vec::new();
+            
+            for (inner, outers) in &within_map {
+                for outer in outers.clone() {
+                    if let Some(outer_outers) = within_map.get(&outer) {
+                        for outer_outer in outer_outers {
+                            if !outers.contains(outer_outer) {
+                                updates.push((inner.clone(), outer_outer.clone()));
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Apply updates
+            for (inner, outer) in updates {
+                within_map.entry(inner)
+                    .or_insert_with(HashSet::new)
+                    .insert(outer);
+            }
+        }
+        
+        // Check for cycles
+        for (temporal, within_set) in &within_map {
+            if within_set.contains(temporal) {
+                return Err(TypeError::TemporalConstraintViolation(
+                    format!("Cyclic temporal constraint detected: {} within itself", temporal)
+                ));
+            }
+        }
+        
         Ok(())
     }
     
@@ -2338,13 +2393,12 @@ impl TypeChecker {
         let result = self.check_block_expr(&with_lifetime.body)?;
         
         // Check that the result doesn't escape the temporal scope
-        if let TypedType::Temporal { temporals, .. } = &result {
-            for temporal in temporals {
-                if temporal == &with_lifetime.lifetime {
-                    return Err(TypeError::TemporalEscape(temporal.clone()));
-                }
-            }
-        }
+        // Get the allowed temporals (all active except the one being introduced by this with_lifetime)
+        let mut allowed_temporals = self.temporal_context.active_temporals.clone();
+        allowed_temporals.remove(&with_lifetime.lifetime);
+        
+        // Use the comprehensive temporal escape check
+        self.check_temporal_escape(&result, &allowed_temporals)?;
         
         // Restore temporal context
         if let Some(parent) = self.temporal_context.parent_temporals.take() {
@@ -2760,6 +2814,26 @@ impl TypeChecker {
     }
     
     fn check_lambda_expr(&mut self, lambda: &LambdaExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
+        // Collect free variables before creating lambda scope
+        let bound_vars = HashSet::new();
+        let free_vars = self.collect_free_variables(&lambda.body, &bound_vars);
+        
+        // Get current temporal context to determine allowed temporals
+        let allowed_temporals = self.temporal_context.active_temporals.clone();
+        
+        // Check if any free variables have temporal types that would escape
+        for var_name in &free_vars {
+            match self.lookup_var(var_name) {
+                Ok(var_type) => {
+                    // Check if this type contains temporals that would escape
+                    self.check_temporal_escape(&var_type, &allowed_temporals)?;
+                }
+                Err(_) => {
+                    // Variable not found - this will be caught later during body type checking
+                }
+            }
+        }
+        
         // Create a new scope for lambda parameters
         self.push_scope();
         
@@ -2808,11 +2882,16 @@ impl TypeChecker {
         // Pop the lambda scope
         self.pop_scope();
         
-        // Return the function type
-        Ok(TypedType::Function {
+        // Create the function type
+        let func_type = TypedType::Function {
             params: param_types,
             return_type: Box::new(body_type),
-        })
+        };
+        
+        // Check if the function type itself contains escaping temporals
+        self.check_temporal_escape(&func_type, &allowed_temporals)?;
+        
+        Ok(func_type)
     }
     
     fn infer_param_type_from_usage(&self, param_name: &str, expr: &Expr) -> TypedType {
@@ -3368,5 +3447,223 @@ impl TypeChecker {
             hash: Some(new_hash.clone()),
             parent_hash 
         })
+    }
+    
+    /// Collect free variables in an expression
+    fn collect_free_variables(&self, expr: &Expr, bound_vars: &HashSet<String>) -> HashSet<String> {
+        let mut free_vars = HashSet::new();
+        
+        match expr {
+            Expr::Ident(name) => {
+                if !bound_vars.contains(name) {
+                    // Check if variable exists in scope
+                    for scope in self.var_env.iter().rev() {
+                        if scope.contains_key(name) {
+                            free_vars.insert(name.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+            Expr::Binary(bin) => {
+                free_vars.extend(self.collect_free_variables(&bin.left, bound_vars));
+                free_vars.extend(self.collect_free_variables(&bin.right, bound_vars));
+            }
+            Expr::Call(call) => {
+                free_vars.extend(self.collect_free_variables(&call.function, bound_vars));
+                for arg in &call.args {
+                    free_vars.extend(self.collect_free_variables(arg, bound_vars));
+                }
+            }
+            Expr::FieldAccess(object, _field) => {
+                free_vars.extend(self.collect_free_variables(object, bound_vars));
+            }
+            Expr::RecordLit(record_lit) => {
+                for field in &record_lit.fields {
+                    free_vars.extend(self.collect_free_variables(&field.value, bound_vars));
+                }
+            }
+            Expr::Clone(clone_expr) => {
+                free_vars.extend(self.collect_free_variables(&clone_expr.base, bound_vars));
+                for field in &clone_expr.updates.fields {
+                    free_vars.extend(self.collect_free_variables(&field.value, bound_vars));
+                }
+            }
+            Expr::Freeze(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
+            Expr::PrototypeClone(proto_clone) => {
+                // Base is just a name, not an expression, so no free vars from it
+                for field in &proto_clone.updates.fields {
+                    free_vars.extend(self.collect_free_variables(&field.value, bound_vars));
+                }
+            }
+            Expr::ListLit(elements) => {
+                for elem in elements {
+                    free_vars.extend(self.collect_free_variables(elem, bound_vars));
+                }
+            }
+            Expr::ArrayLit(elements) => {
+                for elem in elements {
+                    free_vars.extend(self.collect_free_variables(elem, bound_vars));
+                }
+            }
+            Expr::Match(match_expr) => {
+                free_vars.extend(self.collect_free_variables(&match_expr.expr, bound_vars));
+                for arm in &match_expr.arms {
+                    // Pattern bindings create new bound variables
+                    let mut arm_bound = bound_vars.clone();
+                    self.collect_pattern_bindings(&arm.pattern, &mut arm_bound);
+                    // The body is a BlockExpr, so we need to handle it specially
+                    free_vars.extend(self.collect_free_variables_in_block(&arm.body, &arm_bound));
+                }
+            }
+            Expr::Then(then_expr) => {
+                free_vars.extend(self.collect_free_variables(&then_expr.condition, bound_vars));
+                free_vars.extend(self.collect_free_variables_in_block(&then_expr.then_block, bound_vars));
+                for (cond, block) in &then_expr.else_ifs {
+                    free_vars.extend(self.collect_free_variables(cond, bound_vars));
+                    free_vars.extend(self.collect_free_variables_in_block(block, bound_vars));
+                }
+                if let Some(else_block) = &then_expr.else_block {
+                    free_vars.extend(self.collect_free_variables_in_block(else_block, bound_vars));
+                }
+            }
+            Expr::While(while_expr) => {
+                free_vars.extend(self.collect_free_variables(&while_expr.condition, bound_vars));
+                free_vars.extend(self.collect_free_variables_in_block(&while_expr.body, bound_vars));
+            }
+            Expr::Block(block) => {
+                free_vars.extend(self.collect_free_variables_in_block(block, bound_vars));
+            }
+            Expr::Lambda(lambda) => {
+                let mut lambda_bound = bound_vars.clone();
+                for param in &lambda.params {
+                    lambda_bound.insert(param.clone());
+                }
+                free_vars.extend(self.collect_free_variables(&lambda.body, &lambda_bound));
+            }
+            Expr::WithLifetime(wl) => {
+                free_vars.extend(self.collect_free_variables_in_block(&wl.body, bound_vars));
+            }
+            Expr::With(with_expr) => {
+                free_vars.extend(self.collect_free_variables_in_block(&with_expr.body, bound_vars));
+            }
+            Expr::Pipe(pipe_expr) => {
+                free_vars.extend(self.collect_free_variables(&pipe_expr.expr, bound_vars));
+                match &pipe_expr.target {
+                    PipeTarget::Ident(_) => {
+                        // Target identifier is a binding, not a use
+                    }
+                    PipeTarget::Expr(target_expr) => {
+                        free_vars.extend(self.collect_free_variables(target_expr, bound_vars));
+                    }
+                }
+            }
+            Expr::Some(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
+            Expr::Await(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
+            Expr::Spawn(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
+            // Literals and None have no free variables
+            Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) | 
+            Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit | 
+            Expr::None | Expr::NoneTyped(_) => {}
+        }
+        
+        free_vars
+    }
+    
+    /// Helper function to collect free variables in a BlockExpr
+    fn collect_free_variables_in_block(&self, block: &BlockExpr, bound_vars: &HashSet<String>) -> HashSet<String> {
+        let mut free_vars = HashSet::new();
+        let mut block_bound = bound_vars.clone();
+        
+        for stmt in &block.statements {
+            match stmt {
+                Stmt::Binding(bind_decl) => {
+                    free_vars.extend(self.collect_free_variables(&bind_decl.value, &block_bound));
+                    block_bound.insert(bind_decl.name.clone());
+                }
+                Stmt::Assignment(assign) => {
+                    free_vars.extend(self.collect_free_variables(&assign.value, &block_bound));
+                }
+                Stmt::Expr(expr) => {
+                    free_vars.extend(self.collect_free_variables(expr, &block_bound));
+                }
+            }
+        }
+        
+        if let Some(expr) = &block.expr {
+            free_vars.extend(self.collect_free_variables(expr, &block_bound));
+        }
+        
+        free_vars
+    }
+    
+    /// Collect variable bindings from a pattern
+    fn collect_pattern_bindings(&self, pattern: &Pattern, bindings: &mut HashSet<String>) {
+        match pattern {
+            Pattern::Ident(name) => {
+                bindings.insert(name.clone());
+            }
+            Pattern::Wildcard => {}
+            Pattern::Record(_name, fields) => {
+                for (_, p) in fields {
+                    self.collect_pattern_bindings(p, bindings);
+                }
+            }
+            Pattern::Some(p) => {
+                self.collect_pattern_bindings(p, bindings);
+            }
+            Pattern::ListCons(head, tail) => {
+                self.collect_pattern_bindings(head, bindings);
+                self.collect_pattern_bindings(tail, bindings);
+            }
+            Pattern::ListExact(patterns) => {
+                for p in patterns {
+                    self.collect_pattern_bindings(p, bindings);
+                }
+            }
+            Pattern::Literal(_) | Pattern::None | Pattern::EmptyList => {}
+        }
+    }
+    
+    /// Check if a type contains temporal parameters that are not in the allowed set
+    fn check_temporal_escape(&self, ty: &TypedType, allowed_temporals: &HashSet<String>) -> Result<(), TypeError> {
+        match ty {
+            TypedType::Temporal { base_type, temporals } => {
+                for temporal in temporals {
+                    if !allowed_temporals.contains(temporal) {
+                        return Err(TypeError::TemporalEscape {
+                            temporal: temporal.clone(),
+                            message: format!("Temporal parameter {} escapes its scope", temporal)
+                        });
+                    }
+                }
+                self.check_temporal_escape(base_type, allowed_temporals)?;
+            }
+            TypedType::Function { params, return_type } => {
+                for param in params {
+                    self.check_temporal_escape(param, allowed_temporals)?;
+                }
+                self.check_temporal_escape(return_type, allowed_temporals)?;
+            }
+            TypedType::Option(ty) => {
+                self.check_temporal_escape(ty, allowed_temporals)?;
+            }
+            TypedType::List(ty) => {
+                self.check_temporal_escape(ty, allowed_temporals)?;
+            }
+            TypedType::Array(elem_ty, _) => {
+                self.check_temporal_escape(elem_ty, allowed_temporals)?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }

@@ -35,12 +35,12 @@ fun gt = |a, b| -> Result {
 }
 
 fun has = |list, elem| -> Result {
-    if list.contains(elem) { Pass } else { Fail("not found") }
+    if (elem) list.contains { Pass } else { Fail("not found") }
 }
 
 // Pattern matching helper
 fun matches = |value, pattern| -> Result {
-    pattern(value)
+    (value) pattern
 }
 
 // Chaining assertions
@@ -70,20 +70,20 @@ fun run = |tests: List<(String, Result)>| {
 
 // Property testing in one line
 fun prop = |gen, check, n| -> Result {
-    (1..n).map(|_| gen().check).find(|r| match r { Fail(_) -> true, _ -> false })
-        .getOrElse(Pass)
+    (Pass) (|r| match r { Fail(_) -> true, _ -> false }) (|_| () gen.check) (1..n).map.find
+        .getOrElse
 }
 
 // Table testing
 fun table = |cases, f| -> Result {
-    cases.map(|(input, expected)| input.f expected.eq)
-         .find(|r| match r { Fail(_) -> true, _ -> false })
-         .getOrElse(Pass)
+    (Pass) (|r| match r { Fail(_) -> true, _ -> false }) (|(input, expected)| expected.eq input.f) cases.map
+         .find
+         .getOrElse
 }
 
 // Temporal isolation as a simple wrapper
 fun isolated = |<~t> test| -> Result {
-    with lifetime<~t> { test() }
+    with lifetime<~t> { () test }
 }
 
 // Usage - pure data flow
@@ -98,10 +98,10 @@ fun main = {
         "multiple checks" !! ((2 + 2) 4.eq and 10 5.gt),
         
         // Pattern matching
-        "option match" !! Some(42).matches |opt| match opt {
+        "option match" !! (|opt| match opt {
             Some(42) -> Pass,
             _ -> Fail("wrong value")
-        },
+        }) Some(42).matches,
         
         // Property test
         "reverse property" !! 
@@ -131,7 +131,7 @@ fun main = {
 
 // Even more concise with custom syntax
 fun test = |name| -> |body| -> (String, Result) {
-    name !! body()
+    name !! () body
 }
 
 // Alternative style using pipes
@@ -139,7 +139,7 @@ fun testSuite = {
     []
         |> "math" { (1+1) 2.eq }.test.cons
         |> "lists" { [1,2,3].length 3.eq }.test.cons
-        |> "option" { Some(5).map(|x| x*2) Some(10).eq }.test.cons
+        |> "option" { Some(10).eq (|x| x*2) Some(5).map }.test.cons
         |> run
 }
 
@@ -160,9 +160,9 @@ fun quickExample = {
 // Helpers
 fun cons = |x, xs| [x] ++ xs
 fun sum = |list: List<Int32>| -> Int32 {
-    list.foldLeft(0, |acc, x| acc + x)
+    (0, |acc, x| acc + x) list.foldLeft
 }
 fun isPrime = |n: Int32| -> Bool {
-    n > 1 && (2..n.sqrt).all(|i| n % i != 0)
+    n > 1 && (|i| n % i != 0) (2..n.sqrt).all
 }
 fun fib = |n| match n { 0->0, 1->1, n->(n-1).fib+(n-2).fib }

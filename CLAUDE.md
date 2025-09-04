@@ -4,24 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+**IMPORTANT**: This project uses `mise` for environment management. All cargo commands should be prefixed with `mise exec --` to ensure proper environment setup.
+
 ### Build the project
 ```
-cargo build
+mise exec -- cargo build
+# or
+mise run build
 ```
 
 ### Run the compiler
 ```
-cargo run --bin restrict_lang <source_file.rl>
+mise exec -- cargo run --bin restrict_lang <source_file.rl>
 ```
 
 ### Run tests
 ```
-cargo test
+mise exec -- cargo test
+# or
+mise run test
 ```
 
 ### Debug lexer
 ```
-cargo run --bin debug_lex
+mise exec -- cargo run --bin debug_lex
+```
+
+### Available mise tasks
+```
+mise tasks  # List all available tasks
+mise run test-one TEST=test_name  # Run specific test
+mise run fmt  # Format code
+mise run lint  # Run clippy
+mise run ci  # Run full CI pipeline
 ```
 
 ## Architecture
@@ -95,3 +110,25 @@ Good:
 - The language compiles to WASM without GC
 - Comments are fully implemented: `//` for single-line and `/* */` for multi-line
 - Binary operators for arithmetic are defined but not yet integrated into the parser
+
+## Commit Message Rules
+
+**IMPORTANT**: Follow these rules for ALL git commits:
+
+1. **NO emoji** in commit messages
+2. **NO "Generated with Claude"** or similar AI signatures
+3. **NO Co-Authored-By** for AI tools
+4. Use conventional commit format: `type: subject`
+5. Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+6. Keep subject under 50 characters
+7. Use imperative mood ("Add" not "Added")
+8. No period at end of subject line
+
+Example:
+```
+fix: Restore WebAssembly code generation pipeline
+
+All 8 WAT generation tests were failing due to parser not handling
+function declarations correctly. Fixed by supporting both complex
+and simple syntax styles.
+```

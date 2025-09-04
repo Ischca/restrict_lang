@@ -13,7 +13,7 @@ record Test {
 // Simple assertion
 fun assert = |condition: Bool| {
     if condition.not {
-        panic("Assertion failed")
+        ("Assertion failed") panic
     }
 }
 
@@ -25,7 +25,7 @@ fun runTests = |tests: List<Test>| {
     tests.forEach |test| {
         ("Running: " ++ test.name).println;
         try {
-            test.run();
+            () test.run;
             passed = passed + 1;
             "  ✓ Passed".println;
         } catch e {

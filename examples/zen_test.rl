@@ -20,28 +20,28 @@ infix ∈ 9   // membership
 infix ↦ 9   // maps to
 
 fun ≟ = |a, b| || a == b
-fun ∈ = |elem, list| || list.contains(elem)
+fun ∈ = |elem, list| || (elem) list.contains
 fun ↦ = |input, output| |f| || input.f == output
 
 // Test flow is just data flow
 fun flow = |tests: List<Test>| {
     tests 
-    |> |t| t.1() t.0    // execute and pair with name
+    |> |t| () t.1 t.0    // execute and pair with name
     |> |name, pass| (if pass "✓" else "✗") ++ " " ++ name
     |> println.forEach
-    |> tests.count(|t| t.1()) tests.length  // count results
+    |> (|t| () t.1) tests.count tests.length  // count results
     |> |p, t| "\n" ++ p.toString ++ "/" ++ t.toString
     |> println
 }
 
 // Temporal test contexts are just scoped computations
 fun within = |<~τ> compute| {
-    with lifetime<~τ> { compute() }
+    with lifetime<~τ> { () compute }
 }
 
 // Property tests are just filtered generations
 fun holds = |gen, invariant, n| || {
-    (1..n).generate(gen).all(invariant)
+    (invariant) (gen) (1..n).generate.all
 }
 
 // Table tests are just mapped validations
@@ -57,13 +57,13 @@ fun demonstrate = {
         "membership" ⟷ 3 [1,2,3,4].∈,
         "morphism" ⟷ 5 10.↦ (*2),
         
-        "property" ⟷ (|| 1 to 100).holds(|n| n + 0 n.≟, 100),
+        "property" ⟷ (|n| n + 0 n.≟, 100) (|| 1 to 100).holds,
         
-        "table" ⟷ [(0,1), (1,1), (2,2), (3,6)].validates(factorial),
+        "table" ⟷ (factorial) [(0,1), (1,1), (2,2), (3,6)].validates,
         
         "temporal" ⟷ within |<~t>| {
             record Box<~t> { value: Int32 }
-            Box { value = 7 }.value 7.≟()
+            () Box { value = 7 }.value 7.≟
         },
         
         "pipeline" ⟷ "hello"
@@ -82,9 +82,9 @@ fun demonstrate = {
 }
 
 // Helpers exist in the flow
-fun count = |list, pred| list.filter(pred).length
-fun all = |list, pred| list.filter(pred.not).isEmpty
-fun generate = |range, gen| range.map |_| gen()
+fun count = |list, pred| (pred) list.filter.length
+fun all = |list, pred| (pred.not) list.filter.isEmpty
+fun generate = |range, gen| (|_| () gen) range.map
 fun factorial = |n| match n { 0->1, n->n*(n-1).factorial }
 fun uppercase = |s: String| s  // would use string method
 
@@ -98,7 +98,7 @@ fun pure = {
         "test".length == 4
     ];
     
-    val passed = results.count(|x| x);
+    val passed = (|x| x) results.count;
     (passed.toString ++ "/" ++ results.length.toString).println
 }
 
@@ -106,12 +106,12 @@ fun pure = {
 type Proven<P> = private Proven(P)
 
 fun prove = |<P> evidence: P, proof: P -> Bool| -> Option<Proven<P>> {
-    if evidence.proof { Some(Proven(evidence)) } else { None }
+    if () evidence.proof { Some(Proven(evidence)) } else { None }
 }
 
 // Usage: type-safe tested values
 fun typeLevel = {
-    val maybePrime = 17.prove(isPrime);
+    val maybePrime = (isPrime) 17.prove;
     match maybePrime {
         Some(Proven(p)) -> (p.toString ++ " is proven prime").println,
         None -> "Not prime".println
@@ -128,7 +128,7 @@ fun main = {
 fun to = |start, end| (start..end).toList
 fun isEmpty = |list| list.length == 0
 fun isSome = |opt| match opt { Some(_) -> true, None -> false }
-fun isPrime = |n| n > 1 && (2 to n.sqrt).all(|i| n % i != 0)
+fun isPrime = |n| n > 1 && (|i| n % i != 0) (2 to n.sqrt).all
 fun sqrt = |n: Int32| -> Int32 { 
     // Simple integer square root
     var i = 1;

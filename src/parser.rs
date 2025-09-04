@@ -6,115 +6,130 @@
 //!
 //! ## Key Features
 //!
-//! - **OSV Syntax**: Natural handling of pipe operators (`|>`, `|>>`)
+//! - **OSV Syntax**: Natural handling of the pipe operator (`|>`)
 //! - **Pattern Matching**: Comprehensive pattern support including list patterns
 //! - **Generic Functions**: Type parameters with bounds and derivation constraints
 //! - **Prototype System**: Parsing of `clone` and `freeze` operations
 //!
 //! ## Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use restrict_lang::parser::parse_program;
 //!
-//! let input = r#"
-//!     fn main() {
-//!         "Hello, World!" |> println;
-//!     }
-//! "#;
-//! 
-//! let ast = parse_program(input).unwrap();
+//! let input = r#"fun main: () -> String = { "Hello, World!" }"#;
+//!
+//! let (remaining, ast) = parse_program(input).unwrap();
+//! assert!(remaining.trim().is_empty());
+//! assert_eq!(ast.declarations.len(), 1);
 //! ```
 
+use crate::ast::*;
+use crate::lexer::{lex_token, skip, Token};
 use nom::{
-    IResult,
     branch::alt,
     combinator::{map, opt, value},
     multi::{many0, many1, separated_list0, separated_list1},
-    sequence::{preceded, tuple, delimited},
+    sequence::{delimited, preceded, tuple},
+    IResult,
 };
-use crate::lexer::{Token, lex_token, skip, skip_non_newline, newline, Span};
-use crate::ast::*;
-
-/// Context for tracking source positions during parsing.
-pub struct ParseContext<'a> {
-    /// The original source string
-    pub source: &'a str,
-}
-
-impl<'a> ParseContext<'a> {
-    /// Creates a new parse context.
-    pub fn new(source: &'a str) -> Self {
-        Self { source }
-    }
-
-    /// Calculates the byte offset from remaining input.
-    pub fn offset(&self, remaining: &str) -> usize {
-        self.source.len() - remaining.len()
-    }
-
-    /// Creates a span from start offset to current position.
-    pub fn span_from(&self, start: usize, remaining: &str) -> Span {
-        Span::new(start, self.offset(remaining))
-    }
-}
-
-/// Helper to calculate byte offset from remaining input.
-fn calc_offset(original: &str, remaining: &str) -> usize {
-    original.len() - remaining.len()
-}
-
-/// Helper to create a span from original source and remaining input.
-fn make_span(original: &str, start_remaining: &str, end_remaining: &str) -> Span {
-    let start = calc_offset(original, start_remaining);
-    let end = calc_offset(original, end_remaining);
-    Span::new(start, end)
-}
 
 /// Type alias for parser results.
 type ParseResult<'a, T> = IResult<&'a str, T>;
 
+const UNSUPPORTED_ENUM_DECL_ERROR: &str =
+    "enum declarations are unsupported in v0.0.1; user-defined enum declarations are not implemented";
+const UNSUPPORTED_FORM_TAKES_DECL_ERROR: &str =
+    "source-level `form` / `takes` syntax is unsupported in v0.0.1; v0.0.1 only exposes compiler-internal Container behavior";
+const UNSUPPORTED_IMPORT_ALIAS_ERROR: &str =
+    "string import paths and import aliases are unsupported in v0.0.1; use dotted source imports such as import module.{item}";
+const UNSUPPORTED_RE_EXPORT_ERROR: &str =
+    "re-exports are unsupported in v0.0.1; import declarations must stay at the source module boundary";
+const STALE_LET_ERROR: &str =
+    "stale syntax `let` is not valid Restrict; use `val` for immutable bindings";
+const STALE_IF_ERROR: &str =
+    "stale syntax `if (...)` is not valid Restrict; use condition-first `then` expressions";
+const STALE_VAL_MUT_ERROR: &str =
+    "stale syntax `val mut` is not valid Restrict; write mutable bindings as `mut val`";
+const TRADITIONAL_CALL_ERROR: &str =
+    "traditional calls like `add(1, 2)` are not valid Restrict; use OSV syntax such as `(1, 2) add` or `value |> add`";
+const NONE_TYPE_ARGUMENT_ERROR: &str =
+    "stale syntax `None<T>` is not valid Restrict; write `None` and provide an expected `Option<T>` type through an annotation or typed context";
+const STALE_UNIT_ERROR: &str =
+    "stale syntax `Unit` is not valid Restrict; use `()` for the unit value or unit type";
+
 /// Expects a specific token and consumes it.
-/// 
+///
 /// Returns an error if the next token doesn't match.
 fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> {
     move |input| {
         let original_input = input;
         let (input, token) = lex_token(input)?;
         if token == expected {
-            // Skip trailing whitespace but NOT newlines - newlines are needed for OSV detection
-            let (input, _) = skip_non_newline(input)?;
+            let (input, _) = skip(input)?; // Skip trailing whitespace after token
             Ok((input, ()))
         } else {
             // Return error with the original input to allow backtracking
-            Err(nom::Err::Error(nom::error::Error::new(original_input, nom::error::ErrorKind::Tag)))
+            Err(nom::Err::Error(nom::error::Error::new(
+                original_input,
+                nom::error::ErrorKind::Tag,
+            )))
         }
     }
 }
 
+fn user_syntax_failure<'a, T>(message: &'static str) -> ParseResult<'a, T> {
+    Err(nom::Err::Failure(nom::error::Error::new(
+        message,
+        nom::error::ErrorKind::Fail,
+    )))
+}
+
+fn starts_with_word(input: &str, word: &str) -> bool {
+    let trimmed = input.trim_start();
+    let Some(rest) = trimmed.strip_prefix(word) else {
+        return false;
+    };
+    rest.chars()
+        .next()
+        .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
+}
+
+fn starts_with_let_binding(input: &str) -> bool {
+    starts_with_word(input, "let")
+}
+
+fn starts_with_if_parens(input: &str) -> bool {
+    let trimmed = input.trim_start();
+    let Some(rest) = trimmed.strip_prefix("if") else {
+        return false;
+    };
+    rest.trim_start().starts_with('(')
+}
+
+fn starts_with_val_mut(input: &str) -> bool {
+    let trimmed = input.trim_start();
+    let Some(rest) = trimmed.strip_prefix("val") else {
+        return false;
+    };
+    starts_with_word(rest, "mut")
+}
+
 /// Parses an identifier.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```
 /// // Parses: myVariable, userName, _private
 /// ```
-fn ident(input: &str) -> ParseResult<String> {
+fn ident(input: &str) -> ParseResult<'_, String> {
     let original_input = input;
     let (input, token) = lex_token(input)?;
     match token {
         Token::Ident(name) => Ok((input, name)),
-        Token::It => Ok((input, "it".to_string())),  // Allow 'it' as an identifier in binding contexts
-        _ => Err(nom::Err::Error(nom::error::Error::new(original_input, nom::error::ErrorKind::Tag)))
-    }
-}
-
-/// Helper to parse a type name (identifier or Unit keyword)
-fn type_name(input: &str) -> ParseResult<String> {
-    let (input, token) = lex_token(input)?;
-    match token {
-        Token::Unit => Ok((input, "Unit".to_string())),
-        Token::Ident(name) => Ok((input, name)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            original_input,
+            nom::error::ErrorKind::Tag,
+        ))),
     }
 }
 
@@ -125,179 +140,202 @@ fn type_name(input: &str) -> ParseResult<String> {
 /// # Examples
 ///
 /// ```
-/// // Simple types: i32, String, Point
-/// // Generic types: Vec<i32>, Map<String, Value>
+/// // Simple types: Int32, String, Point
+/// // Generic types: List<Int32>, Result<String, Error>
 /// // Temporal types: File<~f>, Transaction<~tx, ~db>
 /// ```
-fn parse_type(input: &str) -> ParseResult<Type> {
-    // Try to parse function type first: |Type1, Type2| -> ReturnType
-    if let Ok((_input_after_bar, _)) = expect_token(Token::Bar)(input) {
-        // Parse parameter types
-        let (input, param_types) = delimited(
-            expect_token(Token::Bar),
-            separated_list0(expect_token(Token::Comma), parse_type),
-            expect_token(Token::Bar)
-        )(input)?;
-
-        // Parse arrow and return type
-        let (input, _) = expect_token(Token::ThinArrow)(input)?;
-        let (input, return_type) = parse_type(input)?;
-
-        return Ok((input, Type::Function(param_types, Box::new(return_type))));
-    }
-
-    // Try to parse tuple type: (Type1, Type2, ...)
-    if let Ok((input_after_lparen, _)) = expect_token::<'_>(Token::LParen)(input) {
-        // Check for unit type ()
-        if let Ok((input_after_rparen, _)) = expect_token::<'_>(Token::RParen)(input_after_lparen) {
-            return Ok((input_after_rparen, Type::Named("Unit".to_string())));
-        }
-        // Try parsing as tuple type: (T1, T2, ...)
-        if let Ok((remaining, first_type)) = parse_type(input_after_lparen) {
-            if let Ok((remaining, _)) = expect_token::<'_>(Token::Comma)(remaining) {
-                // It's a tuple type
-                let (remaining, rest) = separated_list0(
-                    expect_token(Token::Comma),
-                    parse_type
-                )(remaining)?;
-                let (remaining, _) = expect_token(Token::RParen)(remaining)?;
-                let mut types = vec![first_type];
-                types.extend(rest);
-                return Ok((remaining, Type::Tuple(types)));
-            }
-            // Single type in parens - just grouping, not a tuple
-        }
-    }
-
-    // Parse type name - handle both identifiers and the Unit keyword
-    let (input, name) = type_name(input)?;
-
-    // Try to parse type parameters: <T>, <Option<T>>, <~f>
-    let (input, type_params) = opt(
-        delimited(
-            expect_token(Token::Lt),
-            separated_list0(
-                expect_token(Token::Comma),
-                parse_generic_arg
-            ),
-            expect_token(Token::Gt)
-        )
-    )(input)?;
-
-    match type_params {
-        Some(params) => {
-            // Check if all parameters are temporal
-            let all_temporal = params.iter().all(|p| matches!(p, GenericArg::Temporal(_)));
-            let all_types = params.iter().all(|p| matches!(p, GenericArg::Type(_)));
-
-            if all_temporal {
-                // All temporal: File<~f>
-                let temporal_names: Vec<String> = params.into_iter().map(|p| {
-                    match p {
-                        GenericArg::Temporal(n) => n,
-                        _ => unreachable!()
-                    }
-                }).collect();
-                Ok((input, Type::Temporal(name, temporal_names)))
-            } else if all_types {
-                // All regular types: Vec<String>, Option<Option<T>>
-                let types: Vec<Type> = params.into_iter().map(|p| {
-                    match p {
-                        GenericArg::Type(ty) => ty,
-                        _ => unreachable!()
-                    }
-                }).collect();
-                Ok((input, Type::Generic(name, types)))
-            } else {
-                // Mixed not supported yet
-                Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
-            }
-        }
-        None => Ok((input, Type::Named(name)))
-    }
+fn parse_type(input: &str) -> ParseResult<'_, Type> {
+    parse_function_type(input)
 }
 
-/// Helper enum to distinguish between temporal parameters (~f) and type parameters (T, Option<T>)
-/// Named GenericArg to avoid conflict with ast::TypeParam
-enum GenericArg {
-    Temporal(String),
+enum TypeArg {
     Type(Type),
+    Temporal(String),
 }
 
-/// Parse a single type parameter (either ~name for temporal or a full type)
-fn parse_generic_arg(input: &str) -> ParseResult<GenericArg> {
+fn parse_type_arg(input: &str) -> ParseResult<'_, TypeArg> {
     alt((
-        // Parse temporal parameter (~f)
         map(
             preceded(expect_token(Token::Tilde), ident),
-            GenericArg::Temporal
+            TypeArg::Temporal,
         ),
-        // Parse regular type (can be nested generic like Option<T>)
-        map(parse_type, GenericArg::Type)
+        |input| {
+            let original_input = input;
+            let (input, token) = lex_token(input)?;
+            match token {
+                Token::IntLit(value) if value >= 0 => {
+                    Ok((input, TypeArg::Type(Type::Named(value.to_string()))))
+                }
+                _ => Err(nom::Err::Error(nom::error::Error::new(
+                    original_input,
+                    nom::error::ErrorKind::Tag,
+                ))),
+            }
+        },
+        map(parse_type, TypeArg::Type),
     ))(input)
 }
 
-fn field_decl(input: &str) -> ParseResult<FieldDecl> {
+fn parse_function_type(input: &str) -> ParseResult<'_, Type> {
+    if let Ok((after_params, params)) = delimited(
+        expect_token(Token::LParen),
+        separated_list0(expect_token(Token::Comma), parse_type),
+        expect_token(Token::RParen),
+    )(input)
+    {
+        if let Ok((after_arrow, _)) = expect_token::<'_>(Token::ThinArrow)(after_params) {
+            let (input, return_type) = parse_type(after_arrow)?;
+            return Ok((input, Type::Function(params, Box::new(return_type))));
+        }
+
+        if let [single] = params.as_slice() {
+            return Ok((after_params, single.clone()));
+        }
+
+        if params.is_empty() {
+            return Ok((after_params, Type::Named("Unit".to_string())));
+        }
+    }
+
+    let (input, param_type) = parse_type_atom(input)?;
+    if let Ok((input, _)) = expect_token::<'_>(Token::ThinArrow)(input) {
+        let (input, return_type) = parse_type(input)?;
+        Ok((
+            input,
+            Type::Function(vec![param_type], Box::new(return_type)),
+        ))
+    } else {
+        Ok((input, param_type))
+    }
+}
+
+fn parse_type_atom(input: &str) -> ParseResult<'_, Type> {
+    if let Ok((_, Token::Unit)) = lex_token(input) {
+        return user_syntax_failure(STALE_UNIT_ERROR);
+    }
+
+    let (input, name) = ident(input)?;
+    let (input, type_params) = opt(delimited(
+        expect_token(Token::Lt),
+        separated_list0(expect_token(Token::Comma), parse_type_arg),
+        expect_token(Token::Gt),
+    ))(input)?;
+
+    match type_params {
+        Some(params) => {
+            // Check if all are temporal
+            let all_temporal = params
+                .iter()
+                .all(|param| matches!(param, TypeArg::Temporal(_)));
+            let all_regular = params.iter().all(|param| matches!(param, TypeArg::Type(_)));
+
+            if all_temporal {
+                // All temporal: File<~f>
+                Ok((
+                    input,
+                    Type::Temporal(
+                        name,
+                        params
+                            .into_iter()
+                            .map(|param| match param {
+                                TypeArg::Temporal(name) => name,
+                                TypeArg::Type(_) => unreachable!(),
+                            })
+                            .collect(),
+                    ),
+                ))
+            } else if all_regular {
+                // All regular types: Vec<String>
+                let types = params
+                    .into_iter()
+                    .map(|param| match param {
+                        TypeArg::Type(ty) => ty,
+                        TypeArg::Temporal(_) => unreachable!(),
+                    })
+                    .collect();
+                Ok((input, Type::Generic(name, types)))
+            } else {
+                // Mixed not supported yet
+                Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Tag,
+                )))
+            }
+        }
+        None => Ok((input, Type::Named(name))),
+    }
+}
+
+fn field_decl(input: &str) -> ParseResult<'_, FieldDecl> {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Colon)(input)?;
     let (input, ty) = parse_type(input)?;
     Ok((input, FieldDecl { name, ty }))
 }
 
-fn record_decl(input: &str) -> ParseResult<RecordDecl> {
+fn field_decls(input: &str) -> ParseResult<'_, Vec<FieldDecl>> {
+    let mut fields = Vec::new();
+    let mut remaining = input;
+
+    loop {
+        let (input, _) = skip(remaining)?;
+
+        if expect_token::<'_>(Token::RBrace)(input).is_ok() {
+            return Ok((input, fields));
+        }
+
+        let (input, field) = field_decl(input)?;
+        fields.push(field);
+
+        let (input, _) = opt(expect_token(Token::Comma))(input)?;
+        remaining = input;
+    }
+}
+
+fn record_decl(input: &str) -> ParseResult<'_, RecordDecl> {
     let (input, _) = expect_token(Token::Record)(input)?;
     let (input, name) = ident(input)?;
-    
+
     // Parse optional type parameters: <T, ~f>
     let (input, type_params) = opt(|input| {
         let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
+        let (input, params) = separated_list1(expect_token(Token::Comma), type_param)(input)?;
         let (input, _) = expect_token(Token::Gt)(input)?;
         Ok((input, params))
     })(input)?;
     let type_params = type_params.unwrap_or_default();
-    
+
     // Parse optional temporal constraints: where ~tx within ~db
     let (input, temporal_constraints) = opt(|input| {
         let (input, _) = expect_token(Token::Where)(input)?;
-        separated_list1(
-            expect_token(Token::Comma),
-            temporal_constraint
-        )(input)
+        separated_list1(expect_token(Token::Comma), temporal_constraint)(input)
     })(input)?;
     let temporal_constraints = temporal_constraints.unwrap_or_default();
 
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    // Parse fields - strictly comma-separated with optional trailing comma
-    let (input, fields) = separated_list0(
-        expect_token(Token::Comma),
-        field_decl
-    )(input)?;
-    // Consume optional trailing comma
-    let (input, _) = opt(expect_token(Token::Comma))(input)?;
+    let (input, fields) = field_decls(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
-    
+
     // For now, skip freeze/sealed checks to debug parsing issue
     let frozen = false;
     let sealed = false;
-    
-    Ok((input, RecordDecl {
-        name,
-        type_params,
-        temporal_constraints,
-        fields,
-        frozen,
-        sealed,
-        parent_hash: None,
-        span: None,
-    }))
+
+    Ok((
+        input,
+        RecordDecl {
+            name,
+            type_params,
+            temporal_constraints,
+            fields,
+            frozen,
+            sealed,
+            parent_hash: None,
+        },
+    ))
 }
 
 // Parse a temporal constraint: ~tx within ~db
-fn temporal_constraint(input: &str) -> ParseResult<TemporalConstraint> {
+fn temporal_constraint(input: &str) -> ParseResult<'_, TemporalConstraint> {
     let (input, _) = expect_token(Token::Tilde)(input)?;
     let (input, inner) = ident(input)?;
     let (input, _) = expect_token(Token::Within)(input)?;
@@ -306,30 +344,24 @@ fn temporal_constraint(input: &str) -> ParseResult<TemporalConstraint> {
     Ok((input, TemporalConstraint { inner, outer }))
 }
 
-fn param(input: &str) -> ParseResult<Param> {
+fn param(input: &str) -> ParseResult<'_, Param> {
     // For now, skip context bounds since we don't have @ token
     let context_bound = None;
-    
+
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Colon)(input)?;
     let (input, ty) = parse_type(input)?;
-    Ok((input, Param { name, ty, context_bound }))
+    Ok((
+        input,
+        Param {
+            name,
+            ty,
+            context_bound,
+        },
+    ))
 }
 
-/// Parse a block expression with context-dependent evaluation mode.
-///
-/// # Parameters
-/// - `input`: The input string to parse
-/// - `is_lazy`: Whether this block should be lazy (true) or eager (false)
-///   - Lazy: block is a closure, can be stored and called later
-///   - Eager: block executes immediately
-///
-/// # Statement Termination (Kotlin-style)
-/// Statements in blocks are terminated by either:
-/// - A semicolon `;`
-/// - A newline (when using newline-aware parsing)
-/// - Implicitly before `}`
-fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
+fn block_expr(input: &str) -> ParseResult<'_, BlockExpr> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
 
     // Parse statements and expressions carefully
@@ -339,7 +371,6 @@ fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
 
     loop {
         // Skip whitespace and comments before each statement/expression
-        // Use regular skip here - newlines inside braces are already filtered by lexer
         let (rest, _) = skip(remaining)?;
         remaining = rest;
 
@@ -349,100 +380,61 @@ fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
             break;
         }
 
+        if starts_with_let_binding(remaining) {
+            return user_syntax_failure(STALE_LET_ERROR);
+        }
+        if starts_with_if_parens(remaining) {
+            return user_syntax_failure(STALE_IF_ERROR);
+        }
+        if starts_with_val_mut(remaining) {
+            return user_syntax_failure(STALE_VAL_MUT_ERROR);
+        }
+
         // Try to parse a binding first
-        if let Ok((after_bind, bind_decl)) = bind_decl(remaining) {
+        if let Ok((after_bind, bind_decl)) = bind_decl_in_statement(remaining) {
             statements.push(Stmt::Binding(bind_decl));
-            // Consume optional semicolon or newline as statement terminator
-            let after_term = consume_statement_terminator(after_bind);
-            remaining = after_term;
+            // Consume optional semicolon
+            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_bind)?;
+            remaining = after_semi;
             continue;
         }
 
         // Try to parse an assignment
         if let Ok((after_assign, assign_stmt)) = assignment_stmt(remaining) {
             statements.push(assign_stmt);
-            // Consume optional semicolon or newline as statement terminator
-            let after_term = consume_statement_terminator(after_assign);
-            remaining = after_term;
+            // Consume optional semicolon
+            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_assign)?;
+            remaining = after_semi;
             continue;
         }
 
         // Otherwise, parse an expression with statement context
         let (after_expr, expr) = expression_in_statement(remaining)?;
 
-        // Skip whitespace (but preserve newlines for checking)
-        let (after_skip, _) = skip(after_expr)?;
-
         // Peek ahead to see if this is the final expression
-        if let Ok((_, _)) = expect_token::<'_>(Token::RBrace)(after_skip) {
+        if let Ok((_, _)) = expect_token::<'_>(Token::RBrace)(after_expr) {
             // This is the final expression
             final_expr = Some(Box::new(expr));
-            remaining = after_skip;
+            remaining = after_expr;
         } else {
             // This is a statement expression
             statements.push(Stmt::Expr(Box::new(expr)));
-            // Consume optional semicolon or newline as statement terminator
-            let after_term = consume_statement_terminator(after_expr);
-            remaining = after_term;
+            // Consume optional semicolon
+            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_expr)?;
+            remaining = after_semi;
         }
     }
 
-    // Detect if the block uses 'it' anywhere
-    let has_implicit_it = block_uses_it(&statements, &final_expr);
-
-    Ok((remaining, BlockExpr {
-        statements,
-        expr: final_expr,
-        is_lazy,
-        has_implicit_it,
-        span: None,
-    }))
+    Ok((
+        remaining,
+        BlockExpr {
+            statements,
+            expr: final_expr,
+        },
+    ))
 }
 
-/// Check if there's a newline before the next token.
-/// Used for OSV parsing to determine statement boundaries.
-fn has_newline_before_next_token(input: &str) -> bool {
-    // Skip non-newline whitespace first
-    let after_ws = if let Ok((rest, _)) = skip_non_newline(input) {
-        rest
-    } else {
-        input
-    };
-
-    // Check if there's a newline
-    newline(after_ws).is_ok()
-}
-
-/// Consume an optional statement terminator (semicolon or newline).
-/// Returns the input after consuming the terminator (if any).
-/// IMPORTANT: This function should NOT skip newlines because they're used
-/// for OSV detection in expression parsing.
-fn consume_statement_terminator(input: &str) -> &str {
-    // First, try to consume a semicolon
-    if let Ok((rest, _)) = expect_token(Token::Semicolon)(input) {
-        return rest;
-    }
-
-    // Only skip non-newline whitespace. Newlines are needed for OSV detection
-    // to distinguish between `x func` (same line = OSV) and `x\nfunc` (different lines = separate statements)
-    if let Ok((rest, _)) = skip_non_newline(input) {
-        return rest;
-    }
-
-    input
-}
-
-/// Parse an eager block (default for function bodies, control flow, etc.)
-fn block_expr(input: &str) -> ParseResult<BlockExpr> {
-    block_expr_with_mode(input, false)  // eager by default
-}
-
-/// Parse a lazy block (for expression contexts)
-fn lazy_block_expr(input: &str) -> ParseResult<BlockExpr> {
-    block_expr_with_mode(input, true)  // lazy for closures
-}
-
-fn fun_decl(input: &str) -> ParseResult<FunDecl> {
+fn fun_decl(input: &str) -> ParseResult<'_, FunDecl> {
     // Skip leading whitespace
     let (input, _) = skip(input)?;
 
@@ -453,88 +445,102 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
 
-    // Parse optional generic type parameters: <T: Display, U: Clone + Debug, ~t>
-    // Syntax: fun name<T, U>: (...) -> T
-    let (input, type_params) = opt(|input| {
-        let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, params))
-    })(input)?;
-    let type_params = type_params.unwrap_or_default();
+    // Try to parse either simple syntax (fun main = {...}) or complex syntax (fun main : (...) -> ... = {...})
+    // Check if we have a colon (complex syntax) or equals (simple syntax)
+    let (input, has_signature) = alt((
+        map(expect_token(Token::Colon), |_| true),
+        map(expect_token(Token::Assign), |_| false),
+    ))(input)?;
 
-    // Parse optional signature: : (params) -> ReturnType
-    // If no colon, function has no parameters and no explicit return type
-    let (input, params, return_type, temporal_constraints) =
-        if let Ok((input_after_colon, _)) = expect_token(Token::Colon)(input) {
-            // Has colon - parse parameter list: (x: Int32, y: Int32)
-            let (input, _) = expect_token(Token::LParen)(input_after_colon)?;
-            let (input, params) = separated_list0(
-                expect_token(Token::Comma),
-                param
-            )(input)?;
+    let (input, type_params, params, return_type, temporal_constraints) = if has_signature {
+        // Complex syntax: parse type parameters, parameters, return type, temporal constraints
+        let (input, type_params) = opt(|input| {
+            let (input, _) = expect_token(Token::Lt)(input)?;
+            let (input, params) = separated_list1(expect_token(Token::Comma), type_param)(input)?;
+            let (input, _) = expect_token(Token::Gt)(input)?;
+            Ok((input, params))
+        })(input)?;
+        let type_params = type_params.unwrap_or_default();
+
+        // Parse parameter list: (x: Int32, y: Int32) or inline params: x: Int32 y: Int32
+        let (input, params) = if let Ok((input2, _)) = expect_token(Token::LParen)(input) {
+            // Parenthesized parameters
+            let (input, params) = separated_list0(expect_token(Token::Comma), param)(input2)?;
             let (input, _) = expect_token(Token::RParen)(input)?;
-
-            // Parse optional return type: -> ReturnType
-            let (input, return_type) = opt(|input| {
-                let (input, _) = expect_token(Token::ThinArrow)(input)?;
-                parse_type(input)
-            })(input)?;
-
-            // Parse optional temporal constraints: where ~tx within ~db
-            let (input, temporal_constraints) = opt(|input| {
-                let (input, _) = expect_token(Token::Where)(input)?;
-                separated_list1(
-                    expect_token(Token::Comma),
-                    temporal_constraint
-                )(input)
-            })(input)?;
-            let temporal_constraints = temporal_constraints.unwrap_or_default();
-
-            (input, params, return_type, temporal_constraints)
+            (input, params)
         } else {
-            // No colon - no params, no return type, no temporal constraints
-            (input, vec![], None, vec![])
+            // Inline parameters: x: Int32 y: Int32
+            separated_list0(skip, param)(input)?
         };
 
-    let (input, _) = expect_token(Token::Assign)(input)?;
+        // Parse optional return type: -> ReturnType
+        let (input, return_type) = opt(|input| {
+            let (input, _) = expect_token(Token::ThinArrow)(input)?;
+            parse_type(input)
+        })(input)?;
+
+        // Parse optional temporal constraints: where ~tx within ~db
+        let (input, temporal_constraints) = opt(|input| {
+            let (input, _) = expect_token(Token::Where)(input)?;
+            separated_list1(expect_token(Token::Comma), temporal_constraint)(input)
+        })(input)?;
+        let temporal_constraints = temporal_constraints.unwrap_or_default();
+
+        // Now expect the assignment
+        let (input, _) = expect_token(Token::Assign)(input)?;
+
+        (
+            input,
+            type_params,
+            params,
+            return_type,
+            temporal_constraints,
+        )
+    } else {
+        // Simple syntax with possible inline parameters: fun name = param: Type param2: Type { ... }
+        let (input, params) = separated_list0(skip, param)(input)?;
+
+        (input, Vec::new(), params, None, Vec::new())
+    };
+
     let (input, body) = block_expr(input)?;
 
-    Ok((input, FunDecl {
-        name,
-        is_async,
-        type_params,
-        temporal_constraints,
-        params,
-        return_type,
-        body,
-        span: None,
-    }))
+    Ok((
+        input,
+        FunDecl {
+            name,
+            is_async,
+            type_params,
+            temporal_constraints,
+            params,
+            return_type,
+            body,
+        },
+    ))
 }
 
 // Parse a type parameter with optional bounds: T: Display + Clone and derivation bound: T from ParentType
 // Also supports temporal type parameters: ~t
-fn type_param(input: &str) -> ParseResult<TypeParam> {
+fn type_param(input: &str) -> ParseResult<'_, TypeParam> {
     // Check if this is a temporal type parameter
     let (input, is_temporal) = opt(expect_token(Token::Tilde))(input)?;
     let is_temporal = is_temporal.is_some();
-    
+
     let (input, name) = ident(input)?;
-    
+
     // Temporal parameters don't have trait bounds or derivation bounds
     if is_temporal {
-        return Ok((input, TypeParam {
-            name,
-            bounds: vec![],
-            derivation_bound: None,
-            of_forms: vec![],
-            is_temporal: true
-        }));
+        return Ok((
+            input,
+            TypeParam {
+                name,
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: true,
+            },
+        ));
     }
-    
+
     // Parse optional derivation bound: from ParentType
     let (input, derivation_bound) = opt(|input| {
         let (input, _) = expect_token(Token::From)(input)?;
@@ -550,27 +556,24 @@ fn type_param(input: &str) -> ParseResult<TypeParam> {
             |input| {
                 let (input, trait_name) = ident(input)?;
                 Ok((input, TypeBound { trait_name }))
-            }
+            },
         )(input)
     })(input)?;
 
     let bounds = bounds.unwrap_or_default();
-
-    // Parse optional form constraints: of Container + Printable
-    let (input, of_forms) = opt(|input| {
-        let (input, _) = expect_token(Token::Of)(input)?;
-        separated_list1(
-            expect_token(Token::Plus),
-            ident
-        )(input)
-    })(input)?;
-    let of_forms = of_forms.unwrap_or_default();
-
-    Ok((input, TypeParam { name, bounds, derivation_bound, of_forms, is_temporal: false }))
+    Ok((
+        input,
+        TypeParam {
+            name,
+            bounds,
+            derivation_bound,
+            is_temporal: false,
+        },
+    ))
 }
 
 #[allow(dead_code)]
-fn impl_block(input: &str) -> ParseResult<ImplBlock> {
+fn impl_block(input: &str) -> ParseResult<'_, ImplBlock> {
     let (input, _) = expect_token(Token::Impl)(input)?;
     let (input, target) = ident(input)?;
     let (input, _) = expect_token(Token::LBrace)(input)?;
@@ -579,47 +582,68 @@ fn impl_block(input: &str) -> ParseResult<ImplBlock> {
     Ok((input, ImplBlock { target, functions }))
 }
 
-fn context_decl(input: &str) -> ParseResult<ContextDecl> {
+fn context_decl(input: &str) -> ParseResult<'_, ContextDecl> {
     let (input, _) = expect_token(Token::Context)(input)?;
     let (input, name) = ident(input)?;
-    
+
     // Parse optional type parameters (including temporal): <~fs>
     let (input, _type_params) = opt(|input| {
         let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
+        let (input, params) = separated_list1(expect_token(Token::Comma), type_param)(input)?;
         let (input, _) = expect_token(Token::Gt)(input)?;
         Ok((input, params))
     })(input)?;
-    
-    let type_params = _type_params.unwrap_or_default();
+
+    // TODO: Handle type parameters in context declaration
+    // For now, we'll ignore them until we update the ContextDecl struct
 
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    let (input, fields) = many0(field_decl)(input)?;
+    let (input, fields) = field_decls(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
-    Ok((input, ContextDecl { name, type_params, fields }))
+    Ok((input, ContextDecl { name, fields }))
 }
 
-pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
+fn bind_decl_in_statement(input: &str) -> ParseResult<'_, BindDecl> {
     let (input, mutable) = opt(expect_token(Token::Mut))(input)?;
     let (input, _) = expect_token(Token::Val)(input)?;
-    let (input, name) = ident(input)?;
-    // Parse optional type annotation: `: Type`
-    let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
+
+    let (input, bind_pattern) = pattern(input)?;
+
+    let (input, type_annotation) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to avoid consuming across statement boundaries
-    Ok((input, BindDecl {
-        mutable: mutable.is_some(),
-        name,
-        ty,
-        value: Box::new(value),
-        span: None,
-    }))
+    let (input, value) = expression_in_statement(input)?; // Use statement-aware expression parsing
+    Ok((
+        input,
+        BindDecl {
+            mutable: mutable.is_some(),
+            pattern: bind_pattern,
+            type_annotation,
+            value: Box::new(value),
+        },
+    ))
 }
 
-fn literal(input: &str) -> ParseResult<Expr> {
+pub fn bind_decl(input: &str) -> ParseResult<'_, BindDecl> {
+    let (input, mutable) = opt(expect_token(Token::Mut))(input)?;
+    let (input, _) = expect_token(Token::Val)(input)?;
+
+    let (input, bind_pattern) = pattern(input)?;
+
+    let (input, type_annotation) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
+    let (input, _) = expect_token(Token::Assign)(input)?;
+    let (input, value) = expression(input)?; // Use normal expression parsing for binding values
+    Ok((
+        input,
+        BindDecl {
+            mutable: mutable.is_some(),
+            pattern: bind_pattern,
+            type_annotation,
+            value: Box::new(value),
+        },
+    ))
+}
+
+fn literal(input: &str) -> ParseResult<'_, Expr> {
     let (input, token) = lex_token(input)?;
     match token {
         Token::IntLit(n) => Ok((input, Expr::IntLit(n))),
@@ -628,119 +652,132 @@ fn literal(input: &str) -> ParseResult<Expr> {
         Token::CharLit(c) => Ok((input, Expr::CharLit(c))),
         Token::True => Ok((input, Expr::BoolLit(true))),
         Token::False => Ok((input, Expr::BoolLit(false))),
-        Token::Unit => Ok((input, Expr::Unit)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+        Token::Unit => user_syntax_failure(STALE_UNIT_ERROR),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
     }
 }
 
-fn field_init(input: &str) -> ParseResult<FieldInit> {
-    let (input, name) = ident(input)?;
-    let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression(input)?;
-    Ok((input, FieldInit { name, value: Box::new(value) }))
+fn field_init(input: &str) -> ParseResult<'_, FieldInit> {
+    alt((
+        // Parse spread expression: ...expr
+        |input| {
+            let (input, _) = expect_token(Token::DotDotDot)(input)?;
+            let (input, expr) = expression(input)?;
+            Ok((input, FieldInit::Spread(Box::new(expr))))
+        },
+        // Parse regular field assignment: name: value
+        |input| {
+            let (input, name) = ident(input)?;
+            let (input, _) = expect_token(Token::Colon)(input)?;
+            let (input, value) = expression(input)?;
+            Ok((
+                input,
+                FieldInit::Field {
+                    name,
+                    value: Box::new(value),
+                },
+            ))
+        },
+    ))(input)
 }
 
-fn record_lit(input: &str) -> ParseResult<RecordLit> {
-    let (input, name) = ident(input)?;
-    let (input, _) = expect_token(Token::LBrace)(input)?;
-    let (input, fields) = separated_list0(
-        expect_token(Token::Comma),
-        field_init
-    )(input)?;
-    let (input, _) = expect_token(Token::RBrace)(input)?;
-    Ok((input, RecordLit { name, fields }))
+fn record_lit(input: &str) -> ParseResult<'_, RecordLit> {
+    alt((
+        // Try to parse named record literal first: TypeName { ... }
+        |input| {
+            let (input, name) = ident(input)?;
+            let (input, _) = expect_token(Token::LBrace)(input)?;
+            let (input, fields) = separated_list0(expect_token(Token::Comma), field_init)(input)?;
+            let (input, _) = expect_token(Token::RBrace)(input)?;
+            Ok((input, RecordLit { name, fields }))
+        },
+        // Parse anonymous record literal: { ... }
+        |input| {
+            let (input, _) = expect_token(Token::LBrace)(input)?;
+            let (input, fields) = separated_list0(expect_token(Token::Comma), field_init)(input)?;
+            let (input, _) = expect_token(Token::RBrace)(input)?;
+            Ok((
+                input,
+                RecordLit {
+                    name: String::new(),
+                    fields,
+                },
+            ))
+        },
+    ))(input)
 }
 
 #[allow(dead_code)]
-fn unary_expr(input: &str) -> ParseResult<Expr> {
+fn unary_expr(input: &str) -> ParseResult<'_, Expr> {
     alt((
-        // Handle unary minus
         |input| {
             let (input, _) = expect_token(Token::Minus)(input)?;
-            let (input, expr) = atom_expr(input)?;
-            // Convert to negative literal if it's an integer literal
-            match expr {
-                Expr::IntLit(n) => Ok((input, Expr::IntLit(-n))),
-                _ => Ok((input, Expr::Binary(BinaryExpr {
-                    left: Box::new(Expr::IntLit(0)),
-                    op: BinaryOp::Sub,
-                    right: Box::new(expr),
-                })))
-            }
+            let (input, expr) = unary_expr(input)?;
+            Ok((
+                input,
+                Expr::Unary(UnaryExpr {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(expr),
+                }),
+            ))
         },
-        atom_expr
+        |input| {
+            let (input, _) = expect_token(Token::Not)(input)?;
+            let (input, expr) = unary_expr(input)?;
+            Ok((
+                input,
+                Expr::Unary(UnaryExpr {
+                    op: UnaryOp::Not,
+                    expr: Box::new(expr),
+                }),
+            ))
+        },
+        postfix_expr,
     ))(input)
 }
 
-/// Parse unit `()`, parenthesized expression `(expr)`, or tuple `(expr, expr, ...)`
-fn paren_or_tuple(input: &str) -> ParseResult<Expr> {
-    let (input, _) = expect_token(Token::LParen)(input)?;
-
-    // Check for empty parens: ()
-    if let Ok((input, _)) = expect_token::<'_>(Token::RParen)(input) {
-        return Ok((input, Expr::Unit));
-    }
-
-    // Parse first expression
-    let (input, first) = expression(input)?;
-
-    // Check if there's a comma (making it a tuple)
-    if let Ok((input, _)) = expect_token::<'_>(Token::Comma)(input) {
-        let mut elements = vec![Box::new(first)];
-
-        // Parse remaining elements
-        let (input, rest) = separated_list0(
-            expect_token(Token::Comma),
-            expression
-        )(input)?;
-        for elem in rest {
-            elements.push(Box::new(elem));
-        }
-
-        let (input, _) = expect_token(Token::RParen)(input)?;
-        Ok((input, Expr::TupleLit(elements)))
-    } else {
-        // Just a parenthesized expression
-        let (input, _) = expect_token(Token::RParen)(input)?;
-        Ok((input, first))
-    }
-}
-
-fn atom_expr(input: &str) -> ParseResult<Expr> {
+fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
     alt((
         literal,
-        lambda_expr,  // Try lambda before other expressions that use |
-        some_expr,  // Try Some before ident
-        none_expr,  // Try None before ident
-        ok_expr,    // Try Ok before ident
-        err_expr,   // Try Err before ident
-        array_lit,  // Try array literal before list
-        range_or_list_lit,  // Try range or list literal before record
-        map(record_lit, Expr::RecordLit),  // Try record_lit before ident
-        value(Expr::It, expect_token(Token::It)),  // 'it' keyword
+        unit_expr,
+        lambda_expr, // Try lambda before other expressions that use |
+        some_expr,   // Try Some before ident
+        none_expr,   // Try None before ident
+        ok_expr,     // Try Ok before ident
+        err_expr,    // Try Err before ident
+        list_lit,    // Try list literal before record
+        map(record_lit, Expr::RecordLit), // Try record_lit before ident
         map(ident, Expr::Ident),
-        // Unit (), parenthesized expression (expr), or tuple (expr, expr, ...)
-        paren_or_tuple,
+        delimited(
+            expect_token(Token::LParen),
+            expression,
+            expect_token(Token::RParen),
+        ),
         with_expr,
-        map(lazy_block_expr, Expr::Block)  // Blocks in expression position are lazy
+        map(block_expr, Expr::Block),
     ))(input)
 }
 
-fn none_expr(input: &str) -> ParseResult<Expr> {
+fn unit_expr(input: &str) -> ParseResult<'_, Expr> {
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Expr::Unit))
+}
+
+fn none_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::None)(input)?;
-    
-    // Check if we have a type parameter
-    if let Ok((input, _)) = expect_token::<'_>(Token::Lt)(input) {
-        let (input, ty) = parse_type(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, Expr::NoneTyped(ty)))
+
+    if expect_token::<'_>(Token::Lt)(input).is_ok() {
+        user_syntax_failure(NONE_TYPE_ARGUMENT_ERROR)
     } else {
-        // Bare None - will use tagged union  
         Ok((input, Expr::None))
     }
 }
 
-fn some_expr(input: &str) -> ParseResult<Expr> {
+fn some_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::Some)(input)?;
     let (input, _) = expect_token(Token::LParen)(input)?;
     let (input, expr) = expression(input)?;
@@ -748,195 +785,223 @@ fn some_expr(input: &str) -> ParseResult<Expr> {
     Ok((input, Expr::Some(Box::new(expr))))
 }
 
-fn ok_expr(input: &str) -> ParseResult<Expr> {
-    let (input, _) = expect_token(Token::Ok)(input)?;
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, expr) = expression(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Expr::Ok(Box::new(expr))))
-}
-
-fn err_expr(input: &str) -> ParseResult<Expr> {
-    let (input, _) = expect_token(Token::Err)(input)?;
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, expr) = expression(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Expr::Err(Box::new(expr))))
-}
-
-fn range_or_list_lit(input: &str) -> ParseResult<Expr> {
-    let (input, _) = expect_token(Token::LBracket)(input)?;
-
-    // Try to parse the first expression
-    if let Ok((after_first, first_expr)) = expression(input) {
-        // Check for range operator `..` or `..<`
-        if let Ok((after_op, _)) = expect_token::<'_>(Token::DotDotLt)(after_first) {
-            // Exclusive range: [start..<end]
-            let (input, end_expr) = expression(after_op)?;
-            let (input, _) = expect_token(Token::RBracket)(input)?;
-            return Ok((input, Expr::RangeLit(RangeLit {
-                start: Box::new(first_expr),
-                end: Box::new(end_expr),
-                inclusive: false,
-            })));
-        }
-        if let Ok((after_op, _)) = expect_token::<'_>(Token::DotDot)(after_first) {
-            // Inclusive range: [start..end]
-            let (input, end_expr) = expression(after_op)?;
-            let (input, _) = expect_token(Token::RBracket)(input)?;
-            return Ok((input, Expr::RangeLit(RangeLit {
-                start: Box::new(first_expr),
-                end: Box::new(end_expr),
-                inclusive: true,
-            })));
-        }
+fn result_constructor_expr<'a>(input: &'a str, expected: &'static str) -> ParseResult<'a, Expr> {
+    let (input, name) = ident(input)?;
+    if name != expected {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
     }
 
-    // Fall back to list literal parsing
-    let (input, elements) = separated_list0(
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, expr) = expression(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+
+    match expected {
+        "Ok" => Ok((input, Expr::Ok(Box::new(expr)))),
+        "Err" => Ok((input, Expr::Err(Box::new(expr)))),
+        _ => unreachable!(),
+    }
+}
+
+fn ok_expr(input: &str) -> ParseResult<'_, Expr> {
+    result_constructor_expr(input, "Ok")
+}
+
+fn err_expr(input: &str) -> ParseResult<'_, Expr> {
+    result_constructor_expr(input, "Err")
+}
+
+fn list_lit(input: &str) -> ParseResult<'_, Expr> {
+    let (input, _) = expect_token(Token::LBracket)(input)?;
+
+    if let Ok((input, _)) = expect_token::<'_>(Token::RBracket)(input) {
+        return Ok((input, Expr::ListLit(Vec::new())));
+    }
+
+    let (input, first) = expression(input)?;
+    if let Ok((input, _)) = expect_token::<'_>(Token::DotDot)(input) {
+        let (input, end) = expression(input)?;
+        let (input, _) = expect_token(Token::RBracket)(input)?;
+        return Ok((
+            input,
+            Expr::RangeLit(RangeLit {
+                start: Box::new(first),
+                end: Box::new(end),
+            }),
+        ));
+    }
+
+    let (input, rest) = many0(preceded(
         expect_token(Token::Comma),
-        map(expression, Box::new)
-    )(input)?;
+        map(expression, Box::new),
+    ))(input)?;
     let (input, _) = expect_token(Token::RBracket)(input)?;
+    let mut elements = vec![Box::new(first)];
+    elements.extend(rest);
     Ok((input, Expr::ListLit(elements)))
 }
 
-fn array_lit(input: &str) -> ParseResult<Expr> {
-    let (input, _) = expect_token(Token::LArrayBracket)(input)?;
-    let (input, elements) = separated_list0(
-        expect_token(Token::Comma),
-        map(expression, Box::new)
-    )(input)?;
-    let (input, _) = expect_token(Token::RArrayBracket)(input)?;
-    Ok((input, Expr::ArrayLit(elements)))
-}
+fn lambda_expr(input: &str) -> ParseResult<'_, Expr> {
+    if let Ok((input, _)) = expect_token::<'_>(Token::Or)(input) {
+        let (input, body) = expression(input)?;
+        return Ok((
+            input,
+            Expr::Lambda(LambdaExpr {
+                params: Vec::new(),
+                body: Box::new(body),
+            }),
+        ));
+    }
 
-fn lambda_expr(input: &str) -> ParseResult<Expr> {
     let (input, _) = expect_token(Token::Bar)(input)?;
-    let (input, params) = separated_list0(
-        expect_token(Token::Comma),
-        ident
-    )(input)?;
+    let (input, params) = separated_list0(expect_token(Token::Comma), lambda_param)(input)?;
     let (input, _) = expect_token(Token::Bar)(input)?;
     let (input, body) = expression(input)?;
-    Ok((input, Expr::Lambda(LambdaExpr {
-        params,
-        body: Box::new(body),
-        has_implicit_param: false,  // TODO: detect 'it' usage
-    })))
+    Ok((
+        input,
+        Expr::Lambda(LambdaExpr {
+            params,
+            body: Box::new(body),
+        }),
+    ))
 }
 
-fn with_expr(input: &str) -> ParseResult<Expr> {
+fn lambda_param(input: &str) -> ParseResult<'_, LambdaParam> {
+    let (input, name) = ident(input)?;
+    let (input, type_annotation) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
+
+    Ok((
+        input,
+        LambdaParam {
+            name,
+            type_annotation,
+        },
+    ))
+}
+
+fn with_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::With)(input)?;
-    
+
     // Check if this is a lifetime expression
     if let Ok((_remaining, _)) = expect_token(Token::Lifetime)(input) {
         return with_lifetime_expr(input);
     }
-    
-    // Otherwise, parse as context expression
-    let (input, contexts) = alt((
-        delimited(
-            expect_token(Token::LParen),
-            separated_list0(expect_token(Token::Comma), ident),
-            expect_token(Token::RParen)
-        ),
-        map(ident, |name| vec![name])
-    ))(input)?;
+
+    // Parse context name
+    let (input, context_name) = ident(input)?;
+
+    // Prefer `with Context { bindings } { body }` when a second block follows.
+    if let Ok((after_bindings, bindings)) = context_bindings_block(input) {
+        if let Ok((after_body, body)) = block_expr(after_bindings) {
+            return Ok((
+                after_body,
+                Expr::With(WithExpr {
+                    context_name,
+                    bindings,
+                    body,
+                }),
+            ));
+        }
+    }
+
+    // Fall back to the existing `with Context { body }` form. If another block
+    // follows, the first block was intended as a binding block and must parse as
+    // colon-delimited bindings rather than a regular body block.
     let (input, body) = block_expr(input)?;
-    Ok((input, Expr::With(WithExpr { contexts, body })))
+    if let Ok((_, Token::LBrace)) = lex_token(input) {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
+
+    Ok((
+        input,
+        Expr::With(WithExpr {
+            context_name,
+            bindings: Vec::new(),
+            body,
+        }),
+    ))
+}
+
+fn context_bindings_block(input: &str) -> ParseResult<'_, Vec<FieldInit>> {
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+    let (input, bindings) = separated_list0(expect_token(Token::Comma), field_init)(input)?;
+    let (input, _) = expect_token(Token::RBrace)(input)?;
+    Ok((input, bindings))
 }
 
 /// Parses a with lifetime expression.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```text
 /// with lifetime<~f> { ... }
 /// with lifetime { ... }  // anonymous lifetime
 /// ```
-fn with_lifetime_expr(input: &str) -> ParseResult<Expr> {
+fn with_lifetime_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::Lifetime)(input)?;
-    
+
     // Parse optional lifetime parameter
-    let (input, lifetime_opt) = opt(
-        delimited(
-            expect_token(Token::Lt),
-            preceded(expect_token(Token::Tilde), ident),
-            expect_token(Token::Gt)
-        )
-    )(input)?;
-    
+    let (input, lifetime_opt) = opt(delimited(
+        expect_token(Token::Lt),
+        preceded(expect_token(Token::Tilde), ident),
+        expect_token(Token::Gt),
+    ))(input)?;
+
     let (lifetime, anonymous) = match lifetime_opt {
         Some(name) => (name, false),
         None => {
-            // For now, use a simple placeholder. In practice, this would be 
+            // For now, use a simple placeholder. In practice, this would be
             // handled by the type checker's lifetime inference
             ("_anon".to_string(), true)
-        },
+        }
     };
-    
+
     // Parse optional where clause with temporal constraints
     let (input, constraints) = opt(preceded(
         expect_token(Token::Where),
-        separated_list1(
-            expect_token(Token::Comma),
-            temporal_constraint
-        )
+        separated_list1(expect_token(Token::Comma), temporal_constraint),
     ))(input)?;
-    
+
     let constraints = constraints.unwrap_or_default();
-    
+
     let (input, body) = block_expr(input)?;
-    
-    Ok((input, Expr::WithLifetime(WithLifetimeExpr {
-        lifetime,
-        anonymous,
-        constraints,
-        body,
-    })))
+
+    Ok((
+        input,
+        Expr::WithLifetime(WithLifetimeExpr {
+            lifetime,
+            anonymous,
+            constraints,
+            body,
+        }),
+    ))
 }
 
-fn tuple_pattern(input: &str) -> ParseResult<Pattern> {
-    let (input, _) = expect_token(Token::LParen)(input)?;
-
-    // Parse first pattern
-    let (input, first) = pattern(input)?;
-
-    // Require a comma to distinguish from grouping
-    let (input, _) = expect_token(Token::Comma)(input)?;
-    let mut elements = vec![Box::new(first)];
-
-    // Parse remaining patterns
-    let (input, rest) = separated_list0(
-        expect_token(Token::Comma),
-        pattern
-    )(input)?;
-    for elem in rest {
-        elements.push(Box::new(elem));
-    }
-
-    let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Pattern::Tuple(elements)))
-}
-
-fn pattern(input: &str) -> ParseResult<Pattern> {
+fn pattern(input: &str) -> ParseResult<'_, Pattern> {
     alt((
         // Check for wildcard pattern
         |input| {
             let (input, token) = lex_token(input)?;
             match token {
                 Token::Ident(s) if s == "_" => Ok((input, Pattern::Wildcard)),
-                _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+                _ => Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Tag,
+                ))),
             }
         },
         some_pattern,
         none_pattern,
-        ok_pattern,    // Result Ok pattern
-        err_pattern,   // Result Err pattern
-        tuple_pattern, // Tuple patterns before record/literal
-        record_pattern,  // Try record patterns before identifiers
-        list_pattern,  // Try list patterns before literals
+        ok_pattern,
+        err_pattern,
+        record_pattern, // Try record patterns before identifiers
+        list_pattern,   // Try list patterns before literals
+        unit_pattern,
         map(literal, |expr| match expr {
             Expr::IntLit(n) => Pattern::Literal(Literal::Int(n)),
             Expr::FloatLit(f) => Pattern::Literal(Literal::Float(f)),
@@ -944,13 +1009,19 @@ fn pattern(input: &str) -> ParseResult<Pattern> {
             Expr::CharLit(c) => Pattern::Literal(Literal::Char(c)),
             Expr::BoolLit(b) => Pattern::Literal(Literal::Bool(b)),
             Expr::Unit => Pattern::Literal(Literal::Unit),
-            _ => unreachable!()
+            _ => unreachable!(),
         }),
-        map(ident, Pattern::Ident)
+        map(ident, Pattern::Ident),
     ))(input)
 }
 
-fn some_pattern(input: &str) -> ParseResult<Pattern> {
+fn unit_pattern(input: &str) -> ParseResult<'_, Pattern> {
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Literal(Literal::Unit)))
+}
+
+fn some_pattern(input: &str) -> ParseResult<'_, Pattern> {
     let (input, _) = expect_token(Token::Some)(input)?;
     let (input, _) = expect_token(Token::LParen)(input)?;
     let (input, pattern) = pattern(input)?;
@@ -958,87 +1029,145 @@ fn some_pattern(input: &str) -> ParseResult<Pattern> {
     Ok((input, Pattern::Some(Box::new(pattern))))
 }
 
-fn none_pattern(input: &str) -> ParseResult<Pattern> {
+fn none_pattern(input: &str) -> ParseResult<'_, Pattern> {
     let (input, _) = expect_token(Token::None)(input)?;
     Ok((input, Pattern::None))
 }
 
-fn ok_pattern(input: &str) -> ParseResult<Pattern> {
-    let (input, _) = expect_token(Token::Ok)(input)?;
+fn result_constructor_pattern<'a>(
+    input: &'a str,
+    expected: &'static str,
+) -> ParseResult<'a, Pattern> {
+    let (input, name) = ident(input)?;
+    if name != expected {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
+
     let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, inner_pattern) = pattern(input)?;
+    let (input, pattern) = pattern(input)?;
     let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Pattern::Ok(Box::new(inner_pattern))))
+
+    match expected {
+        "Ok" => Ok((input, Pattern::Ok(Box::new(pattern)))),
+        "Err" => Ok((input, Pattern::Err(Box::new(pattern)))),
+        _ => unreachable!(),
+    }
 }
 
-fn err_pattern(input: &str) -> ParseResult<Pattern> {
-    let (input, _) = expect_token(Token::Err)(input)?;
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, inner_pattern) = pattern(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Pattern::Err(Box::new(inner_pattern))))
+fn ok_pattern(input: &str) -> ParseResult<'_, Pattern> {
+    result_constructor_pattern(input, "Ok")
 }
 
-fn record_pattern(input: &str) -> ParseResult<Pattern> {
+fn err_pattern(input: &str) -> ParseResult<'_, Pattern> {
+    result_constructor_pattern(input, "Err")
+}
+
+fn record_pattern(input: &str) -> ParseResult<'_, Pattern> {
     // Try to parse an identifier followed by {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::LBrace)(input)?;
 
-    // Parse comma-separated fields
-    let (input, fields) = separated_list0(
-        expect_token(Token::Comma),
-        |input| {
-            let (input, field_name) = ident(input)?;
-            // Check if there's a colon for an explicit pattern
-            if let Ok((input, _)) = expect_token::<'_>(Token::Colon)(input) {
-                let (input, pattern) = pattern(input)?;
-                Ok((input, (field_name, pattern)))
+    // Parse fields and check for spread
+    let mut fields = Vec::new();
+    let mut rest = None;
+    let mut input = input;
+
+    loop {
+        // Check for closing brace
+        if let Ok((new_input, _)) = expect_token::<'_>(Token::RBrace)(input) {
+            input = new_input;
+            break;
+        }
+
+        // Check for spread pattern ...rest
+        if let Ok((new_input, _)) = expect_token::<'_>(Token::DotDotDot)(input) {
+            let (new_input, rest_name) = ident(new_input)?;
+            rest = Some(rest_name);
+            input = new_input;
+
+            // After spread, only closing brace is allowed
+            let (new_input, _) = expect_token(Token::RBrace)(input)?;
+            input = new_input;
+            break;
+        }
+
+        // Parse regular field
+        let (new_input, field_name) = ident(input)?;
+
+        // Check if there's a colon for an explicit pattern
+        let (new_input, field_pattern) =
+            if let Ok((new_input, _)) = expect_token::<'_>(Token::Colon)(new_input) {
+                let (new_input, pat) = pattern(new_input)?;
+                (new_input, pat)
             } else {
                 // Shorthand: just field name binds to a variable
-                Ok((input, (field_name.clone(), Pattern::Ident(field_name))))
-            }
-        }
-    )(input)?;
+                (new_input, Pattern::Ident(field_name.clone()))
+            };
 
-    let (input, _) = expect_token(Token::RBrace)(input)?;
-    Ok((input, Pattern::Record(name, fields)))
+        fields.push((field_name, field_pattern));
+        input = new_input;
+
+        // Check for comma
+        if let Ok((new_input, _)) = expect_token::<'_>(Token::Comma)(input) {
+            input = new_input;
+        } else {
+            // No comma, expect closing brace
+            let (new_input, _) = expect_token(Token::RBrace)(input)?;
+            input = new_input;
+            break;
+        }
+    }
+
+    // Return appropriate pattern type based on whether we have spread
+    if rest.is_some() || fields.iter().any(|(_, p)| !matches!(p, Pattern::Ident(_))) {
+        Ok((
+            input,
+            Pattern::RecordDestruct {
+                type_name: name,
+                fields,
+                rest,
+            },
+        ))
+    } else {
+        // Use simpler Record pattern if no spread and all fields are simple bindings
+        Ok((input, Pattern::Record(name, fields)))
+    }
 }
 
-fn list_pattern(input: &str) -> ParseResult<Pattern> {
+fn list_pattern(input: &str) -> ParseResult<'_, Pattern> {
     let (input, _) = expect_token(Token::LBracket)(input)?;
-    
+
     // Check for empty list pattern
     if let Ok((input, _)) = expect_token::<'_>(Token::RBracket)(input) {
         return Ok((input, Pattern::EmptyList));
     }
-    
+
     // Parse first element
     let (input, first) = pattern(input)?;
-    
+
     // Check if it's a cons pattern [head | tail]
     if let Ok((input, _)) = expect_token::<'_>(Token::Bar)(input) {
         let (input, tail) = pattern(input)?;
         let (input, _) = expect_token(Token::RBracket)(input)?;
         return Ok((input, Pattern::ListCons(Box::new(first), Box::new(tail))));
     }
-    
+
     // Otherwise it's an exact pattern [a, b, c]
     let mut patterns = vec![Box::new(first)];
 
-    // Parse remaining elements (comma-prefixed)
-    let (input, mut rest) = many0(
-        preceded(
-            expect_token(Token::Comma),
-            map(pattern, Box::new)
-        )
-    )(input)?;
+    // Parse remaining elements
+    let (input, mut rest) =
+        many0(preceded(expect_token(Token::Comma), map(pattern, Box::new)))(input)?;
     patterns.append(&mut rest);
 
     let (input, _) = expect_token(Token::RBracket)(input)?;
     Ok((input, Pattern::ListExact(patterns)))
 }
 
-fn match_arm(input: &str) -> ParseResult<MatchArm> {
+fn match_arm(input: &str) -> ParseResult<'_, MatchArm> {
     let (input, pattern) = pattern(input)?;
     let (input, _) = expect_token(Token::Arrow)(input)?;
     let (input, body) = block_expr(input)?;
@@ -1046,97 +1175,95 @@ fn match_arm(input: &str) -> ParseResult<MatchArm> {
 }
 
 #[allow(dead_code)]
-fn match_expr(input: &str) -> ParseResult<Expr> {
+fn match_expr(input: &str) -> ParseResult<'_, Expr> {
     match_expr_with_context(input, false)
 }
 
-fn match_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+fn match_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Expr> {
     let (input, expr) = pipe_expr_with_context(input, in_statement)?;
-    let (input, arms) = opt(
-        preceded(
-            expect_token(Token::Match),
-            delimited(
-                expect_token(Token::LBrace),
-                many1(match_arm),
-                expect_token(Token::RBrace)
-            )
-        )
-    )(input)?;
-    
+    let (input, arms) = opt(preceded(
+        expect_token(Token::Match),
+        delimited(
+            expect_token(Token::LBrace),
+            many1(match_arm),
+            expect_token(Token::RBrace),
+        ),
+    ))(input)?;
+
     match arms {
-        Some(arms) => Ok((input, Expr::Match(MatchExpr { 
-            expr: Box::new(expr), 
-            arms 
-        }))),
-        None => Ok((input, expr))
+        Some(arms) => Ok((
+            input,
+            Expr::Match(MatchExpr {
+                expr: Box::new(expr),
+                arms,
+            }),
+        )),
+        None => Ok((input, expr)),
     }
 }
 
 #[allow(dead_code)]
-fn while_expr(input: &str) -> ParseResult<Expr> {
+fn while_expr(input: &str) -> ParseResult<'_, Expr> {
     while_expr_with_context(input, false)
 }
 
-fn while_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+fn while_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Expr> {
     let (input, expr) = match_expr_with_context(input, in_statement)?;
-    let (input, body) = opt(
-        preceded(
-            expect_token(Token::While),
-            block_expr
-        )
-    )(input)?;
-    
+    let (input, body) = opt(preceded(expect_token(Token::While), block_expr))(input)?;
+
     match body {
-        Some(body) => Ok((input, Expr::While(WhileExpr { 
-            condition: Box::new(expr), 
-            body 
-        }))),
-        None => Ok((input, expr))
+        Some(body) => Ok((
+            input,
+            Expr::While(WhileExpr {
+                condition: Box::new(expr),
+                body,
+            }),
+        )),
+        None => Ok((input, expr)),
     }
 }
 
-fn then_expr(input: &str) -> ParseResult<Expr> {
+fn then_expr(input: &str) -> ParseResult<'_, Expr> {
     then_expr_with_context(input, false)
 }
 
-fn then_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+fn then_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Expr> {
     let (input, first_cond) = while_expr_with_context(input, in_statement)?;
-    let (input, then_part) = opt(
-        preceded(
-            expect_token(Token::Then),
-            tuple((
+    let (input, then_part) = opt(preceded(
+        expect_token(Token::Then),
+        tuple((
+            block_expr,
+            many0(tuple((
+                expect_token(Token::Else),
+                |i| while_expr_with_context(i, in_statement),
+                expect_token(Token::Then),
                 block_expr,
-                many0(tuple((
-                    expect_token(Token::Else),
-                    |i| while_expr_with_context(i, in_statement),
-                    expect_token(Token::Then),
-                    block_expr
-                ))),
-                opt(preceded(
-                    expect_token(Token::Else),
-                    block_expr
-                ))
-            ))
-        )
-    )(input)?;
-    
+            ))),
+            opt(preceded(expect_token(Token::Else), block_expr)),
+        )),
+    ))(input)?;
+
     match then_part {
         Some((then_block, else_ifs, else_block)) => {
-            let else_ifs = else_ifs.into_iter()
+            let else_ifs = else_ifs
+                .into_iter()
                 .map(|(_, cond, _, block)| (Box::new(cond), block))
                 .collect();
-            Ok((input, Expr::Then(ThenExpr {
-                condition: Box::new(first_cond),
-                then_block,
-                else_ifs,
-                else_block
-            })))
-        },
-        None => Ok((input, first_cond))
+            Ok((
+                input,
+                Expr::Then(ThenExpr {
+                    condition: Box::new(first_cond),
+                    then_block,
+                    else_ifs,
+                    else_block,
+                }),
+            ))
+        }
+        None => Ok((input, first_cond)),
     }
 }
 
-fn binary_op(input: &str) -> ParseResult<BinaryOp> {
+fn binary_op(input: &str) -> ParseResult<'_, BinaryOp> {
     let (input, token) = lex_token(input)?;
     match token {
         Token::Plus => Ok((input, BinaryOp::Add)),
@@ -1150,100 +1277,179 @@ fn binary_op(input: &str) -> ParseResult<BinaryOp> {
         Token::Le => Ok((input, BinaryOp::Le)),
         Token::Gt => Ok((input, BinaryOp::Gt)),
         Token::Ge => Ok((input, BinaryOp::Ge)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+        Token::And => Ok((input, BinaryOp::And)),
+        Token::Or => Ok((input, BinaryOp::Or)),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
     }
 }
 
-fn pipe_op(input: &str) -> ParseResult<PipeOp> {
+fn binary_precedence(op: &BinaryOp) -> u8 {
+    match op {
+        BinaryOp::Or => 1,
+        BinaryOp::And => 2,
+        BinaryOp::Eq | BinaryOp::Ne => 3,
+        BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => 4,
+        BinaryOp::Add | BinaryOp::Sub => 5,
+        BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => 6,
+    }
+}
+
+fn pipe_op(input: &str) -> ParseResult<'_, PipeOp> {
     let (input, token) = lex_token(input)?;
     match token {
         Token::Pipe => Ok((input, PipeOp::Pipe)),
-        Token::PipeMut => Ok((input, PipeOp::PipeMut)),
         Token::Bar => Ok((input, PipeOp::Bar)),
-        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+        _ => Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
     }
 }
 
+fn starts_infix_or_pipe(tok: &Token) -> bool {
+    matches!(
+        tok,
+        Token::Plus
+            | Token::Minus
+            | Token::Star
+            | Token::Slash
+            | Token::Percent
+            | Token::Eq
+            | Token::Ne
+            | Token::Lt
+            | Token::Le
+            | Token::Gt
+            | Token::Ge
+            | Token::And
+            | Token::Or
+            | Token::Pipe
+            | Token::Bar
+    )
+}
+
 #[allow(dead_code)]
-fn binary_expr(input: &str) -> ParseResult<Expr> {
+fn binary_expr(input: &str) -> ParseResult<'_, Expr> {
     binary_expr_with_context(input, false)
 }
 
-fn binary_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
-    let (input, first) = call_expr_with_context(input, in_statement)?;
-    
-    // Try to parse binary operator and right operand
-    let (input, rest) = many0(
-        tuple((
-            binary_op,
-            |i| call_expr_with_context(i, in_statement)
-        ))
-    )(input)?;
-    
-    // Left-associative fold
-    let expr = rest.into_iter().fold(first, |left, (op, right)| {
-        Expr::Binary(BinaryExpr {
+fn binary_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Expr> {
+    binary_expr_min_precedence(input, in_statement, 1)
+}
+
+fn binary_expr_min_precedence(
+    input: &str,
+    in_statement: bool,
+    min_precedence: u8,
+) -> ParseResult<'_, Expr> {
+    let (mut input, mut left) = call_expr_with_context(input, in_statement)?;
+
+    loop {
+        let Ok((after_op, op)) = binary_op(input) else {
+            break;
+        };
+
+        let precedence = binary_precedence(&op);
+        if precedence < min_precedence {
+            break;
+        }
+
+        let (after_right, right) =
+            binary_expr_min_precedence(after_op, in_statement, precedence + 1)?;
+        left = Expr::Binary(BinaryExpr {
             left: Box::new(left),
             op,
             right: Box::new(right),
-        })
-    });
-    
-    Ok((input, expr))
+        });
+        input = after_right;
+    }
+
+    Ok((input, left))
 }
 
 #[allow(dead_code)]
-fn pipe_expr(input: &str) -> ParseResult<Expr> {
+fn pipe_expr(input: &str) -> ParseResult<'_, Expr> {
     pipe_expr_with_context(input, false)
 }
 
-fn pipe_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+fn pipe_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Expr> {
     let (input, first) = binary_expr_with_context(input, in_statement)?;
-    let (input, pipes) = many0(
-        tuple((
-            pipe_op,
-            alt((
-                map(ident, PipeTarget::Ident),
-                map(|i| binary_expr_with_context(i, in_statement), |e| PipeTarget::Expr(Box::new(e)))
-            ))
-        ))
-    )(input)?;
-    
+    let (input, pipes) = many0(tuple((
+        pipe_op,
+        alt((
+            map(ident, PipeTarget::Ident),
+            map(
+                |i| binary_expr_with_context(i, in_statement),
+                |e| PipeTarget::Expr(Box::new(e)),
+            ),
+        )),
+    )))(input)?;
+
     let expr = pipes.into_iter().fold(first, |acc, (op, target)| {
         Expr::Pipe(PipeExpr {
             expr: Box::new(acc),
             op,
-            target
+            target,
         })
     });
     Ok((input, expr))
 }
 
 #[allow(dead_code)]
-fn call_expr(input: &str) -> ParseResult<Expr> {
+fn call_expr(input: &str) -> ParseResult<'_, Expr> {
     call_expr_with_context(input, false)
 }
 
-fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> {
+fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Expr> {
     alt((
-        // Multiple arguments with parentheses: (a,b,c) func
-        map(
-            tuple((
-                delimited(
-                    expect_token(Token::LParen),
-                    separated_list0(expect_token(Token::Comma), expression),
-                    expect_token(Token::RParen)
-                ),
-                simple_expr
-            )),
-            |(args, func)| Expr::Call(CallExpr {
-                function: Box::new(func),
-                args: args.into_iter().map(Box::new).collect()
-            })
-        ),
+        // Multiple arguments with parentheses: (a,b,c) func - OSV syntax
+        |input| {
+            let (input, args) = delimited(
+                expect_token(Token::LParen),
+                separated_list0(expect_token(Token::Comma), expression),
+                expect_token(Token::RParen),
+            )(input)?;
+
+            if let Ok((_, tok)) = lex_token(input) {
+                if starts_infix_or_pipe(&tok) || matches!(tok, Token::Not) {
+                    return Err(nom::Err::Error(nom::error::Error::new(
+                        input,
+                        nom::error::ErrorKind::Tag,
+                    )));
+                }
+            }
+
+            let (input, func) = simple_expr(input)?;
+            Ok((
+                input,
+                Expr::Call(CallExpr {
+                    function: Box::new(func),
+                    args: args.into_iter().map(Box::new).collect(),
+                }),
+            ))
+        },
         // Single expression or OSV style
         move |input| {
             let (input, first) = simple_expr(input)?;
+
+            // CRITICAL: Reject traditional function call syntax
+            // The Restrict Language enforces OSV (Object-Subject-Verb) word order.
+            // Traditional syntax like func(args) or obj.method(args) is FORBIDDEN.
+            // Only OSV syntax is allowed: (args) func, args func, args |> func
+            match &first {
+                Expr::Ident(_) | Expr::FieldAccess(_, _) => {
+                    // Check for a following parenthesized argument list after optional
+                    // whitespace. Traditional calls like `func(args)`, `func (args)`,
+                    // and `obj.method (args)` are rejected; calls must use OSV order.
+                    if input.trim_start().starts_with('(') {
+                        // This is traditional syntax like func() or obj.method() - REJECT IT
+                        return user_syntax_failure(TRADITIONAL_CALL_ERROR);
+                    }
+                }
+                _ => {}
+            }
 
             if in_statement {
                 // In statement context, be conservative about consuming more expressions
@@ -1259,19 +1465,6 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                     if let Ok((_, Token::Assign)) = lex_token(after_ident) {
                         return Ok((input, first));
                     }
-                    // OSV on same line: `x println` should be parsed as `println(x)`
-                    // But on different lines, they are separate statements
-                    if has_newline_before_next_token(input) {
-                        // There's a newline, so stop - this is a new statement
-                        return Ok((input, first));
-                    }
-                    // No newline - continue to parse as OSV
-                }
-                // Check for unit literal () which might be a separate statement/expression
-                if let Ok((after_lparen, Token::LParen)) = lex_token(input) {
-                    if let Ok((_, Token::RParen)) = lex_token(after_lparen) {
-                        return Ok((input, first));
-                    }
                 }
                 // Check for closing brace
                 if let Ok((_, Token::RBrace)) = lex_token(input) {
@@ -1279,40 +1472,64 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                 }
                 // Don't consume more expressions if we see a binary operator coming
                 if let Ok((_, tok)) = lex_token(input) {
-                    match tok {
-                        Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
-                        Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge |
-                        Token::Pipe | Token::PipeMut | Token::Bar => {
-                            return Ok((input, first));
-                        }
-                        _ => {}
+                    if starts_infix_or_pipe(&tok) {
+                        return Ok((input, first));
+                    }
+                }
+
+                // CRITICAL FIX: In statement context, don't consume lone identifiers
+                // as they might be standalone variable references or start of new statements
+                if let Ok((_, Token::Ident(_))) = lex_token(input) {
+                    // Look ahead after the identifier to see if it's followed by something
+                    // that would indicate it's part of a function call
+                    let (after_ident, _) = lex_token(input)?;
+                    if !matches!(
+                        lex_token(after_ident),
+                        Ok((
+                            _,
+                            Token::IntLit(_)
+                                | Token::FloatLit(_)
+                                | Token::StringLit(_)
+                                | Token::CharLit(_)
+                                | Token::True
+                                | Token::False
+                                | Token::LParen
+                                | Token::LBracket
+                        ))
+                    ) {
+                        // No token after identifier - definitely standalone
+                        return Ok((input, first));
                     }
                 }
             }
-            
+
             // Otherwise, try to parse more expressions for OSV
             // But don't parse expressions that start with binary operators
-            // And in statement context, stop at newlines
             let (input, rest) = many0(|input| {
-                // In statement context, stop at newlines (different line = separate statement)
-                if in_statement && has_newline_before_next_token(input) {
-                    return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
-                }
-
                 // Peek at the next token
                 if let Ok((_, tok)) = lex_token(input) {
-                    match tok {
-                        // Don't parse if it starts with a binary operator
-                        Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
-                        Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge => {
-                            return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
-                        }
-                        _ => {}
+                    // Don't parse if it starts with an infix operator.
+                    if starts_infix_or_pipe(&tok) || matches!(tok, Token::LBrace) {
+                        return Err(nom::Err::Error(nom::error::Error::new(
+                            input,
+                            nom::error::ErrorKind::Tag,
+                        )));
                     }
                 }
-                simple_expr(input)
+
+                let (after_expr, expr) = simple_expr(input)?;
+                if in_statement {
+                    if let Ok((_, Token::While)) = lex_token(after_expr) {
+                        return Err(nom::Err::Error(nom::error::Error::new(
+                            input,
+                            nom::error::ErrorKind::Tag,
+                        )));
+                    }
+                }
+
+                Ok((after_expr, expr))
             })(input)?;
-            
+
             if rest.is_empty() {
                 Ok((input, first))
             } else {
@@ -1320,27 +1537,45 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                 let result = rest.into_iter().fold(first, |arg, func| {
                     Expr::Call(CallExpr {
                         function: Box::new(func),
-                        args: vec![Box::new(arg)]
+                        args: vec![Box::new(arg)],
                     })
                 });
                 Ok((input, result))
             }
-        }
+        },
     ))(input)
 }
 
-pub fn simple_expr(input: &str) -> ParseResult<Expr> {
+pub fn simple_expr(input: &str) -> ParseResult<'_, Expr> {
+    cast_expr(input)
+}
+
+fn cast_expr(input: &str) -> ParseResult<'_, Expr> {
     let (mut input, mut expr) = unary_expr(input)?;
+
+    while let Ok((after_as, _)) = expect_token::<'_>(Token::As)(input) {
+        let (after_type, target) = parse_type(after_as)?;
+        expr = Expr::Cast(CastExpr {
+            expr: Box::new(expr),
+            target,
+        });
+        input = after_type;
+    }
+
+    Ok((input, expr))
+}
+
+fn postfix_expr(input: &str) -> ParseResult<'_, Expr> {
+    let (mut input, mut expr) = atom_expr(input)?;
 
     // Handle postfix operations
     loop {
-        
         // Handle field access and other postfix operations
         let (new_input, op) = opt(alt((
             value(PostfixOp::Dot, expect_token(Token::Dot)),
             value(PostfixOp::Freeze, expect_token(Token::Freeze)),
         )))(input)?;
-        
+
         match op {
             Some(PostfixOp::Dot) => {
                 // Check if the next token is Clone keyword for .clone syntax
@@ -1349,20 +1584,18 @@ pub fn simple_expr(input: &str) -> ParseResult<Expr> {
                     let (new_input, _) = expect_token(Token::Clone)(new_input)?;
                     // Parse field updates for clone: { field1 = value1, field2 = value2, ... }
                     let (new_input, _) = expect_token(Token::LBrace)(new_input)?;
-                    let (new_input, fields) = separated_list0(
-                        expect_token(Token::Comma),
-                        field_init
-                    )(new_input)?;
+                    let (new_input, fields) =
+                        separated_list0(expect_token(Token::Comma), field_init)(new_input)?;
                     let (new_input, _) = expect_token(Token::RBrace)(new_input)?;
-                    
+
                     let mut clone_expr = Expr::Clone(CloneExpr {
                         base: Box::new(expr),
                         updates: RecordLit {
                             name: String::new(),
-                            fields
-                        }
+                            fields,
+                        },
                     });
-                    
+
                     // Check if freeze follows the clone
                     if let Ok((freeze_input, _)) = expect_token::<'_>(Token::Freeze)(new_input) {
                         clone_expr = Expr::Freeze(Box::new(clone_expr));
@@ -1370,7 +1603,7 @@ pub fn simple_expr(input: &str) -> ParseResult<Expr> {
                     } else {
                         input = new_input;
                     }
-                    
+
                     expr = clone_expr;
                 } else {
                     // Regular field access
@@ -1386,7 +1619,7 @@ pub fn simple_expr(input: &str) -> ParseResult<Expr> {
             None => break,
         }
     }
-    
+
     Ok((input, expr))
 }
 
@@ -1396,342 +1629,130 @@ enum PostfixOp {
     Freeze,
 }
 
-fn expression(input: &str) -> ParseResult<Expr> {
+fn expression(input: &str) -> ParseResult<'_, Expr> {
     then_expr(input)
 }
 
-fn expression_in_statement(input: &str) -> ParseResult<Expr> {
+fn expression_in_statement(input: &str) -> ParseResult<'_, Expr> {
     then_expr_with_context(input, true)
 }
 
 #[allow(dead_code)]
-fn statement(input: &str) -> ParseResult<Stmt> {
+fn statement(input: &str) -> ParseResult<'_, Stmt> {
     alt((
-        map(bind_decl, Stmt::Binding),
+        map(bind_decl_in_statement, Stmt::Binding),
         assignment_stmt,
-        map(expression, |e| Stmt::Expr(Box::new(e)))
+        map(expression, |e| Stmt::Expr(Box::new(e))),
     ))(input)
 }
 
-fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
+fn assignment_stmt(input: &str) -> ParseResult<'_, Stmt> {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to respect newlines
-    Ok((input, Stmt::Assignment(AssignStmt {
-        name,
-        value: Box::new(value)
-    })))
+    let (input, value) = expression_in_statement(input)?;
+    Ok((
+        input,
+        Stmt::Assignment(AssignStmt {
+            name,
+            value: Box::new(value),
+        }),
+    ))
 }
 
-// Parse prototype clone expression: ParentType.clone { field: value } [freeze] [sealed]
-fn import_decl(input: &str) -> ParseResult<ImportDecl> {
+fn import_decl(input: &str) -> ParseResult<'_, ImportDecl> {
     let (input, _) = expect_token(Token::Import)(input)?;
-    let (input, module_path) = separated_list1(
-        expect_token(Token::Dot),
-        ident
-    )(input)?;
-    
+    if matches!(lex_token(input), Ok((_, Token::StringLit(_)))) {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            UNSUPPORTED_IMPORT_ALIAS_ERROR,
+            nom::error::ErrorKind::Fail,
+        )));
+    }
+
+    let (input, module_path) = separated_list1(expect_token(Token::Dot), ident)(input)?;
+
     // Check for specific imports: .{foo, bar}
     let (input, items) = if let Ok((input, _)) = expect_token(Token::Dot)(input) {
         alt((
             // import module.*
-            map(
-                expect_token(Token::Star),
-                |_| ImportItems::All
-            ),
+            map(expect_token(Token::Star), |_| ImportItems::All),
             // import module.{foo, bar}
             map(
                 delimited(
                     expect_token(Token::LBrace),
                     separated_list0(expect_token(Token::Comma), ident),
-                    expect_token(Token::RBrace)
+                    expect_token(Token::RBrace),
                 ),
-                ImportItems::Named
-            )
+                ImportItems::Named,
+            ),
         ))(input)?
     } else {
         // import module (imports all)
         (input, ImportItems::All)
     };
-    
-    Ok((input, ImportDecl { module_path, items, span: None }))
-}
 
-/// Parse an associated type definition inside a form: `type Mapped<U>`
-fn form_associated_type(input: &str) -> ParseResult<AssociatedTypeDef> {
-    // Expect identifier "type"
-    let (input, kw) = ident(input)?;
-    if kw != "type" {
-        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
-    }
-    let (input, name) = ident(input)?;
-    // Parse optional type parameters: <U>
-    let (input, type_params) = opt(|input| {
-        let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, params))
-    })(input)?;
-    let type_params = type_params.unwrap_or_default();
-    Ok((input, AssociatedTypeDef { name, type_params }))
-}
-
-/// Parse a method signature inside a form: `fold<U>: (self, init: U, f: |U, T| -> U) -> U`
-fn form_method_decl(input: &str) -> ParseResult<FormMethodDecl> {
-    let (input, name) = ident(input)?;
-    // "type" keyword starts an associated type, not a method
-    if name == "type" {
-        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
-    }
-    // Parse optional type parameters: <U>
-    let (input, type_params) = opt(|input| {
-        let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, params))
-    })(input)?;
-    let type_params = type_params.unwrap_or_default();
-
-    // Parse colon and parameter list: (self, init: U, f: |U, T| -> U)
-    let (input, _) = expect_token(Token::Colon)(input)?;
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, params) = separated_list0(
-        expect_token(Token::Comma),
-        |input| {
-            let (input, param_name) = ident(input)?;
-            // Check for optional type annotation
-            if let Ok((input, _)) = expect_token::<'_>(Token::Colon)(input) {
-                let (input, ty) = parse_type(input)?;
-                Ok((input, (param_name, ty)))
-            } else {
-                // Bare parameter (e.g., "self") gets a Named type of its own name
-                Ok((input, (param_name.clone(), Type::Named(param_name))))
-            }
-        }
-    )(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
-
-    // Parse optional return type: -> U
-    let (input, return_type) = opt(|input| {
-        let (input, _) = expect_token(Token::ThinArrow)(input)?;
-        parse_type(input)
-    })(input)?;
-
-    Ok((input, FormMethodDecl { name, type_params, params, return_type }))
-}
-
-/// Parse a form declaration:
-/// ```text
-/// form Container<T> {
-///     type Mapped<U>
-///     fold<U>: (self, init: U, f: |U, T| -> U) -> U
-///     empty<U>: () -> Mapped<U>
-///     append: (self, elem: T) -> Self
-/// }
-/// ```
-fn form_decl(input: &str) -> ParseResult<FormDecl> {
-    let (input, _) = expect_token(Token::Form)(input)?;
-    let (input, name) = ident(input)?;
-
-    // Parse optional type parameters: <T>
-    let (input, type_params) = opt(|input| {
-        let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, params))
-    })(input)?;
-    let type_params = type_params.unwrap_or_default();
-
-    let (input, _) = expect_token(Token::LBrace)(input)?;
-
-    // Parse items inside the form: associated types and method signatures
-    let mut associated_types = Vec::new();
-    let mut methods = Vec::new();
-    let mut remaining = input;
-
-    loop {
-        let (rest, _) = skip(remaining)?;
-        remaining = rest;
-
-        // Check for closing brace
-        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
-            remaining = after_brace;
-            break;
-        }
-
-        // Try associated type first
-        if let Ok((rest, assoc_type)) = form_associated_type(remaining) {
-            associated_types.push(assoc_type);
-            remaining = rest;
-            continue;
-        }
-
-        // Try method signature
-        let (rest, method) = form_method_decl(remaining)?;
-        methods.push(method);
-        remaining = rest;
+    if matches!(lex_token(input), Ok((_, Token::As))) {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            UNSUPPORTED_IMPORT_ALIAS_ERROR,
+            nom::error::ErrorKind::Fail,
+        )));
     }
 
-    Ok((remaining, FormDecl {
-        name,
-        type_params,
-        associated_types,
-        methods,
-        span: None,
-    }))
+    Ok((input, ImportDecl { module_path, items }))
 }
 
-/// Parse an associated type implementation inside a takes block: `type Mapped<U> = List<U>`
-fn takes_associated_type(input: &str) -> ParseResult<AssociatedTypeImpl> {
-    let (input, kw) = ident(input)?;
-    if kw != "type" {
-        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+fn export_decl(input: &str) -> ParseResult<'_, TopDecl> {
+    let (input, _) = alt((expect_token(Token::Export), expect_token(Token::Pub)))(input)?;
+    if matches!(lex_token(input), Ok((_, Token::Import))) {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            UNSUPPORTED_RE_EXPORT_ERROR,
+            nom::error::ErrorKind::Fail,
+        )));
     }
-    let (input, name) = ident(input)?;
-    // Parse optional type parameters: <U>
-    let (input, type_params) = opt(|input| {
-        let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, params))
-    })(input)?;
-    let type_params = type_params.unwrap_or_default();
-    let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, resolved_type) = parse_type(input)?;
-    Ok((input, AssociatedTypeImpl { name, type_params, resolved_type }))
-}
-
-/// Parse a method implementation inside a takes block: `fold = |self, init, f| { ... }`
-fn takes_method_impl(input: &str) -> ParseResult<FormMethodImpl> {
-    let (input, name) = ident(input)?;
-    // "type" keyword starts an associated type impl, not a method
-    if name == "type" {
-        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
-    }
-    let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, body) = expression(input)?;
-    Ok((input, FormMethodImpl { name, body }))
-}
-
-/// Parse a takes declaration:
-/// ```text
-/// List<T> takes Container<T> {
-///     type Mapped<U> = List<U>
-///     fold = |self, init, f| { ... }
-///     empty = || { [] }
-///     append = |self, elem| { ... }
-/// }
-/// ```
-fn takes_decl(input: &str) -> ParseResult<TakesDecl> {
-    let (input, type_name) = ident(input)?;
-
-    // Parse optional type parameters: <T>
-    let (input, type_params) = opt(|input| {
-        let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, params) = separated_list1(
-            expect_token(Token::Comma),
-            type_param
-        )(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, params))
-    })(input)?;
-    let type_params = type_params.unwrap_or_default();
-
-    let (input, _) = expect_token(Token::Takes)(input)?;
-    let (input, form_name) = ident(input)?;
-
-    // Parse optional form type arguments: <T>
-    let (input, form_type_args) = opt(|input| {
-        let (input, _) = expect_token(Token::Lt)(input)?;
-        let (input, args) = separated_list1(
-            expect_token(Token::Comma),
-            parse_type
-        )(input)?;
-        let (input, _) = expect_token(Token::Gt)(input)?;
-        Ok((input, args))
-    })(input)?;
-    let form_type_args = form_type_args.unwrap_or_default();
-
-    let (input, _) = expect_token(Token::LBrace)(input)?;
-
-    // Parse items inside the takes block
-    let mut associated_type_impls = Vec::new();
-    let mut method_impls = Vec::new();
-    let mut remaining = input;
-
-    loop {
-        let (rest, _) = skip(remaining)?;
-        remaining = rest;
-
-        // Check for closing brace
-        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
-            remaining = after_brace;
-            break;
-        }
-
-        // Try associated type impl first
-        if let Ok((rest, assoc_type_impl)) = takes_associated_type(remaining) {
-            associated_type_impls.push(assoc_type_impl);
-            remaining = rest;
-            continue;
-        }
-
-        // Try method impl
-        let (rest, method_impl) = takes_method_impl(remaining)?;
-        method_impls.push(method_impl);
-        remaining = rest;
-    }
-
-    Ok((remaining, TakesDecl {
-        type_name,
-        type_params,
-        form_name,
-        form_type_args,
-        associated_type_impls,
-        method_impls,
-        span: None,
-    }))
-}
-
-fn export_decl(input: &str) -> ParseResult<TopDecl> {
-    let (input, _) = expect_token(Token::Export)(input)?;
     let (input, item) = top_decl_inner(input)?;
-    Ok((input, TopDecl::Export(ExportDecl {
-        item: Box::new(item)
-    })))
+    Ok((
+        input,
+        TopDecl::Export(ExportDecl {
+            item: Box::new(item),
+        }),
+    ))
 }
 
-fn top_decl_inner(input: &str) -> ParseResult<TopDecl> {
+fn unsupported_enum_decl(input: &str) -> ParseResult<'_, TopDecl> {
+    let (_input, _) = expect_token(Token::Enum)(input)?;
+    Err(nom::Err::Failure(nom::error::Error::new(
+        UNSUPPORTED_ENUM_DECL_ERROR,
+        nom::error::ErrorKind::Fail,
+    )))
+}
+
+fn unsupported_form_takes_decl(input: &str) -> ParseResult<'_, TopDecl> {
+    let (_input, _) = alt((expect_token(Token::Form), expect_token(Token::Takes)))(input)?;
+    Err(nom::Err::Failure(nom::error::Error::new(
+        UNSUPPORTED_FORM_TAKES_DECL_ERROR,
+        nom::error::ErrorKind::Fail,
+    )))
+}
+
+fn top_decl_inner(input: &str) -> ParseResult<'_, TopDecl> {
     alt((
+        unsupported_enum_decl,
+        unsupported_form_takes_decl,
         map(fun_decl, TopDecl::Function),
         map(record_decl, TopDecl::Record),
         map(impl_block, TopDecl::Impl),
         map(context_decl, TopDecl::Context),
-        map(form_decl, TopDecl::Form),
-        map(takes_decl, TopDecl::Takes),
         map(bind_decl, TopDecl::Binding),
     ))(input)
 }
 
-pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
+pub fn top_decl(input: &str) -> ParseResult<'_, TopDecl> {
     // Skip whitespace/comments before parsing a top-level declaration
     let (input, _) = skip(input)?;
-    
+
     // Try export_decl first, but if it fails, make sure we have the right input
     match export_decl(input) {
         Ok(result) => Ok(result),
+        Err(e @ nom::Err::Failure(_)) => Err(e),
         Err(_) => {
             // export_decl failed, try top_decl_inner with the original input
             top_decl_inner(input)
@@ -1739,9 +1760,7 @@ pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
     }
 }
 
-pub fn parse_program(input: &str) -> ParseResult<Program> {
-    let original = input;
-
+pub fn parse_program(input: &str) -> ParseResult<'_, Program> {
     // Skip leading whitespace/comments first
     let (input, _) = skip(input)?;
     let (input, imports) = many0(import_decl)(input)?;
@@ -1760,293 +1779,67 @@ pub fn parse_program(input: &str) -> ParseResult<Program> {
             break;
         }
 
+        if starts_with_let_binding(rest) {
+            return user_syntax_failure(STALE_LET_ERROR);
+        }
+        if starts_with_if_parens(rest) {
+            return user_syntax_failure(STALE_IF_ERROR);
+        }
+        if starts_with_val_mut(rest) {
+            return user_syntax_failure(STALE_VAL_MUT_ERROR);
+        }
+
         // Try to parse a declaration
         match top_decl(rest) {
             Ok((rest2, decl)) => {
                 declarations.push(decl);
                 remaining = rest2;
             }
-            Err(_) => {
-                // If we can't parse more declarations, leave remaining as is
+            Err(e @ nom::Err::Failure(_)) => return Err(e),
+            Err(e) => {
+                // If we've made some progress but failed to parse a declaration,
+                // and there's still non-whitespace content, this is a parse error
+                // (e.g., traditional function call syntax in a function body)
+                if !declarations.is_empty() && !rest.trim().is_empty() {
+                    return Err(e);
+                }
+
+                // Special case: if we have non-whitespace content that looks like
+                // it should be a declaration but fails to parse, propagate the error
+                // This catches cases like functions with traditional syntax
+                let trimmed = rest.trim();
+                if !trimmed.is_empty() {
+                    // Check if it starts with declaration keywords
+                    if trimmed.starts_with("fun ")
+                        || trimmed.starts_with("record ")
+                        || trimmed.starts_with("enum ")
+                        || trimmed.starts_with("form ")
+                        || trimmed.starts_with("takes ")
+                        || trimmed.starts_with("impl ")
+                        || trimmed.starts_with("context ")
+                        || trimmed.starts_with("val ")
+                        || trimmed.starts_with("import ")
+                        || trimmed.starts_with("export ")
+                        || trimmed.starts_with("pub ")
+                    {
+                        return Err(e);
+                    }
+                }
+
+                // If we haven't parsed anything yet, we can safely stop
                 remaining = rest;
                 break;
             }
         }
     }
 
-    let span = Some(make_span(original, original, remaining));
-    Ok((remaining, Program { imports, declarations, span }))
-}
-
-/// Parse result with detailed error information for LSP.
-#[derive(Debug, Clone)]
-pub struct ParseError {
-    /// Error message
-    pub message: String,
-    /// Location of the error
-    pub span: Span,
-}
-
-/// Result of parsing with error recovery.
-#[derive(Debug)]
-pub struct ParseResult2 {
-    /// The (possibly partial) AST
-    pub program: Program,
-    /// Collected errors during parsing
-    pub errors: Vec<ParseError>,
-}
-
-/// Parses a program and returns detailed error information on failure.
-pub fn parse_program_with_errors(input: &str) -> Result<Program, ParseError> {
-    match parse_program(input) {
-        Ok((remaining, mut program)) => {
-            if !remaining.trim().is_empty() {
-                let pos = input.len() - remaining.len();
-                Err(ParseError {
-                    message: format!("Unexpected input: '{}'", remaining.chars().take(30).collect::<String>()),
-                    span: Span::new(pos, pos + remaining.len().min(30)),
-                })
-            } else {
-                // Set program span to cover entire input
-                program.span = Some(Span::new(0, input.len()));
-                Ok(program)
-            }
-        }
-        Err(e) => {
-            // Try to extract position from nom error
-            let (msg, span) = match e {
-                nom::Err::Error(ref err) | nom::Err::Failure(ref err) => {
-                    let pos = input.len() - err.input.len();
-                    (format!("Parse error: {:?}", err.code), Span::new(pos, pos + 1))
-                }
-                nom::Err::Incomplete(_) => {
-                    ("Incomplete input".to_string(), Span::new(input.len(), input.len()))
-                }
-            };
-            Err(ParseError { message: msg, span })
-        }
-    }
-}
-
-/// Parses a program with error recovery, returning a partial AST and all errors.
-///
-/// This is useful for IDE integration where we want to provide diagnostics
-/// even when the code has syntax errors.
-pub fn parse_program_recovering(input: &str) -> ParseResult2 {
-    let mut errors = Vec::new();
-    let mut declarations = Vec::new();
-    let mut imports = Vec::new();
-    let mut remaining = input;
-
-    // Skip leading whitespace
-    if let Ok((rest, _)) = skip(remaining) {
-        remaining = rest;
-    }
-
-    // Try to parse imports
-    loop {
-        let (rest, _) = skip(remaining).unwrap_or((remaining, ()));
-        remaining = rest;
-
-        if remaining.is_empty() {
-            break;
-        }
-
-        // Check if this looks like an import
-        if let Ok((_, Token::Import)) = lex_token(remaining) {
-            match import_decl(remaining) {
-                Ok((rest, import)) => {
-                    imports.push(import);
-                    remaining = rest;
-                }
-                Err(_) => {
-                    // Skip to next line or declaration
-                    remaining = skip_to_next_decl(remaining, &mut errors);
-                    break;
-                }
-            }
-        } else {
-            break;
-        }
-    }
-
-    // Parse declarations with recovery
-    loop {
-        let (rest, _) = skip(remaining).unwrap_or((remaining, ()));
-        remaining = rest;
-
-        if remaining.is_empty() {
-            break;
-        }
-
-        match top_decl(remaining) {
-            Ok((rest, decl)) => {
-                declarations.push(decl);
-                remaining = rest;
-            }
-            Err(e) => {
-                // Record the error
-                let pos = input.len() - remaining.len();
-                let error_msg = match &e {
-                    nom::Err::Error(err) | nom::Err::Failure(err) => {
-                        format!("Syntax error: {:?}", err.code)
-                    }
-                    nom::Err::Incomplete(_) => "Incomplete input".to_string(),
-                };
-
-                // Try to determine error span
-                let error_end = remaining
-                    .find('\n')
-                    .map(|n| pos + n)
-                    .unwrap_or(input.len());
-
-                errors.push(ParseError {
-                    message: error_msg,
-                    span: Span::new(pos, error_end.min(pos + 50)),
-                });
-
-                // Skip to next declaration
-                remaining = skip_to_next_decl(remaining, &mut errors);
-
-                if remaining.is_empty() {
-                    break;
-                }
-            }
-        }
-    }
-
-    ParseResult2 {
-        program: Program {
+    Ok((
+        remaining,
+        Program {
             imports,
             declarations,
-            span: Some(Span::new(0, input.len())),
         },
-        errors,
-    }
-}
-
-/// Skips input until the next likely declaration start.
-fn skip_to_next_decl<'a>(input: &'a str, _errors: &mut Vec<ParseError>) -> &'a str {
-    let mut remaining = input;
-
-    // Skip to next line first
-    if let Some(newline_pos) = remaining.find('\n') {
-        remaining = &remaining[newline_pos + 1..];
-    } else {
-        return "";
-    }
-
-    // Look for declaration keywords
-    let decl_keywords = ["fun", "record", "context", "impl", "val", "export", "import"];
-
-    loop {
-        // Skip whitespace
-        let trimmed = remaining.trim_start();
-        if trimmed.is_empty() {
-            return "";
-        }
-
-        // Check if we're at a declaration keyword
-        for keyword in &decl_keywords {
-            if trimmed.starts_with(keyword) {
-                // Make sure it's a word boundary
-                let after_keyword = &trimmed[keyword.len()..];
-                if after_keyword.is_empty() ||
-                   !after_keyword.chars().next().unwrap().is_alphanumeric() {
-                    return trimmed;
-                }
-            }
-        }
-
-        // Skip to next line
-        if let Some(newline_pos) = remaining.find('\n') {
-            remaining = &remaining[newline_pos + 1..];
-        } else {
-            return "";
-        }
-    }
-}
-
-/// Helper function to detect if a block uses the 'it' keyword
-fn block_uses_it(statements: &[Stmt], final_expr: &Option<Box<Expr>>) -> bool {
-    // Check all statements
-    for stmt in statements {
-        if stmt_uses_it(stmt) {
-            return true;
-        }
-    }
-
-    // Check final expression
-    if let Some(expr) = final_expr {
-        if expr_uses_it(expr) {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Check if a statement uses 'it'
-fn stmt_uses_it(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Binding(bind) => expr_uses_it(&bind.value),
-        Stmt::Assignment(assign) => expr_uses_it(&assign.value),
-        Stmt::Expr(expr) => expr_uses_it(expr),
-    }
-}
-
-/// Recursively check if an expression uses 'it'
-fn expr_uses_it(expr: &Expr) -> bool {
-    match expr {
-        Expr::It => true,
-        Expr::Binary(bin) => expr_uses_it(&bin.left) || expr_uses_it(&bin.right),
-        Expr::Call(call) => {
-            expr_uses_it(&call.function) || call.args.iter().any(|arg| expr_uses_it(arg))
-        }
-        Expr::Block(block) => block_uses_it(&block.statements, &block.expr),
-        Expr::Pipe(pipe) => {
-            expr_uses_it(&pipe.expr) ||
-            match &pipe.target {
-                PipeTarget::Expr(e) => expr_uses_it(e),
-                _ => false,
-            }
-        }
-        Expr::Then(then_expr) => {
-            expr_uses_it(&then_expr.condition) ||
-            block_uses_it(&then_expr.then_block.statements, &then_expr.then_block.expr) ||
-            then_expr.else_block.as_ref().map_or(false, |b| block_uses_it(&b.statements, &b.expr))
-        }
-        Expr::While(while_expr) => {
-            expr_uses_it(&while_expr.condition) ||
-            block_uses_it(&while_expr.body.statements, &while_expr.body.expr)
-        }
-        Expr::Match(match_expr) => {
-            expr_uses_it(&match_expr.expr) ||
-            match_expr.arms.iter().any(|arm| block_uses_it(&arm.body.statements, &arm.body.expr))
-        }
-        Expr::Lambda(lambda) => expr_uses_it(&lambda.body),
-        Expr::FieldAccess(obj, _) => expr_uses_it(obj),
-        Expr::ListLit(items) | Expr::ArrayLit(items) => items.iter().any(|item| expr_uses_it(item)),
-        Expr::TupleLit(items) => items.iter().any(|item| expr_uses_it(item)),
-        Expr::Some(inner) | Expr::Ok(inner) | Expr::Err(inner) => expr_uses_it(inner),
-        Expr::RecordLit(rec) => rec.fields.iter().any(|f| expr_uses_it(&f.value)),
-        Expr::Clone(clone) => {
-            expr_uses_it(&clone.base) ||
-            clone.updates.fields.iter().any(|f| expr_uses_it(&f.value))
-        }
-        Expr::Freeze(inner) => expr_uses_it(inner),
-        Expr::PrototypeClone(proto) => proto.updates.fields.iter().any(|f| expr_uses_it(&f.value)),
-        Expr::With(with) => block_uses_it(&with.body.statements, &with.body.expr),
-        Expr::ScopeCompose(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
-        Expr::ScopeConcat(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
-        Expr::WithLifetime(wl) => block_uses_it(&wl.body.statements, &wl.body.expr),
-        Expr::Await(inner) | Expr::Spawn(inner) => expr_uses_it(inner),
-        Expr::RangeLit(range) => expr_uses_it(&range.start) || expr_uses_it(&range.end),
-        // Literals and identifiers don't use 'it'
-        Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) |
-        Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit |
-        Expr::Ident(_) | Expr::None | Expr::NoneTyped(_) => false,
-    }
+    ))
 }
 
 #[cfg(test)]
@@ -2055,7 +1848,7 @@ mod tests {
 
     #[test]
     fn test_record_decl() {
-        let input = "record Enemy { hp: Int, atk: Int }";
+        let input = "record Enemy { hp: Int32, atk: Int32 }";
         let (_, decl) = record_decl(input).unwrap();
         assert_eq!(decl.name, "Enemy");
         assert_eq!(decl.fields.len(), 2);
@@ -2063,19 +1856,11 @@ mod tests {
 
     #[test]
     fn test_fun_decl() {
-        let input = "fun add: (a:Int, b:Int) -> Int = { a }";
+        let input = "fun add: (a: Int32, b: Int32) -> Int32 = { a }";
         let (_, decl) = fun_decl(input).unwrap();
         assert_eq!(decl.name, "add");
         assert_eq!(decl.params.len(), 2);
-    }
-
-    #[test]
-    fn test_fun_decl_unit_return() {
-        let input = "fun simple: (x: Int) -> Unit = { () }";
-        let result = fun_decl(input);
-        assert!(result.is_ok(), "Failed to parse function with Unit return type: {:?}", result.err());
-        let (_, decl) = result.unwrap();
-        assert_eq!(decl.name, "simple");
+        assert_eq!(decl.return_type, Some(Type::Named("Int32".to_string())));
     }
 
     #[test]
@@ -2084,21 +1869,26 @@ mod tests {
         let (_, expr) = pipe_expr(input).unwrap();
         assert!(matches!(expr, Expr::Pipe(_)));
     }
-    
+
+    #[test]
+    fn test_mutable_pipe_rejected() {
+        assert!(pipe_expr("42 |>> add").is_err());
+    }
+
     #[test]
     fn test_clone_freeze() {
-        let input = "base.clone { hp = 500 } freeze";
+        let input = "base.clone { hp: 500 } freeze";
         let (_, expr) = simple_expr(input).unwrap();
         assert!(matches!(expr, Expr::Freeze(_)));
     }
-    
+
     #[test]
     fn test_field_access() {
         let input = "obj.field";
         let (_, expr) = simple_expr(input).unwrap();
         assert!(matches!(expr, Expr::FieldAccess(_, _)));
     }
-    
+
     #[test]
     fn test_temporal_constraint() {
         let input = "~tx within ~db";
@@ -2106,7 +1896,7 @@ mod tests {
         assert_eq!(constraint.inner, "tx");
         assert_eq!(constraint.outer, "db");
     }
-    
+
     #[test]
     fn test_with_lifetime() {
         let input = "with lifetime<~f> { 42 }";
@@ -2117,243 +1907,6 @@ mod tests {
             assert!(wl.constraints.is_empty());
         } else {
             panic!("Expected WithLifetime expression");
-        }
-    }
-
-    #[test]
-    fn test_parse_program_with_errors() {
-        // Use correct syntax: fun name: (params) -> ReturnType = { body }
-        let input = "fun main: () -> Int = { 42 }";
-        let result = parse_program_with_errors(input);
-        match &result {
-            Ok(program) => {
-                assert_eq!(program.declarations.len(), 1);
-                assert!(program.span.is_some());
-            }
-            Err(e) => {
-                panic!("Parse failed: {} at {:?}", e.message, e.span);
-            }
-        }
-    }
-
-    #[test]
-    fn test_parse_program_recovering_valid() {
-        let input = "fun main: () -> Int = { 42 }\nfun second: () -> Int = { 10 }";
-        let result = parse_program_recovering(input);
-        assert!(result.errors.is_empty(), "Unexpected errors: {:?}", result.errors);
-        assert_eq!(result.program.declarations.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_program_recovering_with_errors() {
-        // Invalid syntax in the middle - should recover and parse the second function
-        let input = "fun first: () -> Int = { 42 }\n@#$invalid\nfun second: () -> Int = { 10 }";
-        let result = parse_program_recovering(input);
-        // Should have at least one error
-        assert!(!result.errors.is_empty(), "Expected at least one error");
-        // Should have parsed the first function at minimum
-        assert!(!result.program.declarations.is_empty(), "Expected at least one declaration");
-    }
-
-    #[test]
-    fn test_parse_error_span() {
-        let input = "fun main: () -> Unit = { () }";
-        let result = parse_program_with_errors(input);
-        // This should succeed with unit return
-        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
-    }
-
-    // ========== Newline-based statement termination tests ==========
-
-    #[test]
-    fn test_block_without_semicolons() {
-        // Statements separated by newlines (no semicolons)
-        let input = "fun main: () -> Int = {
-    val x = 42
-    val y = 10
-    x
-}";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse block without semicolons: {:?}", result.err());
-        let (remaining, ast) = result.unwrap();
-        assert!(remaining.trim().is_empty(), "Unexpected remaining input: {:?}", remaining);
-        assert_eq!(ast.declarations.len(), 1);
-    }
-
-    #[test]
-    fn test_block_with_mixed_terminators() {
-        // Mix of semicolons and newlines
-        let input = "fun main: () -> Int = {
-    val x = 42;
-    val y = 10
-    x
-}";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse block with mixed terminators: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_multiline_expression_with_pipe() {
-        // Pipe operator at end of line should continue to next line
-        let input = "fun main: () -> Int = {
-    val result = 42 |>
-        println
-    0
-}";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse multiline pipe expression: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_multiline_expression_with_operator() {
-        // Binary operator at end of line should continue to next line
-        let input = "fun main: () -> Int = {
-    val result = 42 +
-        10
-    result
-}";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse multiline binary expression: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_if_else_on_multiple_lines() {
-        // else on new line should be parsed correctly
-        let input = "fun main: () -> Int = {
-    true then { 1 }
-    else { 2 }
-}";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse if/else on multiple lines: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_multiple_statements_single_line() {
-        // Multiple statements on single line with semicolons
-        let input = "fun main: () -> Int = { val x = 1; val y = 2; x }";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse multiple statements on single line: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_empty_lines_in_block() {
-        // Empty lines should be ignored
-        let input = "fun main: () -> Int = {
-
-    val x = 42
-
-    val y = 10
-
-    x
-
-}";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse block with empty lines: {:?}", result.err());
-    }
-
-    // ========== OSV syntax tests ==========
-
-    #[test]
-    fn test_osv_same_line() {
-        // OSV on same line: x println should parse as println(x)
-        let input = "fun main: () -> Unit = { 42 println }";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse OSV on same line: {:?}", result.err());
-
-        // Verify it parsed as a function call
-        let (_, ast) = result.unwrap();
-        if let Some(TopDecl::Function(func)) = ast.declarations.first() {
-            if let Some(expr) = &func.body.expr {
-                assert!(matches!(**expr, Expr::Call(_)), "Expected Call expression for OSV");
-            }
-        }
-    }
-
-    #[test]
-    fn test_osv_different_lines() {
-        // OSV on different lines: should be separate expressions
-        let input = "fun main: () -> Int = {
-    42
-    println
-}";
-        let result = parse_program(input);
-        // This should parse, but 42 and println are separate
-        assert!(result.is_ok(), "Failed to parse expressions on different lines: {:?}", result.err());
-
-        let (_, ast) = result.unwrap();
-        if let Some(TopDecl::Function(func)) = ast.declarations.first() {
-            // Should have at least one statement (42) and final expr (println)
-            assert!(!func.body.statements.is_empty() || func.body.expr.is_some(),
-                "Expected separate expressions");
-        }
-    }
-
-    #[test]
-    fn test_osv_chain_same_line() {
-        // Multiple OSV on same line: x f g should parse as g(f(x))
-        let input = "fun main: () -> Unit = { 42 double println }";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse OSV chain on same line: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_range_inclusive() {
-        let input = "fun main = { [1..5] }";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse inclusive range: {:?}", result.err());
-        let (_, prog) = result.unwrap();
-        if let TopDecl::Function(fun) = &prog.declarations[0] {
-            if let Some(expr) = &fun.body.expr {
-                match expr.as_ref() {
-                    Expr::RangeLit(range) => {
-                        assert!(range.inclusive, "Expected inclusive range");
-                        assert_eq!(*range.start, Expr::IntLit(1));
-                        assert_eq!(*range.end, Expr::IntLit(5));
-                    }
-                    _ => panic!("Expected RangeLit, got {:?}", expr),
-                }
-            } else {
-                panic!("Expected expression in function body");
-            }
-        }
-    }
-
-    #[test]
-    fn test_range_exclusive() {
-        let input = "fun main = { [1..<5] }";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse exclusive range: {:?}", result.err());
-        let (_, prog) = result.unwrap();
-        if let TopDecl::Function(fun) = &prog.declarations[0] {
-            if let Some(expr) = &fun.body.expr {
-                match expr.as_ref() {
-                    Expr::RangeLit(range) => {
-                        assert!(!range.inclusive, "Expected exclusive range");
-                        assert_eq!(*range.start, Expr::IntLit(1));
-                        assert_eq!(*range.end, Expr::IntLit(5));
-                    }
-                    _ => panic!("Expected RangeLit, got {:?}", expr),
-                }
-            } else {
-                panic!("Expected expression in function body");
-            }
-        }
-    }
-
-    #[test]
-    fn test_list_still_works() {
-        // Ensure list literals still parse correctly
-        let input = "fun main = { [1, 2, 3] }";
-        let result = parse_program(input);
-        assert!(result.is_ok(), "Failed to parse list literal: {:?}", result.err());
-        let (_, prog) = result.unwrap();
-        if let TopDecl::Function(fun) = &prog.declarations[0] {
-            if let Some(expr) = &fun.body.expr {
-                match expr.as_ref() {
-                    Expr::ListLit(items) => assert_eq!(items.len(), 3),
-                    _ => panic!("Expected ListLit, got {:?}", expr),
-                }
-            }
         }
     }
 }

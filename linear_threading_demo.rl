@@ -18,8 +18,8 @@ record Database {
 
 // Traditional destructuring (baseline for comparison)
 fun processPersonTraditional: (person: Person) -> String = {
-    let name = person.name;
-    let age = person.age;
+    val name = person.name;
+    val age = person.age;
     // person is now partially consumed - this violates affine types
     "Name: " ++ name ++ ", Age: " ++ age.toString()
 }
@@ -27,11 +27,11 @@ fun processPersonTraditional: (person: Person) -> String = {
 // LINEAR THREADING: Spread decomposition with residual rebinding
 fun processPersonLinear: (person: Person) -> (String, Person) = {
     // PROPOSED SYNTAX: Spread with residual binding
-    let { name, age, ...remaining } = person;
+    val { name, age, ...remaining } = person;
     
     // 'remaining' is Person { email: person.email } - only unused fields
     // This preserves affine semantics while allowing field extraction
-    let result = "Name: " ++ name ++ ", Age: " ++ age.toString();
+    val result = "Name: " ++ name ++ ", Age: " ++ age.toString();
     (result, remaining)
 }
 
@@ -67,12 +67,12 @@ fun matchWithLinearThreading: (person: Person) -> String = {
 
 fun resourceExample: () -> String = {
     with Arena {
-        let { users, ...dbRest } = Database.load();
+        val { users, ...dbRest } = Database.load();
         
         users |> forEach |> { user =>
             with user {
                 // PROBLEM: How does 'with' interact with partial consumption?
-                let { name, ...userRest } = user;
+                val { name, ...userRest } = user;
                 name |> println;
                 // userRest needs to be handled within the 'with' block
             }
@@ -90,16 +90,16 @@ record BaseEntity {
 }
 
 fun prototypeWithLinearThreading: (entity: BaseEntity) -> (BaseEntity, BaseEntity) = {
-    let { id, ...rest } = entity;
+    val { id, ...rest } = entity;
     
     // Clone with field updates
-    let updated = clone rest with { 
+    val updated = clone rest with { 
         id: id + 1000,
         updatedAt: now()
     };
     
     // Freeze the residual
-    let frozen = freeze rest;
+    val frozen = freeze rest;
     
     (updated, frozen)
 }
@@ -115,7 +115,7 @@ fun processMultipleFields: (person: Person, { name, age, ...rest }: Person) -> S
 
 // Better alternative using explicit destructuring
 fun processMultipleFieldsBetter: ({ name, age, ...personRest }: Person) -> (String, Person) = {
-    let result = name ++ " is " ++ age.toString() ++ " years old";
+    val result = name ++ " is " ++ age.toString() ++ " years old";
     (result, personRest)
 }
 
@@ -129,7 +129,7 @@ record File<~f> {
 
 fun temporalLinearThreading<~f>: (file: File<~f>) -> String where ~f within lifetime {
     with lifetime<~f> {
-        let { path, metadata, ...fileRest } = file;
+        val { path, metadata, ...fileRest } = file;
         // fileRest contains the handle with temporal constraints intact
         
         path ++ " (" ++ metadata.size.toString() ++ " bytes)"
@@ -146,8 +146,8 @@ fun syntaxConflicts: (person: Person) -> () = {
     // These could be ambiguous in parsing
     
     // CONFLICT 2: Pattern matching spread vs record literal spread
-    let { name, ...rest } = person;  // Pattern spread
-    let updated = Person { name, ...rest };  // Record literal spread (if supported)
+    val { name, ...rest } = person;  // Pattern spread
+    val updated = Person { name, ...rest };  // Record literal spread (if supported)
     
     // CONFLICT 3: Pipe precedence
     person |> name take |> println;  // What does this parse as?
@@ -160,18 +160,18 @@ fun syntaxConflicts: (person: Person) -> () = {
 
 // Option 1: Use different operators for take/peek
 fun refinedSyntax1: (person: Person) -> String = {
-    let name = person <| name;      // Take operator
-    let age_peek = person <? age;   // Peek operator
-    let { email, ...rest } = person >| (name, age);  // Residual after taking fields
+    val name = person <| name;      // Take operator
+    val age_peek = person <? age;   // Peek operator
+    val { email, ...rest } = person >| (name, age);  // Residual after taking fields
     
     name ++ " peeked age: " ++ age_peek.toString()
 }
 
 // Option 2: Use method-like syntax
 fun refinedSyntax2: (person: Person) -> String = {
-    let name = person.take(name);
-    let age_peek = person.peek(age);
-    let rest = person.without(name, age);
+    val name = person.take(name);
+    val age_peek = person.peek(age);
+    val rest = person.without(name, age);
     
     name ++ " peeked age: " ++ age_peek.toString()
 }
@@ -181,7 +181,7 @@ fun refinedSyntax3: (person: Person) -> String = {
     // Use 'consume' keyword to make intent clear
     consume person as { name, age, remainder };
     
-    let result = name ++ " is " ++ age.toString();
+    val result = name ++ " is " ++ age.toString();
     // remainder is automatically bound to unused fields
     result
 }
@@ -196,7 +196,7 @@ fun memoryInefficient: (large_record: LargeRecord) -> String = {
 
 // Linear threading - preserves affine semantics with differential access
 fun memoryEfficient: (large_record: LargeRecord) -> (String, LargeRecord) = {
-    let { field1, field2, ...rest } = large_record;
+    val { field1, field2, ...rest } = large_record;
     // Only field1 and field2 are moved, rest contains pointers to remaining
     // This achieves 90% memory efficiency through differential programming
     (field1 ++ field2, rest)
@@ -223,14 +223,14 @@ are copied, maintaining prototype relationships for unchanged data.
 
 fun errorCases: (person: Person) -> () = {
     // Error: Cannot take same field twice
-    let name1 = person name take;
-    // let name2 = person name take;  // This should be compile error
+    val name1 = person name take;
+    // val name2 = person name take;  // This should be compile error
     
     // Error: Cannot access field after taking
-    let { name, ...rest } = person;
-    // let name_again = rest.name;  // Should be compile error - name not in rest
+    val { name, ...rest } = person;
+    // val name_again = rest.name;  // Should be compile error - name not in rest
     
     // Error: Remainder binding with no remaining fields
-    let { name, age, email, ...empty } = person;
+    val { name, age, email, ...empty } = person;
     // empty should be Empty record type or unit
 }

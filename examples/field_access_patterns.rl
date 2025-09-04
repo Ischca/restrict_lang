@@ -8,13 +8,13 @@
 record Point2D { x: Float64, y: Float64 }
 record RGB { r: Int32, g: Int32, b: Int32 }
 
-fn copyable_field_demo() {
+fun copyable_field_demo() {
     val point = Point2D { x = 3.0, y = 4.0 }
     
     // Multiple field access works naturally - all fields are copyable
     val x = point.x                            // OK: Float64 is copyable
     val y = point.y                            // OK: Float64 is copyable  
-    val distance = sqrt(point.x^2 + point.y^2) // OK: can reuse point
+    val distance = (point.x^2 + point.y^2) sqrt // OK: can reuse point
     
     val color = RGB { r = 255, g = 128, b = 64 }
     val brightness = (color.r + color.g + color.b) / 3  // OK: all Int32
@@ -36,7 +36,7 @@ record FileInfo {
     handle: FileDesc  // Affine (resource handle)
 }
 
-fn mixed_field_demo() {
+fun mixed_field_demo() {
     val user = User { id = 123, name = "Alice", email = "alice@example.com" }
     
     // Can access copyable fields multiple times
@@ -51,7 +51,7 @@ fn mixed_field_demo() {
     // BETTER: Use destructuring for multiple affine fields
     val user2 = User { id = 456, name = "Bob", email = "bob@example.com" }
     val User { id, name, email } = user2  // Single consumption, access all fields
-    val greeting = "Hello " ++ name ++ " (ID: " ++ toString(id) ++ ")"
+    val greeting = "Hello " ++ name ++ " (ID: " ++ id toString ++ ")"
 }
 
 // =============================================================================
@@ -64,20 +64,20 @@ record Database {
     logger: Logger             // Affine resource
 }
 
-fn resource_field_demo() {
+fun resource_field_demo() {
     val db = Database {
-        connection = connect("localhost:5432"),
-        transaction = begin_transaction(),
-        logger = create_logger()
+        connection = ("localhost:5432") connect,
+        transaction = () begin_transaction,
+        logger = () create_logger
     }
     
     // For resource records, destructuring is the only practical pattern
     val Database { connection, transaction, logger } = db
     
     // Now can use all resources independently
-    connection |> execute_query("SELECT * FROM users")
+    ("SELECT * FROM users") connection.execute_query
     transaction |> commit
-    logger |> log_info("Transaction completed")
+    ("Transaction completed") logger.log_info
 }
 
 // =============================================================================
@@ -91,7 +91,7 @@ record BoundingBox {
     dimensions: Dimensions  // All Dimensions fields are copyable
 }
 
-fn nested_copyable_demo() {
+fun nested_copyable_demo() {
     val bbox = BoundingBox {
         min = Point2D { x = 0.0, y = 0.0 },
         max = Point2D { x = 10.0, y = 15.0 },
@@ -123,7 +123,7 @@ frozen record ComplexDataView {
 }
 
 impl ComplexData {
-    fn create_view(self) -> (ComplexDataView, ComplexData) {
+    fun create_view(self) -> (ComplexDataView, ComplexData) {
         val view = ComplexDataView {
             get_metric_count: || self.metrics.count,    // Assuming count is Int32
             get_config_timeout: || self.config.timeout, // Assuming timeout is Float64  
@@ -133,14 +133,14 @@ impl ComplexData {
     }
 }
 
-fn prototype_view_demo() {
+fun prototype_view_demo() {
     val data = ComplexData { /* ... */ }
-    val (view, data_back) = data.create_view()
+    val (view, data_back) = () data.create_view
     
     // Can query copyable data multiple times through view
-    val count = view.get_metric_count()
-    val timeout = view.get_config_timeout()
-    val size = view.get_total_size()
+    val count = () view.get_metric_count
+    val timeout = () view.get_config_timeout
+    val size = () view.get_total_size
     
     // Original data still available for final consumption
     val ComplexData { metrics, resources, config } = data_back
@@ -150,7 +150,7 @@ fn prototype_view_demo() {
 // COMPILER GUIDANCE: Examples that should suggest better patterns
 // =============================================================================
 
-fn needs_improvement() {
+fun needs_improvement() {
     val user = User { id = 123, name = "Alice", email = "alice@example.com" }
     
     // This pattern should trigger compiler hint:
@@ -164,26 +164,26 @@ fn needs_improvement() {
 // =============================================================================
 
 // Instead of this (borrowing-style thinking):
-fn calculate_distance_bad(p1: Point2D, p2: Point2D) -> Float64 {
+fun calculate_distance_bad(p1: Point2D, p2: Point2D) -> Float64 {
     // Thinking: "I need to access multiple fields"
     val dx = p1.x - p2.x  // Consumes p1 
     // val dy = p1.y - p2.y  // ERROR: p1 already consumed
 }
 
 // Do this (Restrict-style):
-fn calculate_distance_good(p1: Point2D, p2: Point2D) -> Float64 {
+fun calculate_distance_good(p1: Point2D, p2: Point2D) -> Float64 {
     // Pattern 1: Destructure first
     val Point2D { x: x1, y: y1 } = p1
     val Point2D { x: x2, y: y2 } = p2
     val dx = x1 - x2
     val dy = y1 - y2
-    sqrt(dx * dx + dy * dy)
+    (dx * dx + dy * dy) sqrt
 }
 
 // Or even better (if Point2D fields are all copyable):
-fn calculate_distance_best(p1: Point2D, p2: Point2D) -> Float64 {
+fun calculate_distance_best(p1: Point2D, p2: Point2D) -> Float64 {
     // Pattern 2: Direct copyable field access
     val dx = p1.x - p2.x  // OK: Float64 is copyable
     val dy = p1.y - p2.y  // OK: Float64 is copyable
-    sqrt(dx * dx + dy * dy)
+    (dx * dx + dy * dy) sqrt
 }

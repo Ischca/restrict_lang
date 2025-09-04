@@ -8,6 +8,14 @@ rust = "latest"
 description = "Run all tests"
 run = ["cargo test -- --nocapture", "cd warder && cargo test -- --nocapture"]
 
+[tasks.test-quiet]
+description = "Run all tests (quiet)"
+run = ["cargo test", "cd warder && cargo test"]
+
+[tasks.test-root]
+description = "Run only root crate tests"
+run = ["cargo test"]
+
 [tasks.test-one]
 description = "Run specific test"
 run = """

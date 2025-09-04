@@ -99,7 +99,7 @@ impl<T> List<T> {
     fun map = |self: List<T>, f: T -> U| -> List<U> {
         match self {
             [] -> [],
-            [x, ...rest] -> [x.f] ++ rest.map(f)
+            [x, ...rest] -> [x.f] ++ (f) rest.map
         }
     }
     
@@ -108,9 +108,9 @@ impl<T> List<T> {
             [] -> [],
             [x, ...rest] -> {
                 if x.pred {
-                    [x] ++ rest.filter(pred)
+                    [x] ++ (pred) rest.filter
                 } else {
-                    rest.filter(pred)
+                    (pred) rest.filter
                 }
             }
         }
@@ -121,7 +121,7 @@ impl<T> List<T> {
             [] -> (),
             [x, ...rest] -> {
                 x.f;
-                rest.forEach(f)
+                (f) rest.forEach
             }
         }
     }
@@ -129,7 +129,7 @@ impl<T> List<T> {
     fun flatMap = |self: List<T>, f: T -> List<U>| -> List<U> {
         match self {
             [] -> [],
-            [x, ...rest] -> x.f ++ rest.flatMap(f)
+            [x, ...rest] -> x.f ++ (f) rest.flatMap
         }
     }
     

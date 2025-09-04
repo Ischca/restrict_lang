@@ -212,11 +212,16 @@ impl RestrictLanguageServer {
                     }
                 }
                 crate::ast::TopDecl::Binding(binding) => {
+                    // Extract name from pattern (for now, only handle simple identifier patterns)
+                    let binding_name = match &binding.pattern {
+                        crate::ast::Pattern::Ident(name) => name.clone(),
+                        _ => "complex_pattern".to_string(), // TODO: handle complex patterns
+                    };
                     for (line_idx, line) in lines.iter().enumerate() {
-                        if line.contains(&format!("val {}", binding.name)) || line.contains(&format!("mut val {}", binding.name)) {
-                            let start_pos = line.find(&binding.name).unwrap_or(0);
+                        if line.contains(&format!("val {}", binding_name)) || line.contains(&format!("mut val {}", binding_name)) {
+                            let start_pos = line.find(&binding_name).unwrap_or(0);
                             symbols.push(DocumentSymbol {
-                                name: binding.name.clone(),
+                                name: binding_name.clone(),
                                 detail: Some(if binding.mutable { "Mutable variable".to_string() } else { "Immutable variable".to_string() }),
                                 kind: SymbolKind::VARIABLE,
                                 tags: None,
@@ -227,7 +232,7 @@ impl RestrictLanguageServer {
                                 ),
                                 selection_range: Range::new(
                                     Position::new(line_idx as u32, start_pos as u32),
-                                    Position::new(line_idx as u32, (start_pos + binding.name.len()) as u32),
+                                    Position::new(line_idx as u32, (start_pos + binding_name.len()) as u32),
                                 ),
                                 children: None,
                             });

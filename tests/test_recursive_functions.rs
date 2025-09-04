@@ -10,7 +10,6 @@ fn test_recursive_program(input: &str, expected_function: &str) {
         .expect("Should type check recursive program");
     
     let mut codegen = WasmCodeGen::new();
-    codegen.expr_types = checker.expr_types.clone();
     let wat_code = codegen.generate(&program)
         .expect("Should generate WASM for recursive program");
     
@@ -56,7 +55,6 @@ fn test_fibonacci_recursive_function() {
     let mut checker = TypeChecker::new();
     checker.check_program(&program).unwrap();
     let mut codegen = WasmCodeGen::new();
-    codegen.expr_types = checker.expr_types.clone();
     let wat_code = codegen.generate(&program).unwrap();
     
     let call_count = wat_code.matches("call $fibonacci").count();
@@ -86,7 +84,6 @@ fn test_mutually_recursive_functions() {
     checker.check_program(&program).expect("Should type check mutual recursion");
     
     let mut codegen = WasmCodeGen::new();
-    codegen.expr_types = checker.expr_types.clone();
     let wat_code = codegen.generate(&program).expect("Should generate WASM for mutual recursion");
     
     // Check that both functions are defined and call each other
@@ -119,7 +116,6 @@ fn test_tail_recursive_function() {
     let mut checker = TypeChecker::new();
     checker.check_program(&program).unwrap();
     let mut codegen = WasmCodeGen::new();
-    codegen.expr_types = checker.expr_types.clone();
     let wat_code = codegen.generate(&program).unwrap();
     
     assert!(wat_code.contains("(func $factorial"));
@@ -165,7 +161,6 @@ fn test_deeply_nested_recursion() {
     let mut checker = TypeChecker::new();
     checker.check_program(&program).unwrap();
     let mut codegen = WasmCodeGen::new();
-    codegen.expr_types = checker.expr_types.clone();
     let wat_code = codegen.generate(&program).unwrap();
     
     let call_count = wat_code.matches("call $ackermann").count();

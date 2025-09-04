@@ -65,7 +65,7 @@ fun addSuite = |runner: TestRunner, suite: TestSuite| {
 }
 
 fun runTest = |test: TestCase| {
-    val result = test.testFn();
+    val result = () test.testFn;
     (test.name, result)
 }
 
@@ -150,7 +150,7 @@ fun isolatedTest = |<~t> name: String, setup: () -> TestContext<~t>, test: TestC
         description = "",
         testFn = || {
             with lifetime<~test> {
-                val ctx = setup();
+                val ctx = () setup;
                 ctx.test
             }
         }
@@ -169,7 +169,7 @@ fun forAll = |<T> gen: () -> T, property: T -> Bool, count: Int32| {
     var failureMessage = "";
     
     while i < count && failed.not {
-        val input = gen();
+        val input = () gen;
         if input.property.not {
             failed = true;
             failureMessage = "Property failed for input: " ++ input.toString;
@@ -197,7 +197,7 @@ fun benchmark = |name: String, f: () -> Unit, iterations: Int32| {
     
     var i = 0;
     while i < iterations {
-        f();
+        () f;
         i = i + 1;
     }
     

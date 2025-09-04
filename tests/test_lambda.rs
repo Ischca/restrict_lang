@@ -8,7 +8,11 @@ fn test_simple_lambda() {
     assert_eq!(program.declarations.len(), 1);
     match &program.declarations[0] {
         TopDecl::Binding(bind) => {
-            assert_eq!(bind.name, "f");
+            if let Pattern::Ident(name) = &bind.pattern {
+                assert_eq!(name, "f");
+            } else {
+                panic!("Expected simple identifier pattern");
+            }
             assert!(!bind.mutable);
             match &*bind.value {
                 Expr::Lambda(lambda) => {

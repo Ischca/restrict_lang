@@ -241,6 +241,7 @@ pub enum Token {
     DotDot,         // ..  (inclusive range)
     DotDotLt,       // ..< (exclusive range)
     Dot,            // .
+    DotDotDot,      // ... (for spread destructuring)
     Semicolon,      // ;
     
     // Special
@@ -324,6 +325,7 @@ impl fmt::Display for Token {
             Token::DotDot => write!(f, ".."),
             Token::DotDotLt => write!(f, "..<"),
             Token::Dot => write!(f, "."),
+            Token::DotDotDot => write!(f, "..."),
             Token::Semicolon => write!(f, ";"),
             Token::Newline => write!(f, "<newline>"),
             Token::Eof => write!(f, "EOF"),
@@ -446,6 +448,7 @@ fn operator(input: &str) -> IResult<&str, Token> {
         value(Token::RArrayBracket, tag("|]")),  // Check |] before |
         value(Token::Bar, tag("|")),
         value(Token::LArrayBracket, tag("[|")),  // Check [| 
+        value(Token::DotDotDot, tag("...")),     // Check ... before .
         value(Token::ThinArrow, tag("->")),
         value(Token::Arrow, tag("=>")),
         value(Token::Eq, tag("==")),

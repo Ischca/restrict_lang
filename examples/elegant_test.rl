@@ -39,7 +39,7 @@ fun it = |ctx: Context, behavior: String, test: () -> Unit| -> Context {
     };
     
     // Run the test to collect assertions
-    val assertions = collectAssertions(test);
+    val assertions = (test) collectAssertions;
     
     ctx.clone { 
         specs = ctx.specs ++ [spec.clone { assertions = assertions }],
@@ -115,7 +115,7 @@ impl Expectation<Bool> {
 impl<T> Expectation<List<T>> {
     fun contain = |self: Expectation<List<T>>, element: T| -> Assertion {
         Assertion {
-            check = || self.actual.contains(element),
+            check = || (element) self.actual.contains,
             message = "List should contain " ++ element.toString
         }
     }
@@ -210,13 +210,13 @@ fun exampleSpecs = {
     "List operations" describe |ctx| {
         ctx
         |> it "should support basic operations" || {
-            [1, 2, 3].should.haveLength(3);
+            (3) [1, 2, 3].should.haveLength;
             [].should.beEmpty;
-            [1, 2, 3].should.contain(2);
+            (2) [1, 2, 3].should.contain;
         }
         |> it "should support functional operations" || {
-            [1, 2, 3].map(|x| x * 2).should.equal([2, 4, 6]);
-            [1, 2, 3, 4].filter(|x| x > 2).should.equal([3, 4]);
+            (|x| x * 2) [1, 2, 3].map.should.equal([2, 4, 6]);
+            (|x| x > 2) [1, 2, 3, 4].filter.should.equal([3, 4]);
         }
     }
 }
@@ -225,20 +225,20 @@ fun exampleSpecs = {
 fun property = |description: String, gen: () -> T, predicate: T -> Bool| -> Spec {
     Spec {
         description = "Property: " ++ description,
-        assertions = (1..100).map |_| {
-            val input = gen();
+        assertions = (|_| {
+            val input = () gen;
             Assertion {
                 check = || input.predicate,
                 message = "Property failed for: " ++ input.toString
             }
-        }
+        }) (1..100).map
     }
 }
 
 // Async test support
 fun eventually = |assertion: () -> Assertion, timeout: Int32| -> Assertion {
     // Would retry assertion until timeout
-    assertion()
+    () assertion
 }
 
 // Test runner with pretty output
@@ -253,7 +253,7 @@ fun runSpecs = |specs: List<Spec>| {
         
         spec.assertions.forEach |assertion| {
             totalAssertions = totalAssertions + 1;
-            if assertion.check() {
+            if () assertion.check {
                 passedAssertions = passedAssertions + 1;
                 "    ✓ pass".println;
             } else {
@@ -301,8 +301,8 @@ impl<T> Scenario<T> {
     }
     
     fun run = |self: Scenario<T>| -> Spec {
-        val initial = self.setup();
-        val final = self.actions.foldLeft(initial, |acc, action| acc.action);
+        val initial = () self.setup;
+        val final = (initial, |acc, action| acc.action) self.actions.foldLeft;
         
         Spec {
             description = self.context,
@@ -317,12 +317,12 @@ fun main = {
         "Arithmetic" describe |ctx| {
             ctx
             |> it "should handle addition" || {
-                (1 + 1).should.equal(2);
-                (5 + 5).should.equal(10);
+                (2) (1 + 1).should.equal;
+                (10) (5 + 5).should.equal;
             }
             |> it "should handle comparison" || {
-                5.should.beGreaterThan(3);
-                3.should.beLessThan(5);
+                (3) 5.should.beGreaterThan;
+                (5) 3.should.beLessThan;
                 true.should.beTrue;
             }
         },
@@ -332,21 +332,21 @@ fun main = {
             |> it "should work with options" || {
                 Some(42).should.beSome;
                 None.should.beNone;
-                Some(42).should.haveSomeValue(42);
+                (42) Some(42).should.haveSomeValue;
             }
         },
         
         // Property-based test
-        property("list reverse twice equals original", 
+        ("list reverse twice equals original", 
             || [1, 2, 3], // generator
             |list| list.reverse.reverse == list
-        ),
+        ) property,
         
         // BDD-style test
-        given("a counter starting at 0", || 0)
+        ("a counter starting at 0", || 0) given
             .when("incremented twice", |x| x + 1)
             .when("incremented again", |x| x + 1)
-            .then("should equal 2", |x| x.should.equal(2))
+            .then("should equal 2", |x| (2) x.should.equal)
             .run,
         
         // Table-driven test
@@ -358,7 +358,7 @@ fun main = {
                     TestCase { input = 1, expected = 1, description = Some("fib(1)") },
                     TestCase { input = 5, expected = 5, description = Some("fib(5)") },
                     TestCase { input = 10, expected = 55, description = Some("fib(10)") }
-                ].testTable(fib)
+                ].(fib) testTable
             }
         }
     ].flatten;

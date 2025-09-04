@@ -22,9 +22,9 @@ record HttpResponse {
 
 // Traditional approach - violates affine types
 fun handleRequestTraditional: (req: HttpRequest) -> HttpResponse = {
-    let method = req.method;     // req partially consumed
-    let path = req.path;         // req further consumed - INVALID
-    let headers = req.headers;   // req cannot be used again - INVALID
+    val method = req.method;     // req partially consumed
+    val path = req.path;         // req further consumed - INVALID
+    val headers = req.headers;   // req cannot be used again - INVALID
     
     // This violates affine constraints
     processRequest(method, path, headers)
@@ -34,10 +34,10 @@ fun handleRequestTraditional: (req: HttpRequest) -> HttpResponse = {
 fun handleRequestLinear: (req: HttpRequest) -> (HttpResponse, AuditLog) = {
     consume req as { method, path, headers, remainder };
     
-    let response = match (method, path) {
+    val response = match (method, path) {
         ("GET", "/api/users") => {
             consume remainder as { remote_addr, audit_info };
-            let users = Database.getUsers();
+            val users = Database.getUsers();
             HttpResponse {
                 status: 200,
                 headers: Map.empty(),
@@ -46,7 +46,7 @@ fun handleRequestLinear: (req: HttpRequest) -> (HttpResponse, AuditLog) = {
         },
         ("POST", "/api/users") => {
             consume remainder as { body, audit_info };
-            let user = User.fromJson(body);
+            val user = User.fromJson(body);
             Database.createUser(user);
             HttpResponse {
                 status: 201,
@@ -63,7 +63,7 @@ fun handleRequestLinear: (req: HttpRequest) -> (HttpResponse, AuditLog) = {
         }
     };
     
-    let audit = AuditLog {
+    val audit = AuditLog {
         request_info: remainder,  // Contains remaining fields
         response_status: response.status
     };
@@ -98,8 +98,8 @@ where ~conn within ~pool = {
     active_connections match {
         [] => {
             // No connections available - create new one
-            let new_conn = DatabaseConnection.create();
-            let updated_pool = clone remainder with {
+            val new_conn = DatabaseConnection.create();
+            val updated_pool = clone remainder with {
                 active_connections: [],
                 metrics: remainder.metrics.incrementCreated()
             };
@@ -109,7 +109,7 @@ where ~conn within ~pool = {
             // Borrow existing connection
             consume head as { socket, connection_id, conn_remainder };
             
-            let borrowed_conn = DatabaseConnection {
+            val borrowed_conn = DatabaseConnection {
                 socket,
                 connection_id,
                 transaction_state: TransactionState.Active,
@@ -117,7 +117,7 @@ where ~conn within ~pool = {
                 stats: conn_remainder.stats.incrementBorrowed()
             };
             
-            let updated_pool = clone remainder with {
+            val updated_pool = clone remainder with {
                 active_connections: tail,
                 metrics: remainder.metrics.incrementBorrowed()
             };
@@ -150,11 +150,11 @@ fun initializeApp: (config: AppConfig) -> (Application, SecretConfig) = {
     consume config as { database, server, logging, features, secrets };
     
     // Process non-sensitive config
-    let db_pool = DatabasePool.create(database);
-    let http_server = HttpServer.create(server);
-    let logger = Logger.create(logging);
+    val db_pool = DatabasePool.create(database);
+    val http_server = HttpServer.create(server);
+    val logger = Logger.create(logging);
     
-    let app = Application {
+    val app = Application {
         database: db_pool,
         server: http_server,
         logger: logger,
@@ -188,7 +188,7 @@ fun processEventStream: (events: Vec<StreamEvent>) -> Vec<ProcessedEvent> = {
     events |> map |> { event =>
         consume event as { id, timestamp, event_type, payload, remainder };
         
-        let result = match event_type {
+        val result = match event_type {
             "user_action" => {
                 consume remainder as { metadata, user_info };
                 UserActionProcessor.process(payload, metadata)
@@ -235,22 +235,22 @@ fun processTransaction: (tx: Transaction) -> (TransactionResult, AuditRecord) = 
     consume tx as { id, from_account, to_account, amount, currency, remainder };
     
     // Basic validation using consumed fields
-    let validation_result = validateTransactionBasics(from_account, to_account, amount, currency);
+    val validation_result = validateTransactionBasics(from_account, to_account, amount, currency);
     
     match validation_result {
         ValidationResult.Valid => {
             consume remainder as { signatures, metadata, audit_info };
             
             // Verify signatures
-            let sig_valid = signatures |> all |> { sig => 
+            val sig_valid = signatures |> all |> { sig => 
                 Crypto.verify(sig, (id, from_account, to_account, amount))
             };
             
             if sig_valid {
                 // Process the transaction
-                let result = AccountingEngine.transfer(from_account, to_account, amount, currency);
+                val result = AccountingEngine.transfer(from_account, to_account, amount, currency);
                 
-                let audit = AuditRecord {
+                val audit = AuditRecord {
                     transaction_id: id,
                     metadata: metadata,
                     timestamp: audit_info.timestamp,
@@ -260,7 +260,7 @@ fun processTransaction: (tx: Transaction) -> (TransactionResult, AuditRecord) = 
                 
                 (result, audit)
             } else {
-                let audit = AuditRecord {
+                val audit = AuditRecord {
                     transaction_id: id,
                     metadata: metadata,
                     timestamp: audit_info.timestamp,
@@ -272,7 +272,7 @@ fun processTransaction: (tx: Transaction) -> (TransactionResult, AuditRecord) = 
             }
         },
         ValidationResult.Invalid(reason) => {
-            let audit = AuditRecord {
+            val audit = AuditRecord {
                 transaction_id: id,
                 metadata: remainder.metadata,
                 timestamp: remainder.timestamp,

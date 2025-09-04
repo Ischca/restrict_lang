@@ -51,7 +51,7 @@ where ~tx within ~db = {
 fun processFile: (filename: String) = {
     with FileSystem {
         // FileSystem.open creates a File<~fs> that's only valid in callback
-        FileSystem.open(filename) { file ->
+        (filename) FileSystem.open { file ->
             // file: File<~fs> is valid here
             val content = file |> FileSystem.read;
             content |> println;

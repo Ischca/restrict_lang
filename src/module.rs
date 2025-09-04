@@ -150,11 +150,19 @@ impl ModuleResolver {
 }
 
 fn get_decl_name(decl: &TopDecl) -> String {
+    use crate::ast::Pattern;
     match decl {
         TopDecl::Function(fun) => fun.name.clone(),
         TopDecl::Record(rec) => rec.name.clone(),
         TopDecl::Context(ctx) => ctx.name.clone(),
-        TopDecl::Binding(bind) => bind.name.clone(),
+        TopDecl::Binding(bind) => {
+            // For bindings, we need to extract the name from the pattern
+            // For now, only handle simple identifier patterns
+            match &bind.pattern {
+                Pattern::Ident(name) => name.clone(),
+                _ => panic!("Complex patterns in top-level bindings not yet supported"),
+            }
+        }
         TopDecl::Impl(impl_block) => impl_block.target.clone(),
         TopDecl::Export(_) => panic!("Nested exports not allowed"),
         TopDecl::Form(form) => form.name.clone(),

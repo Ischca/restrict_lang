@@ -20,7 +20,7 @@ fun apply_int_function = f:Int->Int, x:Int {
 fun test_application_inference = {
     // Parameter type inferred from being passed to a typed function
     val double = |x| x * 2;
-    val result = apply_int_function(double, 21);
+    val result = (double, 21) apply_int_function;
     result
 }
 
@@ -45,7 +45,7 @@ fun test_comparison_inference = {
 // 5. Inference in Option context
 fun test_option_inference = {
     // Lambda type preserved in Option
-    val maybe_increment = Some(|x| x + 1);
+    val maybe_increment = (|x| x + 1) Some;
     maybe_increment
 }
 
@@ -65,12 +65,12 @@ fun test_multi_param_inference = {
 
 // Main function to test all examples
 fun main = {
-    val test1 = test_basic_inference();
-    val test2 = test_application_inference();
-    val test3 = test_nested_inference();
-    val test4 = test_comparison_inference();
-    val test5 = test_option_inference();
-    val test6 = test_multi_param_inference();
+    val test1 = () test_basic_inference;
+    val test2 = () test_application_inference;
+    val test3 = () test_nested_inference;
+    val test4 = () test_comparison_inference;
+    val test5 = () test_option_inference;
+    val test6 = () test_multi_param_inference;
     
     test1 + test2 + test3 + test6
 }

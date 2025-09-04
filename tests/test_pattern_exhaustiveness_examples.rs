@@ -26,7 +26,7 @@ mod examples {
             }
         "#;
         
-        let program = parse_program(source).expect("Parse should succeed");
+        let (_, program) = parse_program(source).expect("Parse should succeed");
         let mut checker = TypeChecker::new();
         
         // This should fail due to missing Err pattern
@@ -81,7 +81,7 @@ mod examples {
             }
         "#;
         
-        let program = parse_program(source).expect("Parse should succeed");
+        let (_, program) = parse_program(source).expect("Parse should succeed");
         let mut checker = TypeChecker::new();
         
         // This should pass - both Some and None cases are handled
@@ -115,7 +115,7 @@ mod examples {
             }
         "#;
         
-        let program = parse_program(source).expect("Parse should succeed");
+        let (_, program) = parse_program(source).expect("Parse should succeed");
         let mut checker = TypeChecker::new();
         
         // The incomplete_list_processor should fail exhaustiveness checking
@@ -152,7 +152,7 @@ mod examples {
             }
         "#;
         
-        let program = parse_program(source).expect("Parse should succeed");
+        let (_, program) = parse_program(source).expect("Parse should succeed");
         let mut checker = TypeChecker::new();
         
         // The incomplete_nested should fail due to missing Some(None) pattern
@@ -179,7 +179,7 @@ mod examples {
             }
         "#;
         
-        let program = parse_program(source).expect("Parse should succeed");
+        let (_, program) = parse_program(source).expect("Parse should succeed");
         let mut checker = TypeChecker::new();
         
         match checker.check_program(&program) {
@@ -211,7 +211,7 @@ mod examples {
             }
         "#;
         
-        let program = parse_program(source).expect("Parse should succeed");
+        let (_, program) = parse_program(source).expect("Parse should succeed");
         let mut checker = TypeChecker::new();
         
         // This should pass because wildcard covers infinite Int32 space

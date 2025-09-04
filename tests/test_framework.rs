@@ -132,6 +132,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                     passed: false,
                     message: "Runtime testing not yet implemented".to_string(),
+                    duration: std::time::Duration::from_secs(0),
                 }
             }
         }
@@ -145,12 +146,14 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: true,
                         message: "Parsed successfully".to_string(),
+                        duration: std::time::Duration::from_secs(0),
                     }
                 } else {
                     TestResult {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
+                        duration: std::time::Duration::from_secs(0),
                     }
                 }
             }
@@ -158,6 +161,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
+                duration: std::time::Duration::from_secs(0),
             },
         }
     }
@@ -168,6 +172,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                 passed: false,
                 message: "Expected parse error but parsing succeeded".to_string(),
+                duration: std::time::Duration::from_secs(0),
             },
             Err(e) => {
                 let error_msg = format!("{:?}", e);
@@ -176,6 +181,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: true,
                         message: format!("Got expected parse error: {}", error_msg),
+                        duration: std::time::Duration::from_secs(0),
                     }
                 } else {
                     TestResult {
@@ -185,6 +191,7 @@ impl TestRunner {
                             "Got parse error but didn't match expected. Got: {}, Expected to contain: {}",
                             error_msg, expected_error
                         ),
+                        duration: std::time::Duration::from_secs(0),
                     }
                 }
             }
@@ -199,6 +206,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
+                        duration: std::time::Duration::from_secs(0),
                     };
                 }
                 
@@ -208,11 +216,13 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: true,
                         message: "Type checked successfully".to_string(),
+                        duration: std::time::Duration::from_secs(0),
                     },
                     Err(e) => TestResult {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Type check error: {:?}", e),
+                        duration: std::time::Duration::from_secs(0),
                     },
                 }
             }
@@ -220,6 +230,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
+                duration: std::time::Duration::from_secs(0),
             },
         }
     }
@@ -232,6 +243,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
+                        duration: std::time::Duration::from_secs(0),
                     };
                 }
                 
@@ -241,6 +253,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: "Expected type error but type checking succeeded".to_string(),
+                        duration: std::time::Duration::from_secs(0),
                     },
                     Err(e) => {
                         let error_msg = format!("{:?}", e);
@@ -249,6 +262,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                                 passed: true,
                                 message: format!("Got expected type error: {}", error_msg),
+                                duration: std::time::Duration::from_secs(0),
                             }
                         } else {
                             TestResult {
@@ -258,6 +272,7 @@ impl TestRunner {
                                     "Got type error but didn't match expected. Got: {}, Expected to contain: {}",
                                     error_msg, expected_error
                                 ),
+                                duration: std::time::Duration::from_secs(0),
                             }
                         }
                     }
@@ -267,6 +282,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
+                duration: std::time::Duration::from_secs(0),
             },
         }
     }
@@ -279,6 +295,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
+                        duration: std::time::Duration::from_secs(0),
                     };
                 }
                 
@@ -288,6 +305,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Type check error: {:?}", e),
+                        duration: std::time::Duration::from_secs(0),
                     };
                 }
                 
@@ -306,12 +324,14 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                                 passed: true,
                                 message: "All expected patterns found in generated code".to_string(),
+                                duration: std::time::Duration::from_secs(0),
                             }
                         } else {
                             TestResult {
                     duration: std::time::Duration::ZERO,
                                 passed: false,
                                 message: format!("Missing patterns in generated code: {:?}", missing),
+                                duration: std::time::Duration::from_secs(0),
                             }
                         }
                     }
@@ -319,6 +339,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Code generation error: {:?}", e),
+                        duration: std::time::Duration::from_secs(0),
                     },
                 }
             }
@@ -326,6 +347,7 @@ impl TestRunner {
                     duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
+                duration: std::time::Duration::from_secs(0),
             },
         }
     }

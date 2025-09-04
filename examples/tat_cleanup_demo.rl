@@ -134,12 +134,12 @@ fun main: () -> Unit = {
     "=== Temporal Affine Types Cleanup Demo ===" |> println;
     
     // Demonstrate file cleanup
-    val file_result = processFile("input.dat");
+    val file_result = ("input.dat") processFile;
     "File processing result: " |> println;
     file_result |> println;
     
     // Demonstrate database transaction cleanup  
-    val db_success = runDatabaseOperation();
+    val db_success = () runDatabaseOperation;
     if db_success {
         "Database operations succeeded" |> println;
     } else {
@@ -147,7 +147,7 @@ fun main: () -> Unit = {
     };
     
     // Demonstrate complex nested cleanup
-    complexCleanupScenario();
+    () complexCleanupScenario;
     
     "=== Demo completed - all resources cleaned up ===" |> println;
     Unit

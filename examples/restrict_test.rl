@@ -61,12 +61,12 @@ fun <? = |actual, expected| {
 
 // Pattern match operator
 fun ~? = |actual, pattern| {
-    pattern(actual)
+    (actual) pattern
 }
 
 // Contains operator for lists
 fun |? = |list: List<T>, element: T| {
-    list.contains(element) true "element found".whenTrue
+    "element found" true (element) list.contains.whenTrue
 }
 
 // Pipe-friendly test builder
@@ -97,7 +97,7 @@ fun whenTrue = |condition: Bool, message: String| -> TestResult {
 
 fun whenSome = |opt: Option<T>, check: T -> TestResult| -> TestResult {
     match opt {
-        Some(value) -> value.check,
+        Some(value) -> (value) check,
         None -> TestResult { passed = false, message = "Expected Some, got None" }
     }
 }
@@ -116,7 +116,7 @@ fun isolated = |<~test> name: String, testFn: () -> TestResult| -> Test {
         run = || {
             with lifetime<~test> {
                 // All test resources are cleaned up automatically
-                testFn()
+                () testFn
             }
         }
     }
@@ -128,11 +128,11 @@ fun forAll = |gen: () -> T| -> |property: T -> Bool| -> |times: Int32| -> TestRe
     var failed = None;
     
     (1..times).forEach |i| {
-        val input = gen();
+        val input = () gen;
         if input.property {
             passed = passed + 1;
         } else if failed.isNone {
-            failed = Some(input);
+            failed = (input) Some;
         }
     };
     
@@ -158,13 +158,13 @@ fun runTests = |tests: List<Test>| {
     
     tests
         |> (|test| {
-            val result = test.run();
+            val result = () test.run;
             val status = if result.passed { "✓" } else { "✗" };
             (status ++ " " ++ test.name ++ " " ++ result.message).println;
             result
         }).map
         |> (|results| {
-            val passed = results.filter(|r| r.passed).length;
+            val passed = (|r| r.passed) results.filter.length;
             val total = results.length;
             "\n━━━━━━━━━━━━━━━━━━━━━".println;
             ("Passed: " ++ passed.toString ++ "/" ++ total.toString).println;
@@ -223,15 +223,15 @@ fun examples = {
             [(0, 0), (1, 1), (2, 1), (5, 5), (10, 55)]
                 .testCases
                 .fib
-                .all(|r| r.passed)
-                .whenTrue("All fibonacci tests passed")
+                .(|r| r.passed) all
+                .("All fibonacci tests passed") whenTrue
         }).test.cons
 }
 
 // Advanced: Test specification using temporal constraints
 fun spec = |<~s> name: String| -> |setup: () -> Context<~s>| -> |tests: Context<~s> -> List<Test>| -> List<Test> {
     with lifetime<~s> {
-        val ctx = setup();
+        val ctx = () setup;
         ctx.tests
     }
 }
@@ -245,7 +245,7 @@ fun eventually = |<~async> assertion: () -> TestResult, timeout: Duration| -> Te
     "async test" || {
         with lifetime<~async> {
             // Would retry assertion until timeout
-            assertion()
+            () assertion
         }
     }.test
 }
@@ -258,7 +258,7 @@ fun main = {
 // Helper functions
 fun cons = |elem: T, list: List<T>| -> List<T> { [elem] ++ list }
 fun all = |list: List<T>, pred: T -> Bool| -> Bool {
-    list.filter(pred.not).length == 0
+    (pred.not) list.filter.length == 0
 }
 
 // Fibonacci for testing

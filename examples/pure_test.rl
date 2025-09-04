@@ -37,10 +37,10 @@ fun testWith = |name: String, value, check: Any -> Bool| -> Test {
 
 // Test runners - data flows naturally
 fun run = |tests: List<Test>| {
-    tests map |t| t() forEach println;
+    (println) (|t| () t) tests map.forEach;
     
     val results = tests map |t| {
-        val msg = t();
+        val msg = () t;
         msg startsWith "✓"
     };
     
@@ -62,7 +62,7 @@ fun any = |checks: List<Bool>| -> Bool {
 
 // Property testing without dots
 fun forAll = |gen: () -> T, prop: T -> Bool, count: Int32| -> Bool {
-    val inputs = (1 to count) map |_| gen();
+    val inputs = (|_| () gen) (1 to count) map;
     inputs map prop all
 }
 
@@ -87,7 +87,7 @@ fun suite = |name: String| -> |tests: List<Test>| -> List<Test> {
 // Temporal test isolation
 fun isolated = |<~t> testFn: () -> Test| -> Test {
     || with lifetime<~t> {
-        testFn()()
+        () () testFn
     }
 }
 

@@ -10,44 +10,8 @@
 //! - **OSV-friendly**: Structures support the Object-Subject-Verb syntax
 //! - **Generic-ready**: Support for type parameters and constraints
 //! - **Pattern-rich**: Comprehensive pattern matching support
-//! - **Position-aware**: AST nodes can carry source location information
 
 use std::fmt;
-
-// Re-export Span from lexer for convenience
-pub use crate::lexer::Span;
-
-/// A wrapper that associates a value with its source location.
-///
-/// This is useful for attaching span information to AST nodes
-/// without modifying their structure.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Spanned<T> {
-    /// The wrapped value
-    pub node: T,
-    /// Source location of this node
-    pub span: Span,
-}
-
-impl<T> Spanned<T> {
-    /// Creates a new spanned value.
-    pub fn new(node: T, span: Span) -> Self {
-        Self { node, span }
-    }
-
-    /// Creates a spanned value with a default (empty) span.
-    pub fn unspanned(node: T) -> Self {
-        Self { node, span: Span::default() }
-    }
-
-    /// Maps the inner value while preserving the span.
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Spanned<U> {
-        Spanned {
-            node: f(self.node),
-            span: self.span,
-        }
-    }
-}
 
 /// The root node of a Restrict Language program.
 ///
@@ -56,11 +20,10 @@ impl<T> Spanned<T> {
 /// # Example
 ///
 /// ```restrict
-/// import std.io.{println, readLine};
-/// import std.collections.*;
+/// import release.{println}
 ///
-/// fn main() {
-///     "Hello, World!" |> println;
+/// fun main: () -> () = {
+///     "Hello, World!" |> println
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -69,8 +32,6 @@ pub struct Program {
     pub imports: Vec<ImportDecl>,
     /// Top-level declarations (functions, types, etc.)
     pub declarations: Vec<TopDecl>,
-    /// Source location of the entire program
-    pub span: Option<Span>,
 }
 
 /// An import declaration bringing external items into scope.
@@ -78,9 +39,8 @@ pub struct Program {
 /// # Examples
 ///
 /// ```restrict
-/// import std.io.*;                    // Import all
-/// import std.collections.{Vec, Map};  // Import specific items
-/// import warder.config;               // Import module
+/// import release.{public_score}
+/// import release.*
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDecl {
@@ -88,8 +48,6 @@ pub struct ImportDecl {
     pub module_path: Vec<String>,
     /// What to import from the module
     pub items: ImportItems,
-    /// Source location
-    pub span: Option<Span>,
 }
 
 /// Specifies which items to import from a module.
@@ -102,7 +60,7 @@ pub enum ImportItems {
 }
 
 /// Top-level declarations that can appear in a program.
-/// 
+///
 /// These form the main structure of a Restrict Language module.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TopDecl {
@@ -118,19 +76,15 @@ pub enum TopDecl {
     Binding(BindDecl),
     /// Export declaration (makes item public)
     Export(ExportDecl),
-    /// Form declaration (behavioral contract, like trait)
-    Form(FormDecl),
-    /// Takes declaration (form adoption by a type)
-    Takes(TakesDecl),
 }
 
 /// Export declaration that makes an item publicly available.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// export fn publicFunction() { ... }
-/// export record PublicType { ... }
+/// pub fun public_function: () -> Int32 = { 1 }
+/// pub record PublicType { value: Int32 }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportDecl {
@@ -139,29 +93,28 @@ pub struct ExportDecl {
 }
 
 /// Record type declaration (similar to struct in other languages).
-/// 
+///
 /// Records in Restrict Language support prototype-based inheritance
 /// through `clone` and `freeze` operations.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// record Point {
-///     x: f64,
-///     y: f64
+///     x: Float64,
+///     y: Float64
 /// }
-/// 
-/// // Frozen record (immutable prototype)
-/// frozen record Config {
+///
+/// record Config {
 ///     host: String,
-///     port: i32
+///     port: Int32
 /// }
-/// 
+///
 /// // Record with temporal parameters
 /// record File<~f> {
 ///     handle: FileHandle
 /// }
-/// 
+///
 /// // Record with temporal constraints
 /// record Transaction<~tx, ~db> where ~tx within ~db {
 ///     db: Database<~db>
@@ -183,8 +136,6 @@ pub struct RecordDecl {
     pub sealed: bool,
     /// Hash of parent prototype if this was created via clone
     pub parent_hash: Option<String>,
-    /// Source location
-    pub span: Option<Span>,
 }
 
 /// Field declaration within a record.
@@ -196,123 +147,15 @@ pub struct FieldDecl {
     pub ty: Type,
 }
 
-/// Form declaration: a behavioral contract (similar to trait).
-///
-/// # Example
-///
-/// ```restrict
-/// form Container<T> {
-///     type Mapped<U>
-///     fold<U>: (self, init: U, f: |U, T| -> U) -> U
-///     empty<U>: () -> Mapped<U>
-///     append: (self, elem: T) -> Self
-/// }
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct FormDecl {
-    /// Form name (e.g., "Container")
-    pub name: String,
-    /// Type parameters (e.g., <T>)
-    pub type_params: Vec<TypeParam>,
-    /// Associated type declarations
-    pub associated_types: Vec<AssociatedTypeDef>,
-    /// Method signatures
-    pub methods: Vec<FormMethodDecl>,
-    /// Source location
-    pub span: Option<Span>,
-}
-
-/// Associated type definition within a form.
-///
-/// # Example
-/// ```restrict
-/// type Mapped<U>
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct AssociatedTypeDef {
-    /// Type name (e.g., "Mapped")
-    pub name: String,
-    /// Type parameters (e.g., <U>)
-    pub type_params: Vec<TypeParam>,
-}
-
-/// Method signature within a form (no body, just signature).
-#[derive(Debug, Clone, PartialEq)]
-pub struct FormMethodDecl {
-    /// Method name (e.g., "fold")
-    pub name: String,
-    /// Method-level type parameters (e.g., <U>)
-    pub type_params: Vec<TypeParam>,
-    /// Parameter types (including self)
-    pub params: Vec<(String, Type)>,
-    /// Return type
-    pub return_type: Option<Type>,
-}
-
-/// Takes declaration: a type adopts a form by providing implementations.
-///
-/// # Example
-///
-/// ```restrict
-/// List<T> takes Container<T> {
-///     type Mapped<U> = List<U>
-///     fold = |self, init, f| { ... }
-///     empty = || { [] }
-///     append = |self, elem| { ... }
-/// }
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct TakesDecl {
-    /// Type that is adopting the form (e.g., "List")
-    pub type_name: String,
-    /// Type parameters of the adopting type (e.g., <T>)
-    pub type_params: Vec<TypeParam>,
-    /// Form being adopted (e.g., "Container")
-    pub form_name: String,
-    /// Type arguments for the form (e.g., <T>)
-    pub form_type_args: Vec<Type>,
-    /// Associated type implementations
-    pub associated_type_impls: Vec<AssociatedTypeImpl>,
-    /// Method implementations
-    pub method_impls: Vec<FormMethodImpl>,
-    /// Source location
-    pub span: Option<Span>,
-}
-
-/// Associated type implementation within a takes declaration.
-///
-/// # Example
-/// ```restrict
-/// type Mapped<U> = List<U>
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct AssociatedTypeImpl {
-    /// Type name (e.g., "Mapped")
-    pub name: String,
-    /// Type parameters (e.g., <U>)
-    pub type_params: Vec<TypeParam>,
-    /// The concrete type (e.g., List<U>)
-    pub resolved_type: Type,
-}
-
-/// Method implementation within a takes declaration.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FormMethodImpl {
-    /// Method name (e.g., "fold")
-    pub name: String,
-    /// Implementation body (typically a lambda expression)
-    pub body: Expr,
-}
-
 /// Implementation block that adds methods to a type.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// impl Point {
-///     fn distance(self, other: Point) -> f64 {
-///         let dx = self.x - other.x;
-///         let dy = self.y - other.y;
+///     fun distance: (self: Point, other: Point) -> Float64 = {
+///         val dx = self.x - other.x
+///         val dy = self.y - other.y
 ///         (dx * dx + dy * dy) |> sqrt
 ///     }
 /// }
@@ -326,54 +169,51 @@ pub struct ImplBlock {
 }
 
 /// Context declaration (similar to type classes or traits).
-/// 
+///
 /// Contexts define interfaces that types can implement.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// context Printable {
-///     toString: fn() -> String
+///     to_string: String
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextDecl {
     /// Name of the context
     pub name: String,
-    /// Type parameters (e.g., `<~fs>` for temporal)
-    pub type_params: Vec<TypeParam>,
     /// Required fields/methods
     pub fields: Vec<FieldDecl>,
 }
 
 /// Function declaration with support for generics and type bounds.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// fn greet(name: String) {
-///     "Hello, " ++ name ++ "!" |> println;
+/// fun greet: (name: String) -> String = {
+///     "Hello, " + name + "!"
 /// }
-/// 
+///
 /// // Generic function
-/// fn identity<T>(value: T) -> T {
+/// fun identity: <T>(value: T) -> T = {
 ///     value
 /// }
-/// 
+///
 /// // With type bounds
-/// fn display<T: ToString>(value: T) {
-///     value |> toString |> println;
+/// fun display: <T: ToString>(value: T) -> String = {
+///     value |> toString
 /// }
-/// 
+///
 /// // With temporal parameters
-/// fn readFile<~io>(file: File<~io>) -> String {
-///     file.read()
+/// fun read_file: <~io>(file: File<~io>) -> String = {
+///     file |> read
 /// }
-/// 
+///
 /// // With temporal constraints
-/// fn beginTx<~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db>
-/// where ~tx within ~db {
-///     // ...
+/// fun begin_tx: <~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db> where ~tx within ~db = {
+///     db |> begin
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -388,20 +228,18 @@ pub struct FunDecl {
     pub temporal_constraints: Vec<TemporalConstraint>,
     /// Function parameters
     pub params: Vec<Param>,
-    /// Return type (None means inferred from body)
+    /// Optional explicit return type annotation
     pub return_type: Option<Type>,
     /// Function body
     pub body: BlockExpr,
-    /// Source location
-    pub span: Option<Span>,
 }
 
 /// Generic type parameter with optional bounds.
-/// 
+///
 /// Supports both trait bounds and derivation bounds.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```restrict
 /// <T>              // Simple type parameter
 /// <T: Clone>       // With trait bound
@@ -418,18 +256,16 @@ pub struct TypeParam {
     pub bounds: Vec<TypeBound>,
     /// Derivation bound (e.g., `T from ParentType`)
     pub derivation_bound: Option<String>,
-    /// Form constraints (e.g., `T of Container`)
-    pub of_forms: Vec<String>,
     /// Whether this is a temporal type parameter (starts with ~)
     pub is_temporal: bool,
 }
 
 /// Type bound constraint for generic parameters.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// fn process<T: Display + Clone>(value: T) { ... }
+/// fun process: <T: Display + Clone>(value: T) -> T = { value }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeBound {
@@ -438,12 +274,11 @@ pub struct TypeBound {
 }
 
 /// Function parameter with optional context binding.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```restrict
-/// fn add(x: i32, y: i32) -> i32 { ... }
-/// fn withContext(@logger: Logger, data: String) { ... }
+/// fun add: (x: Int32, y: Int32) -> Int32 = { x + y }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
@@ -455,39 +290,37 @@ pub struct Param {
     pub context_bound: Option<String>,
 }
 
-/// Binding declaration (let statement).
+/// Binding declaration (val statement).
 ///
 /// # Examples
 ///
 /// ```restrict
-/// let x = 42;              // Immutable binding
-/// let mut count = 0;       // Mutable binding
-/// let x: Int = 42;         // Typed binding
-/// let (a, b) = (1, 2);     // Pattern binding
+/// val x = 42              // Immutable binding
+/// val pi: Float64 = 3.14  // Explicit type annotation
+/// mut val count = 0       // Mutable binding
+/// val Point { x, y } = point
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BindDecl {
     /// Whether the binding is mutable
     pub mutable: bool,
-    /// Variable name
-    pub name: String,
-    /// Optional type annotation
-    pub ty: Option<Type>,
+    /// Binding pattern (can be simple name or complex pattern)
+    pub pattern: Pattern,
+    /// Optional explicit type annotation for the binding
+    pub type_annotation: Option<Type>,
     /// Initial value
     pub value: Box<Expr>,
-    /// Source location
-    pub span: Option<Span>,
 }
 
 /// Expression nodes in the AST.
-/// 
+///
 /// Expressions are the core computational elements of Restrict Language.
 /// They follow the affine type system where each value can be used at most once.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     // Literals
     /// Integer literal (e.g., `42`, `0xFF`, `0b1010`)
-    IntLit(i32),
+    IntLit(i64),
     /// Floating-point literal (e.g., `3.14`, `2.5e-10`)
     FloatLit(f64),
     /// String literal (e.g., `"hello"`, `r"raw string"`)
@@ -498,12 +331,10 @@ pub enum Expr {
     BoolLit(bool),
     /// Unit value `()`
     Unit,
-    
+
     // Identifiers
     /// Variable or function reference
     Ident(String),
-    /// Implicit lambda parameter `it`
-    It,
 
     // Record operations
     /// Record literal construction
@@ -514,7 +345,7 @@ pub enum Expr {
     Freeze(Box<Expr>),
     /// Prototype cloning with modifications
     PrototypeClone(PrototypeCloneExpr),
-    
+
     // Control flow
     /// If-then-else expression
     Then(ThenExpr),
@@ -522,88 +353,75 @@ pub enum Expr {
     While(WhileExpr),
     /// Pattern matching
     Match(MatchExpr),
-    
+
     // Function call
     /// Function application
     Call(CallExpr),
-    
+
     // Binary operations
     /// Binary operators (+, -, *, /, etc.)
     Binary(BinaryExpr),
-    
+    /// Unary operators (`-`, `!`)
+    Unary(UnaryExpr),
+    /// Explicit cast (`expr as Type`)
+    Cast(CastExpr),
+
     // Pipe operations
-    /// Pipe operator (`|>` and `|>>`)
+    /// Pipe operator (`|>`)
     Pipe(PipeExpr),
-    
+
     // Context operations
     /// With expression for resource management
     With(WithExpr),
 
-    // Scope composition
-    /// Scope composition (scopeA + scopeB) - combines bindings from both scopes
-    ScopeCompose(ScopeComposeExpr),
-
-    // Scope concatenation
-    /// Scope concatenation (scopeA scopeB) - sequential execution of scopes
-    ScopeConcat(ScopeConcatExpr),
-
     // Lifetime scope
     /// With lifetime expression for temporal scope management
     WithLifetime(WithLifetimeExpr),
-    
+
     // Block
     /// Block expression containing multiple statements
     Block(BlockExpr),
-    
+
     // Field access
     /// Field access (e.g., `point.x`)
     FieldAccess(Box<Expr>, String),
-    
+
     // List literal
     /// List literal (e.g., `[1, 2, 3]`)
     ListLit(Vec<Box<Expr>>),
-    
+
+    /// Range literal (e.g., `[1..10]`)
+    RangeLit(RangeLit),
+
     // Array literal
     /// Array literal with fixed size
     ArrayLit(Vec<Box<Expr>>),
 
-    // Tuple literal
-    /// Tuple literal (e.g., `(1, 2)`, `("hello", 42, true)`)
-    TupleLit(Vec<Box<Expr>>),
-
-    // Range literal
-    /// Range literal (e.g., `[1..5]` inclusive, `[1..<5]` exclusive)
-    RangeLit(RangeLit),
-    
     // Option constructors
     /// Some variant of Option type
     Some(Box<Expr>),
     /// None variant of Option type
     None,
-    /// None variant with explicit type (e.g., `none<Int>`)
-    NoneTyped(Type),
-
-    // Result constructors
-    /// Ok variant of Result type (e.g., `Ok(42)`)
+    /// Ok variant of Result type
     Ok(Box<Expr>),
-    /// Err variant of Result type (e.g., `Err("error")`)
+    /// Err variant of Result type
     Err(Box<Expr>),
 
     // Lambda expression
     /// Anonymous function (e.g., `|x| x + 1`)
     Lambda(LambdaExpr),
-    
+
     // Async operations
     /// Await expression (e.g., `future await`)
     Await(Box<Expr>),
-    /// Spawn expression (e.g., `spawn(|| computeAsync())`)
+    /// Spawn expression for planned async support
     Spawn(Box<Expr>),
 }
 
 /// Record literal for creating record instances.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// Point { x: 10.0, y: 20.0 }
 /// User { name: "Alice", age: 30 }
@@ -617,20 +435,36 @@ pub struct RecordLit {
 }
 
 /// Field initialization in a record literal.
+///
+/// Can be either a regular field assignment (`field: value`) or a spread expression (`...expr`).
 #[derive(Debug, Clone, PartialEq)]
-pub struct FieldInit {
-    /// Field name
-    pub name: String,
-    /// Field value expression
-    pub value: Box<Expr>,
+pub enum FieldInit {
+    /// Regular field assignment: `field: value`
+    Field {
+        /// Field name
+        name: String,
+        /// Field value expression
+        value: Box<Expr>,
+    },
+    /// Spread expression: `...expr`
+    Spread(Box<Expr>),
+}
+
+/// Range literal with integer endpoints.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RangeLit {
+    /// Start endpoint expression
+    pub start: Box<Expr>,
+    /// End endpoint expression
+    pub end: Box<Expr>,
 }
 
 /// Clone expression with field updates.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// clone point with { x: 30.0 }
+/// val moved = point.clone { x: 30.0 }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct CloneExpr {
@@ -641,16 +475,13 @@ pub struct CloneExpr {
 }
 
 /// Prototype-based cloning with derivation.
-/// 
+///
 /// Creates a new instance derived from a prototype.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// let dog = clone animalProto with {
-///     species: "dog",
-///     sound: "woof"
-/// }
+/// val dog = animal_proto.clone { species: "dog", sound: "woof" }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrototypeCloneExpr {
@@ -664,14 +495,14 @@ pub struct PrototypeCloneExpr {
     pub sealed: bool,
 }
 
-/// If-then-else expression.
-/// 
+/// Then/else expression.
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// if x > 0 {
+/// x > 0 then {
 ///     "positive"
-/// } else if x < 0 {
+/// } else x < 0 then {
 ///     "negative"
 /// } else {
 ///     "zero"
@@ -690,13 +521,13 @@ pub struct ThenExpr {
 }
 
 /// While loop expression.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// while count > 0 {
-///     count |> println;
-///     count = count - 1;
+/// count > 0 while {
+///     count |> println
+///     count = count - 1
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -708,13 +539,13 @@ pub struct WhileExpr {
 }
 
 /// Pattern matching expression.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// match result {
-///     Ok(value) => value |> process,
-///     Err(error) => error |> handleError
+/// result match {
+///     Ok(value) => { value |> process }
+///     Err(error) => { error |> handle_error }
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -735,7 +566,7 @@ pub struct MatchArm {
 }
 
 /// Pattern for pattern matching.
-/// 
+///
 /// Supports literals, destructuring, and list patterns.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
@@ -747,13 +578,22 @@ pub enum Pattern {
     Ident(String),
     /// Record destructuring pattern
     Record(String, Vec<(String, Pattern)>),
+    /// Record destructuring with spread `{ field1, field2, ...rest }`
+    RecordDestruct {
+        /// Record type name
+        type_name: String,
+        /// Fields to extract
+        fields: Vec<(String, Pattern)>,
+        /// Optional residual binding (the ...rest part)
+        rest: Option<String>,
+    },
     /// Some variant pattern
     Some(Box<Pattern>),
     /// None variant pattern
     None,
-    /// Ok variant pattern for Result (e.g., `Ok(x)`)
+    /// Ok variant pattern
     Ok(Box<Pattern>),
-    /// Err variant pattern for Result (e.g., `Err(e)`)
+    /// Err variant pattern
     Err(Box<Pattern>),
     /// Empty list pattern `[]`
     EmptyList,
@@ -761,15 +601,13 @@ pub enum Pattern {
     ListCons(Box<Pattern>, Box<Pattern>),
     /// Exact list pattern `[a, b, c]`
     ListExact(Vec<Box<Pattern>>),
-    /// Tuple destructuring pattern `(a, b, c)`
-    Tuple(Vec<Box<Pattern>>),
 }
 
 /// Literal values that can appear in patterns and expressions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     /// Integer literal
-    Int(i32),
+    Int(i64),
     /// Floating-point literal
     Float(f64),
     /// String literal
@@ -783,12 +621,12 @@ pub enum Literal {
 }
 
 /// Function call expression.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
-/// add(1, 2)
-/// map(list, |x| x * 2)
+/// (1, 2) add
+/// (list, |x| x * 2) map
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallExpr {
@@ -799,9 +637,9 @@ pub struct CallExpr {
 }
 
 /// Binary operation expression.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// x + y
 /// a * b
@@ -815,6 +653,33 @@ pub struct BinaryExpr {
     pub op: BinaryOp,
     /// Right operand
     pub right: Box<Expr>,
+}
+
+/// Unary operation expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnaryExpr {
+    /// Unary operator
+    pub op: UnaryOp,
+    /// Operand
+    pub expr: Box<Expr>,
+}
+
+/// Explicit cast expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CastExpr {
+    /// Expression being cast
+    pub expr: Box<Expr>,
+    /// Target type
+    pub target: Type,
+}
+
+/// Unary operators.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOp {
+    /// Numeric negation `-`
+    Neg,
+    /// Logical negation `!`
+    Not,
 }
 
 /// Binary operators.
@@ -840,6 +705,10 @@ pub enum BinaryOp {
     Le,
     Gt,
     Ge,
+    /// Logical and `&&`
+    And,
+    /// Logical or `||`
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -851,58 +720,34 @@ pub struct PipeExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipeOp {
-    Pipe,      // |>
-    PipeMut,   // |>>
-    Bar,       // |
+    Pipe, // |>
+    Bar,  // |
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipeTarget {
-    Ident(String),       // For binding
-    Expr(Box<Expr>),     // For function application
+    Ident(String),   // For binding
+    Expr(Box<Expr>), // For function application
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithExpr {
-    pub contexts: Vec<String>,
+    /// Context name (e.g., "Database" in "with Database { ... }")
+    pub context_name: String,
+    /// Field bindings for the context (e.g., "connection: conn")
+    pub bindings: Vec<FieldInit>,
+    /// Body of the with expression
     pub body: BlockExpr,
 }
 
-/// Scope composition expression.
-///
-/// Combines two scopes by merging their bindings and executing them in parallel.
-///
-/// # Example
-///
-/// ```restrict
-/// val scopeA = { val x = 10; val y = 20 }
-/// val scopeB = { val z = 30 }
-/// val combined = scopeA + scopeB  // Has bindings: x, y, z
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct ScopeComposeExpr {
-    /// Left scope
-    pub left: Box<Expr>,
-    /// Right scope
-    pub right: Box<Expr>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ScopeConcatExpr {
-    /// Left scope (executed first)
-    pub left: Box<Expr>,
-    /// Right scope (executed second, may receive result from left)
-    pub right: Box<Expr>,
-}
-
 /// With lifetime expression for temporal scope management.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// with lifetime<~f> {
-///     val file = File.open("data.txt");
-///     file.read()
+///     val file = File { path: "data.txt" }
+///     file |> read
 /// }  // file automatically cleaned up
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -921,15 +766,6 @@ pub struct WithLifetimeExpr {
 pub struct BlockExpr {
     pub statements: Vec<Stmt>,
     pub expr: Option<Box<Expr>>,
-    /// Whether this block is lazy (lambda-like) or eager (immediate execution)
-    /// - Lazy: block is a closure that can be stored and called later
-    /// - Eager: block executes immediately in place
-    pub is_lazy: bool,
-    /// Whether this block has an implicit 'it' parameter
-    /// Used for Kotlin-style lambdas: { it + 1 } instead of |x| { x + 1 }
-    pub has_implicit_it: bool,
-    /// Source location
-    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -947,19 +783,22 @@ pub struct AssignStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LambdaExpr {
-    pub params: Vec<String>,
+    pub params: Vec<LambdaParam>,
     pub body: Box<Expr>,
-    /// Whether this lambda uses the implicit parameter `it`
-    pub has_implicit_param: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambdaParam {
+    pub name: String,
+    pub type_annotation: Option<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Named(String),
     Generic(String, Vec<Type>),
-    Function(Vec<Type>, Box<Type>),  // (param_types, return_type)
-    Temporal(String, Vec<String>),    // Type with temporal parameters (e.g., File<~f>)
-    Tuple(Vec<Type>),                 // Tuple type (e.g., (Int, String))
+    Function(Vec<Type>, Box<Type>), // (param_types, return_type)
+    Temporal(String, Vec<String>),  // Type with temporal parameters (e.g., File<~f>)
 }
 
 impl fmt::Display for Type {
@@ -996,16 +835,6 @@ impl fmt::Display for Type {
                 }
                 write!(f, ">")
             }
-            Type::Tuple(types) => {
-                write!(f, "(")?;
-                for (i, ty) in types.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", ty)?;
-                }
-                write!(f, ")")
-            }
         }
     }
 }
@@ -1024,32 +853,25 @@ impl fmt::Display for BinaryOp {
             BinaryOp::Le => write!(f, "<="),
             BinaryOp::Gt => write!(f, ">"),
             BinaryOp::Ge => write!(f, ">="),
+            BinaryOp::And => write!(f, "&&"),
+            BinaryOp::Or => write!(f, "||"),
         }
     }
 }
 
-/// Range literal expression.
-///
-/// # Examples
-///
-/// ```restrict
-/// [1..5]    // inclusive: 1, 2, 3, 4, 5
-/// [1..<5]   // exclusive: 1, 2, 3, 4
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct RangeLit {
-    /// Start expression (inclusive)
-    pub start: Box<Expr>,
-    /// End expression
-    pub end: Box<Expr>,
-    /// Whether the end is inclusive (`..`) or exclusive (`..<`)
-    pub inclusive: bool,
+impl fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnaryOp::Neg => write!(f, "-"),
+            UnaryOp::Not => write!(f, "!"),
+        }
+    }
 }
 
 /// Temporal constraint expressing relationships between temporal variables.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// where ~tx within ~db    // Transaction lifetime within database lifetime
 /// where ~a within ~b      // General containment relationship

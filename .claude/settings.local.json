@@ -49,7 +49,10 @@
       "Bash(mise exec -- cargo test test_recursive_functions --lib)",
       "Bash(mise trust:*)",
       "Bash(mise install:*)",
-      "Bash(mise exec:*)"
+      "Bash(mise exec:*)",
+      "Bash(/Users/shota.watanabe_r0102/.cargo/bin/cargo build)",
+      "Bash(export PATH=$HOME/.cargo/bin:$PATH)",
+      "Bash(./debug_wat)"
     ],
     "deny": []
   }

@@ -116,15 +116,17 @@ fn test_lambda_with_block_body() {
 
 #[test]
 fn test_lambda_in_match_arm() {
-    let input = r#"fun test = {
-        val opt = Some(5);
+    // Use EBNF v-1.0 compliant syntax: fun name: (params) -> Type = body
+    // This returns a lambda function from the match
+    let input = r#"val test = {
+        val opt = Some(5)
         opt match {
             Some(x) => { |y| x + y }
             None => { |y| y }
         }
     }"#;
     let (_, program) = parse_program(input).unwrap();
-    
+
     // Basic validation that it parses
     assert_eq!(program.declarations.len(), 1);
 }
@@ -132,16 +134,17 @@ fn test_lambda_in_match_arm() {
 #[test]
 fn test_lambda_not_confused_with_list_pattern() {
     // Ensure |x| syntax doesn't interfere with [head | tail] pattern
-    let input = r#"fun test = {
-        val lst = [1, 2, 3];
-        val f = |x| x + 1;
+    // Use EBNF v-1.0 compliant syntax
+    let input = r#"val test = {
+        val lst = [1, 2, 3]
+        val f = |x| x + 1
         lst match {
             [head | tail] => { head f }
             [] => { 0 }
         }
     }"#;
     let (_, program) = parse_program(input).unwrap();
-    
+
     // Basic validation that it parses correctly
     assert_eq!(program.declarations.len(), 1);
 }

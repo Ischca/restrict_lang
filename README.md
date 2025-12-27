@@ -205,6 +205,8 @@ arena {
 - **[Tutorial](TUTORIAL.md)** - Learn the language step by step
 - **[Reference](REFERENCE.md)** - Complete language reference
 - **[Examples](examples/)** - Sample programs and use cases
+- **[Temporal Affine Types Guide](docs/TEMPORAL_DESIGN_GUIDE.md)** - Comprehensive TAT documentation
+- **[TAT Implementation Status](docs/TAT_IMPLEMENTATION_STATUS.md)** - Current TAT implementation progress
 
 ## 🏗️ Implementation Status
 

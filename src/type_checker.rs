@@ -3163,13 +3163,15 @@ mod tests {
 
     #[test]
     fn test_affine_nested_blocks() {
-        // Test affine checking in deeply nested blocks
+        // Test affine checking in deeply nested blocks with intermediate variables
         let input = r#"
             val x = 42
             val y = {
-                {
-                    x
+                val inner = {
+                    val deep = x
+                    deep
                 }
+                inner
             }
             val z = x
         "#;
@@ -3224,26 +3226,28 @@ mod tests {
 
     #[test]
     fn test_affine_multiple_params() {
-        // Multiple parameters should be checked independently
-        // Using different parameters is OK
+        // Multiple function parameters should be checked independently
         let input = r#"
             record Point { x: Int y: Int }
-            val p1 = Point { x = 1, y = 2 }
-            val p2 = Point { x = 3, y = 4 }
-            val x1 = p1.x
-            val x2 = p2.x
+            fun use_both: (p1: Point, p2: Point) -> Int = {
+                val x1 = p1.x
+                val x2 = p2.x
+                x1
+            }
         "#;
         assert!(check_program_str(input).is_ok());
     }
 
     #[test]
     fn test_affine_multiple_params_violation() {
-        // Using the same variable/parameter twice should fail
+        // Using the same parameter twice should fail
         let input = r#"
             record Point { x: Int y: Int }
-            val p1 = Point { x = 1, y = 2 }
-            val x = p1.x
-            val y = p1.y
+            fun use_twice: (p1: Point, p2: Point) -> Int = {
+                val x = p1.x
+                val y = p1.y
+                x
+            }
         "#;
         assert_eq!(
             check_program_str(input),

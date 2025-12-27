@@ -946,6 +946,10 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                     if let Ok((_, Token::Assign)) = lex_token(after_ident) {
                         return Ok((input, first));
                     }
+                    // Also stop before a bare identifier that might be a final expression
+                    // Only continue if there's a clear operator or call pattern
+                    // For now, conservatively stop before any identifier to avoid consuming final expressions
+                    return Ok((input, first));
                 }
                 // Check for unit literal () which might be a separate statement/expression
                 if let Ok((after_lparen, Token::LParen)) = lex_token(input) {

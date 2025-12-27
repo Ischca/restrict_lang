@@ -416,7 +416,7 @@ pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, _) = expect_token(Token::Val)(input)?;
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression(input)?;  // Use normal expression parsing for binding values
+    let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to avoid consuming across statement boundaries
     Ok((input, BindDecl { 
         mutable: mutable.is_some(), 
         name, 
@@ -944,6 +944,12 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                 // Check for assignment pattern: ident =
                 if let Ok((after_ident, Token::Ident(_))) = lex_token(input) {
                     if let Ok((_, Token::Assign)) = lex_token(after_ident) {
+                        return Ok((input, first));
+                    }
+                }
+                // Check for unit literal () which might be a separate statement/expression
+                if let Ok((after_lparen, Token::LParen)) = lex_token(input) {
+                    if let Ok((_, Token::RParen)) = lex_token(after_lparen) {
                         return Ok((input, first));
                     }
                 }

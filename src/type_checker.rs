@@ -3135,8 +3135,8 @@ mod tests {
         let input = r#"
             record Point { x: Int y: Int }
             fun use_twice: (p: Point) -> Unit = {
-                val x = p.x;
-                val y = p.x;
+                val x = p.x
+                val y = p.x
                 ()
             }
         "#;

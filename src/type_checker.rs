@@ -43,7 +43,11 @@ pub enum TypeError {
     TypeMismatch { expected: String, found: String },
     
     /// Attempt to use a value that has already been consumed
-    #[error("Variable {0} has already been used (affine type violation)")]
+    #[error("Affine type violation: variable '{0}' has already been used.\n\
+             \nAffine types can only be used once. To fix this:\n\
+             - Use 'mut val' if you need to use the value multiple times\n\
+             - Use '.clone' to create a copy before the first use\n\
+             - Restructure your code to only use the value once")]
     AffineViolation(String),
     
     /// Attempt to mutate an immutable binding

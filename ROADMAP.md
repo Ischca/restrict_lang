@@ -343,12 +343,49 @@ Create/update these files:
 
 ---
 
-### 3. Fix Ignored Tests
+### 3. Fix Ignored Tests (After parser fix)
 
 Priority order:
-1. [ ] `type_checker::tests::test_function_params_affine`
-2. [ ] Any other ignored/skipped tests
-3. [ ] Document why tests were ignored
+1. [ ] Fix parser to handle function definitions
+2. [ ] `type_checker::tests::test_function_params_affine`
+3. [ ] Any other ignored/skipped tests
+4. [ ] Document why tests were ignored
+
+---
+
+## 🚨 Critical Bug Discovered (2025-12-27)
+
+### Parser Does Not Parse Function Definitions
+
+**Symptom**:
+```
+Input file:
+  record Point { x: Int32 y: Int32 }
+  fun use_twice = p: Point { val a = p.x; val b = p.x; a }
+
+Parser output:
+  AST: Program { declarations: [Record(...)] }  ← Only record, no function!
+  Warning: Unparsed input remaining at position 36
+```
+
+**Impact**:
+- **CRITICAL**: All function definitions are silently ignored
+- Type checking never runs on function bodies
+- Affine type violations are not detected
+- `test_function_params_affine` passes incorrectly (nothing to check)
+
+**Root Cause**:
+- Parser does not handle EBNF v-1.0 function syntax
+- Expected: `fun name = param: Type { body }`
+- Possible issue in `src/parser.rs`: `fun_decl`, `top_decl`, or `parse_program`
+
+**Investigation Needed**:
+- [ ] Check parser implementation of function declarations
+- [ ] Verify EBNF specification matches parser
+- [ ] Add parser tests for function definitions
+- [ ] Test both simple and complex function syntaxes
+
+**Priority**: **HIGHEST** - Blocks all function-related development
 
 ---
 

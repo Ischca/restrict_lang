@@ -3131,13 +3131,12 @@ mod tests {
     }
     
     #[test]
-    #[ignore = "TODO: Fix affine type violation detection in new parser syntax"]
     fn test_function_params_affine() {
         let input = r#"
             record Point { x: Int y: Int }
             fun use_twice: (p: Point) -> Unit = {
-                val x = p.x
-                val y = p.x
+                val x = p.x;
+                val y = p.x;
                 ()
             }
         "#;

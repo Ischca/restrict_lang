@@ -71,19 +71,30 @@ fn ident(input: &str) -> ParseResult<String> {
     }
 }
 
+/// Helper to parse a type name (identifier or Unit keyword)
+fn type_name(input: &str) -> ParseResult<String> {
+    let (input, token) = lex_token(input)?;
+    match token {
+        Token::Unit => Ok((input, "Unit".to_string())),
+        Token::Ident(name) => Ok((input, name)),
+        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+    }
+}
+
 /// Parses a type expression.
-/// 
+///
 /// Handles both simple types, generic types, and temporal types.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// // Simple types: i32, String, Point
 /// // Generic types: Vec<i32>, Map<String, Value>
 /// // Temporal types: File<~f>, Transaction<~tx, ~db>
 /// ```
 fn parse_type(input: &str) -> ParseResult<Type> {
-    let (input, name) = ident(input)?;
+    // Parse type name - handle both identifiers and the Unit keyword
+    let (input, name) = type_name(input)?;
     let (input, type_params) = opt(
         delimited(
             expect_token(Token::Lt),
@@ -476,6 +487,11 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
         map(ident, Expr::Ident),
+        // Unit literal () - must come before general parenthesized expressions
+        value(
+            Expr::Unit,
+            tuple((expect_token(Token::LParen), expect_token(Token::RParen)))
+        ),
         delimited(
             expect_token(Token::LParen),
             expression,
@@ -1223,6 +1239,15 @@ mod tests {
         let (_, decl) = fun_decl(input).unwrap();
         assert_eq!(decl.name, "add");
         assert_eq!(decl.params.len(), 2);
+    }
+
+    #[test]
+    fn test_fun_decl_unit_return() {
+        let input = "fun simple: (x: Int) -> Unit = { () }";
+        let result = fun_decl(input);
+        assert!(result.is_ok(), "Failed to parse function with Unit return type: {:?}", result.err());
+        let (_, decl) = result.unwrap();
+        assert_eq!(decl.name, "simple");
     }
 
     #[test]

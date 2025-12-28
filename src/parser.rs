@@ -93,6 +93,22 @@ fn type_name(input: &str) -> ParseResult<String> {
 /// // Temporal types: File<~f>, Transaction<~tx, ~db>
 /// ```
 fn parse_type(input: &str) -> ParseResult<Type> {
+    // Try to parse function type first: |Type1, Type2| -> ReturnType
+    if let Ok((input_after_bar, _)) = expect_token(Token::Bar)(input) {
+        // Parse parameter types
+        let (input, param_types) = delimited(
+            expect_token(Token::Bar),
+            separated_list0(expect_token(Token::Comma), parse_type),
+            expect_token(Token::Bar)
+        )(input)?;
+
+        // Parse arrow and return type
+        let (input, _) = expect_token(Token::ThinArrow)(input)?;
+        let (input, return_type) = parse_type(input)?;
+
+        return Ok((input, Type::Function(param_types, Box::new(return_type))));
+    }
+
     // Parse type name - handle both identifiers and the Unit keyword
     let (input, name) = type_name(input)?;
     let (input, type_params) = opt(
@@ -118,13 +134,13 @@ fn parse_type(input: &str) -> ParseResult<Type> {
             expect_token(Token::Gt)
         )
     )(input)?;
-    
+
     match type_params {
         Some(params) => {
             // Check if all are temporal
             let all_temporal = params.iter().all(|(_, is_temporal)| *is_temporal);
             let all_regular = params.iter().all(|(_, is_temporal)| !*is_temporal);
-            
+
             if all_temporal {
                 // All temporal: File<~f>
                 Ok((input, Type::Temporal(name, params.into_iter().map(|(n, _)| n).collect())))

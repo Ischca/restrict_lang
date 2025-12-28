@@ -1072,9 +1072,21 @@ impl TypeChecker {
                     _ => Err(TypeError::UnknownType(format!("{}<{}>", name, params.len())))
                 }
             },
-            Type::Function(_, _) => {
-                // TODO: Implement function type conversion
-                Err(TypeError::UnsupportedFeature("Function types not yet implemented".to_string()))
+            Type::Function(param_types, return_type) => {
+                // Convert parameter types
+                let typed_params: Result<Vec<TypedType>, TypeError> = param_types
+                    .iter()
+                    .map(|ty| self.convert_type(ty))
+                    .collect();
+                let typed_params = typed_params?;
+
+                // Convert return type
+                let typed_return = self.convert_type(return_type)?;
+
+                Ok(TypedType::Function {
+                    params: typed_params,
+                    return_type: Box::new(typed_return)
+                })
             }
             Type::Temporal(name, temporals) => {
                 // Validate temporal constraints before creating the type

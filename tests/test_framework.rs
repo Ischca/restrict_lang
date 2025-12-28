@@ -129,6 +129,7 @@ impl TestRunner {
             TestExpectation::RuntimeOutput(_output) => {
                 // Runtime testing would require WASM execution
                 TestResult {
+                    duration: std::time::Duration::ZERO,
                     passed: false,
                     message: "Runtime testing not yet implemented".to_string(),
                 }
@@ -141,17 +142,20 @@ impl TestRunner {
             Ok((remaining, _program)) => {
                 if remaining.trim().is_empty() {
                     TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: true,
                         message: "Parsed successfully".to_string(),
                     }
                 } else {
                     TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
                     }
                 }
             }
             Err(e) => TestResult {
+                    duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
             },
@@ -161,6 +165,7 @@ impl TestRunner {
     fn test_parse_error(&self, input: &str, expected_error: &str) -> TestResult {
         match parse_program(input) {
             Ok((_, _)) => TestResult {
+                    duration: std::time::Duration::ZERO,
                 passed: false,
                 message: "Expected parse error but parsing succeeded".to_string(),
             },
@@ -168,11 +173,13 @@ impl TestRunner {
                 let error_msg = format!("{:?}", e);
                 if error_msg.contains(expected_error) {
                     TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: true,
                         message: format!("Got expected parse error: {}", error_msg),
                     }
                 } else {
                     TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!(
                             "Got parse error but didn't match expected. Got: {}, Expected to contain: {}",
@@ -189,6 +196,7 @@ impl TestRunner {
             Ok((remaining, program)) => {
                 if !remaining.trim().is_empty() {
                     return TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
                     };
@@ -197,16 +205,19 @@ impl TestRunner {
                 let mut checker = TypeChecker::new();
                 match checker.check_program(&program) {
                     Ok(()) => TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: true,
                         message: "Type checked successfully".to_string(),
                     },
                     Err(e) => TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Type check error: {:?}", e),
                     },
                 }
             }
             Err(e) => TestResult {
+                    duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
             },
@@ -218,6 +229,7 @@ impl TestRunner {
             Ok((remaining, program)) => {
                 if !remaining.trim().is_empty() {
                     return TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
                     };
@@ -226,6 +238,7 @@ impl TestRunner {
                 let mut checker = TypeChecker::new();
                 match checker.check_program(&program) {
                     Ok(()) => TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: "Expected type error but type checking succeeded".to_string(),
                     },
@@ -233,11 +246,13 @@ impl TestRunner {
                         let error_msg = format!("{:?}", e);
                         if error_msg.contains(expected_error) {
                             TestResult {
+                    duration: std::time::Duration::ZERO,
                                 passed: true,
                                 message: format!("Got expected type error: {}", error_msg),
                             }
                         } else {
                             TestResult {
+                    duration: std::time::Duration::ZERO,
                                 passed: false,
                                 message: format!(
                                     "Got type error but didn't match expected. Got: {}, Expected to contain: {}",
@@ -249,6 +264,7 @@ impl TestRunner {
                 }
             }
             Err(e) => TestResult {
+                    duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
             },
@@ -260,6 +276,7 @@ impl TestRunner {
             Ok((remaining, program)) => {
                 if !remaining.trim().is_empty() {
                     return TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Unparsed input remains: {}", remaining),
                     };
@@ -268,6 +285,7 @@ impl TestRunner {
                 let mut checker = TypeChecker::new();
                 if let Err(e) = checker.check_program(&program) {
                     return TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Type check error: {:?}", e),
                     };
@@ -285,23 +303,27 @@ impl TestRunner {
                         
                         if missing.is_empty() {
                             TestResult {
+                    duration: std::time::Duration::ZERO,
                                 passed: true,
                                 message: "All expected patterns found in generated code".to_string(),
                             }
                         } else {
                             TestResult {
+                    duration: std::time::Duration::ZERO,
                                 passed: false,
                                 message: format!("Missing patterns in generated code: {:?}", missing),
                             }
                         }
                     }
                     Err(e) => TestResult {
+                    duration: std::time::Duration::ZERO,
                         passed: false,
                         message: format!("Code generation error: {:?}", e),
                     },
                 }
             }
             Err(e) => TestResult {
+                    duration: std::time::Duration::ZERO,
                 passed: false,
                 message: format!("Parse error: {:?}", e),
             },

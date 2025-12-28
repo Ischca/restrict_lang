@@ -1978,7 +1978,7 @@ impl TypeChecker {
             }
         }
         
-        let result = if let Some(expr) = &block.expr {
+        let result_type = if let Some(expr) = &block.expr {
             self.check_expr_with_expected(expr, expected)?
         } else if let Some(ty) = last_expr_type {
             // If no explicit return expression but last statement was an expression,
@@ -1987,9 +1987,18 @@ impl TypeChecker {
         } else {
             TypedType::Unit
         };
-        
+
         self.pop_scope();
-        Ok(result)
+
+        // If this is a lazy block, wrap the type in a function type: () -> T
+        if block.is_lazy {
+            Ok(TypedType::Function {
+                params: vec![],  // No parameters for a simple lazy block
+                return_type: Box::new(result_type),
+            })
+        } else {
+            Ok(result_type)
+        }
     }
     
     fn check_binary_expr(&mut self, binary: &BinaryExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {

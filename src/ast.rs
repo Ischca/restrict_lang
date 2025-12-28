@@ -699,6 +699,13 @@ pub struct WithLifetimeExpr {
 pub struct BlockExpr {
     pub statements: Vec<Stmt>,
     pub expr: Option<Box<Expr>>,
+    /// Whether this block is lazy (lambda-like) or eager (immediate execution)
+    /// - Lazy: block is a closure that can be stored and called later
+    /// - Eager: block executes immediately in place
+    pub is_lazy: bool,
+    /// Whether this block has an implicit 'it' parameter
+    /// Used for Kotlin-style lambdas: { it + 1 } instead of |x| { x + 1 }
+    pub has_implicit_it: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

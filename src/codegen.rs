@@ -1046,6 +1046,8 @@ impl WasmCodeGen {
                     function: Box::new(Expr::Ident("println".to_string())), // Call built-in println
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
+                is_lazy: false,
+                has_implicit_it: false,
             },
             is_async: false,
         };
@@ -1066,6 +1068,8 @@ impl WasmCodeGen {
                     function: Box::new(Expr::Ident("print_int".to_string())), // Call built-in print_int
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
+                is_lazy: false,
+                has_implicit_it: false,
             },
             is_async: false,
         };
@@ -1205,13 +1209,22 @@ impl WasmCodeGen {
     }
     
     fn generate_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
-        self.generate_block_internal(block, false)
+        // If this is a lazy block, generate it as a closure
+        if block.is_lazy {
+            self.generate_lazy_block(block)
+        } else {
+            self.generate_block_internal(block, false)
+        }
     }
-    
+
     fn generate_block_as_expression(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
-        self.generate_block_internal(block, true)
+        if block.is_lazy {
+            self.generate_lazy_block(block)
+        } else {
+            self.generate_block_internal(block, true)
+        }
     }
-    
+
     fn generate_block_internal(&mut self, block: &BlockExpr, as_expression: bool) -> Result<(), CodeGenError> {
         // Generate statements
         for (i, stmt) in block.statements.iter().enumerate() {
@@ -1246,7 +1259,45 @@ impl WasmCodeGen {
         
         Ok(())
     }
-    
+
+    /// Generate a lazy block as a zero-parameter lambda/closure
+    fn generate_lazy_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
+        // A lazy block is generated as a lambda with no parameters
+        // We need to create a function in the function table and return its index
+
+        let lambda_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$lazy_block_{}", lambda_idx);
+
+        // Collect free variables from the block (for closure support)
+        // For now, we'll generate a simple lambda without captures
+        let free_vars: Vec<String> = vec![];  // TODO: implement free variable collection
+
+        // Add to function table
+        self.function_table.push(func_name.clone());
+
+        // Generate the lambda function definition
+        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+
+        // Create a new scope for the lambda
+        self.push_scope();
+
+        // Generate block body (as eager block now, since we're inside the lambda function)
+        // Create a modified block that is eager
+        let mut eager_block = block.clone();
+        eager_block.is_lazy = false;
+        self.generate_block_internal(&eager_block, true)?;
+
+        self.pop_scope();
+        self.output.push_str("  )\n");
+
+        // Return the function index to the stack
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
     fn generate_binding(&mut self, bind: &BindDecl) -> Result<(), CodeGenError> {
         // Infer type of the value for variable tracking
         if let Expr::RecordLit(record_lit) = bind.value.as_ref() {

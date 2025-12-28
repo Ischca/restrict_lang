@@ -231,9 +231,16 @@ fn param(input: &str) -> ParseResult<Param> {
     Ok((input, Param { name, ty, context_bound }))
 }
 
-fn block_expr(input: &str) -> ParseResult<BlockExpr> {
+/// Parse a block expression with context-dependent evaluation mode.
+///
+/// # Parameters
+/// - `input`: The input string to parse
+/// - `is_lazy`: Whether this block should be lazy (true) or eager (false)
+///   - Lazy: block is a closure, can be stored and called later
+///   - Eager: block executes immediately
+fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    
+
     // Parse statements and expressions carefully
     let mut statements = Vec::new();
     let mut remaining = input;
@@ -285,10 +292,22 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
         }
     }
     
-    Ok((remaining, BlockExpr { 
-        statements, 
-        expr: final_expr 
+    Ok((remaining, BlockExpr {
+        statements,
+        expr: final_expr,
+        is_lazy,
+        has_implicit_it: false,  // TODO: detect 'it' usage in Phase 2.5
     }))
+}
+
+/// Parse an eager block (default for function bodies, control flow, etc.)
+fn block_expr(input: &str) -> ParseResult<BlockExpr> {
+    block_expr_with_mode(input, false)  // eager by default
+}
+
+/// Parse a lazy block (for expression contexts)
+fn lazy_block_expr(input: &str) -> ParseResult<BlockExpr> {
+    block_expr_with_mode(input, true)  // lazy for closures
 }
 
 fn fun_decl(input: &str) -> ParseResult<FunDecl> {
@@ -516,7 +535,7 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
             expect_token(Token::RParen)
         ),
         with_expr,
-        map(block_expr, Expr::Block)
+        map(lazy_block_expr, Expr::Block)  // Blocks in expression position are lazy
     ))(input)
 }
 

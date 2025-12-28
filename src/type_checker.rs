@@ -1467,6 +1467,7 @@ impl TypeChecker {
             Expr::Binary(binary) => self.check_binary_expr(binary, expected),
             Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
             Expr::With(with) => self.check_with_expr(with),
+            Expr::ScopeCompose(sc) => self.check_scope_compose_expr(sc),
             Expr::WithLifetime(with_lifetime) => self.check_with_lifetime_expr(with_lifetime),
             Expr::Then(then) => self.check_then_expr(then),
             Expr::While(while_expr) => self.check_while_expr(while_expr),
@@ -2034,10 +2035,30 @@ impl TypeChecker {
         
         let left_ty = self.check_expr_with_expected(&binary.left, expected_left)?;
         let right_ty = self.check_expr_with_expected(&binary.right, expected_right)?;
-        
+
         // Type check based on operator
         match binary.op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            BinaryOp::Add => {
+                // Special case: if both operands are function types, treat as scope composition
+                match (&left_ty, &right_ty) {
+                    (TypedType::Function { .. }, TypedType::Function { .. }) => {
+                        // Delegate to scope composition type checking
+                        // Create a temporary ScopeComposeExpr for type checking
+                        let sc = ScopeComposeExpr {
+                            left: binary.left.clone(),
+                            right: binary.right.clone(),
+                        };
+                        return self.check_scope_compose_expr(&sc);
+                    }
+                    (TypedType::Int32, TypedType::Int32) => Ok(TypedType::Int32),
+                    (TypedType::Float64, TypedType::Float64) => Ok(TypedType::Float64),
+                    _ => Err(TypeError::TypeMismatch {
+                        expected: "numeric types or function types".to_string(),
+                        found: format!("{:?} and {:?}", left_ty, right_ty),
+                    })
+                }
+            }
+            BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
                 // Arithmetic operators require numeric types
                 match (&left_ty, &right_ty) {
                     (TypedType::Int32, TypedType::Int32) => Ok(TypedType::Int32),
@@ -3035,6 +3056,33 @@ impl TypeChecker {
             _ => false
         }
     }
+
+    fn check_scope_compose_expr(&mut self, sc: &ScopeComposeExpr) -> Result<TypedType, TypeError> {
+        // Check both left and right expressions
+        let left_type = self.check_expr_with_expected(&sc.left, None)?;
+        let right_type = self.check_expr_with_expected(&sc.right, None)?;
+
+        // For now, both sides should be function types (lazy blocks)
+        // The composition should produce a new function type
+        // TODO: Implement proper scope composition type checking
+        match (&left_type, &right_type) {
+            (TypedType::Function { return_type: left_ret, .. },
+             TypedType::Function { return_type: right_ret, .. }) => {
+                // For now, return the right side's return type
+                // TODO: Properly merge scope types
+                Ok(TypedType::Function {
+                    params: vec![],
+                    return_type: right_ret.clone(),
+                })
+            }
+            _ => {
+                Err(TypeError::TypeMismatch {
+                    expected: "Function type for scope composition".to_string(),
+                    found: format!("{:?} + {:?}", left_type, right_type),
+                })
+            }
+        }
+    }
 }
 
 // Standalone type_check function for public API
@@ -3708,6 +3756,10 @@ impl TypeChecker {
             }
             Expr::With(with_expr) => {
                 free_vars.extend(self.collect_free_variables_in_block(&with_expr.body, bound_vars));
+            }
+            Expr::ScopeCompose(sc) => {
+                free_vars.extend(self.collect_free_variables(&sc.left, bound_vars));
+                free_vars.extend(self.collect_free_variables(&sc.right, bound_vars));
             }
             Expr::Pipe(pipe_expr) => {
                 free_vars.extend(self.collect_free_variables(&pipe_expr.expr, bound_vars));

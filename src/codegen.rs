@@ -1612,13 +1612,16 @@ impl WasmCodeGen {
                 self.output.push_str("    i32.const 8\n");
                 self.output.push_str("    call $allocate\n");
                 self.output.push_str("    local.tee $match_tmp\n");
-                
+
                 // Store tag (0 for None)
                 self.output.push_str("    i32.const 0\n");
                 self.output.push_str("    i32.store\n");
-                
+
                 // Leave pointer on stack
                 self.output.push_str("    local.get $match_tmp\n");
+            }
+            Expr::ScopeCompose(sc) => {
+                self.generate_scope_compose_expr(sc)?;
             }
         }
         Ok(())
@@ -1743,14 +1746,66 @@ impl WasmCodeGen {
         // For now, return empty list
         Ok(Vec::new())
     }
-    
+
+    fn generate_scope_compose_expr(&mut self, sc: &ScopeComposeExpr) -> Result<(), CodeGenError> {
+        // Generate a new lambda that composes both scopes
+        // For scope composition, we create a new function that:
+        // 1. Executes the left scope
+        // 2. Executes the right scope
+        // 3. Returns a merged result
+
+        let compose_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$scope_compose_{}", compose_idx);
+
+        self.function_table.push(func_name.clone());
+
+        // Generate the composed function
+        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+
+        // For now, just execute both scopes and return the right one
+        // TODO: Implement proper scope merging with binding composition
+        self.output.push_str("    ;; Execute left scope\n");
+        self.generate_expr(&sc.left)?;
+        self.output.push_str("    drop ;; discard left result for now\n");
+
+        self.output.push_str("    ;; Execute right scope\n");
+        self.generate_expr(&sc.right)?;
+        self.output.push_str("    ;; Return right result\n");
+
+        self.output.push_str("  )\n");
+
+        // Return function table index
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
     fn generate_binary_expr(&mut self, binary: &BinaryExpr) -> Result<(), CodeGenError> {
+        // Special case: detect scope composition (+ with lazy blocks/lambdas)
+        if binary.op == BinaryOp::Add {
+            let is_left_scope = matches!(&*binary.left,
+                Expr::Block(b) if b.is_lazy) || matches!(&*binary.left, Expr::Lambda(_));
+            let is_right_scope = matches!(&*binary.right,
+                Expr::Block(b) if b.is_lazy) || matches!(&*binary.right, Expr::Lambda(_));
+
+            if is_left_scope && is_right_scope {
+                // This is scope composition, delegate to scope compose
+                let sc = ScopeComposeExpr {
+                    left: binary.left.clone(),
+                    right: binary.right.clone(),
+                };
+                return self.generate_scope_compose_expr(&sc);
+            }
+        }
+
         // Generate left operand
         self.generate_expr(&binary.left)?;
-        
+
         // Generate right operand
         self.generate_expr(&binary.right)?;
-        
+
         // Generate operation
         match binary.op {
             BinaryOp::Add => self.output.push_str("    i32.add\n"),

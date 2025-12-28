@@ -371,7 +371,11 @@ pub enum Expr {
     // Context operations
     /// With expression for resource management
     With(WithExpr),
-    
+
+    // Scope composition
+    /// Scope composition (scopeA + scopeB) - combines bindings from both scopes
+    ScopeCompose(ScopeComposeExpr),
+
     // Lifetime scope
     /// With lifetime expression for temporal scope management
     WithLifetime(WithLifetimeExpr),
@@ -671,6 +675,25 @@ pub enum PipeTarget {
 pub struct WithExpr {
     pub contexts: Vec<String>,
     pub body: BlockExpr,
+}
+
+/// Scope composition expression.
+///
+/// Combines two scopes by merging their bindings and executing them in parallel.
+///
+/// # Example
+///
+/// ```restrict
+/// val scopeA = { val x = 10; val y = 20 }
+/// val scopeB = { val z = 30 }
+/// val combined = scopeA + scopeB  // Has bindings: x, y, z
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeComposeExpr {
+    /// Left scope
+    pub left: Box<Expr>,
+    /// Right scope
+    pub right: Box<Expr>,
 }
 
 /// With lifetime expression for temporal scope management.

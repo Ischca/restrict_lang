@@ -335,7 +335,9 @@ pub enum Expr {
     // Identifiers
     /// Variable or function reference
     Ident(String),
-    
+    /// Implicit lambda parameter `it`
+    It,
+
     // Record operations
     /// Record literal construction
     RecordLit(RecordLit),
@@ -716,6 +718,8 @@ pub struct AssignStmt {
 pub struct LambdaExpr {
     pub params: Vec<String>,
     pub body: Box<Expr>,
+    /// Whether this lambda uses the implicit parameter `it`
+    pub has_implicit_param: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

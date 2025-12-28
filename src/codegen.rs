@@ -1353,6 +1353,17 @@ impl WasmCodeGen {
                     return Err(CodeGenError::UndefinedVariable(name.clone()));
                 }
             }
+            Expr::It => {
+                // 'it' is treated like a local variable named "it"
+                let it_name = "it".to_string();
+                if self.in_lambda_with_captures && self.captured_vars.contains(&it_name) {
+                    self.output.push_str("    local.get $it_captured\n");
+                } else if let Some(_idx) = self.lookup_local("it") {
+                    self.output.push_str("    local.get $it\n");
+                } else {
+                    return Err(CodeGenError::UndefinedVariable(it_name));
+                }
+            }
             Expr::Binary(binary) => {
                 self.generate_binary_expr(binary)?;
             }

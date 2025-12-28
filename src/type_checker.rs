@@ -1453,6 +1453,11 @@ impl TypeChecker {
                     }
                 }
             },
+            Expr::It => {
+                // TODO: Implement proper 'it' support with lambda context tracking
+                // For now, treat it like a regular variable lookup
+                self.lookup_var("it")
+            },
             Expr::RecordLit(record_lit) => self.check_record_lit(record_lit),
             Expr::Clone(clone_expr) => self.check_clone_expr(clone_expr),
             Expr::Freeze(expr) => self.check_freeze_expr(expr),
@@ -3580,6 +3585,17 @@ impl TypeChecker {
                     for scope in self.var_env.iter().rev() {
                         if scope.contains_key(name) {
                             free_vars.insert(name.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+            Expr::It => {
+                // 'it' is like an identifier - check if it's bound
+                if !bound_vars.contains("it") {
+                    for scope in self.var_env.iter().rev() {
+                        if scope.contains_key("it") {
+                            free_vars.insert("it".to_string());
                             break;
                         }
                     }

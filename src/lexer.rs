@@ -96,7 +96,9 @@ pub enum Token {
     Await,
     /// `spawn` keyword for spawning tasks
     Spawn,
-    
+    /// `it` keyword for implicit lambda parameter
+    It,
+
     // Identifiers and Literals
     /// Identifier (variable/function name)
     Ident(String),
@@ -185,6 +187,7 @@ impl fmt::Display for Token {
             Token::Lifetime => write!(f, "lifetime"),
             Token::Await => write!(f, "await"),
             Token::Spawn => write!(f, "spawn"),
+            Token::It => write!(f, "it"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::IntLit(n) => write!(f, "{}", n),
             Token::FloatLit(n) => write!(f, "{}", n),
@@ -276,6 +279,7 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "lifetime" => Token::Lifetime,
         "await" => Token::Await,
         "spawn" => Token::Spawn,
+        "it" => Token::It,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))

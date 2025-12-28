@@ -67,6 +67,7 @@ fn ident(input: &str) -> ParseResult<String> {
     let (input, token) = lex_token(input)?;
     match token {
         Token::Ident(name) => Ok((input, name)),
+        Token::It => Ok((input, "it".to_string())),  // Allow 'it' as an identifier in binding contexts
         _ => Err(nom::Err::Error(nom::error::Error::new(original_input, nom::error::ErrorKind::Tag)))
     }
 }
@@ -502,6 +503,7 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         array_lit,  // Try array literal before list
         list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
+        value(Expr::It, expect_token(Token::It)),  // 'it' keyword
         map(ident, Expr::Ident),
         // Unit literal () - must come before general parenthesized expressions
         value(
@@ -571,6 +573,7 @@ fn lambda_expr(input: &str) -> ParseResult<Expr> {
     Ok((input, Expr::Lambda(LambdaExpr {
         params,
         body: Box::new(body),
+        has_implicit_param: false,  // TODO: detect 'it' usage
     })))
 }
 

@@ -376,6 +376,10 @@ pub enum Expr {
     /// Scope composition (scopeA + scopeB) - combines bindings from both scopes
     ScopeCompose(ScopeComposeExpr),
 
+    // Scope concatenation
+    /// Scope concatenation (scopeA scopeB) - sequential execution of scopes
+    ScopeConcat(ScopeConcatExpr),
+
     // Lifetime scope
     /// With lifetime expression for temporal scope management
     WithLifetime(WithLifetimeExpr),
@@ -693,6 +697,14 @@ pub struct ScopeComposeExpr {
     /// Left scope
     pub left: Box<Expr>,
     /// Right scope
+    pub right: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeConcatExpr {
+    /// Left scope (executed first)
+    pub left: Box<Expr>,
+    /// Right scope (executed second, may receive result from left)
     pub right: Box<Expr>,
 }
 

@@ -1342,6 +1342,7 @@ fn expr_uses_it(expr: &Expr) -> bool {
         Expr::PrototypeClone(proto) => proto.updates.fields.iter().any(|f| expr_uses_it(&f.value)),
         Expr::With(with) => block_uses_it(&with.body.statements, &with.body.expr),
         Expr::ScopeCompose(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
+        Expr::ScopeConcat(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
         Expr::WithLifetime(wl) => block_uses_it(&wl.body.statements, &wl.body.expr),
         Expr::Await(inner) | Expr::Spawn(inner) => expr_uses_it(inner),
         // Literals and identifiers don't use 'it'

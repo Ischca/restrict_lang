@@ -1468,6 +1468,7 @@ impl TypeChecker {
             Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
             Expr::With(with) => self.check_with_expr(with),
             Expr::ScopeCompose(sc) => self.check_scope_compose_expr(sc),
+            Expr::ScopeConcat(sc) => self.check_scope_concat_expr(sc),
             Expr::WithLifetime(with_lifetime) => self.check_with_lifetime_expr(with_lifetime),
             Expr::Then(then) => self.check_then_expr(then),
             Expr::While(while_expr) => self.check_while_expr(while_expr),
@@ -1762,7 +1763,27 @@ impl TypeChecker {
     }
     
     fn check_call_expr(&mut self, call: &CallExpr) -> Result<TypedType, TypeError> {
-        // First check the function expression type
+        // Special case: Detect scope concatenation
+        // If function is a lazy block and all args are lazy blocks, treat as scope concatenation
+        let func_type = self.check_expr_with_expected(&call.function, None)?;
+
+        if let TypedType::Function { params: func_params, .. } = &func_type {
+            if func_params.is_empty() && call.args.len() == 1 {
+                // Check if the single argument is also a function type (lazy block)
+                let arg_type = self.check_expr_with_expected(&call.args[0], None)?;
+                if matches!(arg_type, TypedType::Function { .. }) {
+                    // This is scope concatenation: { a } { b }
+                    // Treat as ScopeConcat
+                    let sc = ScopeConcatExpr {
+                        left: call.function.clone(),
+                        right: call.args[0].clone(),
+                    };
+                    return self.check_scope_concat_expr(&sc);
+                }
+            }
+        }
+
+        // Normal function call processing
         match &*call.function {
             Expr::Ident(name) => {
                 // First check if it's a variable that holds a function
@@ -3083,6 +3104,32 @@ impl TypeChecker {
             }
         }
     }
+
+    fn check_scope_concat_expr(&mut self, sc: &ScopeConcatExpr) -> Result<TypedType, TypeError> {
+        // Check both left and right expressions
+        let left_type = self.check_expr_with_expected(&sc.left, None)?;
+        let right_type = self.check_expr_with_expected(&sc.right, None)?;
+
+        // For scope concatenation, left executes first, then right
+        // Both should be function types (lazy blocks)
+        // The result is a function that sequences both scopes
+        match (&left_type, &right_type) {
+            (TypedType::Function { .. },
+             TypedType::Function { return_type: right_ret, .. }) => {
+                // Return a function type that returns the right scope's result
+                Ok(TypedType::Function {
+                    params: vec![],
+                    return_type: right_ret.clone(),
+                })
+            }
+            _ => {
+                Err(TypeError::TypeMismatch {
+                    expected: "Function type for scope concatenation".to_string(),
+                    found: format!("{:?} ; {:?}", left_type, right_type),
+                })
+            }
+        }
+    }
 }
 
 // Standalone type_check function for public API
@@ -3758,6 +3805,10 @@ impl TypeChecker {
                 free_vars.extend(self.collect_free_variables_in_block(&with_expr.body, bound_vars));
             }
             Expr::ScopeCompose(sc) => {
+                free_vars.extend(self.collect_free_variables(&sc.left, bound_vars));
+                free_vars.extend(self.collect_free_variables(&sc.right, bound_vars));
+            }
+            Expr::ScopeConcat(sc) => {
                 free_vars.extend(self.collect_free_variables(&sc.left, bound_vars));
                 free_vars.extend(self.collect_free_variables(&sc.right, bound_vars));
             }

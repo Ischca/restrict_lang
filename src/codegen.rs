@@ -1623,6 +1623,9 @@ impl WasmCodeGen {
             Expr::ScopeCompose(sc) => {
                 self.generate_scope_compose_expr(sc)?;
             }
+            Expr::ScopeConcat(sc) => {
+                self.generate_scope_concat_expr(sc)?;
+            }
         }
         Ok(())
     }
@@ -1782,6 +1785,42 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn generate_scope_concat_expr(&mut self, sc: &ScopeConcatExpr) -> Result<(), CodeGenError> {
+        // Generate a new lambda that concatenates both scopes
+        // For scope concatenation, we create a new function that:
+        // 1. Executes the left scope
+        // 2. Executes the right scope with access to left's result
+        // 3. Returns the right scope's result
+
+        let concat_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$scope_concat_{}", concat_idx);
+
+        self.function_table.push(func_name.clone());
+
+        // Generate the concatenated function
+        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+
+        // Execute left scope and discard result for now
+        // TODO: Make left's result available to right scope
+        self.output.push_str("    ;; Execute left scope\n");
+        self.generate_expr(&sc.left)?;
+        self.output.push_str("    drop ;; discard left result for now\n");
+
+        // Execute right scope
+        self.output.push_str("    ;; Execute right scope\n");
+        self.generate_expr(&sc.right)?;
+        self.output.push_str("    ;; Return right result\n");
+
+        self.output.push_str("  )\n");
+
+        // Return function table index
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
     fn generate_binary_expr(&mut self, binary: &BinaryExpr) -> Result<(), CodeGenError> {
         // Special case: detect scope composition (+ with lazy blocks/lambdas)
         if binary.op == BinaryOp::Add {
@@ -1837,11 +1876,29 @@ impl WasmCodeGen {
     }
     
     fn generate_call_expr(&mut self, call: &CallExpr) -> Result<(), CodeGenError> {
+        // Special case: Detect scope concatenation
+        // If function is a lazy block and single arg is also a lazy block, treat as scope concatenation
+        if call.args.len() == 1 {
+            let is_func_lazy = matches!(&*call.function,
+                Expr::Block(b) if b.is_lazy) || matches!(&*call.function, Expr::Lambda(_));
+            let is_arg_lazy = matches!(&*call.args[0],
+                Expr::Block(b) if b.is_lazy) || matches!(&*call.args[0], Expr::Lambda(_));
+
+            if is_func_lazy && is_arg_lazy {
+                // This is scope concatenation: { a } { b }
+                let sc = ScopeConcatExpr {
+                    left: call.function.clone(),
+                    right: call.args[0].clone(),
+                };
+                return self.generate_scope_concat_expr(&sc);
+            }
+        }
+
         // Generate arguments first
         for arg in &call.args {
             self.generate_expr(arg)?;
         }
-        
+
         // Handle function call
         if let Expr::Ident(func_name) = &*call.function {
             // Handle special built-in function 'some'

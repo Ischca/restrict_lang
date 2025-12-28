@@ -1260,10 +1260,11 @@ impl WasmCodeGen {
         Ok(())
     }
 
-    /// Generate a lazy block as a zero-parameter lambda/closure
+    /// Generate a lazy block as a lambda/closure (with optional implicit 'it' parameter)
     fn generate_lazy_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
-        // A lazy block is generated as a lambda with no parameters
-        // We need to create a function in the function table and return its index
+        // A lazy block is generated as a lambda
+        // If has_implicit_it is true, it has one parameter named 'it'
+        // Otherwise, it has no parameters
 
         let lambda_idx = self.lambda_counter;
         self.lambda_counter += 1;
@@ -1277,10 +1278,20 @@ impl WasmCodeGen {
         self.function_table.push(func_name.clone());
 
         // Generate the lambda function definition
-        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+        // Add 'it' parameter if block uses implicit 'it'
+        if block.has_implicit_it {
+            self.output.push_str(&format!("\n  (func {} (param $it i32) (result i32)\n", func_name));
+        } else {
+            self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+        }
 
         // Create a new scope for the lambda
         self.push_scope();
+
+        // Add 'it' to local scope if needed
+        if block.has_implicit_it {
+            self.add_local("it", 0);  // 'it' is parameter 0
+        }
 
         // Generate block body (as eager block now, since we're inside the lambda function)
         // Create a modified block that is eager

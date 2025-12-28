@@ -1961,9 +1961,17 @@ impl TypeChecker {
     
     fn check_block_expr_with_expected(&mut self, block: &BlockExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         self.push_scope();
-        
+
+        // If this block has an implicit 'it' parameter, add it to the scope
+        // For now, we'll give it a placeholder type that we'll infer later
+        if block.has_implicit_it {
+            // TODO: Infer the type of 'it' from context
+            // For now, use Int32 as a default
+            self.bind_var("it".to_string(), TypedType::Int32, false)?;
+        }
+
         let mut last_expr_type = None;
-        
+
         for (i, stmt) in block.statements.iter().enumerate() {
             match stmt {
                 Stmt::Binding(bind) => self.check_bind_decl(bind)?,
@@ -1990,10 +1998,17 @@ impl TypeChecker {
 
         self.pop_scope();
 
-        // If this is a lazy block, wrap the type in a function type: () -> T
+        // If this is a lazy block, wrap the type in a function type
         if block.is_lazy {
+            let params = if block.has_implicit_it {
+                // Block has implicit 'it' parameter
+                vec![TypedType::Int32]  // TODO: Infer actual type
+            } else {
+                vec![]  // No parameters
+            };
+
             Ok(TypedType::Function {
-                params: vec![],  // No parameters for a simple lazy block
+                params,
                 return_type: Box::new(result_type),
             })
         } else {

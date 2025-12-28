@@ -292,11 +292,14 @@ fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
         }
     }
     
+    // Detect if the block uses 'it' anywhere
+    let has_implicit_it = block_uses_it(&statements, &final_expr);
+
     Ok((remaining, BlockExpr {
         statements,
         expr: final_expr,
         is_lazy,
-        has_implicit_it: false,  // TODO: detect 'it' usage in Phase 2.5
+        has_implicit_it,
     }))
 }
 
@@ -1267,6 +1270,84 @@ pub fn parse_program(input: &str) -> ParseResult<Program> {
     }
     
     Ok((remaining, Program { imports, declarations }))
+}
+
+/// Helper function to detect if a block uses the 'it' keyword
+fn block_uses_it(statements: &[Stmt], final_expr: &Option<Box<Expr>>) -> bool {
+    // Check all statements
+    for stmt in statements {
+        if stmt_uses_it(stmt) {
+            return true;
+        }
+    }
+
+    // Check final expression
+    if let Some(expr) = final_expr {
+        if expr_uses_it(expr) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if a statement uses 'it'
+fn stmt_uses_it(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Binding(bind) => expr_uses_it(&bind.value),
+        Stmt::Assignment(assign) => expr_uses_it(&assign.value),
+        Stmt::Expr(expr) => expr_uses_it(expr),
+    }
+}
+
+/// Recursively check if an expression uses 'it'
+fn expr_uses_it(expr: &Expr) -> bool {
+    match expr {
+        Expr::It => true,
+        Expr::Binary(bin) => expr_uses_it(&bin.left) || expr_uses_it(&bin.right),
+        Expr::Call(call) => {
+            expr_uses_it(&call.function) || call.args.iter().any(|arg| expr_uses_it(arg))
+        }
+        Expr::Block(block) => block_uses_it(&block.statements, &block.expr),
+        Expr::Pipe(pipe) => {
+            expr_uses_it(&pipe.expr) ||
+            match &pipe.target {
+                PipeTarget::Expr(e) => expr_uses_it(e),
+                _ => false,
+            }
+        }
+        Expr::Then(then_expr) => {
+            expr_uses_it(&then_expr.condition) ||
+            block_uses_it(&then_expr.then_block.statements, &then_expr.then_block.expr) ||
+            then_expr.else_block.as_ref().map_or(false, |b| block_uses_it(&b.statements, &b.expr))
+        }
+        Expr::While(while_expr) => {
+            expr_uses_it(&while_expr.condition) ||
+            block_uses_it(&while_expr.body.statements, &while_expr.body.expr)
+        }
+        Expr::Match(match_expr) => {
+            expr_uses_it(&match_expr.expr) ||
+            match_expr.arms.iter().any(|arm| block_uses_it(&arm.body.statements, &arm.body.expr))
+        }
+        Expr::Lambda(lambda) => expr_uses_it(&lambda.body),
+        Expr::FieldAccess(obj, _) => expr_uses_it(obj),
+        Expr::ListLit(items) | Expr::ArrayLit(items) => items.iter().any(|item| expr_uses_it(item)),
+        Expr::Some(inner) => expr_uses_it(inner),
+        Expr::RecordLit(rec) => rec.fields.iter().any(|f| expr_uses_it(&f.value)),
+        Expr::Clone(clone) => {
+            expr_uses_it(&clone.base) ||
+            clone.updates.fields.iter().any(|f| expr_uses_it(&f.value))
+        }
+        Expr::Freeze(inner) => expr_uses_it(inner),
+        Expr::PrototypeClone(proto) => proto.updates.fields.iter().any(|f| expr_uses_it(&f.value)),
+        Expr::With(with) => block_uses_it(&with.body.statements, &with.body.expr),
+        Expr::WithLifetime(wl) => block_uses_it(&wl.body.statements, &wl.body.expr),
+        Expr::Await(inner) | Expr::Spawn(inner) => expr_uses_it(inner),
+        // Literals and identifiers don't use 'it'
+        Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) |
+        Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit |
+        Expr::Ident(_) | Expr::None | Expr::NoneTyped(_) => false,
+    }
 }
 
 #[cfg(test)]

@@ -58,9 +58,18 @@ jobs:
     
     - name: Build release
       run: cargo build --release
-    
+
     - name: Build Warder release
       run: cd warder && cargo build --release
+
+    - name: Install wasm-pack
+      run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+    - name: Add wasm32 target
+      run: rustup target add wasm32-unknown-unknown
+
+    - name: Build WASM
+      run: wasm-pack build --target web --out-dir web/pkg
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

@@ -82,6 +82,33 @@ The web compiler requires a modern browser with WebAssembly support:
 - Safari 11+
 - Edge 16+
 
+## CI/CD and GitHub Pages Deployment
+
+The playground is automatically built and deployed to GitHub Pages on every push to `main` branch.
+
+### Automatic Deployment
+
+The workflow (`.github/workflows/deploy-playground.yml`) does the following:
+
+1. Builds WASM using `wasm-pack`
+2. Copies web files to deployment directory
+3. Deploys to GitHub Pages
+
+### Manual Setup
+
+To enable GitHub Pages for your fork:
+
+1. Go to repository **Settings** > **Pages**
+2. Under "Build and deployment", select **GitHub Actions**
+3. The playground will be deployed automatically on next push to `main`
+
+### Deployment URL
+
+After deployment, the playground will be available at:
+```
+https://<username>.github.io/<repository>/
+```
+
 ## Development
 
 To modify the web compiler:

@@ -470,6 +470,7 @@ impl LanguageServer for RestrictLanguageServer {
                     more_trigger_character: Some(vec![";".to_string()]),
                 }),
                 rename_provider: Some(OneOf::Left(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 document_link_provider: None,
                 color_provider: None,
                 folding_range_provider: None,
@@ -1020,6 +1021,110 @@ impl LanguageServer for RestrictLanguageServer {
             _ => Ok(None),
         }
     }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+
+        let documents = self.documents.read().unwrap();
+        if let Some(text) = documents.get(uri) {
+            let parse_result = parse_program_recovering(text);
+
+            // Type check to get symbol table
+            let mut type_checker = TypeChecker::new();
+            let _ = type_checker.check_program_collecting(&parse_result.program);
+
+            let mut hints = Vec::new();
+
+            // Generate inlay hints from symbol table
+            for symbol in type_checker.symbols() {
+                if let Some(span) = symbol.def_span {
+                    // Only show hints for variables and parameters (not functions)
+                    if symbol.kind == crate::type_checker::SymbolKind::Variable
+                        || symbol.kind == crate::type_checker::SymbolKind::Parameter
+                    {
+                        let (line, col) = span.to_line_col(text);
+
+                        // Position after the variable name
+                        let end_pos = Position::new(line as u32, (col + symbol.name.len()) as u32);
+
+                        // Build hint label parts
+                        let mut label_parts = vec![
+                            InlayHintLabelPart {
+                                value: format!(": {}", symbol.type_display()),
+                                tooltip: Some(InlayHintLabelPartTooltip::String(
+                                    format!("Type: {}", symbol.type_display())
+                                )),
+                                location: None,
+                                command: None,
+                            }
+                        ];
+
+                        // Add mutability indicator
+                        if symbol.mutable {
+                            label_parts.push(InlayHintLabelPart {
+                                value: " (mut)".to_string(),
+                                tooltip: Some(InlayHintLabelPartTooltip::String(
+                                    "This binding is mutable".to_string()
+                                )),
+                                location: None,
+                                command: None,
+                            });
+                        }
+
+                        // Add affine status for non-Copy types
+                        if !is_copy_type(&symbol.ty) {
+                            let affine_label = if symbol.used {
+                                " [consumed]"
+                            } else {
+                                " [available]"
+                            };
+                            label_parts.push(InlayHintLabelPart {
+                                value: affine_label.to_string(),
+                                tooltip: Some(InlayHintLabelPartTooltip::String(
+                                    if symbol.used {
+                                        "This value has been consumed (affine type)".to_string()
+                                    } else {
+                                        "This value is still available for use".to_string()
+                                    }
+                                )),
+                                location: None,
+                                command: None,
+                            });
+                        }
+
+                        hints.push(InlayHint {
+                            position: end_pos,
+                            label: InlayHintLabel::LabelParts(label_parts),
+                            kind: Some(InlayHintKind::TYPE),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: Some(true),
+                            padding_right: Some(false),
+                            data: None,
+                        });
+                    }
+                }
+            }
+
+            if !hints.is_empty() {
+                return Ok(Some(hints));
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+/// Helper to check if a type is Copy (doesn't need affine tracking)
+fn is_copy_type(ty: &crate::type_checker::TypedType) -> bool {
+    use crate::type_checker::TypedType;
+    matches!(ty,
+        TypedType::Int32 |
+        TypedType::Float64 |
+        TypedType::Boolean |
+        TypedType::Char |
+        TypedType::Unit
+    )
 }
 
 pub async fn start_lsp_server() {

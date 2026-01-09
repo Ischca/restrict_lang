@@ -27,6 +27,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::lexer::Span;
 use crate::lifetime_inference::LifetimeInference;
+use crate::diagnostic::{Diagnostic, Severity};
 use thiserror::Error;
 
 /// Type checking errors.
@@ -154,6 +155,154 @@ impl std::error::Error for SpannedTypeError {
 impl From<TypeError> for SpannedTypeError {
     fn from(error: TypeError) -> Self {
         Self::unspanned(error)
+    }
+}
+
+impl SpannedTypeError {
+    /// Converts this error to a rich Diagnostic for Rust-style output.
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let (code, message, notes, help) = match &self.error {
+            TypeError::UndefinedVariable(name) => (
+                "E0001",
+                format!("cannot find value `{}` in this scope", name),
+                vec![],
+                vec![format!("consider declaring `{}` with `let`", name)],
+            ),
+            TypeError::TypeMismatch { expected, found } => (
+                "E0002",
+                format!("mismatched types"),
+                vec![format!("expected `{}`, found `{}`", expected, found)],
+                vec![],
+            ),
+            TypeError::AffineViolation(name) => (
+                "E0003",
+                format!("use of moved value: `{}`", name),
+                vec![
+                    "affine types can only be used once".to_string(),
+                ],
+                vec![
+                    "use `.clone` to create a copy before the first use".to_string(),
+                    "or restructure your code to only use the value once".to_string(),
+                ],
+            ),
+            TypeError::ImmutableReassignment(name) => (
+                "E0004",
+                format!("cannot assign twice to immutable variable `{}`", name),
+                vec![],
+                vec![format!("consider making `{}` mutable with `mut`", name)],
+            ),
+            TypeError::UnknownType(name) => (
+                "E0005",
+                format!("cannot find type `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or import the type".to_string()],
+            ),
+            TypeError::UnknownField { record, field } => (
+                "E0006",
+                format!("no field `{}` on type `{}`", field, record),
+                vec![],
+                vec!["available fields: ...".to_string()], // TODO: list available fields
+            ),
+            TypeError::CloneFrozenRecord => (
+                "E0007",
+                "cannot clone a frozen (immutable) record".to_string(),
+                vec!["frozen records cannot be cloned because they are already immutable".to_string()],
+                vec![],
+            ),
+            TypeError::FreezeAlreadyFrozen => (
+                "E0008",
+                "cannot freeze an already frozen record".to_string(),
+                vec!["the record is already immutable".to_string()],
+                vec![],
+            ),
+            TypeError::UndefinedRecord(name) => (
+                "E0009",
+                format!("cannot find record `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or define the record".to_string()],
+            ),
+            TypeError::UndefinedFunction(name) => (
+                "E0010",
+                format!("cannot find function `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or define the function".to_string()],
+            ),
+            TypeError::ArityMismatch { expected, found } => (
+                "E0011",
+                format!("this function takes {} argument{} but {} {} supplied",
+                    expected,
+                    if *expected == 1 { "" } else { "s" },
+                    found,
+                    if *found == 1 { "was" } else { "were" }
+                ),
+                vec![],
+                vec![],
+            ),
+            TypeError::UnavailableContext(name) => (
+                "E0012",
+                format!("context `{}` is not available in this scope", name),
+                vec![],
+                vec!["ensure the context is bound with `with` before use".to_string()],
+            ),
+            TypeError::UnsupportedFeature(desc) => (
+                "E0013",
+                format!("unsupported feature: {}", desc),
+                vec![],
+                vec![],
+            ),
+            TypeError::NotDerivedFrom(derived, base) => (
+                "E0014",
+                format!("type `{}` does not derive from `{}`", derived, base),
+                vec![],
+                vec![],
+            ),
+            TypeError::CannotCloneSealed(name) => (
+                "E0015",
+                format!("cannot clone sealed prototype `{}`", name),
+                vec!["sealed prototypes cannot be cloned".to_string()],
+                vec![],
+            ),
+            TypeError::DerivationTooDeep(depth) => (
+                "E0016",
+                format!("derivation chain too deep: {} > 3", depth),
+                vec!["maximum derivation depth is 3".to_string()],
+                vec!["consider flattening your type hierarchy".to_string()],
+            ),
+            TypeError::TemporalConstraintViolation(desc) => (
+                "E0017",
+                format!("temporal constraint violation: {}", desc),
+                vec![],
+                vec![],
+            ),
+            TypeError::TemporalEscape { temporal, message } => (
+                "E0018",
+                message.clone(),
+                vec![format!("temporal variable `{}` escapes its scope", temporal)],
+                vec!["ensure temporally-bound values don't outlive their scope".to_string()],
+            ),
+            TypeError::InvalidTemporalConstraint(outer, inner) => (
+                "E0019",
+                format!("invalid temporal constraint"),
+                vec![format!("`{}` cannot be used within `{}`", outer, inner)],
+                vec![],
+            ),
+        };
+
+        let mut diag = Diagnostic::error(message).with_code(code);
+
+        if let Some(span) = self.span {
+            diag = diag.with_label(span, "");
+        }
+
+        for note in notes {
+            diag = diag.with_note(note);
+        }
+
+        for h in help {
+            diag = diag.with_help(h);
+        }
+
+        diag
     }
 }
 

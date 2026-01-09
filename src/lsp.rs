@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-use crate::{lex, parse_program, TypeChecker};
+use crate::TypeChecker;
 use crate::lexer::Span;
-use crate::parser::{parse_program_with_errors, parse_program_recovering};
+use crate::parser::parse_program_recovering;
+use crate::diagnostic::{Diagnostic as RichDiagnostic, DiagnosticBag};
+use crate::diagnostic::lsp_integration::span_to_range;
 
 #[derive(Debug)]
 pub struct RestrictLanguageServer {
@@ -20,8 +22,8 @@ impl RestrictLanguageServer {
         }
     }
 
-    fn get_diagnostics(&self, _uri: &Url, text: &str) -> Vec<Diagnostic> {
-        let mut diagnostics = Vec::new();
+    fn get_diagnostics(&self, uri: &Url, text: &str) -> Vec<Diagnostic> {
+        let mut bag = DiagnosticBag::new();
 
         // Lexing with span information
         match crate::lexer::lex_spanned_tokens(text) {
@@ -29,19 +31,12 @@ impl RestrictLanguageServer {
                 // Lexing succeeded
             }
             Err((msg, span)) => {
-                let range = self.span_to_range(text, &span);
-                diagnostics.push(Diagnostic {
-                    range,
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    code: None,
-                    code_description: None,
-                    source: Some("restrict-lang".to_string()),
-                    message: format!("Lexer error: {}", msg),
-                    related_information: None,
-                    tags: None,
-                    data: None,
-                });
-                return diagnostics;
+                bag.add(
+                    RichDiagnostic::error(format!("Lexer error: {}", msg))
+                        .with_code("L0001")
+                        .with_label(span, "invalid token")
+                );
+                return bag.to_lsp(text, uri);
             }
         }
 
@@ -50,46 +45,23 @@ impl RestrictLanguageServer {
 
         // Add all parse errors as diagnostics
         for error in &parse_result.errors {
-            let range = self.span_to_range(text, &error.span);
-            diagnostics.push(Diagnostic {
-                range,
-                severity: Some(DiagnosticSeverity::ERROR),
-                code: None,
-                code_description: None,
-                source: Some("restrict-lang".to_string()),
-                message: error.message.clone(),
-                related_information: None,
-                tags: None,
-                data: None,
-            });
+            bag.add(
+                RichDiagnostic::error(&error.message)
+                    .with_code("P0001")
+                    .with_label(error.span, "")
+            );
         }
 
         // Type check the (possibly partial) AST and collect all errors with spans
         let mut type_checker = TypeChecker::new();
         let type_errors = type_checker.check_program_collecting(&parse_result.program);
 
+        // Convert type errors to rich diagnostics
         for type_error in type_errors {
-            let range = if let Some(span) = type_error.span {
-                self.span_to_range(text, &span)
-            } else {
-                // Fallback to beginning of file if no span available
-                Range::new(Position::new(0, 0), Position::new(0, 10))
-            };
-
-            diagnostics.push(Diagnostic {
-                range,
-                severity: Some(DiagnosticSeverity::ERROR),
-                code: None,
-                code_description: None,
-                source: Some("restrict-lang".to_string()),
-                message: format!("Type error: {}", type_error.error),
-                related_information: None,
-                tags: None,
-                data: None,
-            });
+            bag.add(type_error.to_diagnostic());
         }
 
-        diagnostics
+        bag.to_lsp(text, uri)
     }
 
     /// Converts a byte-offset Span to an LSP Range (line/column).

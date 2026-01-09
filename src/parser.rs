@@ -67,23 +67,51 @@ fn ident(input: &str) -> ParseResult<String> {
     let (input, token) = lex_token(input)?;
     match token {
         Token::Ident(name) => Ok((input, name)),
+        Token::It => Ok((input, "it".to_string())),  // Allow 'it' as an identifier in binding contexts
         _ => Err(nom::Err::Error(nom::error::Error::new(original_input, nom::error::ErrorKind::Tag)))
     }
 }
 
+/// Helper to parse a type name (identifier or Unit keyword)
+fn type_name(input: &str) -> ParseResult<String> {
+    let (input, token) = lex_token(input)?;
+    match token {
+        Token::Unit => Ok((input, "Unit".to_string())),
+        Token::Ident(name) => Ok((input, name)),
+        _ => Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))
+    }
+}
+
 /// Parses a type expression.
-/// 
+///
 /// Handles both simple types, generic types, and temporal types.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// // Simple types: i32, String, Point
 /// // Generic types: Vec<i32>, Map<String, Value>
 /// // Temporal types: File<~f>, Transaction<~tx, ~db>
 /// ```
 fn parse_type(input: &str) -> ParseResult<Type> {
-    let (input, name) = ident(input)?;
+    // Try to parse function type first: |Type1, Type2| -> ReturnType
+    if let Ok((input_after_bar, _)) = expect_token(Token::Bar)(input) {
+        // Parse parameter types
+        let (input, param_types) = delimited(
+            expect_token(Token::Bar),
+            separated_list0(expect_token(Token::Comma), parse_type),
+            expect_token(Token::Bar)
+        )(input)?;
+
+        // Parse arrow and return type
+        let (input, _) = expect_token(Token::ThinArrow)(input)?;
+        let (input, return_type) = parse_type(input)?;
+
+        return Ok((input, Type::Function(param_types, Box::new(return_type))));
+    }
+
+    // Parse type name - handle both identifiers and the Unit keyword
+    let (input, name) = type_name(input)?;
     let (input, type_params) = opt(
         delimited(
             expect_token(Token::Lt),
@@ -107,13 +135,13 @@ fn parse_type(input: &str) -> ParseResult<Type> {
             expect_token(Token::Gt)
         )
     )(input)?;
-    
+
     match type_params {
         Some(params) => {
             // Check if all are temporal
             let all_temporal = params.iter().all(|(_, is_temporal)| *is_temporal);
             let all_regular = params.iter().all(|(_, is_temporal)| !*is_temporal);
-            
+
             if all_temporal {
                 // All temporal: File<~f>
                 Ok((input, Type::Temporal(name, params.into_iter().map(|(n, _)| n).collect())))
@@ -203,9 +231,16 @@ fn param(input: &str) -> ParseResult<Param> {
     Ok((input, Param { name, ty, context_bound }))
 }
 
-fn block_expr(input: &str) -> ParseResult<BlockExpr> {
+/// Parse a block expression with context-dependent evaluation mode.
+///
+/// # Parameters
+/// - `input`: The input string to parse
+/// - `is_lazy`: Whether this block should be lazy (true) or eager (false)
+///   - Lazy: block is a closure, can be stored and called later
+///   - Eager: block executes immediately
+fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    
+
     // Parse statements and expressions carefully
     let mut statements = Vec::new();
     let mut remaining = input;
@@ -257,10 +292,25 @@ fn block_expr(input: &str) -> ParseResult<BlockExpr> {
         }
     }
     
-    Ok((remaining, BlockExpr { 
-        statements, 
-        expr: final_expr 
+    // Detect if the block uses 'it' anywhere
+    let has_implicit_it = block_uses_it(&statements, &final_expr);
+
+    Ok((remaining, BlockExpr {
+        statements,
+        expr: final_expr,
+        is_lazy,
+        has_implicit_it,
     }))
+}
+
+/// Parse an eager block (default for function bodies, control flow, etc.)
+fn block_expr(input: &str) -> ParseResult<BlockExpr> {
+    block_expr_with_mode(input, false)  // eager by default
+}
+
+/// Parse a lazy block (for expression contexts)
+fn lazy_block_expr(input: &str) -> ParseResult<BlockExpr> {
+    block_expr_with_mode(input, true)  // lazy for closures
 }
 
 fn fun_decl(input: &str) -> ParseResult<FunDecl> {
@@ -405,7 +455,7 @@ pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, _) = expect_token(Token::Val)(input)?;
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression(input)?;  // Use normal expression parsing for binding values
+    let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to avoid consuming across statement boundaries
     Ok((input, BindDecl { 
         mutable: mutable.is_some(), 
         name, 
@@ -475,14 +525,20 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         array_lit,  // Try array literal before list
         list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
+        value(Expr::It, expect_token(Token::It)),  // 'it' keyword
         map(ident, Expr::Ident),
+        // Unit literal () - must come before general parenthesized expressions
+        value(
+            Expr::Unit,
+            tuple((expect_token(Token::LParen), expect_token(Token::RParen)))
+        ),
         delimited(
             expect_token(Token::LParen),
             expression,
             expect_token(Token::RParen)
         ),
         with_expr,
-        map(block_expr, Expr::Block)
+        map(lazy_block_expr, Expr::Block)  // Blocks in expression position are lazy
     ))(input)
 }
 
@@ -539,6 +595,7 @@ fn lambda_expr(input: &str) -> ParseResult<Expr> {
     Ok((input, Expr::Lambda(LambdaExpr {
         params,
         body: Box::new(body),
+        has_implicit_param: false,  // TODO: detect 'it' usage
     })))
 }
 
@@ -930,6 +987,16 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                     if let Ok((_, Token::Assign)) = lex_token(after_ident) {
                         return Ok((input, first));
                     }
+                    // Also stop before a bare identifier that might be a final expression
+                    // Only continue if there's a clear operator or call pattern
+                    // For now, conservatively stop before any identifier to avoid consuming final expressions
+                    return Ok((input, first));
+                }
+                // Check for unit literal () which might be a separate statement/expression
+                if let Ok((after_lparen, Token::LParen)) = lex_token(input) {
+                    if let Ok((_, Token::RParen)) = lex_token(after_lparen) {
+                        return Ok((input, first));
+                    }
                 }
                 // Check for closing brace
                 if let Ok((_, Token::RBrace)) = lex_token(input) {
@@ -1205,6 +1272,86 @@ pub fn parse_program(input: &str) -> ParseResult<Program> {
     Ok((remaining, Program { imports, declarations }))
 }
 
+/// Helper function to detect if a block uses the 'it' keyword
+fn block_uses_it(statements: &[Stmt], final_expr: &Option<Box<Expr>>) -> bool {
+    // Check all statements
+    for stmt in statements {
+        if stmt_uses_it(stmt) {
+            return true;
+        }
+    }
+
+    // Check final expression
+    if let Some(expr) = final_expr {
+        if expr_uses_it(expr) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if a statement uses 'it'
+fn stmt_uses_it(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Binding(bind) => expr_uses_it(&bind.value),
+        Stmt::Assignment(assign) => expr_uses_it(&assign.value),
+        Stmt::Expr(expr) => expr_uses_it(expr),
+    }
+}
+
+/// Recursively check if an expression uses 'it'
+fn expr_uses_it(expr: &Expr) -> bool {
+    match expr {
+        Expr::It => true,
+        Expr::Binary(bin) => expr_uses_it(&bin.left) || expr_uses_it(&bin.right),
+        Expr::Call(call) => {
+            expr_uses_it(&call.function) || call.args.iter().any(|arg| expr_uses_it(arg))
+        }
+        Expr::Block(block) => block_uses_it(&block.statements, &block.expr),
+        Expr::Pipe(pipe) => {
+            expr_uses_it(&pipe.expr) ||
+            match &pipe.target {
+                PipeTarget::Expr(e) => expr_uses_it(e),
+                _ => false,
+            }
+        }
+        Expr::Then(then_expr) => {
+            expr_uses_it(&then_expr.condition) ||
+            block_uses_it(&then_expr.then_block.statements, &then_expr.then_block.expr) ||
+            then_expr.else_block.as_ref().map_or(false, |b| block_uses_it(&b.statements, &b.expr))
+        }
+        Expr::While(while_expr) => {
+            expr_uses_it(&while_expr.condition) ||
+            block_uses_it(&while_expr.body.statements, &while_expr.body.expr)
+        }
+        Expr::Match(match_expr) => {
+            expr_uses_it(&match_expr.expr) ||
+            match_expr.arms.iter().any(|arm| block_uses_it(&arm.body.statements, &arm.body.expr))
+        }
+        Expr::Lambda(lambda) => expr_uses_it(&lambda.body),
+        Expr::FieldAccess(obj, _) => expr_uses_it(obj),
+        Expr::ListLit(items) | Expr::ArrayLit(items) => items.iter().any(|item| expr_uses_it(item)),
+        Expr::Some(inner) => expr_uses_it(inner),
+        Expr::RecordLit(rec) => rec.fields.iter().any(|f| expr_uses_it(&f.value)),
+        Expr::Clone(clone) => {
+            expr_uses_it(&clone.base) ||
+            clone.updates.fields.iter().any(|f| expr_uses_it(&f.value))
+        }
+        Expr::Freeze(inner) => expr_uses_it(inner),
+        Expr::PrototypeClone(proto) => proto.updates.fields.iter().any(|f| expr_uses_it(&f.value)),
+        Expr::With(with) => block_uses_it(&with.body.statements, &with.body.expr),
+        Expr::ScopeCompose(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
+        Expr::ScopeConcat(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
+        Expr::WithLifetime(wl) => block_uses_it(&wl.body.statements, &wl.body.expr),
+        Expr::Await(inner) | Expr::Spawn(inner) => expr_uses_it(inner),
+        // Literals and identifiers don't use 'it'
+        Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) |
+        Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit |
+        Expr::Ident(_) | Expr::None | Expr::NoneTyped(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1223,6 +1370,15 @@ mod tests {
         let (_, decl) = fun_decl(input).unwrap();
         assert_eq!(decl.name, "add");
         assert_eq!(decl.params.len(), 2);
+    }
+
+    #[test]
+    fn test_fun_decl_unit_return() {
+        let input = "fun simple: (x: Int) -> Unit = { () }";
+        let result = fun_decl(input);
+        assert!(result.is_ok(), "Failed to parse function with Unit return type: {:?}", result.err());
+        let (_, decl) = result.unwrap();
+        assert_eq!(decl.name, "simple");
     }
 
     #[test]

@@ -335,7 +335,9 @@ pub enum Expr {
     // Identifiers
     /// Variable or function reference
     Ident(String),
-    
+    /// Implicit lambda parameter `it`
+    It,
+
     // Record operations
     /// Record literal construction
     RecordLit(RecordLit),
@@ -369,7 +371,15 @@ pub enum Expr {
     // Context operations
     /// With expression for resource management
     With(WithExpr),
-    
+
+    // Scope composition
+    /// Scope composition (scopeA + scopeB) - combines bindings from both scopes
+    ScopeCompose(ScopeComposeExpr),
+
+    // Scope concatenation
+    /// Scope concatenation (scopeA scopeB) - sequential execution of scopes
+    ScopeConcat(ScopeConcatExpr),
+
     // Lifetime scope
     /// With lifetime expression for temporal scope management
     WithLifetime(WithLifetimeExpr),
@@ -671,6 +681,33 @@ pub struct WithExpr {
     pub body: BlockExpr,
 }
 
+/// Scope composition expression.
+///
+/// Combines two scopes by merging their bindings and executing them in parallel.
+///
+/// # Example
+///
+/// ```restrict
+/// val scopeA = { val x = 10; val y = 20 }
+/// val scopeB = { val z = 30 }
+/// val combined = scopeA + scopeB  // Has bindings: x, y, z
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeComposeExpr {
+    /// Left scope
+    pub left: Box<Expr>,
+    /// Right scope
+    pub right: Box<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeConcatExpr {
+    /// Left scope (executed first)
+    pub left: Box<Expr>,
+    /// Right scope (executed second, may receive result from left)
+    pub right: Box<Expr>,
+}
+
 /// With lifetime expression for temporal scope management.
 /// 
 /// # Example
@@ -697,6 +734,13 @@ pub struct WithLifetimeExpr {
 pub struct BlockExpr {
     pub statements: Vec<Stmt>,
     pub expr: Option<Box<Expr>>,
+    /// Whether this block is lazy (lambda-like) or eager (immediate execution)
+    /// - Lazy: block is a closure that can be stored and called later
+    /// - Eager: block executes immediately in place
+    pub is_lazy: bool,
+    /// Whether this block has an implicit 'it' parameter
+    /// Used for Kotlin-style lambdas: { it + 1 } instead of |x| { x + 1 }
+    pub has_implicit_it: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -716,6 +760,8 @@ pub struct AssignStmt {
 pub struct LambdaExpr {
     pub params: Vec<String>,
     pub body: Box<Expr>,
+    /// Whether this lambda uses the implicit parameter `it`
+    pub has_implicit_param: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

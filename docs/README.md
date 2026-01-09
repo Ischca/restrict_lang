@@ -6,15 +6,60 @@ This directory contains the documentation for Restrict Language, including both 
 
 ```
 docs/
-├── en/                 # English documentation
-├── ja/                 # Japanese documentation
-├── includes/           # Shared code snippets (using mdBook includes)
-├── code-examples/      # Standalone code example files
-├── theme/              # Custom CSS and JavaScript
-├── scripts/            # Documentation build and maintenance scripts
-├── book.toml           # mdBook configuration
-└── SUMMARY.md          # Table of contents
+├── en/                          # English documentation
+├── ja/                          # Japanese documentation
+├── includes/                    # Shared code snippets (using mdBook includes)
+├── code-examples/               # Standalone code example files
+├── theme/                       # Custom CSS and JavaScript
+├── scripts/                     # Documentation build and maintenance scripts
+├── archive/                     # Archived design documents
+│   └── temporal-design-exploration/  # TAT design history
+├── TEMPORAL_*.md                # Temporal Affine Types documentation
+├── TAT_IMPLEMENTATION_STATUS.md # TAT implementation status
+├── book.toml                    # mdBook configuration
+└── SUMMARY.md                   # Table of contents
 ```
+
+## Temporal Affine Types (TAT) Documentation
+
+Temporal Affine Types are Restrict Language's innovative feature for automatic resource management.
+
+### Official TAT Documentation
+
+| Document | Purpose |
+|----------|---------|
+| **[TEMPORAL_TYPES_FINAL_DESIGN.md](TEMPORAL_TYPES_FINAL_DESIGN.md)** | Authoritative specification |
+| **[TEMPORAL_DESIGN_GUIDE.md](TEMPORAL_DESIGN_GUIDE.md)** | Comprehensive design guide |
+| **[TEMPORAL_CONSTRAINT_RULES.md](TEMPORAL_CONSTRAINT_RULES.md)** | Formal constraint rules |
+| **[TEMPORAL_ASYNC_ROADMAP.md](TEMPORAL_ASYNC_ROADMAP.md)** | Implementation roadmap |
+| **[TEMPORAL_ASYNC_THEORY.md](TEMPORAL_ASYNC_THEORY.md)** | Theoretical foundation |
+| **[TAT_IMPLEMENTATION_STATUS.md](TAT_IMPLEMENTATION_STATUS.md)** | Current implementation status |
+| **[temporal_test_coverage.md](temporal_test_coverage.md)** | Test coverage summary |
+
+### TAT Syntax (Tilde `~`)
+
+```rust
+// ✅ CORRECT: Use tilde ~ for temporal type variables
+record File<~f> {
+    handle: FileHandle
+}
+
+record Transaction<~tx, ~db> where ~tx within ~db {
+    db: Database<~db>
+    txId: Int32
+}
+
+with lifetime<~io> {
+    val file = openFile("data.txt");
+    file.read()
+}  // Automatic cleanup
+```
+
+### Archived TAT Documents
+
+Design exploration documents with outdated syntax (`'t` or `` `t ``) have been moved to **[archive/temporal-design-exploration/](archive/temporal-design-exploration/)**.
+
+---
 
 ## Shared Code Examples
 

@@ -1046,6 +1046,8 @@ impl WasmCodeGen {
                     function: Box::new(Expr::Ident("println".to_string())), // Call built-in println
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
+                is_lazy: false,
+                has_implicit_it: false,
             },
             is_async: false,
         };
@@ -1066,6 +1068,8 @@ impl WasmCodeGen {
                     function: Box::new(Expr::Ident("print_int".to_string())), // Call built-in print_int
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
+                is_lazy: false,
+                has_implicit_it: false,
             },
             is_async: false,
         };
@@ -1205,13 +1209,22 @@ impl WasmCodeGen {
     }
     
     fn generate_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
-        self.generate_block_internal(block, false)
+        // If this is a lazy block, generate it as a closure
+        if block.is_lazy {
+            self.generate_lazy_block(block)
+        } else {
+            self.generate_block_internal(block, false)
+        }
     }
-    
+
     fn generate_block_as_expression(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
-        self.generate_block_internal(block, true)
+        if block.is_lazy {
+            self.generate_lazy_block(block)
+        } else {
+            self.generate_block_internal(block, true)
+        }
     }
-    
+
     fn generate_block_internal(&mut self, block: &BlockExpr, as_expression: bool) -> Result<(), CodeGenError> {
         // Generate statements
         for (i, stmt) in block.statements.iter().enumerate() {
@@ -1246,7 +1259,56 @@ impl WasmCodeGen {
         
         Ok(())
     }
-    
+
+    /// Generate a lazy block as a lambda/closure (with optional implicit 'it' parameter)
+    fn generate_lazy_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
+        // A lazy block is generated as a lambda
+        // If has_implicit_it is true, it has one parameter named 'it'
+        // Otherwise, it has no parameters
+
+        let lambda_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$lazy_block_{}", lambda_idx);
+
+        // Collect free variables from the block (for closure support)
+        // For now, we'll generate a simple lambda without captures
+        let free_vars: Vec<String> = vec![];  // TODO: implement free variable collection
+
+        // Add to function table
+        self.function_table.push(func_name.clone());
+
+        // Generate the lambda function definition
+        // Add 'it' parameter if block uses implicit 'it'
+        if block.has_implicit_it {
+            self.output.push_str(&format!("\n  (func {} (param $it i32) (result i32)\n", func_name));
+        } else {
+            self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+        }
+
+        // Create a new scope for the lambda
+        self.push_scope();
+
+        // Add 'it' to local scope if needed
+        if block.has_implicit_it {
+            self.add_local("it", 0);  // 'it' is parameter 0
+        }
+
+        // Generate block body (as eager block now, since we're inside the lambda function)
+        // Create a modified block that is eager
+        let mut eager_block = block.clone();
+        eager_block.is_lazy = false;
+        self.generate_block_internal(&eager_block, true)?;
+
+        self.pop_scope();
+        self.output.push_str("  )\n");
+
+        // Return the function index to the stack
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
     fn generate_binding(&mut self, bind: &BindDecl) -> Result<(), CodeGenError> {
         // Infer type of the value for variable tracking
         if let Expr::RecordLit(record_lit) = bind.value.as_ref() {
@@ -1351,6 +1413,17 @@ impl WasmCodeGen {
                     self.output.push_str(&format!("    call ${}\n", name));
                 } else {
                     return Err(CodeGenError::UndefinedVariable(name.clone()));
+                }
+            }
+            Expr::It => {
+                // 'it' is treated like a local variable named "it"
+                let it_name = "it".to_string();
+                if self.in_lambda_with_captures && self.captured_vars.contains(&it_name) {
+                    self.output.push_str("    local.get $it_captured\n");
+                } else if let Some(_idx) = self.lookup_local("it") {
+                    self.output.push_str("    local.get $it\n");
+                } else {
+                    return Err(CodeGenError::UndefinedVariable(it_name));
                 }
             }
             Expr::Binary(binary) => {
@@ -1474,8 +1547,10 @@ impl WasmCodeGen {
             Expr::While(while_expr) => {
                 self.generate_while_expr(while_expr)?;
             }
-            Expr::With(_) => {
-                return Err(CodeGenError::NotImplemented("with expressions".to_string()));
+            Expr::With(with) => {
+                // Phase 5: Generate 'with' as a lazy block (function)
+                // This makes it compatible with scope composition
+                self.generate_with_as_scope(with)?;
             }
             Expr::WithLifetime(with_lifetime) => {
                 self.generate_temporal_scope(&with_lifetime.lifetime, &with_lifetime.body)?;
@@ -1539,13 +1614,19 @@ impl WasmCodeGen {
                 self.output.push_str("    i32.const 8\n");
                 self.output.push_str("    call $allocate\n");
                 self.output.push_str("    local.tee $match_tmp\n");
-                
+
                 // Store tag (0 for None)
                 self.output.push_str("    i32.const 0\n");
                 self.output.push_str("    i32.store\n");
-                
+
                 // Leave pointer on stack
                 self.output.push_str("    local.get $match_tmp\n");
+            }
+            Expr::ScopeCompose(sc) => {
+                self.generate_scope_compose_expr(sc)?;
+            }
+            Expr::ScopeConcat(sc) => {
+                self.generate_scope_concat_expr(sc)?;
             }
         }
         Ok(())
@@ -1670,14 +1751,139 @@ impl WasmCodeGen {
         // For now, return empty list
         Ok(Vec::new())
     }
-    
+
+    fn generate_scope_compose_expr(&mut self, sc: &ScopeComposeExpr) -> Result<(), CodeGenError> {
+        // Generate a new lambda that composes both scopes
+        // For scope composition, we create a new function that:
+        // 1. Executes the left scope
+        // 2. Executes the right scope
+        // 3. Returns a merged result
+
+        let compose_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$scope_compose_{}", compose_idx);
+
+        self.function_table.push(func_name.clone());
+
+        // Generate the composed function
+        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+
+        // For now, just execute both scopes and return the right one
+        // TODO: Implement proper scope merging with binding composition
+        self.output.push_str("    ;; Execute left scope\n");
+        self.generate_expr(&sc.left)?;
+        self.output.push_str("    drop ;; discard left result for now\n");
+
+        self.output.push_str("    ;; Execute right scope\n");
+        self.generate_expr(&sc.right)?;
+        self.output.push_str("    ;; Return right result\n");
+
+        self.output.push_str("  )\n");
+
+        // Return function table index
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
+    fn generate_scope_concat_expr(&mut self, sc: &ScopeConcatExpr) -> Result<(), CodeGenError> {
+        // Generate a new lambda that concatenates both scopes
+        // For scope concatenation, we create a new function that:
+        // 1. Executes the left scope
+        // 2. Executes the right scope with access to left's result
+        // 3. Returns the right scope's result
+
+        let concat_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$scope_concat_{}", concat_idx);
+
+        self.function_table.push(func_name.clone());
+
+        // Generate the concatenated function
+        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+
+        // Execute left scope and discard result for now
+        // TODO: Make left's result available to right scope
+        self.output.push_str("    ;; Execute left scope\n");
+        self.generate_expr(&sc.left)?;
+        self.output.push_str("    drop ;; discard left result for now\n");
+
+        // Execute right scope
+        self.output.push_str("    ;; Execute right scope\n");
+        self.generate_expr(&sc.right)?;
+        self.output.push_str("    ;; Return right result\n");
+
+        self.output.push_str("  )\n");
+
+        // Return function table index
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
+    fn generate_with_as_scope(&mut self, with: &WithExpr) -> Result<(), CodeGenError> {
+        // Phase 5: Generate 'with' expression as a lazy block (function)
+        // This allows it to be composed with other scopes
+
+        let with_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$with_scope_{}", with_idx);
+
+        self.function_table.push(func_name.clone());
+
+        // Generate the with function
+        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+
+        // For now, contexts don't generate actual code - they're compile-time constructs
+        // Just execute the body block
+        // TODO: Generate proper context setup/teardown for Arena and other contexts
+        self.output.push_str("    ;; Execute body with contexts: ");
+        for (i, ctx) in with.contexts.iter().enumerate() {
+            if i > 0 {
+                self.output.push_str(", ");
+            }
+            self.output.push_str(ctx);
+        }
+        self.output.push_str("\n");
+
+        // Generate the body
+        self.generate_block_internal(&with.body, false)?;
+
+        self.output.push_str("  )\n");
+
+        // Return function table index
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
     fn generate_binary_expr(&mut self, binary: &BinaryExpr) -> Result<(), CodeGenError> {
+        // Special case: detect scope composition (+ with lazy blocks/lambdas)
+        if binary.op == BinaryOp::Add {
+            let is_left_scope = matches!(&*binary.left,
+                Expr::Block(b) if b.is_lazy) || matches!(&*binary.left, Expr::Lambda(_));
+            let is_right_scope = matches!(&*binary.right,
+                Expr::Block(b) if b.is_lazy) || matches!(&*binary.right, Expr::Lambda(_));
+
+            if is_left_scope && is_right_scope {
+                // This is scope composition, delegate to scope compose
+                let sc = ScopeComposeExpr {
+                    left: binary.left.clone(),
+                    right: binary.right.clone(),
+                };
+                return self.generate_scope_compose_expr(&sc);
+            }
+        }
+
         // Generate left operand
         self.generate_expr(&binary.left)?;
-        
+
         // Generate right operand
         self.generate_expr(&binary.right)?;
-        
+
         // Generate operation
         match binary.op {
             BinaryOp::Add => self.output.push_str("    i32.add\n"),
@@ -1709,11 +1915,29 @@ impl WasmCodeGen {
     }
     
     fn generate_call_expr(&mut self, call: &CallExpr) -> Result<(), CodeGenError> {
+        // Special case: Detect scope concatenation
+        // If function is a lazy block and single arg is also a lazy block, treat as scope concatenation
+        if call.args.len() == 1 {
+            let is_func_lazy = matches!(&*call.function,
+                Expr::Block(b) if b.is_lazy) || matches!(&*call.function, Expr::Lambda(_));
+            let is_arg_lazy = matches!(&*call.args[0],
+                Expr::Block(b) if b.is_lazy) || matches!(&*call.args[0], Expr::Lambda(_));
+
+            if is_func_lazy && is_arg_lazy {
+                // This is scope concatenation: { a } { b }
+                let sc = ScopeConcatExpr {
+                    left: call.function.clone(),
+                    right: call.args[0].clone(),
+                };
+                return self.generate_scope_concat_expr(&sc);
+            }
+        }
+
         // Generate arguments first
         for arg in &call.args {
             self.generate_expr(arg)?;
         }
-        
+
         // Handle function call
         if let Expr::Ident(func_name) = &*call.function {
             // Handle special built-in function 'some'

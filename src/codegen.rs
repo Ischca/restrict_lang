@@ -1043,13 +1043,15 @@ impl WasmCodeGen {
             body: BlockExpr {
                 statements: vec![],
                 expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("println".to_string())), // Call built-in println
+                    function: Box::new(Expr::Ident("println".to_string())),
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
                 is_lazy: false,
                 has_implicit_it: false,
+                span: None,
             },
             is_async: false,
+            span: None,
         };
         
         // Generate println_Int32 specialization
@@ -1065,13 +1067,15 @@ impl WasmCodeGen {
             body: BlockExpr {
                 statements: vec![],
                 expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("print_int".to_string())), // Call built-in print_int
+                    function: Box::new(Expr::Ident("print_int".to_string())),
                     args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
                 }))),
                 is_lazy: false,
                 has_implicit_it: false,
+                span: None,
             },
             is_async: false,
+            span: None,
         };
         
         // Generate the specialized functions

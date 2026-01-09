@@ -10,19 +10,55 @@
 //! - **OSV-friendly**: Structures support the Object-Subject-Verb syntax
 //! - **Generic-ready**: Support for type parameters and constraints
 //! - **Pattern-rich**: Comprehensive pattern matching support
+//! - **Position-aware**: AST nodes can carry source location information
 
 use std::fmt;
 
+// Re-export Span from lexer for convenience
+pub use crate::lexer::Span;
+
+/// A wrapper that associates a value with its source location.
+///
+/// This is useful for attaching span information to AST nodes
+/// without modifying their structure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spanned<T> {
+    /// The wrapped value
+    pub node: T,
+    /// Source location of this node
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    /// Creates a new spanned value.
+    pub fn new(node: T, span: Span) -> Self {
+        Self { node, span }
+    }
+
+    /// Creates a spanned value with a default (empty) span.
+    pub fn unspanned(node: T) -> Self {
+        Self { node, span: Span::default() }
+    }
+
+    /// Maps the inner value while preserving the span.
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Spanned<U> {
+        Spanned {
+            node: f(self.node),
+            span: self.span,
+        }
+    }
+}
+
 /// The root node of a Restrict Language program.
-/// 
+///
 /// A program consists of import declarations followed by top-level declarations.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```restrict
 /// import std.io.{println, readLine};
 /// import std.collections.*;
-/// 
+///
 /// fn main() {
 ///     "Hello, World!" |> println;
 /// }
@@ -33,12 +69,14 @@ pub struct Program {
     pub imports: Vec<ImportDecl>,
     /// Top-level declarations (functions, types, etc.)
     pub declarations: Vec<TopDecl>,
+    /// Source location of the entire program
+    pub span: Option<Span>,
 }
 
 /// An import declaration bringing external items into scope.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```restrict
 /// import std.io.*;                    // Import all
 /// import std.collections.{Vec, Map};  // Import specific items
@@ -50,6 +88,8 @@ pub struct ImportDecl {
     pub module_path: Vec<String>,
     /// What to import from the module
     pub items: ImportItems,
+    /// Source location
+    pub span: Option<Span>,
 }
 
 /// Specifies which items to import from a module.
@@ -139,6 +179,8 @@ pub struct RecordDecl {
     pub sealed: bool,
     /// Hash of parent prototype if this was created via clone
     pub parent_hash: Option<String>,
+    /// Source location
+    pub span: Option<Span>,
 }
 
 /// Field declaration within a record.
@@ -234,6 +276,8 @@ pub struct FunDecl {
     pub params: Vec<Param>,
     /// Function body
     pub body: BlockExpr,
+    /// Source location
+    pub span: Option<Span>,
 }
 
 /// Generic type parameter with optional bounds.
@@ -294,9 +338,9 @@ pub struct Param {
 }
 
 /// Binding declaration (let statement).
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```restrict
 /// let x = 42;              // Immutable binding
 /// let mut count = 0;       // Mutable binding
@@ -310,6 +354,8 @@ pub struct BindDecl {
     pub name: String,
     /// Initial value
     pub value: Box<Expr>,
+    /// Source location
+    pub span: Option<Span>,
 }
 
 /// Expression nodes in the AST.
@@ -741,6 +787,8 @@ pub struct BlockExpr {
     /// Whether this block has an implicit 'it' parameter
     /// Used for Kotlin-style lambdas: { it + 1 } instead of |x| { x + 1 }
     pub has_implicit_it: bool,
+    /// Source location
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

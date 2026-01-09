@@ -3,6 +3,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use crate::{lex, parse_program, TypeChecker};
+use crate::lexer::Span;
+use crate::parser::{parse_program_with_errors, parse_program_recovering};
 
 #[derive(Debug)]
 pub struct RestrictLanguageServer {
@@ -21,55 +23,79 @@ impl RestrictLanguageServer {
     fn get_diagnostics(&self, _uri: &Url, text: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        // Lexing
-        match lex(text) {
-            Ok((remaining, _tokens)) => {
-                // Only report unparsed input if it contains non-whitespace characters
-                if !remaining.trim().is_empty() {
-                    diagnostics.push(Diagnostic::new_simple(
-                        Range::new(Position::new(0, 0), Position::new(0, 1)),
-                        format!("Lexer: unparsed input remaining: '{}'", remaining.trim()),
-                    ));
-                }
+        // Lexing with span information
+        match crate::lexer::lex_spanned_tokens(text) {
+            Ok(_tokens) => {
+                // Lexing succeeded
             }
-            Err(e) => {
-                diagnostics.push(Diagnostic::new_simple(
-                    Range::new(Position::new(0, 0), Position::new(0, 1)),
-                    format!("Lexing error: {:?}", e),
-                ));
+            Err((msg, span)) => {
+                let range = self.span_to_range(text, &span);
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    code: None,
+                    code_description: None,
+                    source: Some("restrict-lang".to_string()),
+                    message: format!("Lexer error: {}", msg),
+                    related_information: None,
+                    tags: None,
+                    data: None,
+                });
                 return diagnostics;
             }
         }
 
-        // Parsing
-        match parse_program(text) {
-            Ok((remaining, ast)) => {
-                // Only report unparsed input if it contains non-whitespace characters
-                if !remaining.trim().is_empty() {
-                    diagnostics.push(Diagnostic::new_simple(
-                        Range::new(Position::new(0, 0), Position::new(0, 1)),
-                        format!("Parser: unparsed input remaining: '{}'", remaining.trim()),
-                    ));
-                }
+        // Use error-recovering parser to get all syntax errors
+        let parse_result = parse_program_recovering(text);
 
-                // Type checking
-                let mut type_checker = TypeChecker::new();
-                if let Err(e) = type_checker.check_program(&ast) {
-                    diagnostics.push(Diagnostic::new_simple(
-                        Range::new(Position::new(0, 0), Position::new(0, 1)),
-                        format!("Type error: {}", e),
-                    ));
-                }
-            }
-            Err(e) => {
-                diagnostics.push(Diagnostic::new_simple(
-                    Range::new(Position::new(0, 0), Position::new(0, 1)),
-                    format!("Parsing error: {:?}", e),
-                ));
-            }
+        // Add all parse errors as diagnostics
+        for error in &parse_result.errors {
+            let range = self.span_to_range(text, &error.span);
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: Some("restrict-lang".to_string()),
+                message: error.message.clone(),
+                related_information: None,
+                tags: None,
+                data: None,
+            });
+        }
+
+        // Type check the (possibly partial) AST
+        let mut type_checker = TypeChecker::new();
+        if let Err(e) = type_checker.check_program(&parse_result.program) {
+            // TODO: When type checker provides span info, use it here
+            // For now, try to find a reasonable location
+            let range = Range::new(Position::new(0, 0), Position::new(0, 10));
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: Some("restrict-lang".to_string()),
+                message: format!("Type error: {}", e),
+                related_information: None,
+                tags: None,
+                data: None,
+            });
         }
 
         diagnostics
+    }
+
+    /// Converts a byte-offset Span to an LSP Range (line/column).
+    fn span_to_range(&self, text: &str, span: &Span) -> Range {
+        let (start_line, start_col) = span.to_line_col(text);
+        let end_span = Span::new(span.end, span.end);
+        let (end_line, end_col) = end_span.to_line_col(text);
+
+        Range::new(
+            Position::new(start_line as u32, start_col as u32),
+            Position::new(end_line as u32, end_col as u32),
+        )
     }
 
     fn find_definition_at_position(&self, ast: &crate::ast::Program, text: &str, position: &Position) -> Option<Location> {

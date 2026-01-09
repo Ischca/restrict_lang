@@ -84,6 +84,9 @@ pub mod debug_visualizer;
 /// Module system for managing imports and exports
 pub mod module;
 
+/// Rust-style rich diagnostic system
+pub mod diagnostic;
+
 /// Development tools for debugging and analysis (non-WASM only)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev_tools;

@@ -25,7 +25,9 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::ast::*;
+use crate::lexer::Span;
 use crate::lifetime_inference::LifetimeInference;
+use crate::diagnostic::{Diagnostic, Severity};
 use thiserror::Error;
 
 /// Type checking errors.
@@ -114,6 +116,196 @@ pub enum TypeError {
     InvalidTemporalConstraint(String, String),
 }
 
+/// A type error with optional source location information.
+///
+/// This wrapper allows the type checker to report errors with precise
+/// source positions for better IDE integration.
+#[derive(Debug)]
+pub struct SpannedTypeError {
+    /// The type error
+    pub error: TypeError,
+    /// Source location where the error occurred
+    pub span: Option<Span>,
+}
+
+impl SpannedTypeError {
+    /// Creates a new spanned type error.
+    pub fn new(error: TypeError, span: Option<Span>) -> Self {
+        Self { error, span }
+    }
+
+    /// Creates an error without span information.
+    pub fn unspanned(error: TypeError) -> Self {
+        Self { error, span: None }
+    }
+}
+
+impl std::fmt::Display for SpannedTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
+impl std::error::Error for SpannedTypeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl From<TypeError> for SpannedTypeError {
+    fn from(error: TypeError) -> Self {
+        Self::unspanned(error)
+    }
+}
+
+impl SpannedTypeError {
+    /// Converts this error to a rich Diagnostic for Rust-style output.
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let (code, message, notes, help) = match &self.error {
+            TypeError::UndefinedVariable(name) => (
+                "E0001",
+                format!("cannot find value `{}` in this scope", name),
+                vec![],
+                vec![format!("consider declaring `{}` with `let`", name)],
+            ),
+            TypeError::TypeMismatch { expected, found } => (
+                "E0002",
+                format!("mismatched types"),
+                vec![format!("expected `{}`, found `{}`", expected, found)],
+                vec![],
+            ),
+            TypeError::AffineViolation(name) => (
+                "E0003",
+                format!("use of moved value: `{}`", name),
+                vec![
+                    "affine types can only be used once".to_string(),
+                ],
+                vec![
+                    "use `.clone` to create a copy before the first use".to_string(),
+                    "or restructure your code to only use the value once".to_string(),
+                ],
+            ),
+            TypeError::ImmutableReassignment(name) => (
+                "E0004",
+                format!("cannot assign twice to immutable variable `{}`", name),
+                vec![],
+                vec![format!("consider making `{}` mutable with `mut`", name)],
+            ),
+            TypeError::UnknownType(name) => (
+                "E0005",
+                format!("cannot find type `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or import the type".to_string()],
+            ),
+            TypeError::UnknownField { record, field } => (
+                "E0006",
+                format!("no field `{}` on type `{}`", field, record),
+                vec![],
+                vec!["available fields: ...".to_string()], // TODO: list available fields
+            ),
+            TypeError::CloneFrozenRecord => (
+                "E0007",
+                "cannot clone a frozen (immutable) record".to_string(),
+                vec!["frozen records cannot be cloned because they are already immutable".to_string()],
+                vec![],
+            ),
+            TypeError::FreezeAlreadyFrozen => (
+                "E0008",
+                "cannot freeze an already frozen record".to_string(),
+                vec!["the record is already immutable".to_string()],
+                vec![],
+            ),
+            TypeError::UndefinedRecord(name) => (
+                "E0009",
+                format!("cannot find record `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or define the record".to_string()],
+            ),
+            TypeError::UndefinedFunction(name) => (
+                "E0010",
+                format!("cannot find function `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or define the function".to_string()],
+            ),
+            TypeError::ArityMismatch { expected, found } => (
+                "E0011",
+                format!("this function takes {} argument{} but {} {} supplied",
+                    expected,
+                    if *expected == 1 { "" } else { "s" },
+                    found,
+                    if *found == 1 { "was" } else { "were" }
+                ),
+                vec![],
+                vec![],
+            ),
+            TypeError::UnavailableContext(name) => (
+                "E0012",
+                format!("context `{}` is not available in this scope", name),
+                vec![],
+                vec!["ensure the context is bound with `with` before use".to_string()],
+            ),
+            TypeError::UnsupportedFeature(desc) => (
+                "E0013",
+                format!("unsupported feature: {}", desc),
+                vec![],
+                vec![],
+            ),
+            TypeError::NotDerivedFrom(derived, base) => (
+                "E0014",
+                format!("type `{}` does not derive from `{}`", derived, base),
+                vec![],
+                vec![],
+            ),
+            TypeError::CannotCloneSealed(name) => (
+                "E0015",
+                format!("cannot clone sealed prototype `{}`", name),
+                vec!["sealed prototypes cannot be cloned".to_string()],
+                vec![],
+            ),
+            TypeError::DerivationTooDeep(depth) => (
+                "E0016",
+                format!("derivation chain too deep: {} > 3", depth),
+                vec!["maximum derivation depth is 3".to_string()],
+                vec!["consider flattening your type hierarchy".to_string()],
+            ),
+            TypeError::TemporalConstraintViolation(desc) => (
+                "E0017",
+                format!("temporal constraint violation: {}", desc),
+                vec![],
+                vec![],
+            ),
+            TypeError::TemporalEscape { temporal, message } => (
+                "E0018",
+                message.clone(),
+                vec![format!("temporal variable `{}` escapes its scope", temporal)],
+                vec!["ensure temporally-bound values don't outlive their scope".to_string()],
+            ),
+            TypeError::InvalidTemporalConstraint(outer, inner) => (
+                "E0019",
+                format!("invalid temporal constraint"),
+                vec![format!("`{}` cannot be used within `{}`", outer, inner)],
+                vec![],
+            ),
+        };
+
+        let mut diag = Diagnostic::error(message).with_code(code);
+
+        if let Some(span) = self.span {
+            diag = diag.with_label(span, "");
+        }
+
+        for note in notes {
+            diag = diag.with_note(note);
+        }
+
+        for h in help {
+            diag = diag.with_help(h);
+        }
+
+        diag
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedType {
     Int32,
@@ -129,6 +321,46 @@ pub enum TypedType {
     Array(Box<TypedType>, usize),
     TypeParam(String), // Generic type parameter
     Temporal { base_type: Box<TypedType>, temporals: Vec<String> }, // Type with temporal parameters
+}
+
+/// Formats a TypedType for display in LSP hints
+pub fn format_typed_type(ty: &TypedType) -> String {
+    match ty {
+        TypedType::Int32 => "Int".to_string(),
+        TypedType::Float64 => "Float".to_string(),
+        TypedType::Boolean => "Bool".to_string(),
+        TypedType::String => "String".to_string(),
+        TypedType::Char => "Char".to_string(),
+        TypedType::Unit => "()".to_string(),
+        TypedType::Record { name, frozen, .. } => {
+            if *frozen {
+                format!("{} (frozen)", name)
+            } else {
+                name.clone()
+            }
+        }
+        TypedType::Function { params, return_type } => {
+            let params_str = params.iter()
+                .map(format_typed_type)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({}) -> {}", params_str, format_typed_type(return_type))
+        }
+        TypedType::Option(inner) => format!("Option<{}>", format_typed_type(inner)),
+        TypedType::List(inner) => format!("List<{}>", format_typed_type(inner)),
+        TypedType::Array(inner, size) => format!("[{}; {}]", format_typed_type(inner), size),
+        TypedType::TypeParam(name) => name.clone(),
+        TypedType::Temporal { base_type, temporals } => {
+            let temporals_str = temporals.join(", ");
+            format!("{} ~[{}]", format_typed_type(base_type), temporals_str)
+        }
+    }
+}
+
+impl std::fmt::Display for TypedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", format_typed_type(self))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -202,6 +434,102 @@ struct Variable {
     used: bool,  // For affine type checking
 }
 
+/// Symbol information for LSP features (hover, inlay hints, etc.)
+#[derive(Debug, Clone)]
+pub struct SymbolInfo {
+    /// The name of the symbol
+    pub name: String,
+    /// The type of the symbol
+    pub ty: TypedType,
+    /// Whether the symbol is mutable
+    pub mutable: bool,
+    /// Whether the symbol has been consumed (affine type tracking)
+    pub used: bool,
+    /// The kind of symbol
+    pub kind: SymbolKind,
+    /// The span where the symbol is defined
+    pub def_span: Option<Span>,
+    /// The span where the symbol was used (if consumed)
+    pub use_span: Option<Span>,
+    /// For records: whether the value is frozen
+    pub frozen: bool,
+    /// Scope depth (0 = top level)
+    pub scope_depth: usize,
+}
+
+/// Kind of symbol for categorization
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SymbolKind {
+    /// Local variable binding
+    Variable,
+    /// Function parameter
+    Parameter,
+    /// Function definition
+    Function,
+    /// Record type definition
+    Record,
+    /// Record field
+    Field,
+}
+
+impl SymbolInfo {
+    /// Creates a new variable symbol
+    pub fn variable(name: String, ty: TypedType, mutable: bool, def_span: Option<Span>, scope_depth: usize) -> Self {
+        Self {
+            name,
+            ty,
+            mutable,
+            used: false,
+            kind: SymbolKind::Variable,
+            def_span,
+            use_span: None,
+            frozen: false,
+            scope_depth,
+        }
+    }
+
+    /// Creates a new parameter symbol
+    pub fn parameter(name: String, ty: TypedType, def_span: Option<Span>, scope_depth: usize) -> Self {
+        Self {
+            name,
+            ty,
+            mutable: false,
+            used: false,
+            kind: SymbolKind::Parameter,
+            def_span,
+            use_span: None,
+            frozen: false,
+            scope_depth,
+        }
+    }
+
+    /// Creates a new function symbol
+    pub fn function(name: String, ty: TypedType, def_span: Option<Span>) -> Self {
+        Self {
+            name,
+            ty,
+            mutable: false,
+            used: false,
+            kind: SymbolKind::Function,
+            def_span,
+            use_span: None,
+            frozen: false,
+            scope_depth: 0,
+        }
+    }
+
+    /// Marks this symbol as used/consumed
+    pub fn mark_used(&mut self, use_span: Option<Span>) {
+        self.used = true;
+        self.use_span = use_span;
+    }
+
+    /// Returns a display string for the type
+    pub fn type_display(&self) -> String {
+        format_typed_type(&self.ty)
+    }
+}
+
 #[derive(Debug)]
 struct RecordDef {
     fields: HashMap<String, TypedType>,
@@ -240,6 +568,10 @@ pub struct TypeChecker {
     temporal_context: TemporalContext,
     // AsyncRuntime context stack for tracking async scopes
     async_runtime_stack: Vec<String>, // Stack of async lifetime names
+    // Collected errors with span information (for LSP multi-error reporting)
+    collected_errors: Vec<SpannedTypeError>,
+    // Symbol table for LSP features (all symbols with their info)
+    symbol_table: Vec<SymbolInfo>,
 }
 
 impl TypeChecker {
@@ -260,16 +592,149 @@ impl TypeChecker {
                 parent_temporals: None,
             },
             async_runtime_stack: Vec::new(),
+            collected_errors: Vec::new(),
+            symbol_table: Vec::new(),
         };
-        
+
         // Register built-in functions and traits
         checker.register_builtins();
         checker.register_builtin_traits();
         checker.register_async_runtime_builtins();
-        
+
         checker
     }
-    
+
+    /// Returns the symbol table
+    pub fn symbols(&self) -> &[SymbolInfo] {
+        &self.symbol_table
+    }
+
+    /// Returns mutable access to the symbol table
+    pub fn symbols_mut(&mut self) -> &mut Vec<SymbolInfo> {
+        &mut self.symbol_table
+    }
+
+    /// Clears the symbol table
+    pub fn clear_symbols(&mut self) {
+        self.symbol_table.clear();
+    }
+
+    /// Adds a symbol to the table
+    pub fn add_symbol(&mut self, symbol: SymbolInfo) {
+        self.symbol_table.push(symbol);
+    }
+
+    /// Finds a symbol by name
+    pub fn find_symbol(&self, name: &str) -> Option<&SymbolInfo> {
+        self.symbol_table.iter().rev().find(|s| s.name == name)
+    }
+
+    /// Finds a symbol at a given position
+    pub fn find_symbol_at(&self, offset: usize) -> Option<&SymbolInfo> {
+        self.symbol_table.iter().find(|s| {
+            if let Some(span) = &s.def_span {
+                offset >= span.start && offset < span.end
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Current scope depth
+    fn current_scope_depth(&self) -> usize {
+        self.var_env.len().saturating_sub(1)
+    }
+
+    /// Adds an error with span information to the collected errors.
+    pub fn add_error(&mut self, error: TypeError, span: Option<Span>) {
+        self.collected_errors.push(SpannedTypeError::new(error, span));
+    }
+
+    /// Returns all collected errors and clears the error list.
+    pub fn take_errors(&mut self) -> Vec<SpannedTypeError> {
+        std::mem::take(&mut self.collected_errors)
+    }
+
+    /// Returns a reference to collected errors.
+    pub fn errors(&self) -> &[SpannedTypeError] {
+        &self.collected_errors
+    }
+
+    /// Clears all collected errors.
+    pub fn clear_errors(&mut self) {
+        self.collected_errors.clear();
+    }
+
+    /// Type checks a program and collects all errors with span information.
+    ///
+    /// Unlike `check_program`, this method continues checking after errors
+    /// and returns all collected errors for LSP diagnostic reporting.
+    pub fn check_program_collecting(&mut self, program: &Program) -> Vec<SpannedTypeError> {
+        self.collected_errors.clear();
+
+        // First pass: register all function signatures and record types
+        for decl in &program.declarations {
+            match decl {
+                TopDecl::Function(func) => {
+                    if let Err(e) = self.register_function_signature(func) {
+                        self.add_error(e, func.span);
+                    }
+                }
+                TopDecl::Record(record) => {
+                    if let Err(e) = self.check_record_decl(record) {
+                        self.add_error(e, record.span);
+                    }
+                }
+                TopDecl::Export(export) => {
+                    if let TopDecl::Function(func) = export.item.as_ref() {
+                        if let Err(e) = self.register_function_signature(func) {
+                            self.add_error(e, func.span);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Second pass: check all declarations
+        for decl in &program.declarations {
+            match decl {
+                TopDecl::Record(_) => {
+                    // Already processed in first pass
+                }
+                TopDecl::Function(func) => {
+                    if let Err(e) = self.check_function_decl(func) {
+                        self.add_error(e, func.span);
+                    }
+                }
+                TopDecl::Context(context) => {
+                    if let Err(e) = self.check_context_decl(context) {
+                        self.add_error(e, None);
+                    }
+                }
+                TopDecl::Impl(impl_block) => {
+                    if let Err(e) = self.check_impl_block(impl_block) {
+                        self.add_error(e, None);
+                    }
+                }
+                TopDecl::Binding(bind) => {
+                    if let Err(e) = self.check_bind_decl(bind) {
+                        self.add_error(e, bind.span);
+                    }
+                }
+                TopDecl::Export(export) => {
+                    if let TopDecl::Function(func) = export.item.as_ref() {
+                        if let Err(e) = self.check_function_decl(func) {
+                            self.add_error(e, func.span);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.take_errors()
+    }
+
     fn register_builtin_traits(&mut self) {
         // Register trait implementations for built-in types
         
@@ -1286,16 +1751,39 @@ impl TypeChecker {
         }
         
         self.push_scope();
-        
+
+        // Prepare function symbol (we'll add it before checking body)
+        let param_tys: Vec<TypedType> = func.params.iter()
+            .filter_map(|param| self.convert_type(&param.ty).ok())
+            .collect();
+
         let mut param_types = Vec::new();
+        let scope_depth = self.current_scope_depth();
         for param in &func.params {
             let ty = self.convert_type(&param.ty)?;
             param_types.push((param.name.clone(), ty.clone()));
+
+            // Add parameter symbol
+            let param_symbol = SymbolInfo::parameter(
+                param.name.clone(),
+                ty.clone(),
+                None, // TODO: Add span to Param in AST
+                scope_depth,
+            );
+            self.add_symbol(param_symbol);
+
             self.bind_var(param.name.clone(), ty, false)?;
         }
         
         let return_type = self.check_block_expr(&func.body)?;
-        
+
+        // Add function symbol with complete type info
+        let func_ty = TypedType::Function {
+            params: param_tys,
+            return_type: Box::new(return_type.clone()),
+        };
+        self.add_symbol(SymbolInfo::function(func.name.clone(), func_ty, func.span));
+
         // Check for temporal escape in return type
         if let TypedType::Temporal { temporals, .. } = &return_type {
             for temporal in temporals {
@@ -1308,7 +1796,7 @@ impl TypeChecker {
                 }
             }
         }
-        
+
         self.functions.insert(func.name.clone(), FunctionDef {
             params: param_types,
             return_type,
@@ -1333,13 +1821,23 @@ impl TypeChecker {
     
     fn check_bind_decl(&mut self, bind: &BindDecl) -> Result<(), TypeError> {
         let ty = self.check_expr(&bind.value)?;
-        
+
         // Check if this is a new binding or reassignment
         if let Ok((_existing_ty, _is_mutable)) = self.lookup_var_for_assignment(&bind.name) {
             // This is a reassignment
             self.reassign_var(&bind.name, &ty)?;
         } else {
-            // This is a new binding
+            // This is a new binding - add to symbol table
+            let scope_depth = self.current_scope_depth();
+            let symbol = SymbolInfo::variable(
+                bind.name.clone(),
+                ty.clone(),
+                bind.mutable,
+                bind.span,
+                scope_depth,
+            );
+            self.add_symbol(symbol);
+
             self.bind_var(bind.name.clone(), ty, bind.mutable)?;
         }
         Ok(())

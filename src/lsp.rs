@@ -2,7 +2,11 @@ use std::collections::HashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-use crate::{lex, parse_program, TypeChecker};
+use crate::TypeChecker;
+use crate::lexer::Span;
+use crate::parser::parse_program_recovering;
+use crate::diagnostic::{Diagnostic as RichDiagnostic, DiagnosticBag};
+use crate::diagnostic::lsp_integration::span_to_range;
 
 #[derive(Debug)]
 pub struct RestrictLanguageServer {
@@ -18,58 +22,58 @@ impl RestrictLanguageServer {
         }
     }
 
-    fn get_diagnostics(&self, _uri: &Url, text: &str) -> Vec<Diagnostic> {
-        let mut diagnostics = Vec::new();
+    fn get_diagnostics(&self, uri: &Url, text: &str) -> Vec<Diagnostic> {
+        let mut bag = DiagnosticBag::new();
 
-        // Lexing
-        match lex(text) {
-            Ok((remaining, _tokens)) => {
-                // Only report unparsed input if it contains non-whitespace characters
-                if !remaining.trim().is_empty() {
-                    diagnostics.push(Diagnostic::new_simple(
-                        Range::new(Position::new(0, 0), Position::new(0, 1)),
-                        format!("Lexer: unparsed input remaining: '{}'", remaining.trim()),
-                    ));
-                }
+        // Lexing with span information
+        match crate::lexer::lex_spanned_tokens(text) {
+            Ok(_tokens) => {
+                // Lexing succeeded
             }
-            Err(e) => {
-                diagnostics.push(Diagnostic::new_simple(
-                    Range::new(Position::new(0, 0), Position::new(0, 1)),
-                    format!("Lexing error: {:?}", e),
-                ));
-                return diagnostics;
+            Err((msg, span)) => {
+                bag.add(
+                    RichDiagnostic::error(format!("Lexer error: {}", msg))
+                        .with_code("L0001")
+                        .with_label(span, "invalid token")
+                );
+                return bag.to_lsp(text, uri);
             }
         }
 
-        // Parsing
-        match parse_program(text) {
-            Ok((remaining, ast)) => {
-                // Only report unparsed input if it contains non-whitespace characters
-                if !remaining.trim().is_empty() {
-                    diagnostics.push(Diagnostic::new_simple(
-                        Range::new(Position::new(0, 0), Position::new(0, 1)),
-                        format!("Parser: unparsed input remaining: '{}'", remaining.trim()),
-                    ));
-                }
+        // Use error-recovering parser to get all syntax errors
+        let parse_result = parse_program_recovering(text);
 
-                // Type checking
-                let mut type_checker = TypeChecker::new();
-                if let Err(e) = type_checker.check_program(&ast) {
-                    diagnostics.push(Diagnostic::new_simple(
-                        Range::new(Position::new(0, 0), Position::new(0, 1)),
-                        format!("Type error: {}", e),
-                    ));
-                }
-            }
-            Err(e) => {
-                diagnostics.push(Diagnostic::new_simple(
-                    Range::new(Position::new(0, 0), Position::new(0, 1)),
-                    format!("Parsing error: {:?}", e),
-                ));
-            }
+        // Add all parse errors as diagnostics
+        for error in &parse_result.errors {
+            bag.add(
+                RichDiagnostic::error(&error.message)
+                    .with_code("P0001")
+                    .with_label(error.span, "")
+            );
         }
 
-        diagnostics
+        // Type check the (possibly partial) AST and collect all errors with spans
+        let mut type_checker = TypeChecker::new();
+        let type_errors = type_checker.check_program_collecting(&parse_result.program);
+
+        // Convert type errors to rich diagnostics
+        for type_error in type_errors {
+            bag.add(type_error.to_diagnostic());
+        }
+
+        bag.to_lsp(text, uri)
+    }
+
+    /// Converts a byte-offset Span to an LSP Range (line/column).
+    fn span_to_range(&self, text: &str, span: &Span) -> Range {
+        let (start_line, start_col) = span.to_line_col(text);
+        let end_span = Span::new(span.end, span.end);
+        let (end_line, end_col) = end_span.to_line_col(text);
+
+        Range::new(
+            Position::new(start_line as u32, start_col as u32),
+            Position::new(end_line as u32, end_col as u32),
+        )
     }
 
     fn find_definition_at_position(&self, ast: &crate::ast::Program, text: &str, position: &Position) -> Option<Location> {
@@ -466,6 +470,7 @@ impl LanguageServer for RestrictLanguageServer {
                     more_trigger_character: Some(vec![";".to_string()]),
                 }),
                 rename_provider: Some(OneOf::Left(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 document_link_provider: None,
                 color_provider: None,
                 folding_range_provider: None,
@@ -1016,6 +1021,110 @@ impl LanguageServer for RestrictLanguageServer {
             _ => Ok(None),
         }
     }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+
+        let documents = self.documents.read().unwrap();
+        if let Some(text) = documents.get(uri) {
+            let parse_result = parse_program_recovering(text);
+
+            // Type check to get symbol table
+            let mut type_checker = TypeChecker::new();
+            let _ = type_checker.check_program_collecting(&parse_result.program);
+
+            let mut hints = Vec::new();
+
+            // Generate inlay hints from symbol table
+            for symbol in type_checker.symbols() {
+                if let Some(span) = symbol.def_span {
+                    // Only show hints for variables and parameters (not functions)
+                    if symbol.kind == crate::type_checker::SymbolKind::Variable
+                        || symbol.kind == crate::type_checker::SymbolKind::Parameter
+                    {
+                        let (line, col) = span.to_line_col(text);
+
+                        // Position after the variable name
+                        let end_pos = Position::new(line as u32, (col + symbol.name.len()) as u32);
+
+                        // Build hint label parts
+                        let mut label_parts = vec![
+                            InlayHintLabelPart {
+                                value: format!(": {}", symbol.type_display()),
+                                tooltip: Some(InlayHintLabelPartTooltip::String(
+                                    format!("Type: {}", symbol.type_display())
+                                )),
+                                location: None,
+                                command: None,
+                            }
+                        ];
+
+                        // Add mutability indicator
+                        if symbol.mutable {
+                            label_parts.push(InlayHintLabelPart {
+                                value: " (mut)".to_string(),
+                                tooltip: Some(InlayHintLabelPartTooltip::String(
+                                    "This binding is mutable".to_string()
+                                )),
+                                location: None,
+                                command: None,
+                            });
+                        }
+
+                        // Add affine status for non-Copy types
+                        if !is_copy_type(&symbol.ty) {
+                            let affine_label = if symbol.used {
+                                " [consumed]"
+                            } else {
+                                " [available]"
+                            };
+                            label_parts.push(InlayHintLabelPart {
+                                value: affine_label.to_string(),
+                                tooltip: Some(InlayHintLabelPartTooltip::String(
+                                    if symbol.used {
+                                        "This value has been consumed (affine type)".to_string()
+                                    } else {
+                                        "This value is still available for use".to_string()
+                                    }
+                                )),
+                                location: None,
+                                command: None,
+                            });
+                        }
+
+                        hints.push(InlayHint {
+                            position: end_pos,
+                            label: InlayHintLabel::LabelParts(label_parts),
+                            kind: Some(InlayHintKind::TYPE),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: Some(true),
+                            padding_right: Some(false),
+                            data: None,
+                        });
+                    }
+                }
+            }
+
+            if !hints.is_empty() {
+                return Ok(Some(hints));
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+/// Helper to check if a type is Copy (doesn't need affine tracking)
+fn is_copy_type(ty: &crate::type_checker::TypedType) -> bool {
+    use crate::type_checker::TypedType;
+    matches!(ty,
+        TypedType::Int32 |
+        TypedType::Float64 |
+        TypedType::Boolean |
+        TypedType::Char |
+        TypedType::Unit
+    )
 }
 
 pub async fn start_lsp_server() {

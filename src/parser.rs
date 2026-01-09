@@ -32,8 +32,43 @@ use nom::{
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{preceded, tuple, delimited},
 };
-use crate::lexer::{Token, lex_token, skip};
+use crate::lexer::{Token, lex_token, skip, Span};
 use crate::ast::*;
+
+/// Context for tracking source positions during parsing.
+pub struct ParseContext<'a> {
+    /// The original source string
+    pub source: &'a str,
+}
+
+impl<'a> ParseContext<'a> {
+    /// Creates a new parse context.
+    pub fn new(source: &'a str) -> Self {
+        Self { source }
+    }
+
+    /// Calculates the byte offset from remaining input.
+    pub fn offset(&self, remaining: &str) -> usize {
+        self.source.len() - remaining.len()
+    }
+
+    /// Creates a span from start offset to current position.
+    pub fn span_from(&self, start: usize, remaining: &str) -> Span {
+        Span::new(start, self.offset(remaining))
+    }
+}
+
+/// Helper to calculate byte offset from remaining input.
+fn calc_offset(original: &str, remaining: &str) -> usize {
+    original.len() - remaining.len()
+}
+
+/// Helper to create a span from original source and remaining input.
+fn make_span(original: &str, start_remaining: &str, end_remaining: &str) -> Span {
+    let start = calc_offset(original, start_remaining);
+    let end = calc_offset(original, end_remaining);
+    Span::new(start, end)
+}
 
 /// Type alias for parser results.
 type ParseResult<'a, T> = IResult<&'a str, T>;
@@ -200,14 +235,15 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let frozen = false;
     let sealed = false;
     
-    Ok((input, RecordDecl { 
-        name, 
+    Ok((input, RecordDecl {
+        name,
         type_params,
         temporal_constraints,
-        fields, 
-        frozen, 
-        sealed, 
-        parent_hash: None 
+        fields,
+        frozen,
+        sealed,
+        parent_hash: None,
+        span: None,
     }))
 }
 
@@ -300,6 +336,7 @@ fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
         expr: final_expr,
         is_lazy,
         has_implicit_it,
+        span: None,
     }))
 }
 
@@ -364,13 +401,14 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, body) = block_expr(input)?;
     
-    Ok((input, FunDecl { 
+    Ok((input, FunDecl {
         name,
         is_async,
-        type_params, 
+        type_params,
         temporal_constraints,
-        params, 
-        body 
+        params,
+        body,
+        span: None,
     }))
 }
 
@@ -456,10 +494,11 @@ pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to avoid consuming across statement boundaries
-    Ok((input, BindDecl { 
-        mutable: mutable.is_some(), 
-        name, 
-        value: Box::new(value) 
+    Ok((input, BindDecl {
+        mutable: mutable.is_some(),
+        name,
+        value: Box::new(value),
+        span: None,
     }))
 }
 
@@ -1201,7 +1240,7 @@ fn import_decl(input: &str) -> ParseResult<ImportDecl> {
         (input, ImportItems::All)
     };
     
-    Ok((input, ImportDecl { module_path, items }))
+    Ok((input, ImportDecl { module_path, items, span: None }))
 }
 
 fn export_decl(input: &str) -> ParseResult<TopDecl> {
@@ -1237,24 +1276,26 @@ pub fn top_decl(input: &str) -> ParseResult<TopDecl> {
 }
 
 pub fn parse_program(input: &str) -> ParseResult<Program> {
+    let original = input;
+
     // Skip leading whitespace/comments first
     let (input, _) = skip(input)?;
     let (input, imports) = many0(import_decl)(input)?;
-    
-    // Parse declarations  
+
+    // Parse declarations
     let mut remaining = input;
     let mut declarations = Vec::new();
-    
+
     loop {
         // Skip any whitespace/comments first
         let (rest, _) = skip(remaining)?;
-        
+
         // If nothing left after skipping whitespace, we're done
         if rest.is_empty() {
             remaining = rest;
             break;
         }
-        
+
         // Try to parse a declaration
         match top_decl(rest) {
             Ok((rest2, decl)) => {
@@ -1268,8 +1309,198 @@ pub fn parse_program(input: &str) -> ParseResult<Program> {
             }
         }
     }
-    
-    Ok((remaining, Program { imports, declarations }))
+
+    let span = Some(make_span(original, original, remaining));
+    Ok((remaining, Program { imports, declarations, span }))
+}
+
+/// Parse result with detailed error information for LSP.
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    /// Error message
+    pub message: String,
+    /// Location of the error
+    pub span: Span,
+}
+
+/// Result of parsing with error recovery.
+#[derive(Debug)]
+pub struct ParseResult2 {
+    /// The (possibly partial) AST
+    pub program: Program,
+    /// Collected errors during parsing
+    pub errors: Vec<ParseError>,
+}
+
+/// Parses a program and returns detailed error information on failure.
+pub fn parse_program_with_errors(input: &str) -> Result<Program, ParseError> {
+    match parse_program(input) {
+        Ok((remaining, mut program)) => {
+            if !remaining.trim().is_empty() {
+                let pos = input.len() - remaining.len();
+                Err(ParseError {
+                    message: format!("Unexpected input: '{}'", remaining.chars().take(30).collect::<String>()),
+                    span: Span::new(pos, pos + remaining.len().min(30)),
+                })
+            } else {
+                // Set program span to cover entire input
+                program.span = Some(Span::new(0, input.len()));
+                Ok(program)
+            }
+        }
+        Err(e) => {
+            // Try to extract position from nom error
+            let (msg, span) = match e {
+                nom::Err::Error(ref err) | nom::Err::Failure(ref err) => {
+                    let pos = input.len() - err.input.len();
+                    (format!("Parse error: {:?}", err.code), Span::new(pos, pos + 1))
+                }
+                nom::Err::Incomplete(_) => {
+                    ("Incomplete input".to_string(), Span::new(input.len(), input.len()))
+                }
+            };
+            Err(ParseError { message: msg, span })
+        }
+    }
+}
+
+/// Parses a program with error recovery, returning a partial AST and all errors.
+///
+/// This is useful for IDE integration where we want to provide diagnostics
+/// even when the code has syntax errors.
+pub fn parse_program_recovering(input: &str) -> ParseResult2 {
+    let mut errors = Vec::new();
+    let mut declarations = Vec::new();
+    let mut imports = Vec::new();
+    let mut remaining = input;
+
+    // Skip leading whitespace
+    if let Ok((rest, _)) = skip(remaining) {
+        remaining = rest;
+    }
+
+    // Try to parse imports
+    loop {
+        let (rest, _) = skip(remaining).unwrap_or((remaining, ()));
+        remaining = rest;
+
+        if remaining.is_empty() {
+            break;
+        }
+
+        // Check if this looks like an import
+        if let Ok((_, Token::Import)) = lex_token(remaining) {
+            match import_decl(remaining) {
+                Ok((rest, import)) => {
+                    imports.push(import);
+                    remaining = rest;
+                }
+                Err(_) => {
+                    // Skip to next line or declaration
+                    remaining = skip_to_next_decl(remaining, &mut errors);
+                    break;
+                }
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Parse declarations with recovery
+    loop {
+        let (rest, _) = skip(remaining).unwrap_or((remaining, ()));
+        remaining = rest;
+
+        if remaining.is_empty() {
+            break;
+        }
+
+        match top_decl(remaining) {
+            Ok((rest, decl)) => {
+                declarations.push(decl);
+                remaining = rest;
+            }
+            Err(e) => {
+                // Record the error
+                let pos = input.len() - remaining.len();
+                let error_msg = match &e {
+                    nom::Err::Error(err) | nom::Err::Failure(err) => {
+                        format!("Syntax error: {:?}", err.code)
+                    }
+                    nom::Err::Incomplete(_) => "Incomplete input".to_string(),
+                };
+
+                // Try to determine error span
+                let error_end = remaining
+                    .find('\n')
+                    .map(|n| pos + n)
+                    .unwrap_or(input.len());
+
+                errors.push(ParseError {
+                    message: error_msg,
+                    span: Span::new(pos, error_end.min(pos + 50)),
+                });
+
+                // Skip to next declaration
+                remaining = skip_to_next_decl(remaining, &mut errors);
+
+                if remaining.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+
+    ParseResult2 {
+        program: Program {
+            imports,
+            declarations,
+            span: Some(Span::new(0, input.len())),
+        },
+        errors,
+    }
+}
+
+/// Skips input until the next likely declaration start.
+fn skip_to_next_decl<'a>(input: &'a str, _errors: &mut Vec<ParseError>) -> &'a str {
+    let mut remaining = input;
+
+    // Skip to next line first
+    if let Some(newline_pos) = remaining.find('\n') {
+        remaining = &remaining[newline_pos + 1..];
+    } else {
+        return "";
+    }
+
+    // Look for declaration keywords
+    let decl_keywords = ["fun", "record", "context", "impl", "val", "export", "import"];
+
+    loop {
+        // Skip whitespace
+        let trimmed = remaining.trim_start();
+        if trimmed.is_empty() {
+            return "";
+        }
+
+        // Check if we're at a declaration keyword
+        for keyword in &decl_keywords {
+            if trimmed.starts_with(keyword) {
+                // Make sure it's a word boundary
+                let after_keyword = &trimmed[keyword.len()..];
+                if after_keyword.is_empty() ||
+                   !after_keyword.chars().next().unwrap().is_alphanumeric() {
+                    return trimmed;
+                }
+            }
+        }
+
+        // Skip to next line
+        if let Some(newline_pos) = remaining.find('\n') {
+            remaining = &remaining[newline_pos + 1..];
+        } else {
+            return "";
+        }
+    }
 }
 
 /// Helper function to detect if a block uses the 'it' keyword
@@ -1421,5 +1652,48 @@ mod tests {
         } else {
             panic!("Expected WithLifetime expression");
         }
+    }
+
+    #[test]
+    fn test_parse_program_with_errors() {
+        // Use correct syntax: fun name: (params) -> ReturnType = { body }
+        let input = "fun main: () -> Int = { 42 }";
+        let result = parse_program_with_errors(input);
+        match &result {
+            Ok(program) => {
+                assert_eq!(program.declarations.len(), 1);
+                assert!(program.span.is_some());
+            }
+            Err(e) => {
+                panic!("Parse failed: {} at {:?}", e.message, e.span);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_program_recovering_valid() {
+        let input = "fun main: () -> Int = { 42 }\nfun second: () -> Int = { 10 }";
+        let result = parse_program_recovering(input);
+        assert!(result.errors.is_empty(), "Unexpected errors: {:?}", result.errors);
+        assert_eq!(result.program.declarations.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_program_recovering_with_errors() {
+        // Invalid syntax in the middle - should recover and parse the second function
+        let input = "fun first: () -> Int = { 42 }\n@#$invalid\nfun second: () -> Int = { 10 }";
+        let result = parse_program_recovering(input);
+        // Should have at least one error
+        assert!(!result.errors.is_empty(), "Expected at least one error");
+        // Should have parsed the first function at minimum
+        assert!(!result.program.declarations.is_empty(), "Expected at least one declaration");
+    }
+
+    #[test]
+    fn test_parse_error_span() {
+        let input = "fun main: () -> Unit = { () }";
+        let result = parse_program_with_errors(input);
+        // This should succeed with unit return
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
     }
 }

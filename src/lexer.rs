@@ -32,6 +32,86 @@ use nom::{
 };
 use std::fmt;
 
+/// Represents a position in source code as a byte offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Span {
+    /// Start byte offset (inclusive)
+    pub start: usize,
+    /// End byte offset (exclusive)
+    pub end: usize,
+}
+
+impl Span {
+    /// Creates a new span from start and end byte offsets.
+    pub fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+
+    /// Creates a span covering a single point.
+    pub fn point(offset: usize) -> Self {
+        Self { start: offset, end: offset }
+    }
+
+    /// Creates a span that combines two spans (from start of first to end of second).
+    pub fn merge(self, other: Span) -> Self {
+        Self {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+
+    /// Returns the length of this span in bytes.
+    pub fn len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    /// Returns true if this span has zero length.
+    pub fn is_empty(&self) -> bool {
+        self.start >= self.end
+    }
+
+    /// Converts byte offset to line and column (0-indexed).
+    pub fn to_line_col(&self, source: &str) -> (usize, usize) {
+        let mut line = 0;
+        let mut col = 0;
+        for (i, ch) in source.char_indices() {
+            if i >= self.start {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    /// Converts span to line/column range for LSP.
+    pub fn to_line_col_range(&self, source: &str) -> ((usize, usize), (usize, usize)) {
+        let start_pos = Self { start: self.start, end: self.start }.to_line_col(source);
+        let end_pos = Self { start: self.end, end: self.end }.to_line_col(source);
+        (start_pos, end_pos)
+    }
+}
+
+/// A token with its span information.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpannedToken {
+    /// The token value
+    pub token: Token,
+    /// The span in source code
+    pub span: Span,
+}
+
+impl SpannedToken {
+    /// Creates a new spanned token.
+    pub fn new(token: Token, span: Span) -> Self {
+        Self { token, span }
+    }
+}
+
 /// Token types in Restrict Language.
 /// 
 /// Each token represents a lexical unit in the source code.
@@ -440,6 +520,66 @@ pub fn lex_tokens(input: &str) -> Result<Vec<Token>, String> {
     }
 }
 
+/// Lexes input and returns tokens with span information.
+///
+/// This is the preferred function for LSP and error reporting as it
+/// preserves source location information.
+pub fn lex_spanned(input: &str) -> IResult<&str, Vec<SpannedToken>> {
+    let original = input;
+    let original_len = input.len();
+
+    let mut remaining = input;
+    let mut tokens = Vec::new();
+
+    loop {
+        // Skip whitespace and comments
+        let (after_skip, _) = skip(remaining)?;
+        remaining = after_skip;
+
+        if remaining.is_empty() {
+            break;
+        }
+
+        // Calculate current position
+        let start = original_len - remaining.len();
+
+        // Try to lex a token
+        match token(remaining) {
+            Ok((rest, tok)) => {
+                let end = original_len - rest.len();
+                tokens.push(SpannedToken::new(tok, Span::new(start, end)));
+                remaining = rest;
+            }
+            Err(_) => {
+                // Return what we have so far
+                break;
+            }
+        }
+    }
+
+    Ok((remaining, tokens))
+}
+
+/// Lexes input and returns spanned tokens or an error with position.
+pub fn lex_spanned_tokens(input: &str) -> Result<Vec<SpannedToken>, (String, Span)> {
+    let original_len = input.len();
+
+    match lex_spanned(input) {
+        Ok((remaining, tokens)) => {
+            if !remaining.trim().is_empty() {
+                let pos = original_len - remaining.len();
+                Err((
+                    format!("Unexpected input: '{}'", remaining.chars().take(20).collect::<String>()),
+                    Span::new(pos, pos + remaining.len().min(20))
+                ))
+            } else {
+                Ok(tokens)
+            }
+        }
+        Err(e) => Err((format!("Lexing error: {:?}", e), Span::new(0, 0))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +589,48 @@ mod tests {
         assert_eq!(lex("record").unwrap().1, vec![Token::Record]);
         assert_eq!(lex("fun").unwrap().1, vec![Token::Fun]);
         assert_eq!(lex("val").unwrap().1, vec![Token::Val]);
+    }
+
+    #[test]
+    fn test_spanned_tokens() {
+        let input = "val x = 42";
+        let tokens = lex_spanned_tokens(input).unwrap();
+
+        assert_eq!(tokens.len(), 4);
+
+        // "val" at position 0-3
+        assert_eq!(tokens[0].token, Token::Val);
+        assert_eq!(tokens[0].span, Span::new(0, 3));
+
+        // "x" at position 4-5
+        assert_eq!(tokens[1].token, Token::Ident("x".to_string()));
+        assert_eq!(tokens[1].span, Span::new(4, 5));
+
+        // "=" at position 6-7
+        assert_eq!(tokens[2].token, Token::Assign);
+        assert_eq!(tokens[2].span, Span::new(6, 7));
+
+        // "42" at position 8-10
+        assert_eq!(tokens[3].token, Token::IntLit(42));
+        assert_eq!(tokens[3].span, Span::new(8, 10));
+    }
+
+    #[test]
+    fn test_span_line_col() {
+        let source = "val x = 42\nval y = 10";
+        let span1 = Span::new(0, 3);  // "val" on line 0
+        let span2 = Span::new(11, 14); // "val" on line 1
+
+        assert_eq!(span1.to_line_col(source), (0, 0));
+        assert_eq!(span2.to_line_col(source), (1, 0));
+    }
+
+    #[test]
+    fn test_span_merge() {
+        let span1 = Span::new(0, 5);
+        let span2 = Span::new(10, 15);
+        let merged = span1.merge(span2);
+        assert_eq!(merged, Span::new(0, 15));
     }
 
     #[test]

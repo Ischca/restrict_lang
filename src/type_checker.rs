@@ -25,6 +25,7 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::ast::*;
+use crate::lexer::Span;
 use crate::lifetime_inference::LifetimeInference;
 use thiserror::Error;
 
@@ -112,6 +113,48 @@ pub enum TypeError {
     /// Invalid temporal constraint
     #[error("Invalid temporal constraint: {0} within {1}")]
     InvalidTemporalConstraint(String, String),
+}
+
+/// A type error with optional source location information.
+///
+/// This wrapper allows the type checker to report errors with precise
+/// source positions for better IDE integration.
+#[derive(Debug)]
+pub struct SpannedTypeError {
+    /// The type error
+    pub error: TypeError,
+    /// Source location where the error occurred
+    pub span: Option<Span>,
+}
+
+impl SpannedTypeError {
+    /// Creates a new spanned type error.
+    pub fn new(error: TypeError, span: Option<Span>) -> Self {
+        Self { error, span }
+    }
+
+    /// Creates an error without span information.
+    pub fn unspanned(error: TypeError) -> Self {
+        Self { error, span: None }
+    }
+}
+
+impl std::fmt::Display for SpannedTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
+impl std::error::Error for SpannedTypeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl From<TypeError> for SpannedTypeError {
+    fn from(error: TypeError) -> Self {
+        Self::unspanned(error)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -240,6 +283,8 @@ pub struct TypeChecker {
     temporal_context: TemporalContext,
     // AsyncRuntime context stack for tracking async scopes
     async_runtime_stack: Vec<String>, // Stack of async lifetime names
+    // Collected errors with span information (for LSP multi-error reporting)
+    collected_errors: Vec<SpannedTypeError>,
 }
 
 impl TypeChecker {
@@ -260,6 +305,7 @@ impl TypeChecker {
                 parent_temporals: None,
             },
             async_runtime_stack: Vec::new(),
+            collected_errors: Vec::new(),
         };
         
         // Register built-in functions and traits
@@ -269,7 +315,97 @@ impl TypeChecker {
         
         checker
     }
-    
+
+    /// Adds an error with span information to the collected errors.
+    pub fn add_error(&mut self, error: TypeError, span: Option<Span>) {
+        self.collected_errors.push(SpannedTypeError::new(error, span));
+    }
+
+    /// Returns all collected errors and clears the error list.
+    pub fn take_errors(&mut self) -> Vec<SpannedTypeError> {
+        std::mem::take(&mut self.collected_errors)
+    }
+
+    /// Returns a reference to collected errors.
+    pub fn errors(&self) -> &[SpannedTypeError] {
+        &self.collected_errors
+    }
+
+    /// Clears all collected errors.
+    pub fn clear_errors(&mut self) {
+        self.collected_errors.clear();
+    }
+
+    /// Type checks a program and collects all errors with span information.
+    ///
+    /// Unlike `check_program`, this method continues checking after errors
+    /// and returns all collected errors for LSP diagnostic reporting.
+    pub fn check_program_collecting(&mut self, program: &Program) -> Vec<SpannedTypeError> {
+        self.collected_errors.clear();
+
+        // First pass: register all function signatures and record types
+        for decl in &program.declarations {
+            match decl {
+                TopDecl::Function(func) => {
+                    if let Err(e) = self.register_function_signature(func) {
+                        self.add_error(e, func.span);
+                    }
+                }
+                TopDecl::Record(record) => {
+                    if let Err(e) = self.check_record_decl(record) {
+                        self.add_error(e, record.span);
+                    }
+                }
+                TopDecl::Export(export) => {
+                    if let TopDecl::Function(func) = export.item.as_ref() {
+                        if let Err(e) = self.register_function_signature(func) {
+                            self.add_error(e, func.span);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Second pass: check all declarations
+        for decl in &program.declarations {
+            match decl {
+                TopDecl::Record(_) => {
+                    // Already processed in first pass
+                }
+                TopDecl::Function(func) => {
+                    if let Err(e) = self.check_function_decl(func) {
+                        self.add_error(e, func.span);
+                    }
+                }
+                TopDecl::Context(context) => {
+                    if let Err(e) = self.check_context_decl(context) {
+                        self.add_error(e, None);
+                    }
+                }
+                TopDecl::Impl(impl_block) => {
+                    if let Err(e) = self.check_impl_block(impl_block) {
+                        self.add_error(e, None);
+                    }
+                }
+                TopDecl::Binding(bind) => {
+                    if let Err(e) = self.check_bind_decl(bind) {
+                        self.add_error(e, bind.span);
+                    }
+                }
+                TopDecl::Export(export) => {
+                    if let TopDecl::Function(func) = export.item.as_ref() {
+                        if let Err(e) = self.check_function_decl(func) {
+                            self.add_error(e, func.span);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.take_errors()
+    }
+
     fn register_builtin_traits(&mut self) {
         // Register trait implementations for built-in types
         

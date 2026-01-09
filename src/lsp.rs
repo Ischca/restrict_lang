@@ -64,19 +64,25 @@ impl RestrictLanguageServer {
             });
         }
 
-        // Type check the (possibly partial) AST
+        // Type check the (possibly partial) AST and collect all errors with spans
         let mut type_checker = TypeChecker::new();
-        if let Err(e) = type_checker.check_program(&parse_result.program) {
-            // TODO: When type checker provides span info, use it here
-            // For now, try to find a reasonable location
-            let range = Range::new(Position::new(0, 0), Position::new(0, 10));
+        let type_errors = type_checker.check_program_collecting(&parse_result.program);
+
+        for type_error in type_errors {
+            let range = if let Some(span) = type_error.span {
+                self.span_to_range(text, &span)
+            } else {
+                // Fallback to beginning of file if no span available
+                Range::new(Position::new(0, 0), Position::new(0, 10))
+            };
+
             diagnostics.push(Diagnostic {
                 range,
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: None,
                 code_description: None,
                 source: Some("restrict-lang".to_string()),
-                message: format!("Type error: {}", e),
+                message: format!("Type error: {}", type_error.error),
                 related_information: None,
                 tags: None,
                 data: None,

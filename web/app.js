@@ -165,19 +165,105 @@ async function executeWasm(watCode) {
         const binary = wasmModule.toBinary({});
 
         const module = await WebAssembly.compile(binary.buffer);
-        const instance = await WebAssembly.instantiate(module, {});
 
-        // Try to call main function
-        if (instance.exports.main) {
-            const result = instance.exports.main();
-            document.getElementById('resultOutput').innerHTML =
-                `<div class="success">Execution Result: <strong>${result}</strong></div>`;
+        // Collect console output
+        let consoleOutput = [];
+        let instance = null;  // Will be set after instantiation
+
+        // WASI shim for browser execution
+        const wasiShim = {
+            // fd_write(fd, iovs, iovs_len, nwritten) - write to file descriptor
+            fd_write: (fd, iovs, iovs_len, nwritten) => {
+                // fd 1 = stdout, fd 2 = stderr
+                const memory = instance.exports.memory;
+                if (!memory) return 0;
+
+                const view = new DataView(memory.buffer);
+                let written = 0;
+                const decoder = new TextDecoder();
+
+                for (let i = 0; i < iovs_len; i++) {
+                    const ptr = view.getUint32(iovs + i * 8, true);
+                    const len = view.getUint32(iovs + i * 8 + 4, true);
+                    const bytes = new Uint8Array(memory.buffer, ptr, len);
+                    const text = decoder.decode(bytes);
+                    consoleOutput.push(text);
+                    written += len;
+                }
+
+                if (nwritten) {
+                    view.setUint32(nwritten, written, true);
+                }
+                return 0; // Success
+            },
+            // Other WASI functions (stubs)
+            fd_seek: () => 0,
+            fd_close: () => 0,
+            fd_read: () => 0,
+            fd_prestat_get: () => 8, // EBADF
+            fd_prestat_dir_name: () => 8,
+            environ_sizes_get: (count_ptr, buf_size_ptr) => {
+                const memory = instance.exports.memory;
+                if (memory) {
+                    const view = new DataView(memory.buffer);
+                    view.setUint32(count_ptr, 0, true);
+                    view.setUint32(buf_size_ptr, 0, true);
+                }
+                return 0;
+            },
+            environ_get: () => 0,
+            args_sizes_get: (argc_ptr, argv_buf_size_ptr) => {
+                const memory = instance.exports.memory;
+                if (memory) {
+                    const view = new DataView(memory.buffer);
+                    view.setUint32(argc_ptr, 0, true);
+                    view.setUint32(argv_buf_size_ptr, 0, true);
+                }
+                return 0;
+            },
+            args_get: () => 0,
+            proc_exit: (code) => { throw new Error(`Process exited with code ${code}`); },
+            clock_time_get: () => 0,
+            random_get: (buf, len) => {
+                const memory = instance.exports.memory;
+                if (memory) {
+                    const bytes = new Uint8Array(memory.buffer, buf, len);
+                    crypto.getRandomValues(bytes);
+                }
+                return 0;
+            },
+        };
+
+        const importObject = {
+            wasi_snapshot_preview1: wasiShim,
+            env: {},
+        };
+
+        instance = await WebAssembly.instantiate(module, importObject);
+
+        // Try to call main function or _start
+        let result;
+        if (instance.exports._start) {
+            instance.exports._start();
+            result = 'completed';
+        } else if (instance.exports.main) {
+            result = instance.exports.main();
         } else {
             // List exported functions
-            const exports = Object.keys(instance.exports);
+            const exports = Object.keys(instance.exports).filter(k => typeof instance.exports[k] === 'function');
             document.getElementById('resultOutput').innerHTML =
-                `<div class="info">No main function. Exports: ${exports.join(', ')}</div>`;
+                `<div class="info">No main/_start function. Exported functions: ${exports.join(', ') || 'none'}</div>`;
+            return;
         }
+
+        // Display result
+        let output = '';
+        if (consoleOutput.length > 0) {
+            output += `<div class="console-output"><strong>Output:</strong><pre>${escapeHtml(consoleOutput.join(''))}</pre></div>`;
+        }
+        output += `<div class="success">Return value: <strong>${result}</strong></div>`;
+        document.getElementById('resultOutput').innerHTML = output;
+
     } catch (error) {
         document.getElementById('resultOutput').innerHTML =
             `<div class="error">Execution error: ${escapeHtml(error.message)}</div>`;

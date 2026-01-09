@@ -2147,9 +2147,12 @@ impl TypeChecker {
     }
     
     fn check_with_expr(&mut self, with: &WithExpr) -> Result<TypedType, TypeError> {
+        // Phase 5: Treat 'with' as scope composition
+        // Conceptually: with ctx1, ctx2 { body } == ctx1 + ctx2 + { body }
+
         // Push contexts onto the stack
         let original_len = self._contexts.len();
-        
+
         // Verify all contexts exist and push them
         for ctx_name in &with.contexts {
             // Check if it's a built-in context or a user-defined context
@@ -2172,10 +2175,11 @@ impl TypeChecker {
                 return Err(TypeError::UnavailableContext(ctx_name.clone()));
             }
         }
-        
+
         // Check the body with contexts available
-        let result = self.check_block_expr(&with.body)?;
-        
+        // The body is executed within the context, making it effectively a scope concatenation
+        let body_type = self.check_block_expr(&with.body)?;
+
         // Pop contexts (in reverse order) and exit AsyncRuntime contexts
         for ctx_name in with.contexts.iter().rev() {
             if ctx_name.starts_with("AsyncRuntime") {
@@ -2183,8 +2187,14 @@ impl TypeChecker {
             }
         }
         self._contexts.truncate(original_len);
-        
-        Ok(result)
+
+        // Phase 5: Return the with expression as a function type (lazy evaluation)
+        // This makes 'with' compatible with scope composition
+        // The function wraps the body execution in the appropriate context
+        Ok(TypedType::Function {
+            params: vec![],
+            return_type: Box::new(body_type),
+        })
     }
     
     fn _is_context_available(&self, name: &str) -> bool {

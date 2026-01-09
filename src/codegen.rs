@@ -1547,8 +1547,10 @@ impl WasmCodeGen {
             Expr::While(while_expr) => {
                 self.generate_while_expr(while_expr)?;
             }
-            Expr::With(_) => {
-                return Err(CodeGenError::NotImplemented("with expressions".to_string()));
+            Expr::With(with) => {
+                // Phase 5: Generate 'with' as a lazy block (function)
+                // This makes it compatible with scope composition
+                self.generate_with_as_scope(with)?;
             }
             Expr::WithLifetime(with_lifetime) => {
                 self.generate_temporal_scope(&with_lifetime.lifetime, &with_lifetime.body)?;
@@ -1811,6 +1813,43 @@ impl WasmCodeGen {
         self.output.push_str("    ;; Execute right scope\n");
         self.generate_expr(&sc.right)?;
         self.output.push_str("    ;; Return right result\n");
+
+        self.output.push_str("  )\n");
+
+        // Return function table index
+        let table_index = self.function_table.len() - 1;
+        self.output.push_str(&format!("    i32.const {}\n", table_index));
+
+        Ok(())
+    }
+
+    fn generate_with_as_scope(&mut self, with: &WithExpr) -> Result<(), CodeGenError> {
+        // Phase 5: Generate 'with' expression as a lazy block (function)
+        // This allows it to be composed with other scopes
+
+        let with_idx = self.lambda_counter;
+        self.lambda_counter += 1;
+        let func_name = format!("$with_scope_{}", with_idx);
+
+        self.function_table.push(func_name.clone());
+
+        // Generate the with function
+        self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
+
+        // For now, contexts don't generate actual code - they're compile-time constructs
+        // Just execute the body block
+        // TODO: Generate proper context setup/teardown for Arena and other contexts
+        self.output.push_str("    ;; Execute body with contexts: ");
+        for (i, ctx) in with.contexts.iter().enumerate() {
+            if i > 0 {
+                self.output.push_str(", ");
+            }
+            self.output.push_str(ctx);
+        }
+        self.output.push_str("\n");
+
+        // Generate the body
+        self.generate_block_internal(&with.body, false)?;
 
         self.output.push_str("  )\n");
 

@@ -84,15 +84,17 @@ The web compiler requires a modern browser with WebAssembly support:
 
 ## CI/CD and GitHub Pages Deployment
 
-The playground is automatically built and deployed to GitHub Pages on every push to `main` branch.
+The playground and documentation are automatically built and deployed to GitHub Pages on every push to `master` branch.
 
 ### Automatic Deployment
 
-The workflow (`.github/workflows/deploy-playground.yml`) does the following:
+The unified workflow (`.github/workflows/deploy.yml`) does the following:
 
-1. Builds WASM using `wasm-pack`
-2. Copies web files to deployment directory
-3. Deploys to GitHub Pages
+1. Builds WASM using `wasm-pack` for the playground
+2. Builds documentation using `mdBook`
+3. Deploys to GitHub Pages:
+   - Playground at root (`/`)
+   - Documentation at `/docs`
 
 ### Manual Setup
 
@@ -100,14 +102,13 @@ To enable GitHub Pages for your fork:
 
 1. Go to repository **Settings** > **Pages**
 2. Under "Build and deployment", select **GitHub Actions**
-3. The playground will be deployed automatically on next push to `main`
+3. The site will be deployed automatically on next push to `master`
 
-### Deployment URL
+### Deployment URLs
 
-After deployment, the playground will be available at:
-```
-https://<username>.github.io/<repository>/
-```
+After deployment:
+- **Playground**: `https://<username>.github.io/<repository>/`
+- **Documentation**: `https://<username>.github.io/<repository>/docs/`
 
 ## Development
 

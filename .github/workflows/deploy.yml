@@ -1,13 +1,8 @@
-name: Deploy Playground
+name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [ main ]
-    paths:
-      - 'src/**'
-      - 'web/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+    branches: [ master ]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Setup Rust and wasm-pack for playground
       - name: Install Rust
         uses: dtolnay/rust-action@stable
 
@@ -45,25 +41,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
 
+      # Build playground (WASM)
       - name: Build WASM
         run: |
           wasm-pack build --target web --out-dir web/pkg
-          echo "WASM build completed"
-          ls -la web/pkg/
+          echo "✅ WASM build completed"
 
+      # Setup mdBook for documentation
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v1
+        with:
+          mdbook-version: 'latest'
+
+      # Build documentation
+      - name: Build documentation
+        run: |
+          cd docs
+          mdbook build
+          echo "✅ Documentation build completed"
+
+      # Prepare deployment directory
       - name: Prepare deployment
         run: |
-          # Create deployment directory
           mkdir -p deploy
 
-          # Copy web files
+          # Copy playground to root
           cp -r web/* deploy/
+
+          # Copy docs to /docs subdirectory
+          cp -r docs/book deploy/docs
 
           # Add .nojekyll to prevent Jekyll processing
           touch deploy/.nojekyll
 
-          echo "Deployment directory contents:"
+          echo "📁 Deployment structure:"
           ls -la deploy/
+          echo ""
+          echo "📁 docs subdirectory:"
+          ls -la deploy/docs/ | head -10
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

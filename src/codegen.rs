@@ -1315,11 +1315,35 @@ impl WasmCodeGen {
 
     fn generate_binding(&mut self, bind: &BindDecl) -> Result<(), CodeGenError> {
         // Infer type of the value for variable tracking
-        if let Expr::RecordLit(record_lit) = bind.value.as_ref() {
-            // Record the type of the variable for field access later
-            self.var_types.insert(bind.name.clone(), record_lit.name.clone());
+        match bind.value.as_ref() {
+            Expr::RecordLit(record_lit) => {
+                // Record the type of the variable for field access later
+                self.var_types.insert(bind.name.clone(), record_lit.name.clone());
+            }
+            Expr::IntLit(_) => {
+                self.var_types.insert(bind.name.clone(), "Int".to_string());
+            }
+            Expr::StringLit(_) => {
+                self.var_types.insert(bind.name.clone(), "String".to_string());
+            }
+            Expr::FloatLit(_) => {
+                self.var_types.insert(bind.name.clone(), "Float".to_string());
+            }
+            Expr::BoolLit(_) => {
+                self.var_types.insert(bind.name.clone(), "Bool".to_string());
+            }
+            Expr::Ident(other_var) => {
+                // Copy the type from the other variable if known
+                if let Some(type_name) = self.var_types.get(other_var).cloned() {
+                    self.var_types.insert(bind.name.clone(), type_name);
+                }
+            }
+            _ => {
+                // For complex expressions, we'd need full type inference
+                // For now, leave the type unknown
+            }
         }
-        
+
         // Generate the value expression
         self.generate_expr(&bind.value)?;
         
@@ -2320,6 +2344,22 @@ impl WasmCodeGen {
             match arg_expr {
                 Expr::StringLit(_) => Ok("println".to_string()),
                 Expr::IntLit(_) => Ok("print_int".to_string()),
+                Expr::Ident(var_name) => {
+                    // Look up variable type from var_types
+                    if let Some(type_name) = self.var_types.get(var_name) {
+                        if type_name == "String" {
+                            Ok("println".to_string())
+                        } else if type_name == "Int32" || type_name == "Int" || type_name == "Int64" {
+                            Ok("print_int".to_string())
+                        } else {
+                            // Default to println for other types
+                            Ok("println".to_string())
+                        }
+                    } else {
+                        // Variable not found - default to print_int for numeric context
+                        Ok("print_int".to_string())
+                    }
+                }
                 _ => {
                     // Try to get type from expr_types map
                     if let Some(type_name) = self.expr_types.get(&(arg_expr as *const Expr)) {
@@ -2331,8 +2371,8 @@ impl WasmCodeGen {
                             Ok("println".to_string())
                         }
                     } else {
-                        // Default to println
-                        Ok("println".to_string())
+                        // Default to print_int for numeric expressions
+                        Ok("print_int".to_string())
                     }
                 }
             }

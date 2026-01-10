@@ -8,7 +8,7 @@ fn test_with_lifetime_basic() {
         handle: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { handle = 1 };
             file.handle
@@ -31,7 +31,7 @@ fn test_with_lifetime_anonymous() {
         id: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime {
             val res = Resource { id = 42 };
             res.id
@@ -54,7 +54,7 @@ fn test_with_lifetime_escape_error() {
         handle: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { handle = 1 };
             file  // ERROR: Cannot return File<~f> outside lifetime scope
@@ -85,7 +85,7 @@ fn test_nested_with_lifetime() {
         data: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~out> {
             val outer = Outer { id = 1 };
             with lifetime<~in> {

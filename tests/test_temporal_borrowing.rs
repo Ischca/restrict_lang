@@ -13,7 +13,7 @@ fn test_sublifetime_constraint() {
         txId: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~db> {
             val database = Database { id = 1 };
             with lifetime<~tx> where ~tx within ~db {
@@ -44,7 +44,7 @@ fn test_invalid_sublifetime_constraint() {
         txId: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~db> {
             val database = Database { id = 1 };
             Unit
@@ -79,7 +79,7 @@ fn test_temporal_borrowing() {
         resource.data
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~r> {
             val resource = Resource { data = 42 };
             val result = (resource) borrowResource;
@@ -113,7 +113,7 @@ fn test_transitive_sublifetime() {
         innerId: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~out> {
             val outer = Outer { id = 1 };
             with lifetime<~mid> where ~mid within ~out {

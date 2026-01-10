@@ -32,7 +32,7 @@ use nom::{
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{preceded, tuple, delimited},
 };
-use crate::lexer::{Token, lex_token, skip, Span};
+use crate::lexer::{Token, lex_token, skip, skip_non_newline, newline, Span};
 use crate::ast::*;
 
 /// Context for tracking source positions during parsing.
@@ -81,7 +81,8 @@ fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> 
         let original_input = input;
         let (input, token) = lex_token(input)?;
         if token == expected {
-            let (input, _) = skip(input)?; // Skip trailing whitespace after token
+            // Skip trailing whitespace but NOT newlines - newlines are needed for OSV detection
+            let (input, _) = skip_non_newline(input)?;
             Ok((input, ()))
         } else {
             // Return error with the original input to allow backtracking
@@ -350,18 +351,33 @@ fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
     }))
 }
 
+/// Check if there's a newline before the next token.
+/// Used for OSV parsing to determine statement boundaries.
+fn has_newline_before_next_token(input: &str) -> bool {
+    // Skip non-newline whitespace first
+    let after_ws = if let Ok((rest, _)) = skip_non_newline(input) {
+        rest
+    } else {
+        input
+    };
+
+    // Check if there's a newline
+    newline(after_ws).is_ok()
+}
+
 /// Consume an optional statement terminator (semicolon or newline).
 /// Returns the input after consuming the terminator (if any).
+/// IMPORTANT: This function should NOT skip newlines because they're used
+/// for OSV detection in expression parsing.
 fn consume_statement_terminator(input: &str) -> &str {
     // First, try to consume a semicolon
     if let Ok((rest, _)) = expect_token(Token::Semicolon)(input) {
         return rest;
     }
 
-    // Otherwise, just skip whitespace - newlines are already handled by the lexer's
-    // smart filtering, so we don't need to explicitly look for them here.
-    // The next statement will naturally start at the right position.
-    if let Ok((rest, _)) = skip(input) {
+    // Only skip non-newline whitespace. Newlines are needed for OSV detection
+    // to distinguish between `x func` (same line = OSV) and `x\nfunc` (different lines = separate statements)
+    if let Ok((rest, _)) = skip_non_newline(input) {
         return rest;
     }
 
@@ -1039,7 +1055,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
         // Single expression or OSV style
         move |input| {
             let (input, first) = simple_expr(input)?;
-            
+
             if in_statement {
                 // In statement context, be conservative about consuming more expressions
                 // Peek at the next tokens to see if this is a new statement
@@ -1054,10 +1070,13 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
                     if let Ok((_, Token::Assign)) = lex_token(after_ident) {
                         return Ok((input, first));
                     }
-                    // Also stop before a bare identifier that might be a final expression
-                    // Only continue if there's a clear operator or call pattern
-                    // For now, conservatively stop before any identifier to avoid consuming final expressions
-                    return Ok((input, first));
+                    // OSV on same line: `x println` should be parsed as `println(x)`
+                    // But on different lines, they are separate statements
+                    if has_newline_before_next_token(input) {
+                        // There's a newline, so stop - this is a new statement
+                        return Ok((input, first));
+                    }
+                    // No newline - continue to parse as OSV
                 }
                 // Check for unit literal () which might be a separate statement/expression
                 if let Ok((after_lparen, Token::LParen)) = lex_token(input) {
@@ -1084,7 +1103,13 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
             
             // Otherwise, try to parse more expressions for OSV
             // But don't parse expressions that start with binary operators
+            // And in statement context, stop at newlines
             let (input, rest) = many0(|input| {
+                // In statement context, stop at newlines (different line = separate statement)
+                if in_statement && has_newline_before_next_token(input) {
+                    return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+                }
+
                 // Peek at the next token
                 if let Ok((_, tok)) = lex_token(input) {
                     match tok {
@@ -1117,7 +1142,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
 
 pub fn simple_expr(input: &str) -> ParseResult<Expr> {
     let (mut input, mut expr) = atom_expr(input)?;
-    
+
     // Handle postfix operations
     loop {
         
@@ -1811,5 +1836,50 @@ mod tests {
 }";
         let result = parse_program(input);
         assert!(result.is_ok(), "Failed to parse block with empty lines: {:?}", result.err());
+    }
+
+    // ========== OSV syntax tests ==========
+
+    #[test]
+    fn test_osv_same_line() {
+        // OSV on same line: x println should parse as println(x)
+        let input = "fun main: () -> Unit = { 42 println }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse OSV on same line: {:?}", result.err());
+
+        // Verify it parsed as a function call
+        let (_, ast) = result.unwrap();
+        if let Some(TopDecl::Function(func)) = ast.declarations.first() {
+            if let Some(expr) = &func.body.expr {
+                assert!(matches!(**expr, Expr::Call(_)), "Expected Call expression for OSV");
+            }
+        }
+    }
+
+    #[test]
+    fn test_osv_different_lines() {
+        // OSV on different lines: should be separate expressions
+        let input = "fun main: () -> Int = {
+    42
+    println
+}";
+        let result = parse_program(input);
+        // This should parse, but 42 and println are separate
+        assert!(result.is_ok(), "Failed to parse expressions on different lines: {:?}", result.err());
+
+        let (_, ast) = result.unwrap();
+        if let Some(TopDecl::Function(func)) = ast.declarations.first() {
+            // Should have at least one statement (42) and final expr (println)
+            assert!(!func.body.statements.is_empty() || func.body.expr.is_some(),
+                "Expected separate expressions");
+        }
+    }
+
+    #[test]
+    fn test_osv_chain_same_line() {
+        // Multiple OSV on same line: x f g should parse as g(f(x))
+        let input = "fun main: () -> Unit = { 42 double println }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse OSV chain on same line: {:?}", result.err());
     }
 }

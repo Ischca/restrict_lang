@@ -18,7 +18,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_default_arena_in_main() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             // Default arena should be available automatically
             42
         }
@@ -48,7 +48,7 @@ fn test_no_default_arena_in_other_functions() {
             x + 1
         }
         
-        fun main = {
+        fun main: () -> Int = {
             42 helper
         }
     "#;
@@ -71,7 +71,7 @@ fn test_no_default_arena_in_other_functions() {
 #[test]
 fn test_global_current_arena() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             42
         }
     "#;
@@ -87,7 +87,7 @@ fn test_global_current_arena() {
 #[test]
 fn test_allocate_function() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             42
         }
     "#;
@@ -107,7 +107,7 @@ fn test_allocate_function() {
 #[ignore]
 fn test_list_with_default_arena() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val list = [1, 2, 3, 4, 5];
             list
         }

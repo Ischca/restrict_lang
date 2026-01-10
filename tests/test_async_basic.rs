@@ -18,7 +18,7 @@ fn test_async_function_basic() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         42
     }"#;
     
@@ -47,7 +47,7 @@ fn test_async_with_lifetime() {
         AsyncFile { handle = 1 }
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             // In real implementation, this would use await
             42
@@ -87,7 +87,7 @@ fn test_await_in_pipe() {
         Task { id = userId }
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             val userTask = (123) fetchUser;
             val user = userTask |> await;
@@ -116,7 +116,7 @@ fn test_spawn_task() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             // Spawn a lambda that returns a User
             val task = spawn { User { id = 42, name = "Spawned" } };
@@ -151,7 +151,7 @@ fn test_async_with_temporal_constraints() {
         Task { id = 1 }
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             with lifetime<~f> where ~f within ~async {
                 val fileTask = ("test.txt") readFile;
@@ -182,7 +182,7 @@ fn test_async_runtime_context() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             with AsyncRuntime<~async> {
                 // spawn in AsyncRuntime context
@@ -216,7 +216,7 @@ fn test_async_runtime_context_error() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             // This should fail - spawn without AsyncRuntime context
             val task = spawn { User { id = 42, name = "Test" } };
@@ -258,7 +258,7 @@ fn test_async_runtime_with_channels() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             with AsyncRuntime<~async> {
                 // Create channel

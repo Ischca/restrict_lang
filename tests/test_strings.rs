@@ -19,7 +19,7 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
 #[test]
 fn test_string_literal() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val message = "Hello, World!";
             message
         }
@@ -36,7 +36,7 @@ fn test_string_literal() {
 #[test]
 fn test_string_println() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             "Hello, World!" println
         }
     "#;
@@ -52,7 +52,7 @@ fn test_string_println() {
 #[test]
 fn test_multiple_strings() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val s1 = "First string";
             val s2 = "Second string";
             s1 println;
@@ -74,7 +74,7 @@ fn test_string_in_function() {
             name println
         }
         
-        fun main = {
+        fun main: () -> Int = {
             "Alice" greet
         }
     "#;
@@ -89,7 +89,7 @@ fn test_string_in_function() {
 #[test]
 fn test_empty_string() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             "" println
         }
     "#;

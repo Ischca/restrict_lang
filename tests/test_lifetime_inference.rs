@@ -13,7 +13,7 @@ fn test_basic_lifetime_inference() {
         file.handle
     }
     
-    fun main = {
+    fun main: () -> Int = {
         42
     }"#;
     

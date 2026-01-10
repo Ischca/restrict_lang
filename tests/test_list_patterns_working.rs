@@ -30,7 +30,7 @@ fn compile_simple(source: &str) -> Result<String, String> {
 #[test]
 fn test_empty_list_pattern() {
     let src = r#"
-fun main = {
+fun main: () -> Int = {
     with Arena {
         val lst = []
         val result = (lst) match {
@@ -49,7 +49,7 @@ fun main = {
 #[test]
 fn test_cons_pattern() {
     let src = r#"
-fun main = {
+fun main: () -> Int = {
     with Arena {
         val lst = [10, 20, 30]
         val result = (lst) match {
@@ -69,7 +69,7 @@ fun main = {
 #[test]
 fn test_exact_pattern() {
     let src = r#"
-fun main = {
+fun main: () -> Int = {
     with Arena {
         val lst = [1, 2, 3]
         val result = (lst) match {

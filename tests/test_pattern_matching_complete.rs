@@ -26,7 +26,7 @@ fn test_simple_match_some_none() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val some_val = 42 some;
             val none_val = None<Int>;
             some_val test_option |> print_int;
@@ -61,7 +61,7 @@ fn test_nested_pattern_match() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val nested = 42 some some;
             val some_none = None<Int> some;
             val none = None<Int?>;
@@ -87,7 +87,7 @@ fn test_list_pattern_matching() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val empty = [];
             val single = [10];
             val double = [20, 30];
@@ -123,7 +123,7 @@ fn test_record_pattern_matching() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val origin = Point { x: 0 y: 0 };
             val p1 = Point { x: 10 y: 20 };
             val p2 = Point { x: -10 y: 20 };
@@ -159,7 +159,7 @@ fn test_wildcard_pattern() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val some_val = 42 some;
             val none_val = None<Int>;
             some_val handle_option |> print_int;
@@ -182,7 +182,7 @@ fn test_pattern_match_with_guards() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             -10 classify |> print_int;
             0 classify |> print_int;
             10 classify |> print_int
@@ -204,7 +204,7 @@ fn test_exhaustive_pattern_checking() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             42 some incomplete
         }
     "#;
@@ -224,7 +224,7 @@ fn test_pattern_binding_affine_types() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             42 some test_affine
         }
     "#;
@@ -243,7 +243,7 @@ fn test_pattern_match_tuple() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val pair = (10, 20);
             pair swap match {
                 (a, b) => { a + b }
@@ -258,7 +258,7 @@ fn test_pattern_match_tuple() {
 #[test]
 fn test_pattern_match_in_let_binding() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val Some(x) = 42 some;
             x |> print_int
         }
@@ -285,7 +285,7 @@ fn test_multiple_pattern_variables() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             [1, 2, 3] test_list |> print_int;
             [10, 20] test_list |> print_int;
             [100] test_list |> print_int;
@@ -307,7 +307,7 @@ fn test_pattern_match_osv_syntax() {
             } |> println
         }
         
-        fun main = {
+        fun main: () -> Int = {
             0 process;
             42 process
         }
@@ -328,7 +328,7 @@ fn test_pattern_match_with_complex_expressions() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             complex_match |> print_int
         }
     "#;
@@ -349,7 +349,7 @@ fn test_match_return_different_types() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             42 some test_types
         }
     "#;

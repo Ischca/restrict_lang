@@ -28,7 +28,7 @@ fn test_integer_pattern_match() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             0 classify |> print_int;
             1 classify |> print_int;
             5 classify |> print_int
@@ -49,7 +49,7 @@ fn test_match_with_variable_binding() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             -5 test_binding |> print_int;
             0 test_binding |> print_int;
             10 test_binding |> print_int
@@ -63,7 +63,7 @@ fn test_match_with_variable_binding() {
 #[test]
 fn test_match_in_expression_context() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val result = 42 match {
                 0 => { 100 }
                 42 => { 200 }
@@ -89,7 +89,7 @@ fn test_nested_match() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             0 nested |> print_int;
             1 nested |> print_int;
             2 nested |> print_int
@@ -112,7 +112,7 @@ fn test_match_with_complex_expressions() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             0 process |> print_int;
             10 process |> print_int;
             20 process |> print_int;
@@ -127,7 +127,7 @@ fn test_match_with_complex_expressions() {
 #[test]
 fn test_match_osv_syntax() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             42 match {
                 0 => { 100 }
                 42 => { 200 }
@@ -161,7 +161,7 @@ fn test_match_with_block_patterns() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             0 complex_match |> print_int;
             1 complex_match |> print_int;
             2 complex_match |> print_int
@@ -181,7 +181,7 @@ fn test_wildcard_pattern() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             100 always_42 |> print_int
         }
     "#;
@@ -200,7 +200,7 @@ fn test_match_exhaustiveness_with_wildcard() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             (10, 2) safe_divide |> print_int;
             (10, 0) safe_divide |> print_int
         }

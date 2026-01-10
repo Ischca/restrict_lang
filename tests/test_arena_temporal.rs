@@ -40,7 +40,7 @@ fn test_temporal_scope_arena_allocation() {
     y: Int32
 }
 
-fun main = {
+fun main: () -> Int = {
     with lifetime<~outer> {
         val p1 = Point { x = 10, y = 20 };
         
@@ -84,7 +84,7 @@ fn test_nested_temporal_scope_memory() {
     size: Int32
 }
 
-fun main = {
+fun main: () -> Int = {
     with lifetime<~level1> {
         val buf1 = Buffer { data = "Level 1", size = 7 };
         
@@ -124,7 +124,7 @@ fun main = {
 
 #[test]
 fn test_temporal_scope_with_allocations() {
-    let input = r#"fun main = {
+    let input = r#"fun main: () -> Int = {
     with lifetime<~temp> {
         val list = [1, 2, 3, 4, 5];
         val opt = Some(42);
@@ -155,7 +155,7 @@ fn test_temporal_scope_return_value() {
     }
 }
 
-fun main = {
+fun main: () -> Int = {
     with lifetime<~main> {
         process
     }
@@ -182,7 +182,7 @@ fn test_async_runtime_with_arena() {
     n * 2
 }
 
-fun main = {
+fun main: () -> Int = {
     with AsyncRuntime<~async> {
         val task = 21 |> compute |> spawn;
         task |> await
@@ -211,7 +211,7 @@ fn test_temporal_memory_bounds() {
     data4: Int32
 }
 
-fun main = {
+fun main: () -> Int = {
     with lifetime<~scope> {
         val item1 = Large { data1 = 1, data2 = 2, data3 = 3, data4 = 4 };
         val item2 = Large { data1 = 5, data2 = 6, data3 = 7, data4 = 8 };

@@ -7,7 +7,7 @@ fn test_exact_input_parsing() {
     y: Int32
 }
 
-fun main = {
+fun main: () -> Int = {
     with lifetime<~outer> {
         val p1 = Point { x = 10, y = 20 };
         
@@ -55,7 +55,7 @@ fn test_simple_parsing() {
     y: Int32
 }
 
-fun main = {
+fun main: () -> Int = {
     42
 }"#;
     

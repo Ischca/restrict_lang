@@ -14,7 +14,7 @@ fn type_check(source: &str) -> Result<(), String> {
 #[test]
 fn test_empty_list() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val empty = [];
             empty
         }
@@ -27,7 +27,7 @@ fn test_empty_list() {
 #[test]
 fn test_int_list() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val nums = [1, 2, 3, 4, 5];
             nums
         }
@@ -40,7 +40,7 @@ fn test_int_list() {
 #[test]
 fn test_string_list() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val words = ["hello", "world"];
             words
         }
@@ -53,7 +53,7 @@ fn test_string_list() {
 #[test]
 fn test_mixed_type_list_error() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val mixed = [1, "hello", 3];
             mixed
         }
@@ -67,7 +67,7 @@ fn test_mixed_type_list_error() {
 #[test]
 fn test_nested_list() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val matrix = [[1, 2], [3, 4], [5, 6]];
             matrix
         }
@@ -86,7 +86,7 @@ fn test_list_in_function() {
             42
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val numbers = [1, 2, 3];
             numbers sum_list
         }
@@ -102,7 +102,7 @@ fn test_list_in_function() {
 fn test_list_pattern_in_match() {
     // This is future work - list patterns in match expressions
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val nums = [1, 2, 3];
             nums match {
                 [] => { 0 }

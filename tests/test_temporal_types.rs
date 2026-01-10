@@ -58,7 +58,7 @@ fn test_temporal_inference() {
         res.id
     }
     
-    fun main = {
+    fun main: () -> Int = {
         val res = Resource { id: 42 };  // ~r should be inferred
         (res) useResource
     }"#;
@@ -83,7 +83,7 @@ fun leakFile<~io> = {
     file  // ERROR: Cannot return File<~io> outside ~io
 }
 
-fun main = {
+fun main: () -> Int = {
     Unit
 }"#;
     
@@ -113,7 +113,7 @@ fn test_temporal_with_context() {
         handle: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with FileSystem {
             val file = "test.txt" |> open;  // file: File<~fs>
             file.handle

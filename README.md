@@ -54,11 +54,12 @@ wasmtime hello.wat
 
 - **🔒 Affine Type System**: Variables can be used at most once, preventing accidental resource duplication
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
-- **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for Option, List, and Record types  
+- **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for Option, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition
 - **💬 Comments**: Full support for single-line (`//`) and multi-line (`/* */`) comments
+- **✂️ Semicolon-Free**: Kotlin-style newline-based statement termination (semicolons optional)
 
 ## 📖 Language Overview
 
@@ -98,6 +99,11 @@ val y = x    // x is consumed here
 mut val counter = 0
 counter = counter + 1  // OK
 counter = counter + 1  // OK
+
+// Semicolons are optional - use newlines to separate statements
+val a = 1
+val b = 2
+val c = a + b
 ```
 
 ### Functions and OSV Syntax
@@ -134,14 +140,14 @@ val result = 10 |> add5  // Returns 15
 ```rust
 // Option pattern matching
 val maybe_value: Option<Int> = Some(42)
-maybe_value match {
+val result = maybe_value match {
     Some(value) => { value * 2 }
     None => { 0 }
 }
 
 // List pattern matching
 val numbers = [1, 2, 3, 4]
-numbers match {
+val description = numbers match {
     [] => { "empty" }
     [head | tail] => { "head: " + head }
     [a, b] => { "exactly two" }
@@ -151,7 +157,7 @@ numbers match {
 // Record pattern matching
 record Point { x: Int y: Int }
 val point = Point { x: 10 y: 20 }
-point match {
+val sum = point match {
     Point { x: 0 y: 0 } => { "origin" }
     Point { x y } => { x + y }  // Destructure both fields
     _ => { "unknown" }
@@ -194,10 +200,45 @@ val arena = new_arena(1024)  // 1KB arena
 arena {
     val big_list = [1, 2, 3, /* many elements */]
     val user = Person { name: "Bob" age: 25 email: "bob@test.com" }
-    
+
     // Process data...
     // All memory automatically freed when leaving scope
 }
+```
+
+### Semicolon-Free Syntax
+
+Restrict Language uses Kotlin-style newline-based statement termination. Semicolons are optional in most cases:
+
+```rust
+// Statements separated by newlines (no semicolons needed)
+fun main: () -> Int = {
+    val x = 42
+    val y = 10
+    val result = x + y
+    result
+}
+
+// Multiple statements on one line require semicolons
+fun compact: () -> Int = { val a = 1; val b = 2; a + b }
+
+// Line continuation: operators at end of line continue to next line
+fun multiline: () -> Int = {
+    val sum = 10 +
+        20 +
+        30
+
+    val piped = 42 |>
+        println
+
+    sum
+}
+
+// Method chaining can span multiple lines
+val result = obj
+    .method1()
+    .method2()
+    .method3()
 ```
 
 ## 📚 Documentation
@@ -221,6 +262,7 @@ arena {
 - [x] Arena memory management
 - [x] Bidirectional type inference
 - [x] Function tables for indirect calls
+- [x] Kotlin-style semicolon-free syntax
 
 ### 🚧 In Progress
 

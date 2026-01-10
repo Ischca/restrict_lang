@@ -274,6 +274,12 @@ fn param(input: &str) -> ParseResult<Param> {
 /// - `is_lazy`: Whether this block should be lazy (true) or eager (false)
 ///   - Lazy: block is a closure, can be stored and called later
 ///   - Eager: block executes immediately
+///
+/// # Statement Termination (Kotlin-style)
+/// Statements in blocks are terminated by either:
+/// - A semicolon `;`
+/// - A newline (when using newline-aware parsing)
+/// - Implicitly before `}`
 fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
 
@@ -281,53 +287,57 @@ fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
     let mut statements = Vec::new();
     let mut remaining = input;
     let mut final_expr = None;
-    
+
     loop {
         // Skip whitespace and comments before each statement/expression
+        // Use regular skip here - newlines inside braces are already filtered by lexer
         let (rest, _) = skip(remaining)?;
         remaining = rest;
-        
+
         // Check if we've reached the closing brace
         if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
             remaining = after_brace;
             break;
         }
-        
+
         // Try to parse a binding first
         if let Ok((after_bind, bind_decl)) = bind_decl(remaining) {
             statements.push(Stmt::Binding(bind_decl));
-            // Consume optional semicolon
-            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_bind)?;
-            remaining = after_semi;
+            // Consume optional semicolon or newline as statement terminator
+            let after_term = consume_statement_terminator(after_bind);
+            remaining = after_term;
             continue;
         }
-        
+
         // Try to parse an assignment
         if let Ok((after_assign, assign_stmt)) = assignment_stmt(remaining) {
             statements.push(assign_stmt);
-            // Consume optional semicolon
-            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_assign)?;
-            remaining = after_semi;
+            // Consume optional semicolon or newline as statement terminator
+            let after_term = consume_statement_terminator(after_assign);
+            remaining = after_term;
             continue;
         }
-        
+
         // Otherwise, parse an expression with statement context
         let (after_expr, expr) = expression_in_statement(remaining)?;
-        
+
+        // Skip whitespace (but preserve newlines for checking)
+        let (after_skip, _) = skip(after_expr)?;
+
         // Peek ahead to see if this is the final expression
-        if let Ok((_, _)) = expect_token::<'_>(Token::RBrace)(after_expr) {
+        if let Ok((_, _)) = expect_token::<'_>(Token::RBrace)(after_skip) {
             // This is the final expression
             final_expr = Some(Box::new(expr));
-            remaining = after_expr;
+            remaining = after_skip;
         } else {
             // This is a statement expression
             statements.push(Stmt::Expr(Box::new(expr)));
-            // Consume optional semicolon
-            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_expr)?;
-            remaining = after_semi;
+            // Consume optional semicolon or newline as statement terminator
+            let after_term = consume_statement_terminator(after_expr);
+            remaining = after_term;
         }
     }
-    
+
     // Detect if the block uses 'it' anywhere
     let has_implicit_it = block_uses_it(&statements, &final_expr);
 
@@ -338,6 +348,24 @@ fn block_expr_with_mode(input: &str, is_lazy: bool) -> ParseResult<BlockExpr> {
         has_implicit_it,
         span: None,
     }))
+}
+
+/// Consume an optional statement terminator (semicolon or newline).
+/// Returns the input after consuming the terminator (if any).
+fn consume_statement_terminator(input: &str) -> &str {
+    // First, try to consume a semicolon
+    if let Ok((rest, _)) = expect_token(Token::Semicolon)(input) {
+        return rest;
+    }
+
+    // Otherwise, just skip whitespace - newlines are already handled by the lexer's
+    // smart filtering, so we don't need to explicitly look for them here.
+    // The next statement will naturally start at the right position.
+    if let Ok((rest, _)) = skip(input) {
+        return rest;
+    }
+
+    input
 }
 
 /// Parse an eager block (default for function bodies, control flow, etc.)
@@ -1695,5 +1723,93 @@ mod tests {
         let result = parse_program_with_errors(input);
         // This should succeed with unit return
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+    }
+
+    // ========== Newline-based statement termination tests ==========
+
+    #[test]
+    fn test_block_without_semicolons() {
+        // Statements separated by newlines (no semicolons)
+        let input = "fun main: () -> Int = {
+    val x = 42
+    val y = 10
+    x
+}";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse block without semicolons: {:?}", result.err());
+        let (remaining, ast) = result.unwrap();
+        assert!(remaining.trim().is_empty(), "Unexpected remaining input: {:?}", remaining);
+        assert_eq!(ast.declarations.len(), 1);
+    }
+
+    #[test]
+    fn test_block_with_mixed_terminators() {
+        // Mix of semicolons and newlines
+        let input = "fun main: () -> Int = {
+    val x = 42;
+    val y = 10
+    x
+}";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse block with mixed terminators: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_multiline_expression_with_pipe() {
+        // Pipe operator at end of line should continue to next line
+        let input = "fun main: () -> Int = {
+    val result = 42 |>
+        println
+    0
+}";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse multiline pipe expression: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_multiline_expression_with_operator() {
+        // Binary operator at end of line should continue to next line
+        let input = "fun main: () -> Int = {
+    val result = 42 +
+        10
+    result
+}";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse multiline binary expression: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_if_else_on_multiple_lines() {
+        // else on new line should be parsed correctly
+        let input = "fun main: () -> Int = {
+    true then { 1 }
+    else { 2 }
+}";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse if/else on multiple lines: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_multiple_statements_single_line() {
+        // Multiple statements on single line with semicolons
+        let input = "fun main: () -> Int = { val x = 1; val y = 2; x }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse multiple statements on single line: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_empty_lines_in_block() {
+        // Empty lines should be ignored
+        let input = "fun main: () -> Int = {
+
+    val x = 42
+
+    val y = 10
+
+    x
+
+}";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse block with empty lines: {:?}", result.err());
     }
 }

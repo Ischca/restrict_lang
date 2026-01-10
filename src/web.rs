@@ -562,7 +562,7 @@ fn get_semantic_tokens_internal(source: &str) -> Vec<SemanticToken> {
                 // Special tokens
                 Token::It => "keyword",
                 Token::Asterisk => "operator",
-                Token::Eof => continue,  // Skip EOF token
+                Token::Eof | Token::Newline => continue,  // Skip EOF and Newline tokens
             };
 
             tokens.push(SemanticToken {

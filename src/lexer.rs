@@ -232,6 +232,8 @@ pub enum Token {
     Semicolon,      // ;
     
     // Special
+    /// Newline token for statement termination
+    Newline,
     Eof,
 }
 
@@ -304,6 +306,7 @@ impl fmt::Display for Token {
             Token::Colon => write!(f, ":"),
             Token::Dot => write!(f, "."),
             Token::Semicolon => write!(f, ";"),
+            Token::Newline => write!(f, "<newline>"),
             Token::Eof => write!(f, "EOF"),
         }
     }
@@ -468,6 +471,19 @@ fn whitespace(input: &str) -> IResult<&str, &str> {
     take_while1(|c: char| c.is_whitespace())(input)
 }
 
+/// Parse only non-newline whitespace (spaces, tabs)
+fn non_newline_whitespace(input: &str) -> IResult<&str, &str> {
+    take_while1(|c: char| c.is_whitespace() && c != '\n' && c != '\r')(input)
+}
+
+/// Parse a newline (LF or CRLF)
+fn newline(input: &str) -> IResult<&str, &str> {
+    alt((
+        tag("\r\n"),
+        tag("\n"),
+    ))(input)
+}
+
 fn comment(input: &str) -> IResult<&str, &str> {
     alt((
         // Single line comment
@@ -495,8 +511,237 @@ pub fn skip(input: &str) -> IResult<&str, ()> {
     Ok((input, ()))
 }
 
+/// Skip whitespace and comments, but NOT newlines.
+/// Used for newline-sensitive parsing.
+pub fn skip_non_newline(input: &str) -> IResult<&str, ()> {
+    let mut input = input;
+    loop {
+        // Skip non-newline whitespace
+        if let Ok((rest, _)) = non_newline_whitespace(input) {
+            input = rest;
+            continue;
+        }
+        // Skip comments (but not the newline at the end of single-line comments)
+        if let Ok((rest, _)) = comment(input) {
+            input = rest;
+            continue;
+        }
+        break;
+    }
+    Ok((input, ()))
+}
+
 pub fn lex_token(input: &str) -> IResult<&str, Token> {
     preceded(skip, token)(input)
+}
+
+/// Lex a token without skipping newlines.
+/// Returns either a regular token or a Newline token.
+pub fn lex_token_newline_aware(input: &str) -> IResult<&str, Token> {
+    // First skip non-newline whitespace and comments
+    let (input, _) = skip_non_newline(input)?;
+
+    // Check if we're at a newline
+    if let Ok((rest, _)) = newline(input) {
+        return Ok((rest, Token::Newline));
+    }
+
+    // Otherwise, lex a normal token
+    token(input)
+}
+
+/// Checks if a token should suppress the following newline.
+/// These are tokens after which a newline should be ignored (continuation).
+fn suppresses_following_newline(token: &Token) -> bool {
+    matches!(token,
+        // Binary operators
+        Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
+        // Comparison operators
+        Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge |
+        // Assignment and arrow operators
+        Token::Assign | Token::Arrow | Token::ThinArrow |
+        // Pipe operators
+        Token::Pipe | Token::PipeMut | Token::Bar |
+        // Opening delimiters
+        Token::LBrace | Token::LParen | Token::LBracket | Token::LArrayBracket |
+        // Comma and colon (continuation in lists, type annotations)
+        Token::Comma | Token::Colon |
+        // Keywords that expect something to follow
+        Token::Fun | Token::Val | Token::Mut | Token::Record | Token::Context |
+        Token::Impl | Token::Import | Token::Export | Token::With | Token::Clone |
+        Token::Match | Token::Then | Token::Else | Token::While | Token::Where |
+        Token::From | Token::Within | Token::Async | Token::Return |
+        // Tilde (for temporal types)
+        Token::Tilde
+    )
+}
+
+/// Checks if a token should suppress the preceding newline.
+/// These are tokens before which a newline should be ignored.
+fn suppresses_preceding_newline(token: &Token) -> bool {
+    matches!(token,
+        // Closing delimiters
+        Token::RBrace | Token::RParen | Token::RBracket | Token::RArrayBracket |
+        // These can continue a previous line
+        Token::Else | Token::Match | Token::Then | Token::While |
+        // Operators that can appear at start of continuation line
+        Token::Pipe | Token::PipeMut |
+        // Dot for method chaining
+        Token::Dot
+    )
+}
+
+/// Lexes input into tokens with newline-sensitive tokenization.
+///
+/// This function implements Kotlin-style newline handling:
+/// - Newlines are emitted as tokens
+/// - Newlines after operators, open brackets, etc. are suppressed
+/// - Newlines before closing brackets, else, etc. are suppressed
+///
+/// The resulting token stream can be used by the parser to determine
+/// statement boundaries without requiring semicolons.
+pub fn lex_newline_aware(input: &str) -> Result<Vec<Token>, String> {
+    let mut remaining = input;
+    let mut tokens: Vec<Token> = Vec::new();
+
+    loop {
+        // Skip non-newline whitespace
+        if let Ok((rest, _)) = skip_non_newline(remaining) {
+            remaining = rest;
+        }
+
+        if remaining.is_empty() {
+            break;
+        }
+
+        // Try to lex a token (including newline)
+        match lex_token_newline_aware(remaining) {
+            Ok((rest, Token::Newline)) => {
+                // Check if we should suppress this newline based on previous token
+                let suppress_after_prev = tokens.last()
+                    .map(suppresses_following_newline)
+                    .unwrap_or(true); // Suppress at start of file
+
+                // Skip any additional newlines and whitespace to find the next actual token
+                // This collapses multiple consecutive newlines into one
+                let mut peek_rest = rest;
+                loop {
+                    if let Ok((r, _)) = skip_non_newline(peek_rest) {
+                        peek_rest = r;
+                    }
+                    if let Ok((r, _)) = newline(peek_rest) {
+                        peek_rest = r;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Check if we should suppress this newline based on next token
+                let suppress_before_next = if !peek_rest.is_empty() {
+                    if let Ok((_, next_tok)) = token(peek_rest) {
+                        suppresses_preceding_newline(&next_tok)
+                    } else {
+                        false
+                    }
+                } else {
+                    true // Suppress at end of file
+                };
+
+                // Only emit newline if not suppressed
+                if !suppress_after_prev && !suppress_before_next {
+                    tokens.push(Token::Newline);
+                }
+
+                // Skip past all the newlines we just processed (collapse multiple into one)
+                remaining = peek_rest;
+            }
+            Ok((rest, tok)) => {
+                tokens.push(tok);
+                remaining = rest;
+            }
+            Err(e) => {
+                return Err(format!("Lexing error at: {}", &remaining[..remaining.len().min(20)]));
+            }
+        }
+    }
+
+    Ok(tokens)
+}
+
+/// Lexes input into spanned tokens with newline awareness.
+pub fn lex_spanned_newline_aware(input: &str) -> Result<Vec<SpannedToken>, (String, Span)> {
+    let original_len = input.len();
+    let mut remaining = input;
+    let mut tokens: Vec<SpannedToken> = Vec::new();
+
+    loop {
+        // Skip non-newline whitespace
+        if let Ok((rest, _)) = skip_non_newline(remaining) {
+            remaining = rest;
+        }
+
+        if remaining.is_empty() {
+            break;
+        }
+
+        let start = original_len - remaining.len();
+
+        // Try to lex a token (including newline)
+        match lex_token_newline_aware(remaining) {
+            Ok((rest, Token::Newline)) => {
+                let end = original_len - rest.len();
+
+                // Check if we should suppress this newline based on previous token
+                let suppress_after_prev = tokens.last()
+                    .map(|st| suppresses_following_newline(&st.token))
+                    .unwrap_or(true);
+
+                // Skip any additional newlines and whitespace to find the next actual token
+                // This collapses multiple consecutive newlines into one
+                let mut peek_rest = rest;
+                loop {
+                    if let Ok((r, _)) = skip_non_newline(peek_rest) {
+                        peek_rest = r;
+                    }
+                    if let Ok((r, _)) = newline(peek_rest) {
+                        peek_rest = r;
+                    } else {
+                        break;
+                    }
+                }
+
+                let suppress_before_next = if !peek_rest.is_empty() {
+                    if let Ok((_, next_tok)) = token(peek_rest) {
+                        suppresses_preceding_newline(&next_tok)
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                };
+
+                if !suppress_after_prev && !suppress_before_next {
+                    tokens.push(SpannedToken::new(Token::Newline, Span::new(start, end)));
+                }
+
+                // Skip past all the newlines we just processed (collapse multiple into one)
+                remaining = peek_rest;
+            }
+            Ok((rest, tok)) => {
+                let end = original_len - rest.len();
+                tokens.push(SpannedToken::new(tok, Span::new(start, end)));
+                remaining = rest;
+            }
+            Err(_) => {
+                return Err((
+                    format!("Unexpected input: '{}'", remaining.chars().take(20).collect::<String>()),
+                    Span::new(start, start + remaining.len().min(20))
+                ));
+            }
+        }
+    }
+
+    Ok(tokens)
 }
 
 pub fn lex(input: &str) -> IResult<&str, Vec<Token>> {
@@ -739,5 +984,159 @@ mod tests {
             Token::Plus,
             Token::IntLit(10),
         ]);
+    }
+
+    // ========== Newline-aware lexer tests ==========
+
+    #[test]
+    fn test_newline_aware_basic() {
+        // Two statements on separate lines should have a newline token between them
+        let input = "val x = 42\nval y = 10";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::Val,
+            Token::Ident("x".to_string()),
+            Token::Assign,
+            Token::IntLit(42),
+            Token::Newline,
+            Token::Val,
+            Token::Ident("y".to_string()),
+            Token::Assign,
+            Token::IntLit(10),
+        ]);
+    }
+
+    #[test]
+    fn test_newline_suppressed_after_operator() {
+        // Newline after operator should be suppressed
+        let input = "val x = 42 +\n10";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::Val,
+            Token::Ident("x".to_string()),
+            Token::Assign,
+            Token::IntLit(42),
+            Token::Plus,
+            Token::IntLit(10),
+        ]);
+    }
+
+    #[test]
+    fn test_newline_suppressed_after_pipe() {
+        // Newline after pipe operator should be suppressed
+        let input = "42 |>\nprintln";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::IntLit(42),
+            Token::Pipe,
+            Token::Ident("println".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn test_newline_suppressed_in_braces() {
+        // Newlines inside braces should be suppressed
+        let input = "{\n42\n}";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::LBrace,
+            Token::IntLit(42),
+            Token::RBrace,
+        ]);
+    }
+
+    #[test]
+    fn test_newline_suppressed_before_else() {
+        // Newline before else should be suppressed
+        let input = "x then { 1 }\nelse { 2 }";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::Ident("x".to_string()),
+            Token::Then,
+            Token::LBrace,
+            Token::IntLit(1),
+            Token::RBrace,
+            Token::Else,
+            Token::LBrace,
+            Token::IntLit(2),
+            Token::RBrace,
+        ]);
+    }
+
+    #[test]
+    fn test_newline_suppressed_after_comma() {
+        // Newline after comma should be suppressed
+        let input = "[\n1,\n2,\n3\n]";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::LBracket,
+            Token::IntLit(1),
+            Token::Comma,
+            Token::IntLit(2),
+            Token::Comma,
+            Token::IntLit(3),
+            Token::RBracket,
+        ]);
+    }
+
+    #[test]
+    fn test_newline_in_function_body() {
+        // Statements inside function body should be separated by newlines
+        let input = "fun main: () -> Int = {\n    val x = 1\n    val y = 2\n    x\n}";
+        let tokens = lex_newline_aware(input).unwrap();
+        // Newlines after `=` (after fun decl) and `{` are suppressed
+        // Newlines before `}` are suppressed
+        // But newline between statements should be preserved
+        assert!(tokens.contains(&Token::Newline), "Expected newline tokens in function body");
+
+        // Count newlines - should have 2 (after x = 1, after y = 2)
+        let newline_count = tokens.iter().filter(|t| **t == Token::Newline).count();
+        assert_eq!(newline_count, 2, "Expected 2 newlines between statements, got {}", newline_count);
+    }
+
+    #[test]
+    fn test_newline_suppressed_after_assign() {
+        // Newline after = should be suppressed (multiline values)
+        let input = "val x =\n42";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::Val,
+            Token::Ident("x".to_string()),
+            Token::Assign,
+            Token::IntLit(42),
+        ]);
+    }
+
+    #[test]
+    fn test_method_chaining_on_newline() {
+        // Dot at start of line should suppress preceding newline (method chaining)
+        let input = "obj\n.method";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::Ident("obj".to_string()),
+            Token::Dot,
+            Token::Ident("method".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn test_pipe_at_start_of_line() {
+        // Pipe at start of line should suppress preceding newline
+        let input = "42\n|> println";
+        let tokens = lex_newline_aware(input).unwrap();
+        assert_eq!(tokens, vec![
+            Token::IntLit(42),
+            Token::Pipe,
+            Token::Ident("println".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn test_multiple_newlines_collapsed() {
+        // Multiple newlines should be treated as one
+        let input = "val x = 42\n\n\nval y = 10";
+        let tokens = lex_newline_aware(input).unwrap();
+        let newline_count = tokens.iter().filter(|t| **t == Token::Newline).count();
+        assert_eq!(newline_count, 1, "Multiple newlines should collapse to one");
     }
 }

@@ -390,7 +390,7 @@ mod framework_tests {
         runner.add_test(TestCase {
             name: "simple_function".to_string(),
             description: "Test simple function parsing".to_string(),
-            input: "fun main = { Unit }".to_string(),
+            input: "fun main: () -> Int = { Unit }".to_string(),
             expected: TestExpectation::ParseSuccess,
             tags: vec!["syntax".to_string()],
         });

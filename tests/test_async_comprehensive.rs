@@ -16,7 +16,7 @@ fn test_nested_async_runtime_contexts() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~outer> {
             with AsyncRuntime<~outer> {
                 val outer_task = spawn { User { id = 1, name = "Outer" } };
@@ -51,7 +51,7 @@ fn test_async_runtime_lifetime_validation() {
         id: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~valid> {
             with AsyncRuntime<~invalid> {
                 val task = spawn { 42 };
@@ -88,7 +88,7 @@ fn test_task_type_preservation() {
         nested: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             with AsyncRuntime<~async> {
                 val task = spawn { ComplexType { value = 42, nested = "test" } };
@@ -123,7 +123,7 @@ fn test_async_runtime_with_temporal_constraints() {
         db: Database<~db>
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~db> {
             with lifetime<~tx> where ~tx within ~db {
                 with lifetime<~async> where ~async within ~tx {
@@ -163,7 +163,7 @@ fn test_multiple_spawn_await_same_context() {
         processed: Boolean
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             with AsyncRuntime<~async> {
                 val task1 = spawn { ProcessedData { value = 1, processed = true } };
@@ -200,7 +200,7 @@ fn test_async_runtime_context_isolation() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async1> {
             with AsyncRuntime<~async1> {
                 val task1 = spawn { User { id = 1, name = "First" } };
@@ -244,7 +244,7 @@ fn test_temporal_type_with_async_integration() {
         status: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~async> {
             with lifetime<~f> where ~f within ~async {
                 with AsyncRuntime<~async> {

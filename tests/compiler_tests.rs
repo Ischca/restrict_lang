@@ -4,12 +4,12 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
     // Parse
     let (_, ast) = parse_program(source)
         .map_err(|e| format!("Parse error: {:?}", e))?;
-    
+
     // Type check
     let mut type_checker = TypeChecker::new();
     type_checker.check_program(&ast)
         .map_err(|e| format!("Type error: {}", e))?;
-    
+
     // Generate WASM
     let mut codegen = WasmCodeGen::new();
     codegen.generate(&ast)
@@ -19,13 +19,13 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
 #[test]
 fn test_arithmetic_wat_generation() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             10 + 20
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify WAT contains expected instructions
     assert!(wat.contains("(func $main")); // main doesn't return a value
     assert!(wat.contains("i32.const 10"));
@@ -37,26 +37,26 @@ fn test_arithmetic_wat_generation() {
 #[test]
 fn test_function_call_wat_generation() {
     let source = r#"
-        fun double = x: Int {
+        fun double: (x: Int) -> Int = {
             x * 2
         }
-        
-        fun main = {
+
+        fun main: () -> Int = {
             21 |> double
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify function definitions
     assert!(wat.contains("(func $double (param $x i32) (result i32)"));
     assert!(wat.contains("(func $main"));
-    
+
     // Verify double function body
     assert!(wat.contains("local.get $x"));
     assert!(wat.contains("i32.const 2"));
     assert!(wat.contains("i32.mul"));
-    
+
     // Verify main calls double
     assert!(wat.contains("i32.const 21"));
     assert!(wat.contains("call $double"));
@@ -65,27 +65,27 @@ fn test_function_call_wat_generation() {
 #[test]
 fn test_local_variables_wat_generation() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val a = 100;
             val b = 50;
             val result = a - b;
             result
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify local declarations
     assert!(wat.contains("(local $a i32)"));
     assert!(wat.contains("(local $b i32)"));
     assert!(wat.contains("(local $result i32)"));
-    
+
     // Verify assignments
     assert!(wat.contains("i32.const 100"));
     assert!(wat.contains("local.set $a"));
     assert!(wat.contains("i32.const 50"));
     assert!(wat.contains("local.set $b"));
-    
+
     // Verify subtraction
     assert!(wat.contains("local.get $a"));
     assert!(wat.contains("local.get $b"));
@@ -97,29 +97,29 @@ fn test_local_variables_wat_generation() {
 #[test]
 fn test_conditional_wat_generation() {
     let source = r#"
-        fun is_positive = x: Int {
+        fun is_positive: (x: Int) -> Int = {
             x > 0 then {
                 1
             } else {
                 0
             }
         }
-        
-        fun main = {
+
+        fun main: () -> Int = {
             42 |> is_positive
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify conditional structure
     assert!(wat.contains("(if (result i32)"));
     assert!(wat.contains("(then"));
     assert!(wat.contains("(else"));
-    
+
     // Verify comparison
     assert!(wat.contains("i32.gt_s"));
-    
+
     // Verify then/else return values
     assert!(wat.contains("i32.const 1"));
     assert!(wat.contains("i32.const 0"));
@@ -128,17 +128,17 @@ fn test_conditional_wat_generation() {
 #[test]
 fn test_pipe_operator_wat_generation() {
     let source = r#"
-        fun inc = x: Int {
+        fun inc: (x: Int) -> Int = {
             x + 1
         }
-        
-        fun main = {
+
+        fun main: () -> Int = {
             42 |> inc
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify pipe translates to function call
     assert!(wat.contains("i32.const 42"));
     assert!(wat.contains("call $inc"));
@@ -147,7 +147,7 @@ fn test_pipe_operator_wat_generation() {
 #[test]
 fn test_all_binary_operators() {
     let source = r#"
-        fun test_ops = {
+        fun test_ops: () -> Int = {
             val add = 10 + 3;
             val sub = 10 - 3;
             val mul = 10 * 3;
@@ -161,14 +161,14 @@ fn test_all_binary_operators() {
             val ge = 10 >= 3;
             42
         }
-        
-        fun main = {
+
+        fun main: () -> Int = {
             test_ops
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify all operators
     assert!(wat.contains("i32.add"));
     assert!(wat.contains("i32.sub"));
@@ -186,7 +186,7 @@ fn test_all_binary_operators() {
 #[test]
 fn test_multiple_locals() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val a = 10;
             val b = 5;
             val sum = a + b;
@@ -194,9 +194,9 @@ fn test_multiple_locals() {
             result
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify multiple locals
     assert!(wat.contains("(local $a i32)"));
     assert!(wat.contains("(local $b i32)"));
@@ -206,21 +206,21 @@ fn test_multiple_locals() {
 #[test]
 fn test_multiple_parameters() {
     let source = r#"
-        fun add3 = a: Int b: Int c: Int {
+        fun add3: (a: Int, b: Int, c: Int) -> Int = {
             a + b + c
         }
-        
-        fun main = {
+
+        fun main: () -> Int = {
             val result = (10, 20, 30) add3
             result
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify function with 3 parameters
     assert!(wat.contains("(func $add3 (param $a i32) (param $b i32) (param $c i32) (result i32)"));
-    
+
     // Verify call with 3 arguments
     assert!(wat.contains("i32.const 10"));
     assert!(wat.contains("i32.const 20"));

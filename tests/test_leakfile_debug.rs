@@ -11,7 +11,7 @@ fun leakFile<~io> = {
     file
 }
 
-fun main = {
+fun main: () -> Int = {
     Unit
 }"#;
     

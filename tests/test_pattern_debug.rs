@@ -10,7 +10,7 @@ fn test_debug_pattern() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             val some_val = 42 some;
             val none_val = None<Int>;
             some_val test_option |> print_int;

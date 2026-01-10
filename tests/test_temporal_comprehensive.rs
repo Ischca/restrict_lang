@@ -12,7 +12,7 @@ fn test_basic_temporal_scope() {
         content: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { path = "test.txt", content = "data" };
             file.content
@@ -46,7 +46,7 @@ fn test_nested_temporal_constraints() {
         tx: Transaction<~tx, ~db>
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~db> {
             with lifetime<~tx> where ~tx within ~db {
                 with lifetime<~q> where ~q within ~tx {
@@ -75,7 +75,7 @@ fn test_temporal_constraint_violation() {
         id: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~tx> {
             with lifetime<~db> where ~db within ~tx {
                 // This should fail: ~tx should be within ~db, not the other way around
@@ -108,7 +108,7 @@ fn test_temporal_scope_lifetime_ordering() {
         resource: Resource<~r>
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~r> {
             val resource = Resource { name = "data", value = 42 };
             
@@ -151,7 +151,7 @@ fn test_complex_temporal_relationships() {
         connection: Connection<~conn, ~svc, ~sys>
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~sys> {
             with lifetime<~svc> where ~svc within ~sys {
                 with lifetime<~conn> where ~conn within ~svc {
@@ -189,7 +189,7 @@ fn test_temporal_type_with_generics() {
         status: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~c> {
             with lifetime<~m> where ~m within ~c {
                 val container = Container { value = 42, created_at = "now" };
@@ -216,7 +216,7 @@ fn test_temporal_scope_isolation() {
         name: String
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~r1> {
             val resource1 = Resource { id = 1, name = "First" };
             resource1.id
@@ -245,7 +245,7 @@ fn test_temporal_affine_usage() {
         value: Int32
     }
     
-    fun main = {
+    fun main: () -> Int = {
         with lifetime<~r> {
             val resource = UniqueResource { token = "unique", value = 100 };
             // Using the resource once should be fine

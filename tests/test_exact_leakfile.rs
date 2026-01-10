@@ -12,7 +12,7 @@ fun leakFile<~io> = {
     file  // ERROR: Cannot return File<~io> outside ~io
 }
 
-fun main = {
+fun main: () -> Int = {
     Unit
 }"#;
     

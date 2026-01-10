@@ -18,7 +18,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_array_literal() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val arr = [|1, 2, 3, 4, 5|];
             arr
         }
@@ -42,7 +42,7 @@ fn test_array_literal() {
 #[test]
 fn test_empty_array() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val empty = [||];
             empty
         }
@@ -60,7 +60,7 @@ fn test_empty_array() {
 #[test]
 fn test_array_get() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 val arr = [|10, 20, 30, 40, 50|];
                 val third = (arr, 2) array_get;
@@ -83,7 +83,7 @@ fn test_array_get() {
 #[test]
 fn test_array_set() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 mut val arr = [|10, 20, 30, 40, 50|];
                 (arr, 2, 35) array_set;
@@ -107,7 +107,7 @@ fn test_array_set() {
 #[test]
 fn test_array_vs_list() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 val list = [1, 2, 3];      // List literal
                 val arr = [|1, 2, 3|];     // Array literal

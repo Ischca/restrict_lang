@@ -18,7 +18,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_basic_arena() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 // For now, just test that arena block compiles
                 42
@@ -46,7 +46,7 @@ fn test_basic_arena() {
 #[test]
 fn test_nested_arena() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 val x = 1;
                 with Arena {
@@ -64,7 +64,7 @@ fn test_nested_arena() {
 #[test]
 fn test_arena_with_other_context_error() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with NonExistentContext {
                 42
             }
@@ -80,7 +80,7 @@ fn test_arena_with_other_context_error() {
 #[ignore]
 fn test_arena_list_allocation() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 val nums = [1, 2, 3, 4, 5];
                 val doubled = nums map (* 2);
@@ -98,7 +98,7 @@ fn test_arena_value_escape() {
     // Values created in arena should not escape the block
     // This is a semantic test - the type system should catch this
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val x = with Arena {
                 42  // This is fine - integers are copied
             };

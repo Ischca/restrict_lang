@@ -477,7 +477,7 @@ fn non_newline_whitespace(input: &str) -> IResult<&str, &str> {
 }
 
 /// Parse a newline (LF or CRLF)
-fn newline(input: &str) -> IResult<&str, &str> {
+pub fn newline(input: &str) -> IResult<&str, &str> {
     alt((
         tag("\r\n"),
         tag("\n"),

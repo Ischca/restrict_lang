@@ -18,7 +18,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_simple_list_literal() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val list = [1, 2, 3];
             list
         }
@@ -44,7 +44,7 @@ fn test_simple_list_literal() {
 #[test]
 fn test_empty_list() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val empty = [];
             empty
         }
@@ -62,7 +62,7 @@ fn test_empty_list() {
 #[test]
 fn test_list_in_expression() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             mut val x = 10;
             val list = [x, x + 1, x + 2];
             list

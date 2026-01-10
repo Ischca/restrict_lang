@@ -2263,20 +2263,23 @@ impl TypeChecker {
     fn check_call_expr(&mut self, call: &CallExpr) -> Result<TypedType, TypeError> {
         // Special case: Detect scope concatenation
         // If function is a lazy block and all args are lazy blocks, treat as scope concatenation
-        let func_type = self.check_expr_with_expected(&call.function, None)?;
+        // Skip this check for identifier expressions (they are handled below)
+        if !matches!(&*call.function, Expr::Ident(_)) {
+            let func_type = self.check_expr_with_expected(&call.function, None)?;
 
-        if let TypedType::Function { params: func_params, .. } = &func_type {
-            if func_params.is_empty() && call.args.len() == 1 {
-                // Check if the single argument is also a function type (lazy block)
-                let arg_type = self.check_expr_with_expected(&call.args[0], None)?;
-                if matches!(arg_type, TypedType::Function { .. }) {
-                    // This is scope concatenation: { a } { b }
-                    // Treat as ScopeConcat
-                    let sc = ScopeConcatExpr {
-                        left: call.function.clone(),
-                        right: call.args[0].clone(),
-                    };
-                    return self.check_scope_concat_expr(&sc);
+            if let TypedType::Function { params: func_params, .. } = &func_type {
+                if func_params.is_empty() && call.args.len() == 1 {
+                    // Check if the single argument is also a function type (lazy block)
+                    let arg_type = self.check_expr_with_expected(&call.args[0], None)?;
+                    if matches!(arg_type, TypedType::Function { .. }) {
+                        // This is scope concatenation: { a } { b }
+                        // Treat as ScopeConcat
+                        let sc = ScopeConcatExpr {
+                            left: call.function.clone(),
+                            right: call.args[0].clone(),
+                        };
+                        return self.check_scope_concat_expr(&sc);
+                    }
                 }
             }
         }

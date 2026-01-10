@@ -18,7 +18,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_list_length() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val list = [1, 2, 3, 4, 5];
             val len = list list_length;
             len
@@ -39,7 +39,7 @@ fn test_list_length() {
 #[test]
 fn test_list_get() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 val list = [10, 20, 30, 40, 50];
                 val second = (list, 1) list_get;  // Get element at index 1
@@ -62,7 +62,7 @@ fn test_list_get() {
 #[test]
 fn test_list_operations_combined() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             with Arena {
                 mut val nums = [5, 10, 15, 20];
                 val len = nums list_length;
@@ -89,7 +89,7 @@ fn test_list_operations_combined() {
 #[test]
 fn test_empty_list_length() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val empty = [];
             val len = empty list_length;
             len

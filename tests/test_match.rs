@@ -19,7 +19,7 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
 #[test]
 fn test_simple_match() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val x = 42;
             x match {
                 0 => { 100 }
@@ -40,7 +40,7 @@ fn test_simple_match() {
 #[test]
 fn test_match_with_binding() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val x = 10;
             x match {
                 0 => { 0 }
@@ -66,7 +66,7 @@ fn test_boolean_match() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             true test_bool
         }
     "#;
@@ -81,7 +81,7 @@ fn test_boolean_match() {
 #[test]
 fn test_match_type_consistency() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val x = 5;
             x match {
                 0 => { "zero" }
@@ -101,7 +101,7 @@ fn test_match_type_consistency() {
 #[test]
 fn test_match_exhaustiveness() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val b = true;
             b match {
                 true => { 1 }
@@ -119,7 +119,7 @@ fn test_match_exhaustiveness() {
 #[test]
 fn test_nested_match() {
     let source = r#"
-        fun main = {
+        fun main: () -> Int = {
             val x = 1;
             val y = 2;
             
@@ -159,7 +159,7 @@ fn test_match_in_function() {
             }
         }
         
-        fun main = {
+        fun main: () -> Int = {
             42 classify
         }
     "#;

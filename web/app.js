@@ -10,6 +10,55 @@ import init, {
 
 let wasmModule = null;
 let wabtModule = null;
+let editor = null;  // CodeMirror instance
+
+// Initialize CodeMirror editor
+function initEditor() {
+    const textarea = document.getElementById('sourceCode');
+    if (!textarea) return;
+
+    editor = CodeMirror.fromTextArea(textarea, {
+        mode: 'restrict',
+        theme: 'restrict-dark',
+        lineNumbers: true,
+        matchBrackets: true,
+        autoCloseBrackets: true,
+        styleActiveLine: true,
+        indentUnit: 4,
+        tabSize: 4,
+        indentWithTabs: false,
+        lineWrapping: false,
+        extraKeys: {
+            'Ctrl-Enter': function() { compile(); },
+            'Cmd-Enter': function() { compile(); },
+            'Tab': function(cm) {
+                if (cm.somethingSelected()) {
+                    cm.indentSelection('add');
+                } else {
+                    cm.replaceSelection('    ', 'end');
+                }
+            }
+        }
+    });
+
+    // Refresh editor layout after initialization
+    setTimeout(() => editor.refresh(), 100);
+}
+
+// Get source code from editor
+function getSourceCode() {
+    return editor ? editor.getValue() : document.getElementById('sourceCode')?.value || '';
+}
+
+// Set source code in editor
+function setSourceCode(code) {
+    if (editor) {
+        editor.setValue(code);
+    } else {
+        const textarea = document.getElementById('sourceCode');
+        if (textarea) textarea.value = code;
+    }
+}
 
 // Initialize the WASM module
 async function initWasm() {
@@ -57,7 +106,7 @@ async function compile() {
         return;
     }
 
-    const sourceCode = document.getElementById('sourceCode').value;
+    const sourceCode = getSourceCode();
     if (!sourceCode.trim()) {
         updateStatus('Please enter some source code to compile.', 'error');
         return;
@@ -304,7 +353,7 @@ async function lexOnly() {
         return;
     }
 
-    const sourceCode = document.getElementById('sourceCode').value;
+    const sourceCode = getSourceCode();
     if (!sourceCode.trim()) {
         updateStatus('Please enter some source code to tokenize.', 'error');
         return;
@@ -342,7 +391,7 @@ async function parseOnly() {
         return;
     }
 
-    const sourceCode = document.getElementById('sourceCode').value;
+    const sourceCode = getSourceCode();
     if (!sourceCode.trim()) {
         updateStatus('Please enter some source code to parse.', 'error');
         return;
@@ -466,7 +515,7 @@ fun main: () -> Int = {
 
     const example = examples[exampleName];
     if (example) {
-        document.getElementById('sourceCode').value = example;
+        setSourceCode(example);
         clearOutput();
     }
 }
@@ -480,4 +529,7 @@ window.showTab = showTab;
 window.loadExample = loadExample;
 
 // Initialize when the page loads
-document.addEventListener('DOMContentLoaded', initWasm);
+document.addEventListener('DOMContentLoaded', () => {
+    initEditor();
+    initWasm();
+});

@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Restrict Language Playground</title>
+
+    <!-- CodeMirror -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+
     <style>
         :root {
             --bg-dark: #1e1e1e;
@@ -107,20 +115,49 @@
         button:disabled { opacity: 0.4; cursor: not-allowed; }
         button.secondary { background: var(--bg-light); border: 1px solid var(--border); }
 
-        #sourceCode {
+        /* CodeMirror Container */
+        .editor-wrapper {
             flex: 1;
-            width: 100%;
-            background: var(--bg-dark);
-            color: var(--text);
-            border: none;
-            padding: 15px;
-            font-family: 'Fira Code', 'Consolas', monospace;
+            overflow: hidden;
+        }
+
+        .CodeMirror {
+            height: 100%;
+            font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
             font-size: 14px;
             line-height: 1.6;
-            resize: none;
-            outline: none;
-            tab-size: 4;
         }
+
+        /* Restrict Lang Dark Theme for CodeMirror */
+        .cm-s-restrict-dark.CodeMirror { background: var(--bg-dark); color: var(--text); }
+        .cm-s-restrict-dark .CodeMirror-gutters { background: var(--bg-medium); border-right: 1px solid var(--border); }
+        .cm-s-restrict-dark .CodeMirror-linenumber { color: var(--text-dim); }
+        .cm-s-restrict-dark .CodeMirror-cursor { border-left: 2px solid var(--text); }
+        .cm-s-restrict-dark .CodeMirror-selected { background: rgba(86, 156, 214, 0.2); }
+        .cm-s-restrict-dark .CodeMirror-activeline-background { background: rgba(255, 255, 255, 0.05); }
+        .cm-s-restrict-dark .CodeMirror-matchingbracket { color: #fff !important; background: rgba(86, 156, 214, 0.3); }
+
+        /* Syntax highlighting colors */
+        .cm-s-restrict-dark .cm-keyword { color: #c586c0; }
+        .cm-s-restrict-dark .cm-keyword-control { color: #c586c0; }
+        .cm-s-restrict-dark .cm-keyword-affine { color: #4ec9b0; font-weight: 500; }
+        .cm-s-restrict-dark .cm-keyword-context { color: #dcdcaa; }
+        .cm-s-restrict-dark .cm-operator { color: #d4d4d4; }
+        .cm-s-restrict-dark .cm-operator-pipe { color: #c586c0; font-weight: 500; }
+        .cm-s-restrict-dark .cm-number { color: #b5cea8; }
+        .cm-s-restrict-dark .cm-string { color: #ce9178; }
+        .cm-s-restrict-dark .cm-string-2 { color: #ce9178; }
+        .cm-s-restrict-dark .cm-comment { color: #6a9955; font-style: italic; }
+        .cm-s-restrict-dark .cm-variable { color: #9cdcfe; }
+        .cm-s-restrict-dark .cm-variable-2 { color: #9cdcfe; }
+        .cm-s-restrict-dark .cm-def { color: #dcdcaa; }
+        .cm-s-restrict-dark .cm-property { color: #9cdcfe; }
+        .cm-s-restrict-dark .cm-type { color: #4ec9b0; }
+        .cm-s-restrict-dark .cm-builtin { color: #dcdcaa; }
+        .cm-s-restrict-dark .cm-atom { color: #569cd6; }
+        .cm-s-restrict-dark .cm-meta { color: #569cd6; }
+        .cm-s-restrict-dark .cm-attribute { color: #9cdcfe; }
+        .cm-s-restrict-dark .cm-error { color: #f14c4c; }
 
         .tabs {
             display: flex;
@@ -164,6 +201,18 @@
         .success { color: var(--success); background: rgba(78,201,176,0.1); padding: 10px; border-radius: 4px; }
         .warning { color: var(--warning); background: rgba(204,167,0,0.1); padding: 10px; border-radius: 4px; }
         .info { color: var(--text-dim); }
+
+        .console-output {
+            background: var(--bg-medium);
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            border-left: 3px solid var(--accent);
+        }
+
+        .console-output pre {
+            color: var(--text);
+        }
 
         .error-item {
             background: rgba(241,76,76,0.05);
@@ -236,7 +285,7 @@
         @media (max-width: 900px) {
             .container { flex-direction: column; }
             .editor-panel, .output-panel { border: none; border-bottom: 1px solid var(--border); }
-            #sourceCode { height: 200px; }
+            .editor-wrapper { height: 250px; }
         }
     </style>
 </head>
@@ -257,7 +306,8 @@
                     <button onclick="clearOutput()" id="clearBtn" class="secondary">Clear</button>
                 </div>
             </div>
-            <textarea id="sourceCode" spellcheck="false">// Restrict Language Playground
+            <div class="editor-wrapper">
+                <textarea id="sourceCode">// Restrict Language Playground
 // Press Ctrl+Enter to compile and run!
 
 fun main: () -> Int = {
@@ -265,6 +315,7 @@ fun main: () -> Int = {
     val y = 10;
     x
 }</textarea>
+            </div>
             <div class="examples">
                 <h4>Examples:</h4>
                 <div class="example-grid">
@@ -272,6 +323,7 @@ fun main: () -> Int = {
                     <button class="example-btn" onclick="loadExample('affine')">Affine Types</button>
                     <button class="example-btn" onclick="loadExample('record')">Records</button>
                     <button class="example-btn" onclick="loadExample('function')">Functions</button>
+                    <button class="example-btn" onclick="loadExample('pipe')">Pipe Operators</button>
                 </div>
             </div>
         </div>
@@ -307,18 +359,167 @@ fun main: () -> Int = {
         </div>
     </div>
 
+    <!-- Restrict Lang mode for CodeMirror -->
+    <script>
+        // Define Restrict Language mode for CodeMirror
+        CodeMirror.defineMode("restrict", function() {
+            const keywords = /^(fun|val|mut|if|else|while|match|with|context|record|impl|for|return|break|continue|import|export|type|trait|where|async|await|spawn|select|in)\b/;
+            const affineKeywords = /^(val|mut|clone|freeze|move)\b/;
+            const contextKeywords = /^(with|context)\b/;
+            const builtinTypes = /^(Int|Int32|Int64|Float|Float32|Float64|String|Bool|Unit|Option|List|Array|Result|Future|Channel)\b/;
+            const builtins = /^(println|print|print_int|print_float|eprintln|eprint|Some|None|Ok|Err|true|false)\b/;
+            const operators = /^(->|=>|\|>|\|>>|::|&&|\|\||==|!=|<=|>=|<|>|\+|-|\*|\/|%|=|!|\||&)/;
+
+            return {
+                startState: function() {
+                    return { inString: false, inComment: false, commentDepth: 0 };
+                },
+                token: function(stream, state) {
+                    // Multi-line comment
+                    if (state.commentDepth > 0) {
+                        while (!stream.eol()) {
+                            if (stream.match("*/")) {
+                                state.commentDepth--;
+                                if (state.commentDepth === 0) break;
+                            } else if (stream.match("/*")) {
+                                state.commentDepth++;
+                            } else {
+                                stream.next();
+                            }
+                        }
+                        return "comment";
+                    }
+
+                    // Skip whitespace
+                    if (stream.eatSpace()) return null;
+
+                    // Single-line comment
+                    if (stream.match("//")) {
+                        stream.skipToEnd();
+                        return "comment";
+                    }
+
+                    // Multi-line comment start
+                    if (stream.match("/*")) {
+                        state.commentDepth = 1;
+                        while (!stream.eol()) {
+                            if (stream.match("*/")) {
+                                state.commentDepth--;
+                                if (state.commentDepth === 0) break;
+                            } else if (stream.match("/*")) {
+                                state.commentDepth++;
+                            } else {
+                                stream.next();
+                            }
+                        }
+                        return "comment";
+                    }
+
+                    // Strings
+                    if (stream.match('"')) {
+                        while (!stream.eol()) {
+                            const ch = stream.next();
+                            if (ch === '"') break;
+                            if (ch === '\\') stream.next();
+                        }
+                        return "string";
+                    }
+
+                    // Character literals
+                    if (stream.match("'")) {
+                        stream.next();
+                        if (stream.peek() === '\\') stream.next();
+                        stream.next();
+                        if (stream.peek() === "'") stream.next();
+                        return "string-2";
+                    }
+
+                    // Numbers
+                    if (stream.match(/^0x[0-9a-fA-F]+/) || stream.match(/^0b[01]+/) ||
+                        stream.match(/^\d+\.?\d*(?:[eE][+-]?\d+)?/)) {
+                        return "number";
+                    }
+
+                    // Pipe operators (special highlight)
+                    if (stream.match("|>") || stream.match("|>>")) {
+                        return "operator-pipe";
+                    }
+
+                    // Arrow operators
+                    if (stream.match("->") || stream.match("=>")) {
+                        return "operator";
+                    }
+
+                    // Other operators
+                    if (stream.match(operators)) {
+                        return "operator";
+                    }
+
+                    // Identifiers and keywords
+                    if (stream.match(/^[a-zA-Z_][a-zA-Z0-9_]*/)) {
+                        const word = stream.current();
+
+                        // Affine keywords (val, mut, clone, freeze)
+                        if (affineKeywords.test(word)) {
+                            return "keyword-affine";
+                        }
+
+                        // Context keywords (with, context)
+                        if (contextKeywords.test(word)) {
+                            return "keyword-context";
+                        }
+
+                        // Regular keywords
+                        if (keywords.test(word)) {
+                            return "keyword";
+                        }
+
+                        // Built-in types
+                        if (builtinTypes.test(word)) {
+                            return "type";
+                        }
+
+                        // Built-in functions
+                        if (builtins.test(word)) {
+                            return "builtin";
+                        }
+
+                        // Check if it's a type (starts with uppercase)
+                        if (/^[A-Z]/.test(word)) {
+                            return "type";
+                        }
+
+                        return "variable";
+                    }
+
+                    // Brackets
+                    if (stream.match(/^[{}\[\]()]/)) {
+                        return "bracket";
+                    }
+
+                    // Semicolon, colon, comma
+                    if (stream.match(/^[;:,]/)) {
+                        return "punctuation";
+                    }
+
+                    // Lifetime
+                    if (stream.match(/^'[a-z]+/)) {
+                        return "attribute";
+                    }
+
+                    stream.next();
+                    return null;
+                }
+            };
+        });
+
+        // Define MIME type
+        CodeMirror.defineMIME("text/x-restrict", "restrict");
+    </script>
+
     <!-- wabt.js for WAT to WASM conversion -->
     <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.32/index.js"></script>
 
     <script type="module" src="./app.js"></script>
-    <script>
-        // Keyboard shortcut
-        document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                e.preventDefault();
-                if (window.compile) window.compile();
-            }
-        });
-    </script>
 </body>
 </html>

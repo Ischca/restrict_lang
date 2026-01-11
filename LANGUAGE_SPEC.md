@@ -66,6 +66,62 @@ record Point { x: Int32 y: Int32 }
 val p = Point { x = 10, y = 20 }
 ```
 
+### 1.10 命名規則 (Naming Conventions)
+
+Restrict Languageは **snake_case** を標準命名規則として採用する（OCaml/Rust風）。
+
+#### 関数名・変数名
+- **採用**: `snake_case`
+- **理由**:
+  - OSV構文での可読性（`(s) string_length` vs `(s) stringLength`）
+  - Rust（コンパイラ実装言語）との親和性
+  - 関数型言語（OCaml, Haskell）の慣例に準拠
+
+```rust
+// 良い例
+val user_name = "Alice"
+fun string_length: (s: String) -> Int = { ... }
+fun is_digit: (c: Char) -> Bool = { ... }
+fun char_to_int: (c: Char) -> Int = { ... }
+
+// 避けるべき例
+val userName = "Alice"      // camelCase は非推奨
+fun stringLength = { ... }  // camelCase は非推奨
+```
+
+#### 型名・レコード名
+- **採用**: `PascalCase`
+- **理由**: 値と型を視覚的に区別
+
+```rust
+// 型名は PascalCase
+record UserProfile { name: String, age: Int32 }
+enum HttpStatus { Ok, NotFound, ServerError }
+
+// ジェネリック型パラメータは大文字1文字
+fun map<T, U>: (list: List<T>, f: |T| -> U) -> List<U> = { ... }
+```
+
+#### 定数
+- **採用**: `SCREAMING_SNAKE_CASE`（オプション）
+- **理由**: 定数と変数を視覚的に区別
+
+```rust
+val MAX_BUFFER_SIZE = 1024
+val DEFAULT_TIMEOUT = 30
+```
+
+#### まとめ
+
+| 種類 | 規則 | 例 |
+|------|------|-----|
+| 関数名 | `snake_case` | `string_length`, `to_upper` |
+| 変数名 | `snake_case` | `user_name`, `total_count` |
+| 型名 | `PascalCase` | `UserProfile`, `HttpResponse` |
+| レコード名 | `PascalCase` | `Point`, `Rectangle` |
+| 型パラメータ | 大文字1文字 | `T`, `U`, `E` |
+| 定数（任意） | `SCREAMING_SNAKE_CASE` | `MAX_SIZE` |
+
 ## 2. 型システム
 
 ### 2.1 基本型

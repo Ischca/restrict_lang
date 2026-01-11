@@ -1,15 +1,12 @@
 // Restrict Language Standard Library: String Operations
 // 標準ライブラリ: 文字列操作
 //
-// Note: Core string functions (string_length, string_concat, string_equals)
-// are implemented as WASM built-ins and are always available.
+// Core string functions are implemented as WASM built-ins and always available.
 // This module provides additional string utilities.
 
 // ============================================================
-// String Properties (WASM Built-ins)
+// WASM Built-in Functions (always available)
 // ============================================================
-//
-// The following functions are built-in and always available:
 //
 // string_length: (String) -> Int
 //     Get the length of a string
@@ -19,6 +16,18 @@
 //
 // string_equals: (String, String) -> Bool
 //     Compare two strings for equality
+//
+// char_at: (String, Int) -> Int
+//     Get character code at index (returns -1 if out of bounds)
+//
+// substring: (String, Int, Int) -> String
+//     Extract portion of string (start inclusive, end exclusive)
+//
+// string_to_int: (String) -> Int
+//     Parse integer from string (returns 0 on invalid input)
+//
+// int_to_string: (Int) -> String
+//     Format integer as string
 
 // ============================================================
 // String Utilities
@@ -39,29 +48,24 @@ export fun string_append: (base: String, suffix: String) -> String = {
     (base, suffix) string_concat
 }
 
-// ============================================================
-// String Conversion (placeholders - need WASM runtime)
-// ============================================================
-
-// Convert a string to an integer
-// Returns 0 if parsing fails
-// TODO: Implement parsing logic at WASM level
-export fun string_to_int: (s: String) -> Int = {
-    // Placeholder - needs WASM runtime support
-    0
-}
-
-// Convert an integer to a string
-// TODO: Implement digit conversion at WASM level
-export fun int_to_string: (n: Int) -> String = {
-    // Placeholder - needs WASM runtime support
-    "0"
-}
-
 // Convert a boolean to a string
 export fun bool_to_string: (b: Bool) -> String = {
     b then { "true" } else { "false" }
 }
+
+// Get the first character of a string (or -1 if empty)
+export fun string_head: (s: String) -> Int = {
+    (s, 0) char_at
+}
+
+// Get first n characters
+export fun string_take: (s: String, n: Int) -> String = {
+    (s, 0, n) substring
+}
+
+// Note: string_tail and string_drop require using the string twice
+// (once for length, once for substring), which violates affine types.
+// Use substring directly with explicit indices instead.
 
 // ============================================================
 // Character Operations
@@ -69,20 +73,16 @@ export fun bool_to_string: (b: Bool) -> String = {
 
 // Check if a character is a digit (0-9)
 export fun is_digit: (c: Char) -> Bool = {
-    // Char is represented as i32 (ASCII/Unicode code point)
-    // '0' = 48, '9' = 57
     c >= '0' && c <= '9'
 }
 
 // Check if a character is a lowercase letter (a-z)
 export fun is_lower: (c: Char) -> Bool = {
-    // 'a' = 97, 'z' = 122
     c >= 'a' && c <= 'z'
 }
 
 // Check if a character is an uppercase letter (A-Z)
 export fun is_upper: (c: Char) -> Bool = {
-    // 'A' = 65, 'Z' = 90
     c >= 'A' && c <= 'Z'
 }
 
@@ -98,19 +98,16 @@ export fun is_alphanumeric: (c: Char) -> Bool = {
 
 // Check if a character is whitespace (space, tab, newline, etc.)
 export fun is_whitespace: (c: Char) -> Bool = {
-    // ' ' = 32, '\t' = 9, '\n' = 10, '\r' = 13
     c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // Convert a character to its ASCII code
 export fun char_to_int: (c: Char) -> Int = {
-    // Chars are stored as i32 code points
     c
 }
 
 // Convert an ASCII code to a character
 export fun int_to_char: (n: Int) -> Char = {
-    // Direct conversion from code point
     n
 }
 
@@ -123,7 +120,6 @@ export fun digit_value: (c: Char) -> Int = {
 // Convert lowercase to uppercase
 export fun to_upper: (c: Char) -> Char = {
     (c) is_lower then {
-        // Subtract 32 to convert lowercase to uppercase in ASCII
         ((c) char_to_int - 32) int_to_char
     } else {
         c
@@ -133,7 +129,6 @@ export fun to_upper: (c: Char) -> Char = {
 // Convert uppercase to lowercase
 export fun to_lower: (c: Char) -> Char = {
     (c) is_upper then {
-        // Add 32 to convert uppercase to lowercase in ASCII
         ((c) char_to_int + 32) int_to_char
     } else {
         c

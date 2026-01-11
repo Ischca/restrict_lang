@@ -209,12 +209,16 @@ After:  Affine type violation: variable 'p' has already been used.
 - [x] std/prelude.rl - Core functions (not, identity, comparison helpers)
 
 **In Progress**:
-- [ ] String runtime (WASM-level): string_length, string_concat, string_equals
 - [ ] Memory allocator for dynamic string/list operations
+
+**Completed** (2025-01-11):
+- [x] String runtime (WASM-level): string_length, string_concat, string_equals
+- [x] String conversion: string_to_int, int_to_string
+- [x] String access: char_at, substring
 
 **Remaining Tasks**:
 - [ ] List operations: map, filter, fold, zip (blocked by affine type constraints)
-- [ ] String operations: split, join, substring (needs WASM runtime)
+- [ ] String operations: split, join (needs WASM runtime)
 - [ ] Option utilities: map, flatMap, and_then
 - [ ] I/O functions integrated with contexts
 
@@ -224,21 +228,23 @@ After:  Affine type violation: variable 'p' has already been used.
 
 #### 2.1.1 String Runtime Implementation (WASM)
 
-**Status**: IN PROGRESS (2025-01-11)
+**Status**: COMPLETED (2025-01-11)
 
 **Goal**: Implement WASM-level string operations that cannot be written in pure Restrict
 
-**Tasks**:
-- [ ] `string_length`: Count bytes in null-terminated string
-- [ ] `string_concat`: Allocate new string and copy both sources
-- [ ] `string_equals`: Byte-by-byte comparison
-- [ ] `string_to_int`: Parse integer from string
-- [ ] `int_to_string`: Format integer as string
+**Completed Tasks**:
+- [x] `string_length`: Read 4-byte length prefix
+- [x] `string_concat`: Allocate new string and copy both sources
+- [x] `string_equals`: Byte-by-byte comparison with length check
+- [x] `string_to_int`: Parse integer from string (handles negative numbers)
+- [x] `int_to_string`: Format integer as string (handles negative numbers)
+- [x] `char_at`: Get character at index (bounds checked)
+- [x] `substring`: Extract portion of string (start/end clamped)
 
 **Technical Notes**:
-- Strings are stored as pointers (i32) to memory
-- Need simple bump allocator for concatenation
-- Consider null-termination vs length-prefixed format
+- Strings use length-prefixed format (4 bytes length + data)
+- Uses arena allocator for dynamic allocation
+- All functions registered in type checker and codegen
 
 ---
 

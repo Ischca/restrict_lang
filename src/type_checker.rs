@@ -1264,6 +1264,45 @@ impl TypeChecker {
             temporal_constraints: vec![],
         });
 
+        // char_at: Get character at index (returns -1 if out of bounds)
+        self.functions.insert("char_at".to_string(), FunctionDef {
+            params: vec![
+                ("s".to_string(), TypedType::String),
+                ("index".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::Int32,  // Returns char code or -1
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // substring: Extract portion of string (start inclusive, end exclusive)
+        self.functions.insert("substring".to_string(), FunctionDef {
+            params: vec![
+                ("s".to_string(), TypedType::String),
+                ("start".to_string(), TypedType::Int32),
+                ("end".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_to_int: Parse integer from string
+        self.functions.insert("string_to_int".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // int_to_string: Format integer as string
+        self.functions.insert("int_to_string".to_string(), FunctionDef {
+            params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
         // ============================================================
         // Character functions
         // ============================================================

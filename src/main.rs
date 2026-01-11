@@ -1,4 +1,5 @@
 use restrict_lang::{lex, parse_program, TypeChecker, WasmCodeGen, ModuleResolver};
+use restrict_lang::diagnostic::{DiagnosticRenderer, RenderConfig};
 use std::fs;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -217,19 +218,28 @@ async fn main() {
         }
     }
 
-    match type_checker.check_program(&ast) {
-        Ok(()) => {
-            if check_only {
-                // For --check mode, just exit successfully after type checking
-                return;
-            }
-            println!("Type checking passed!");
-        },
-        Err(e) => {
-            eprintln!("Type error: {}", e);
-            std::process::exit(1);
+    // Use check_program_collecting for rich error messages with suggestions
+    let errors = type_checker.check_program_collecting(&ast);
+    if !errors.is_empty() {
+        // Render errors with rich diagnostics (Rust-style output)
+        let renderer = DiagnosticRenderer::new(RenderConfig::default());
+        for err in &errors {
+            let diagnostic = err.to_diagnostic()
+                .with_filename(filename.to_string());
+            let output = renderer.render(&diagnostic, &source);
+            eprintln!("{}", output);
         }
+        eprintln!("\nerror: aborting due to {} previous error{}",
+            errors.len(),
+            if errors.len() == 1 { "" } else { "s" });
+        std::process::exit(1);
     }
+
+    if check_only {
+        // For --check mode, just exit successfully after type checking
+        return;
+    }
+    println!("Type checking passed!");
     
     // Generate WASM
     println!("\n=== WASM Code Generation ===");

@@ -126,17 +126,25 @@ pub struct SpannedTypeError {
     pub error: TypeError,
     /// Source location where the error occurred
     pub span: Option<Span>,
+    /// Suggestions for "did you mean" hints
+    pub suggestions: Vec<String>,
 }
 
 impl SpannedTypeError {
     /// Creates a new spanned type error.
     pub fn new(error: TypeError, span: Option<Span>) -> Self {
-        Self { error, span }
+        Self { error, span, suggestions: Vec::new() }
     }
 
     /// Creates an error without span information.
     pub fn unspanned(error: TypeError) -> Self {
-        Self { error, span: None }
+        Self { error, span: None, suggestions: Vec::new() }
+    }
+
+    /// Adds suggestions to this error.
+    pub fn with_suggestions(mut self, suggestions: Vec<String>) -> Self {
+        self.suggestions = suggestions;
+        self
     }
 }
 
@@ -161,12 +169,12 @@ impl From<TypeError> for SpannedTypeError {
 impl SpannedTypeError {
     /// Converts this error to a rich Diagnostic for Rust-style output.
     pub fn to_diagnostic(&self) -> Diagnostic {
-        let (code, message, notes, help) = match &self.error {
+        let (code, message, notes, mut help) = match &self.error {
             TypeError::UndefinedVariable(name) => (
                 "E0001",
                 format!("cannot find value `{}` in this scope", name),
                 vec![],
-                vec![format!("consider declaring `{}` with `let`", name)],
+                vec![format!("consider declaring `{}` with `val`", name)],
             ),
             TypeError::TypeMismatch { expected, found } => (
                 "E0002",
@@ -189,7 +197,7 @@ impl SpannedTypeError {
                 "E0004",
                 format!("cannot assign twice to immutable variable `{}`", name),
                 vec![],
-                vec![format!("consider making `{}` mutable with `mut`", name)],
+                vec![format!("consider making `{}` mutable with `var`", name)],
             ),
             TypeError::UnknownType(name) => (
                 "E0005",
@@ -201,7 +209,7 @@ impl SpannedTypeError {
                 "E0006",
                 format!("no field `{}` on type `{}`", field, record),
                 vec![],
-                vec!["available fields: ...".to_string()], // TODO: list available fields
+                vec![], // Suggestions will be added from self.suggestions
             ),
             TypeError::CloneFrozenRecord => (
                 "E0007",
@@ -225,7 +233,7 @@ impl SpannedTypeError {
                 "E0010",
                 format!("cannot find function `{}` in this scope", name),
                 vec![],
-                vec!["check spelling or define the function".to_string()],
+                vec![], // Suggestions will be added from self.suggestions
             ),
             TypeError::ArityMismatch { expected, found } => (
                 "E0011",
@@ -287,6 +295,17 @@ impl SpannedTypeError {
                 vec![],
             ),
         };
+
+        // Add "did you mean" suggestions if available
+        if !self.suggestions.is_empty() {
+            let suggestion_text = if self.suggestions.len() == 1 {
+                format!("did you mean `{}`?", self.suggestions[0])
+            } else {
+                let quoted: Vec<String> = self.suggestions.iter().map(|s| format!("`{}`", s)).collect();
+                format!("did you mean one of: {}?", quoted.join(", "))
+            };
+            help.insert(0, suggestion_text);
+        }
 
         let mut diag = Diagnostic::error(message).with_code(code);
 
@@ -594,6 +613,64 @@ pub struct TypeChecker {
     symbol_table: Vec<SymbolInfo>,
 }
 
+// ============================================================
+// String similarity utilities for "did you mean" suggestions
+// ============================================================
+
+/// Calculates the Levenshtein edit distance between two strings.
+/// Used for suggesting similar names when a typo is detected.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_len = a_chars.len();
+    let b_len = b_chars.len();
+
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
+
+    let mut matrix = vec![vec![0usize; b_len + 1]; a_len + 1];
+
+    for i in 0..=a_len {
+        matrix[i][0] = i;
+    }
+    for j in 0..=b_len {
+        matrix[0][j] = j;
+    }
+
+    for i in 1..=a_len {
+        for j in 1..=b_len {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            matrix[i][j] = (matrix[i - 1][j] + 1)
+                .min(matrix[i][j - 1] + 1)
+                .min(matrix[i - 1][j - 1] + cost);
+        }
+    }
+
+    matrix[a_len][b_len]
+}
+
+/// Finds similar names from a list of candidates.
+/// Returns names with Levenshtein distance <= max_distance, sorted by distance.
+fn find_similar_names<'a>(target: &str, candidates: impl Iterator<Item = &'a String>, max_distance: usize) -> Vec<&'a String> {
+    let mut results: Vec<(&String, usize)> = candidates
+        .filter_map(|name| {
+            let dist = levenshtein_distance(target, name);
+            if dist <= max_distance && dist > 0 {
+                Some((name, dist))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    results.sort_by_key(|(_, dist)| *dist);
+    results.into_iter().map(|(name, _)| name).take(3).collect()
+}
+
 impl TypeChecker {
     pub fn new() -> Self {
         let mut checker = Self {
@@ -670,6 +747,40 @@ impl TypeChecker {
         self.collected_errors.push(SpannedTypeError::new(error, span));
     }
 
+    /// Adds an error with span and suggestions to the collected errors.
+    pub fn add_error_with_suggestions(&mut self, error: TypeError, span: Option<Span>, suggestions: Vec<String>) {
+        self.collected_errors.push(SpannedTypeError::new(error, span).with_suggestions(suggestions));
+    }
+
+    /// Smart error adder that automatically generates suggestions based on error type.
+    /// This provides "did you mean" hints for typos in variable names, function names, etc.
+    pub fn add_error_smart(&mut self, error: TypeError, span: Option<Span>) {
+        let suggestions = match &error {
+            TypeError::UndefinedVariable(name) => self.suggest_similar_vars(name),
+            TypeError::UndefinedFunction(name) => self.suggest_similar_functions(name),
+            TypeError::UndefinedRecord(name) => self.suggest_similar_records(name),
+            TypeError::UnknownField { record, field } => {
+                // For unknown field, first try similar field names
+                let mut suggestions = self.suggest_similar_fields(record, field);
+                if suggestions.is_empty() {
+                    // If no similar fields, show all available fields
+                    let fields = self.get_record_fields(record);
+                    if !fields.is_empty() {
+                        suggestions = fields;
+                    }
+                }
+                suggestions
+            }
+            _ => Vec::new(),
+        };
+
+        if suggestions.is_empty() {
+            self.add_error(error, span);
+        } else {
+            self.add_error_with_suggestions(error, span, suggestions);
+        }
+    }
+
     /// Returns all collected errors and clears the error list.
     pub fn take_errors(&mut self) -> Vec<SpannedTypeError> {
         std::mem::take(&mut self.collected_errors)
@@ -697,18 +808,18 @@ impl TypeChecker {
             match decl {
                 TopDecl::Function(func) => {
                     if let Err(e) = self.register_function_signature(func) {
-                        self.add_error(e, func.span);
+                        self.add_error_smart(e, func.span);
                     }
                 }
                 TopDecl::Record(record) => {
                     if let Err(e) = self.check_record_decl(record) {
-                        self.add_error(e, record.span);
+                        self.add_error_smart(e, record.span);
                     }
                 }
                 TopDecl::Export(export) => {
                     if let TopDecl::Function(func) = export.item.as_ref() {
                         if let Err(e) = self.register_function_signature(func) {
-                            self.add_error(e, func.span);
+                            self.add_error_smart(e, func.span);
                         }
                     }
                 }
@@ -724,28 +835,28 @@ impl TypeChecker {
                 }
                 TopDecl::Function(func) => {
                     if let Err(e) = self.check_function_decl(func) {
-                        self.add_error(e, func.span);
+                        self.add_error_smart(e, func.span);
                     }
                 }
                 TopDecl::Context(context) => {
                     if let Err(e) = self.check_context_decl(context) {
-                        self.add_error(e, None);
+                        self.add_error_smart(e, None);
                     }
                 }
                 TopDecl::Impl(impl_block) => {
                     if let Err(e) = self.check_impl_block(impl_block) {
-                        self.add_error(e, None);
+                        self.add_error_smart(e, None);
                     }
                 }
                 TopDecl::Binding(bind) => {
                     if let Err(e) = self.check_bind_decl(bind) {
-                        self.add_error(e, bind.span);
+                        self.add_error_smart(e, bind.span);
                     }
                 }
                 TopDecl::Export(export) => {
                     if let TopDecl::Function(func) = export.item.as_ref() {
                         if let Err(e) = self.check_function_decl(func) {
-                            self.add_error(e, func.span);
+                            self.add_error_smart(e, func.span);
                         }
                     }
                 }
@@ -1850,7 +1961,72 @@ impl TypeChecker {
         }
         Err(TypeError::UndefinedVariable(name.to_string()))
     }
-    
+
+    // ============================================================
+    // Name suggestion helpers for "did you mean" errors
+    // ============================================================
+
+    /// Get all variable names currently in scope
+    fn get_all_var_names(&self) -> Vec<String> {
+        self.var_env.iter()
+            .flat_map(|scope| scope.keys())
+            .cloned()
+            .collect()
+    }
+
+    /// Get all function names currently defined
+    fn get_all_function_names(&self) -> Vec<String> {
+        self.functions.keys().cloned().collect()
+    }
+
+    /// Get all record names currently defined
+    fn get_all_record_names(&self) -> Vec<String> {
+        self.records.keys().cloned().collect()
+    }
+
+    /// Find similar variable names for suggestions
+    fn suggest_similar_vars(&self, name: &str) -> Vec<String> {
+        let candidates = self.get_all_var_names();
+        find_similar_names(name, candidates.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Find similar function names for suggestions
+    fn suggest_similar_functions(&self, name: &str) -> Vec<String> {
+        let candidates = self.get_all_function_names();
+        find_similar_names(name, candidates.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Find similar record names for suggestions
+    fn suggest_similar_records(&self, name: &str) -> Vec<String> {
+        let candidates = self.get_all_record_names();
+        find_similar_names(name, candidates.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Get field names for a record type
+    fn get_record_fields(&self, record_name: &str) -> Vec<String> {
+        self.records.get(record_name)
+            .map(|def| def.fields.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Find similar field names for suggestions
+    fn suggest_similar_fields(&self, record_name: &str, field_name: &str) -> Vec<String> {
+        let fields = self.get_record_fields(record_name);
+        find_similar_names(field_name, fields.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     fn convert_type(&mut self, ty: &Type) -> Result<TypedType, TypeError> {
         match ty {
             Type::Named(name) => match name.as_str() {

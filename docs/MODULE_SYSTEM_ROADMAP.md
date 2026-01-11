@@ -45,8 +45,8 @@
 - [x] Prelude関数のWASM生成 (generate_prelude_functions)
 - [x] 組み込み関数との連携
 
-**Note**: `and`, `or`, `xor`, `abs`, `max`, `min` はmatch armでのaffine制約により保留。
-今後のaffine checker改善で対応予定。
+**Note**: `and`, `or`, `xor` はmatch armでのaffine制約により保留。
+`abs`, `max`, `min` はCopy型サポートにより実装可能になった (Phase 4で実装済み)。
 
 ---
 
@@ -124,34 +124,46 @@ fun main: () -> Int = { 5 double }  // → 10
 
 ---
 
-## Phase 4: 標準ライブラリ整備
+## Phase 4: 標準ライブラリ整備 🚧 IN PROGRESS
 
 **Goal**: 実用的な標準ライブラリを提供
 
-### 4.1 std/io
-- [ ] print, println (polymorphic)
+**Status**: Partial implementation (2025-01-11)
+
+### Prerequisites ✅
+- [x] Copy型サポート追加 (Int, Bool, Float, Char, Unitが複数回使用可能に)
+  - これにより`abs`, `min`, `max`などの実装が可能になった
+
+### 4.1 std/io ⚠️ Built-in
+- [x] print, println (polymorphic) - 組み込み関数として実装済み
 - [ ] read_line (WASI)
 - [ ] file operations (WASI)
 
-### 4.2 std/list
-- [ ] map, filter, fold
-- [ ] head, tail, length
-- [ ] concat, reverse
+### 4.2 std/list ⚠️ Partial
+- [x] is_empty, head, prepend - 実装済み
+- [ ] map, filter, fold - 関数型パラメータ未サポート
+- [ ] tail, length, concat, reverse - 再帰ジェネリック関数に問題あり
 
-### 4.3 std/option
-- [ ] map, flatMap
-- [ ] unwrap_or, expect
-- [ ] is_some, is_none
+### 4.3 std/option ⚠️ Partial
+- [x] is_some, is_none, unwrap_or - 実装済み
+- [ ] map, and_then - 関数型パラメータ未サポート
+- [ ] flatten, or_else - ネストされたジェネリック型未サポート
 
-### 4.4 std/string
+### 4.4 std/string ❌ TODO
 - [ ] length, concat
 - [ ] split, join
 - [ ] substring, contains
 
-### 4.5 std/math
-- [ ] abs, min, max
-- [ ] pow, sqrt
-- [ ] trigonometric (if needed)
+### 4.5 std/math ✅ COMPLETED
+- [x] abs, min, max, signum
+- [x] is_positive, is_negative, is_zero
+- [x] pow, gcd, lcm
+- [x] clamp
+
+### Known Limitations
+1. **関数型パラメータ未サポート**: `|T| -> U` のような関数型をパラメータとして使えない
+2. **ネストされたジェネリック型未サポート**: `Option<Option<T>>` がパースエラー
+3. **再帰ジェネリック関数**: 型チェッカーでスタックオーバーフロー発生
 
 ---
 
@@ -178,21 +190,24 @@ fun main: () -> Int = { 5 double }  // → 10
 
 ## Success Metrics
 
-### Phase 1 完了条件
-- [ ] `42 print` がPreludeインポートなしで動作
-- [ ] テストが全て通過
+### Phase 1 完了条件 ✅
+- [x] `42 print` がPreludeインポートなしで動作
+- [x] テストが全て通過 (81 tests)
 
-### Phase 2 完了条件
-- [ ] `import math.{abs}` で関数をインポート可能
-- [ ] 循環依存でエラー
-- [ ] 未エクスポート関数へのアクセスでエラー
+### Phase 2 完了条件 ✅
+- [x] `import math.{abs}` で関数をインポート可能
+- [x] 循環依存でエラー
+- [x] 未エクスポート関数へのアクセスでエラー
 
 ### Phase 3 完了条件
 - [ ] 複数ファイルプロジェクトがコンパイル可能
 - [ ] 生成されるWASMが正しく動作
 
-### Phase 4 完了条件
-- [ ] 基本的なプログラムが標準ライブラリで書ける
+### Phase 4 完了条件 🚧
+- [x] std/math: abs, min, max, pow, gcd, lcm, clamp 実装
+- [x] std/option: is_some, is_none, unwrap_or 実装
+- [x] std/list: is_empty, head, prepend 実装
+- [ ] 高階関数対応 (map, filter, fold)
 - [ ] ドキュメント完備
 
 ### Phase 5 完了条件
@@ -203,12 +218,17 @@ fun main: () -> Int = { 5 double }  // → 10
 
 ## 現在のフォーカス
 
-**Phase 1: Prelude自動インポート** から開始
+**Phase 4: 標準ライブラリ整備** を継続中
 
-理由:
-1. 最もシンプルで効果が高い
-2. 他のPhaseの基盤となる
-3. ユーザー体験を即座に改善
+完了済み:
+- Phase 1: Prelude自動インポート ✅
+- Phase 2: Import解決 ✅
+- Phase 4.5: std/math ✅
+
+次のステップ:
+1. パーサーの拡張: 関数型パラメータ、ネストされたジェネリック型対応
+2. 型チェッカーの修正: 再帰ジェネリック関数のスタックオーバーフロー解消
+3. std/list, std/option の完全実装
 
 ---
 

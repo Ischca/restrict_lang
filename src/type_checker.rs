@@ -363,6 +363,26 @@ impl std::fmt::Display for TypedType {
     }
 }
 
+/// Check if a type is a Copy type (can be used multiple times without moving)
+/// Primitive types like Int, Bool, Float, and Unit are Copy types.
+pub fn is_copy_type(ty: &TypedType) -> bool {
+    match ty {
+        TypedType::Int32 => true,
+        TypedType::Float64 => true,
+        TypedType::Boolean => true,
+        TypedType::Unit => true,
+        TypedType::Char => true,
+        TypedType::String => false,  // Strings are not Copy (heap allocated)
+        TypedType::Record { .. } => false,  // Records are not Copy by default
+        TypedType::List(_) => false,  // Lists are not Copy
+        TypedType::Array(_, _) => false,  // Arrays are not Copy
+        TypedType::Option(inner) => is_copy_type(inner),  // Option<Copy> is Copy
+        TypedType::Function { .. } => false,  // Functions are not Copy
+        TypedType::TypeParam(_) => false,  // Unknown, assume not Copy
+        TypedType::Temporal { base_type, .. } => is_copy_type(base_type),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeSubstitution {
     // Maps type parameter names to concrete types
@@ -1569,11 +1589,13 @@ impl TypeChecker {
         // Search from innermost to outermost scope
         for scope in self.var_env.iter_mut().rev() {
             if let Some(var) = scope.get_mut(name) {
-                // Mutable variables can be used multiple times
-                if var.used && !var.mutable {
+                // Copy types and mutable variables can be used multiple times
+                let is_copy = is_copy_type(&var.ty);
+                if var.used && !var.mutable && !is_copy {
                     return Err(TypeError::AffineViolation(name.to_string()));
                 }
-                if !var.mutable {
+                // Only mark as used if not mutable and not a Copy type
+                if !var.mutable && !is_copy {
                     var.used = true;
                 }
                 return Ok(var.ty.clone());
@@ -3835,15 +3857,28 @@ mod tests {
     
     #[test]
     fn test_affine_violation() {
+        // Note: Int is a Copy type, so we use a Record to test affine violation
+        let input = r#"
+            record Point { x: Int y: Int }
+            val p = Point { x = 10, y = 20 }
+            val y = p
+            val z = p
+        "#;
+        assert_eq!(
+            check_program_str(input),
+            Err(TypeError::AffineViolation("p".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_copy_types_allowed() {
+        // Copy types (Int, Bool, Float) can be used multiple times
         let input = r#"
             val x = 42
             val y = x
             val z = x
         "#;
-        assert_eq!(
-            check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
-        );
+        assert!(check_program_str(input).is_ok());
     }
     
     #[test]
@@ -3932,15 +3967,28 @@ mod tests {
     
     #[test]
     fn test_affine_in_blocks() {
+        // Note: Int is a Copy type, so we use a Record to test affine violation
         let input = r#"
-            val x = 42
-            val y = { val z = x }
-            val w = x
+            record Point { x: Int y: Int }
+            val p = Point { x = 10, y = 20 }
+            val y = { val z = p }
+            val w = p
         "#;
         assert_eq!(
             check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
+            Err(TypeError::AffineViolation("p".to_string()))
         );
+    }
+
+    #[test]
+    fn test_copy_types_in_blocks() {
+        // Copy types can be used in blocks and still be available outside
+        let input = r#"
+            val x = 42
+            val y = { x }
+            val w = x
+        "#;
+        assert!(check_program_str(input).is_ok());
     }
     
     #[test]
@@ -3973,20 +4021,22 @@ mod tests {
     #[test]
     fn test_affine_nested_blocks() {
         // Test affine checking in deeply nested blocks with intermediate variables
+        // Note: Int is a Copy type, so we use a Record to test affine violation
         let input = r#"
-            val x = 42
+            record Point { x: Int y: Int }
+            val p = Point { x = 10, y = 20 }
             val y = {
                 val inner = {
-                    val deep = x
+                    val deep = p
                     deep
                 }
                 inner
             }
-            val z = x
+            val z = p
         "#;
         assert_eq!(
             check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
+            Err(TypeError::AffineViolation("p".to_string()))
         );
     }
 
@@ -4021,16 +4071,28 @@ mod tests {
 
     #[test]
     fn test_affine_conditional_violation() {
-        // Using a variable before AND inside a conditional should fail
+        // Using a non-Copy variable before AND inside a conditional should fail
+        let input = r#"
+            record Point { x: Int y: Int }
+            val p = Point { x = 10, y = 20 }
+            val y = p
+            val z = true then { p } else { Point { x = 0, y = 0 } }
+        "#;
+        assert_eq!(
+            check_program_str(input),
+            Err(TypeError::AffineViolation("p".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_copy_types_in_conditionals() {
+        // Copy types can be used multiple times in conditionals
         let input = r#"
             val x = 42
             val y = x
             val z = true then { x } else { 0 }
         "#;
-        assert_eq!(
-            check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
-        );
+        assert!(check_program_str(input).is_ok());
     }
 
     #[test]

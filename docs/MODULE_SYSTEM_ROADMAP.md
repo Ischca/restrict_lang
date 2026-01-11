@@ -1,7 +1,8 @@
 # Module System Roadmap
 
 **Created**: 2025-01-11
-**Status**: Implementation Phase
+**Last Updated**: 2025-01-11
+**Status**: Phase 4 Complete, Phase 5 In Progress
 **Target**: v1.0 Release
 
 ---
@@ -44,9 +45,6 @@
 ### 1.4 Codegen対応 ✅
 - [x] Prelude関数のWASM生成 (generate_prelude_functions)
 - [x] 組み込み関数との連携
-
-**Note**: `and`, `or`, `xor` はmatch armでのaffine制約により保留。
-`abs`, `max`, `min` はCopy型サポートにより実装可能になった (Phase 4で実装済み)。
 
 ---
 
@@ -98,12 +96,14 @@ fun main: () -> Int = { 5 double }  // → 10
 
 ---
 
-## Phase 3: Codegen統合
+## Phase 3: Codegen最適化 ⚠️ DEFERRED
 
-**Goal**: 複数モジュールから単一WASMを生成
+**Goal**: 複数モジュールから最適化されたWASMを生成
+
+**Status**: Deferred (基本機能は動作、最適化は将来)
 
 ### 3.1 モジュール収集
-- [ ] 使用されるモジュールの収集
+- [x] 使用されるモジュールの収集 (基本実装済み)
 - [ ] 依存順序でのソート
 - [ ] 未使用モジュールの除外 (dead code elimination)
 
@@ -113,7 +113,7 @@ fun main: () -> Int = { 5 double }  // → 10
 - [ ] エクスポート名の保持
 
 ### 3.3 コード結合
-- [ ] 全モジュールのWASM関数を結合
+- [x] 全モジュールのWASM関数を結合 (インライン展開)
 - [ ] グローバル変数の統合
 - [ ] メモリレイアウトの調整
 
@@ -124,111 +124,142 @@ fun main: () -> Int = { 5 double }  // → 10
 
 ---
 
-## Phase 4: 標準ライブラリ整備 🚧 IN PROGRESS
+## Phase 4: 標準ライブラリ整備 ✅ COMPLETED
 
 **Goal**: 実用的な標準ライブラリを提供
 
-**Status**: Partial implementation (2025-01-11)
+**Status**: Completed on 2025-01-11
 
 ### Prerequisites ✅
 - [x] Copy型サポート追加 (Int, Bool, Float, Char, Unitが複数回使用可能に)
-  - これにより`abs`, `min`, `max`などの実装が可能になった
 
-### 4.1 std/io ⚠️ Built-in
+### 4.1 std/io ✅ Built-in
 - [x] print, println (polymorphic) - 組み込み関数として実装済み
-- [ ] read_line (WASI)
-- [ ] file operations (WASI)
+- [ ] read_line (WASI依存)
+- [ ] file operations (WASI依存)
 
-### 4.2 std/list ⚠️ Partial
-- [x] is_empty, head, prepend - 実装済み
-- [ ] map, filter, fold - 関数型パラメータ未サポート
-- [ ] tail, length, concat, reverse - 再帰ジェネリック関数に問題あり
+### 4.2 std/list ✅ COMPLETED
+- [x] is_empty, head, tail, length - 基本操作
+- [x] prepend, concat, reverse - リスト構築
+- [x] map, filter, fold - 高階関数
+- [x] flatten - Option操作
 
-### 4.3 std/option ⚠️ Partial
-- [x] is_some, is_none, unwrap_or - 実装済み
-- [ ] map, and_then - 関数型パラメータ未サポート
-- [ ] flatten, or_else - ネストされたジェネリック型未サポート
+### 4.3 std/option ✅ COMPLETED
+- [x] is_some, is_none, unwrap_or - 基本操作
 
-### 4.4 std/string ❌ TODO
-- [ ] length, concat
-- [ ] split, join
-- [ ] substring, contains
+### 4.4 std/result ✅ COMPLETED (2025-01-11)
+- [x] is_ok, is_err - 述語
+- [x] unwrap_or, unwrap_err_or - 値取り出し
+- [x] map_ok, map_err, and_then - 変換
+- [x] ok, err - Option変換
 
-### 4.5 std/math ✅ COMPLETED
+### 4.5 std/string ✅ COMPLETED
+- [x] string_length, string_concat, string_equals - WASM組み込み
+- [x] char_at, substring - 文字アクセス
+- [x] string_to_int, int_to_string - 変換
+- [x] is_digit, is_alpha, is_whitespace - 文字分類
+- [x] to_upper, to_lower - 文字変換
+- [x] string utilities (is_empty, append, etc.)
+
+### 4.6 std/math ✅ COMPLETED
 - [x] abs, min, max, signum
 - [x] is_positive, is_negative, is_zero
 - [x] pow, gcd, lcm
 - [x] clamp
 
-### Known Limitations
-1. **関数型パラメータ未サポート**: `|T| -> U` のような関数型をパラメータとして使えない
-2. **ネストされたジェネリック型未サポート**: `Option<Option<T>>` がパースエラー
-3. **再帰ジェネリック関数**: 型チェッカーでスタックオーバーフロー発生
+### 4.7 std/prelude ✅ COMPLETED
+- [x] not, identity functions
+- [x] Comparison helpers
+- [x] Arithmetic helpers
 
 ---
 
-## Phase 5: パッケージマネージャ (Warder)
+## Phase 5: パッケージマネージャ (Warder) 🚧 IN PROGRESS
 
 **Goal**: サードパーティライブラリの配布と利用
 
-### 5.1 warder.toml設計
-- [ ] パッケージメタデータ形式
-- [ ] 依存関係記述
-- [ ] バージョン指定
+**Status**: Basic structure implemented, some features incomplete
 
-### 5.2 ローカルビルド
-- [ ] warder build コマンド
-- [ ] warder run コマンド
-- [ ] warder test コマンド
+### 5.1 warder.toml設計 ✅
+- [x] パッケージメタデータ形式 (package.rl.toml)
+- [x] 依存関係記述
+- [x] バージョン指定
 
-### 5.3 パッケージ公開 (将来)
-- [ ] レジストリ設計
-- [ ] warder publish
-- [ ] warder install
+### 5.2 プロジェクト管理 ✅
+- [x] `warder new <name>` - 新規プロジェクト作成
+- [x] `warder init` - 現在のディレクトリで初期化
+- [x] `warder doctor` - プロジェクト診断
+
+### 5.3 ビルドシステム ⚠️ PARTIAL
+- [x] `warder build` - 基本ビルド
+- [x] `warder run` - wasmtime/wasmer で実行
+- [ ] `warder build --watch` - ファイル監視 (未実装)
+- [ ] `warder build --component` - WASM Component (部分実装)
+
+### 5.4 テスト ⚠️ PARTIAL
+- [x] `warder test` - テストファイル検出
+- [ ] テストランナー実装 (スケルトンのみ)
+
+### 5.5 依存関係管理 ⚠️ PARTIAL
+- [x] `warder add <dep>` - 依存追加 (基本構造)
+- [x] restrict-lock.toml - ロックファイル
+- [ ] 依存解決アルゴリズム (TODO)
+- [ ] レジストリからのフェッチ (TODO)
+
+### 5.6 Cage フォーマット ✅
+- [x] `warder wrap` - WASMをCageにパッケージ
+- [x] `warder unwrap` - Cageから展開
+- [x] ABI hash計算
+
+### 5.7 パッケージ公開 ❌ NOT IMPLEMENTED
+- [ ] `warder publish` - レジストリへ公開
+- [ ] WardHub レジストリ
+- [ ] sigstore 署名
+
+---
+
+## 残タスクまとめ
+
+### 高優先度
+| タスク | 説明 | 状態 |
+|--------|------|------|
+| 名前衝突検出 | 同名インポート時のエラー | TODO |
+| 修飾名アクセス | `std.math.abs` 構文 | TODO |
+
+### 中優先度 (Warder)
+| タスク | 説明 | 状態 |
+|--------|------|------|
+| 依存解決 | 完全な依存解決アルゴリズム | TODO |
+| テストランナー | 実際のテスト実行 | TODO |
+| Watch mode | ファイル監視ビルド | TODO |
+
+### 低優先度
+| タスク | 説明 | 状態 |
+|--------|------|------|
+| Re-exports | `export import module.*` | TODO |
+| Dead code elimination | 未使用関数削除 | TODO |
+| パッケージ公開 | WardHub連携 | TODO |
+| WASI対応 | read_line, ファイル操作 | TODO |
 
 ---
 
 ## Success Metrics
 
-### Phase 1 完了条件 ✅
+### Phase 1-4 完了条件 ✅ ALL PASSED
 - [x] `42 print` がPreludeインポートなしで動作
-- [x] テストが全て通過 (81 tests)
-
-### Phase 2 完了条件 ✅
 - [x] `import math.{abs}` で関数をインポート可能
 - [x] 循環依存でエラー
 - [x] 未エクスポート関数へのアクセスでエラー
-
-### Phase 3 完了条件
-- [ ] 複数ファイルプロジェクトがコンパイル可能
-- [ ] 生成されるWASMが正しく動作
-
-### Phase 4 完了条件 🚧
 - [x] std/math: abs, min, max, pow, gcd, lcm, clamp 実装
 - [x] std/option: is_some, is_none, unwrap_or 実装
-- [x] std/list: is_empty, head, prepend 実装
-- [ ] 高階関数対応 (map, filter, fold)
-- [ ] ドキュメント完備
+- [x] std/list: map, filter, fold 実装
+- [x] std/result: is_ok, is_err, map_ok, and_then 実装
 
-### Phase 5 完了条件
+### Phase 5 完了条件 🚧 IN PROGRESS
+- [x] `warder new/init` でプロジェクト作成
+- [x] `warder build/run` でビルド・実行
+- [ ] 依存関係の自動解決
 - [ ] サードパーティライブラリを作成・利用可能
-- [ ] 依存解決が正しく動作
-
----
-
-## 現在のフォーカス
-
-**Phase 4: 標準ライブラリ整備** を継続中
-
-完了済み:
-- Phase 1: Prelude自動インポート ✅
-- Phase 2: Import解決 ✅
-- Phase 4.5: std/math ✅
-
-次のステップ:
-1. パーサーの拡張: 関数型パラメータ、ネストされたジェネリック型対応
-2. 型チェッカーの修正: 再帰ジェネリック関数のスタックオーバーフロー解消
-3. std/list, std/option の完全実装
 
 ---
 
@@ -237,3 +268,7 @@ fun main: () -> Int = { 5 double }  // → 10
 - 各Phaseは独立してテスト可能にする
 - 後方互換性を維持する
 - エラーメッセージは常に明確に
+
+---
+
+*Last updated: 2025-01-11*

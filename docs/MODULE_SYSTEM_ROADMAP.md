@@ -50,35 +50,51 @@
 
 ---
 
-## Phase 2: Import解決
+## Phase 2: Import解決 ✅ COMPLETED
 
 **Goal**: `import module.{name}` でモジュールから関数を取り込める
 
-### 2.1 ModuleResolver統合
-- [ ] main.rsにModuleResolver統合
-- [ ] 検索パス設定 (., ./std, ~/.restrict/lib)
-- [ ] モジュールファイル探索ロジック
+**Status**: Completed on 2025-01-11
 
-### 2.2 Export収集
-- [ ] パース時にexport宣言を収集
-- [ ] エクスポートテーブル構築
-- [ ] private関数のフィルタリング
+### 2.1 ModuleResolver統合 ✅
+- [x] main.rsにModuleResolver統合
+- [x] 検索パス設定 (ソースファイルディレクトリ, std/)
+- [x] モジュールファイル探索ロジック
 
-### 2.3 Import処理
-- [ ] import文のパース (既存)
-- [ ] モジュールパス → ファイルパス解決
-- [ ] インポートされた名前をスコープに追加
-- [ ] 名前衝突の検出とエラー
+### 2.2 Export収集 ✅
+- [x] パース時にexport宣言を収集
+- [x] エクスポートテーブル構築
+- [x] private関数のフィルタリング (exportされたもののみ公開)
 
-### 2.4 型チェッカー統合
-- [ ] インポートされた関数の型情報取得
-- [ ] インポートされたRecord型の登録
-- [ ] インポートされたContext型の登録
+### 2.3 Import処理 ✅
+- [x] import文のパース (既存のパーサー使用)
+- [x] モジュールパス → ファイルパス解決
+- [x] インポートされた名前をスコープに追加
+- [ ] 名前衝突の検出とエラー (TODO: 将来の改善)
 
-### 2.5 循環依存検出
-- [ ] 依存グラフ構築
-- [ ] 循環検出アルゴリズム
-- [ ] 明確なエラーメッセージ
+### 2.4 型チェッカー統合 ✅
+- [x] インポートされた関数の型情報取得 (register_imported_decl)
+- [x] インポートされたRecord型の登録
+- [x] インポートされたContext型の登録
+
+### 2.5 循環依存検出 ✅
+- [x] resolving set による依存追跡
+- [x] 循環検出アルゴリズム
+- [x] 明確なエラーメッセージ ("Import chain involves: ...")
+
+### 2.6 Codegen統合 ✅
+- [x] インポートした関数のWASM生成
+- [x] インライン展開 (単一WASMファイル出力)
+
+**Example:**
+```rl
+// std/test_module.rl
+export fun double: (x: Int) -> Int = { x * 2 }
+
+// main.rl
+import test_module.{double}
+fun main: () -> Int = { 5 double }  // → 10
+```
 
 ---
 

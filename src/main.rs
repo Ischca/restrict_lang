@@ -1,7 +1,7 @@
-use restrict_lang::{lex, parse_program, TypeChecker, WasmCodeGen};
+use restrict_lang::{lex, parse_program, TypeChecker, WasmCodeGen, ModuleResolver};
 use std::fs;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
 use restrict_lang::lsp;
@@ -159,12 +159,64 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    
+
+    // Process imports
+    let mut imported_decls = Vec::new();
+    if !ast.imports.is_empty() {
+        if !check_only && !show_ast {
+            println!("\n=== Resolving Imports ===");
+        }
+
+        let mut resolver = ModuleResolver::new();
+
+        // Add search paths
+        // 1. Directory containing the source file
+        if let Some(parent) = Path::new(filename).parent() {
+            resolver.add_search_path(parent.to_path_buf());
+        }
+        // 2. Standard library path (relative to current dir)
+        resolver.add_search_path(PathBuf::from("std"));
+
+        for import in &ast.imports {
+            match resolver.resolve_module(&import.module_path) {
+                Ok(_) => {
+                    match resolver.get_imported_items(&import.module_path, &import.items) {
+                        Ok(items) => {
+                            if !check_only {
+                                println!("  Imported {} items from {}",
+                                    items.len(),
+                                    import.module_path.join("."));
+                            }
+                            imported_decls.extend(items);
+                        }
+                        Err(e) => {
+                            eprintln!("Import error: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Module resolution error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // Type check
     if !check_only {
         println!("\n=== Type Checking ===");
     }
     let mut type_checker = TypeChecker::new();
+
+    // Register imported declarations first
+    for (name, decl) in &imported_decls {
+        if let Err(e) = type_checker.register_imported_decl(name, decl) {
+            eprintln!("Error registering import '{}': {}", name, e);
+            std::process::exit(1);
+        }
+    }
+
     match type_checker.check_program(&ast) {
         Ok(()) => {
             if check_only {
@@ -182,6 +234,12 @@ async fn main() {
     // Generate WASM
     println!("\n=== WASM Code Generation ===");
     let mut codegen = WasmCodeGen::new();
+
+    // Register imported declarations with codegen
+    for (_name, decl) in &imported_decls {
+        codegen.register_imported_decl(decl);
+    }
+
     let wat = match codegen.generate(&ast) {
         Ok(wat) => {
             println!("WASM generation successful!");

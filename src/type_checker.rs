@@ -1784,7 +1784,43 @@ impl TypeChecker {
         self.pop_type_param_scope();
         Ok(())
     }
-    
+
+    /// Register an imported declaration (function or record) into the type checker's scope.
+    /// This is called for each exported item from imported modules.
+    pub fn register_imported_decl(&mut self, _name: &str, decl: &crate::ast::TopDecl) -> Result<(), TypeError> {
+        match decl {
+            crate::ast::TopDecl::Function(func) => {
+                self.register_function_signature(func)?;
+            }
+            crate::ast::TopDecl::Record(record) => {
+                self.check_record_decl(record)?;
+            }
+            crate::ast::TopDecl::Context(ctx) => {
+                // Register context as a record type (contexts are similar to records)
+                // Collect fields first to avoid borrow issue
+                let fields: HashMap<String, TypedType> = ctx.fields.iter().filter_map(|f| {
+                    self.convert_type(&f.ty).ok().map(|ty| (f.name.clone(), ty))
+                }).collect();
+                self.records.insert(ctx.name.clone(), RecordDef {
+                    fields,
+                    type_params: vec![],
+                    temporal_constraints: vec![],
+                });
+            }
+            crate::ast::TopDecl::Binding(_bind) => {
+                // Global bindings are currently not fully supported in imports
+                // They would need their value to be evaluated at module load time
+            }
+            crate::ast::TopDecl::Impl(_) => {
+                // Impl blocks need special handling - skip for now
+            }
+            crate::ast::TopDecl::Export(_) => {
+                // Export wrapper - should not happen as we unwrap exports
+            }
+        }
+        Ok(())
+    }
+
     // Wrapper function for compatibility
     pub fn type_check(&mut self, program: &Program) -> Result<(), TypeError> {
         self.check_program(program)

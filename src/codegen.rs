@@ -99,6 +99,10 @@ pub struct WasmCodeGen {
     record_field_offsets: HashMap<String, HashMap<String, u32>>,
     /// Variable types: var_name -> type_name (e.g., "Point", "Buffer")
     var_types: HashMap<String, String>,
+    /// Imported functions to be inlined
+    imported_functions: Vec<FunDecl>,
+    /// Imported records to be included
+    imported_records: Vec<RecordDecl>,
 }
 
 #[derive(Debug, Clone)]
@@ -139,14 +143,43 @@ impl WasmCodeGen {
             records: HashMap::new(),
             record_field_offsets: HashMap::new(),
             var_types: HashMap::new(),
+            imported_functions: Vec::new(),
+            imported_records: Vec::new(),
         }
     }
     
+    /// Register imported declarations to be included in the generated WASM.
+    /// These declarations will be generated as part of the module instead of
+    /// being imported from external modules.
+    pub fn register_imported_decl(&mut self, decl: &TopDecl) {
+        match decl {
+            TopDecl::Function(func) => {
+                // Register the function signature so codegen knows about it
+                let params: Vec<WasmType> = func.params.iter().map(|_| WasmType::I32).collect();
+                let result = Some(WasmType::I32); // Default to I32 for now
+                self.functions.insert(func.name.clone(), FunctionSig {
+                    _params: params,
+                    result,
+                });
+                // Store the function for later generation
+                self.imported_functions.push(func.clone());
+            }
+            TopDecl::Record(record) => {
+                // Store record for later registration
+                self.imported_records.push(record.clone());
+            }
+            _ => {
+                // Other declaration types not yet supported for import
+            }
+        }
+    }
+
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
         self.output.push_str("(module\n");
-        
-        // Process module imports first
-        self.generate_imports(&program.imports)?;
+
+        // Skip WASM imports for functions we have inlined declarations for
+        // This prevents generating "import" statements for functions we'll define locally
+        // (No-op if we have the functions inlined)
         
         // Import WASI functions for I/O
         self.output.push_str("  ;; WASI imports\n");
@@ -239,6 +272,15 @@ impl WasmCodeGen {
             }
         }
         
+        // Generate imported functions first
+        if !self.imported_functions.is_empty() {
+            self.output.push_str("\n  ;; Imported functions (inlined)\n");
+            let imported_funcs: Vec<_> = self.imported_functions.clone();
+            for func in &imported_funcs {
+                self.generate_function(func)?;
+            }
+        }
+
         // Generate functions
         self.output.push_str("\n  ;; Functions\n");
         for decl in &program.declarations {

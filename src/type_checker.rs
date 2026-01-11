@@ -336,6 +336,7 @@ pub enum TypedType {
     Record { name: String, frozen: bool, hash: Option<String>, parent_hash: Option<String> },
     Function { params: Vec<TypedType>, return_type: Box<TypedType> },
     Option(Box<TypedType>),
+    Result { ok: Box<TypedType>, err: Box<TypedType> }, // Result<T, E> type for error handling
     List(Box<TypedType>),
     Array(Box<TypedType>, usize),
     TypeParam(String), // Generic type parameter
@@ -366,6 +367,7 @@ pub fn format_typed_type(ty: &TypedType) -> String {
             format!("({}) -> {}", params_str, format_typed_type(return_type))
         }
         TypedType::Option(inner) => format!("Option<{}>", format_typed_type(inner)),
+        TypedType::Result { ok, err } => format!("Result<{}, {}>", format_typed_type(ok), format_typed_type(err)),
         TypedType::List(inner) => format!("List<{}>", format_typed_type(inner)),
         TypedType::Array(inner, size) => format!("[{}; {}]", format_typed_type(inner), size),
         TypedType::TypeParam(name) => name.clone(),
@@ -396,6 +398,7 @@ pub fn is_copy_type(ty: &TypedType) -> bool {
         TypedType::List(_) => false,  // Lists are not Copy
         TypedType::Array(_, _) => false,  // Arrays are not Copy
         TypedType::Option(inner) => is_copy_type(inner),  // Option<Copy> is Copy
+        TypedType::Result { ok, err } => is_copy_type(ok) && is_copy_type(err),  // Result<Copy, Copy> is Copy
         TypedType::Function { .. } => false,  // Functions are not Copy
         TypedType::TypeParam(_) => false,  // Unknown, assume not Copy
         TypedType::Temporal { base_type, .. } => is_copy_type(base_type),
@@ -453,6 +456,10 @@ impl TypeSubstitution {
             TypedType::List(inner) => TypedType::List(Box::new(self.apply(inner))),
             TypedType::Array(inner, size) => TypedType::Array(Box::new(self.apply(inner)), *size),
             TypedType::Option(inner) => TypedType::Option(Box::new(self.apply(inner))),
+            TypedType::Result { ok, err } => TypedType::Result {
+                ok: Box::new(self.apply(ok)),
+                err: Box::new(self.apply(err)),
+            },
             TypedType::Function { params, return_type } => TypedType::Function {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 return_type: Box::new(self.apply(return_type)),
@@ -1766,6 +1773,7 @@ impl TypeChecker {
             TypedType::TypeParam(param_name) => name == param_name,
             TypedType::List(inner) => self.occurs_in(name, inner),
             TypedType::Option(inner) => self.occurs_in(name, inner),
+            TypedType::Result { ok, err } => self.occurs_in(name, ok) || self.occurs_in(name, err),
             TypedType::Array(inner, _) => self.occurs_in(name, inner),
             TypedType::Function { params, return_type } => {
                 params.iter().any(|p| self.occurs_in(name, p)) || self.occurs_in(name, return_type)
@@ -1845,7 +1853,13 @@ impl TypeChecker {
             (TypedType::Option(e1), TypedType::Option(e2)) => {
                 self.unify(e1, e2, substitution)
             }
-            
+
+            // Result types must have same ok and err types
+            (TypedType::Result { ok: ok1, err: err1 }, TypedType::Result { ok: ok2, err: err2 }) => {
+                self.unify(ok1, ok2, substitution)?;
+                self.unify(err1, err2, substitution)
+            }
+
             // Array types must have same element type and size
             (TypedType::Array(e1, s1), TypedType::Array(e2, s2)) => {
                 if s1 == s2 {
@@ -2055,6 +2069,12 @@ impl TypeChecker {
                 match name.as_str() {
                     "Option" if params.len() == 1 => {
                         Ok(TypedType::Option(Box::new(self.convert_type(&params[0])?)))
+                    },
+                    "Result" if params.len() == 2 => {
+                        Ok(TypedType::Result {
+                            ok: Box::new(self.convert_type(&params[0])?),
+                            err: Box::new(self.convert_type(&params[1])?),
+                        })
                     },
                     "List" if params.len() == 1 => {
                         Ok(TypedType::List(Box::new(self.convert_type(&params[0])?)))
@@ -2566,9 +2586,47 @@ impl TypeChecker {
                 let typed_type = self.convert_type(ty)?;
                 Ok(TypedType::Option(Box::new(typed_type)))
             },
+            Expr::Ok(expr) => {
+                // Infer the ok type from the inner expression
+                let expected_inner = if let Some(TypedType::Result { ok, .. }) = expected {
+                    Some(ok.as_ref())
+                } else {
+                    None
+                };
+                let ok_type = self.check_expr_with_expected(expr, expected_inner)?;
+                // For error type, use expected if available, otherwise TypeParam
+                let err_type = if let Some(TypedType::Result { err, .. }) = expected {
+                    err.as_ref().clone()
+                } else {
+                    TypedType::TypeParam("E".to_string())
+                };
+                Ok(TypedType::Result {
+                    ok: Box::new(ok_type),
+                    err: Box::new(err_type),
+                })
+            },
+            Expr::Err(expr) => {
+                // Infer the error type from the inner expression
+                let expected_inner = if let Some(TypedType::Result { err, .. }) = expected {
+                    Some(err.as_ref())
+                } else {
+                    None
+                };
+                let err_type = self.check_expr_with_expected(expr, expected_inner)?;
+                // For ok type, use expected if available, otherwise TypeParam
+                let ok_type = if let Some(TypedType::Result { ok, .. }) = expected {
+                    ok.as_ref().clone()
+                } else {
+                    TypedType::TypeParam("T".to_string())
+                };
+                Ok(TypedType::Result {
+                    ok: Box::new(ok_type),
+                    err: Box::new(err_type),
+                })
+            },
         }
     }
-    
+
     fn check_record_lit(&mut self, record_lit: &RecordLit) -> Result<TypedType, TypeError> {
         // First check if record exists and collect field types
         let (field_types, type_params, temporal_constraints): (HashMap<String, TypedType>, Vec<TypeParam>, Vec<TemporalConstraint>) = {
@@ -3790,6 +3848,26 @@ impl TypeChecker {
                     })
                 }
             }
+            Pattern::Ok(inner_pattern) => {
+                if let TypedType::Result { ok, .. } = expected_type {
+                    self.check_pattern(inner_pattern, ok)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "Result type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+            Pattern::Err(inner_pattern) => {
+                if let TypedType::Result { err, .. } = expected_type {
+                    self.check_pattern(inner_pattern, err)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "Result type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
             Pattern::EmptyList => {
                 if matches!(expected_type, TypedType::List(_)) {
                     Ok(())
@@ -3865,6 +3943,20 @@ impl TypeChecker {
                 }
             }
             Pattern::None => Ok(()),
+            Pattern::Ok(inner_pattern) => {
+                if let TypedType::Result { ok, .. } = ty {
+                    self.bind_pattern_vars(inner_pattern, ok)
+                } else {
+                    Ok(())
+                }
+            }
+            Pattern::Err(inner_pattern) => {
+                if let TypedType::Result { err, .. } = ty {
+                    self.bind_pattern_vars(inner_pattern, err)
+                } else {
+                    Ok(())
+                }
+            }
             Pattern::EmptyList => Ok(()),
             Pattern::ListCons(head_pattern, tail_pattern) => {
                 if let TypedType::List(element_type) = ty {
@@ -4944,6 +5036,12 @@ impl TypeChecker {
             Expr::Some(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
+            Expr::Ok(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
+            Expr::Err(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
             Expr::Await(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
@@ -4951,8 +5049,8 @@ impl TypeChecker {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
             // Literals and None have no free variables
-            Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) | 
-            Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit | 
+            Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) |
+            Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit |
             Expr::None | Expr::NoneTyped(_) => {}
         }
         
@@ -5001,6 +5099,12 @@ impl TypeChecker {
             Pattern::Some(p) => {
                 self.collect_pattern_bindings(p, bindings);
             }
+            Pattern::Ok(p) => {
+                self.collect_pattern_bindings(p, bindings);
+            }
+            Pattern::Err(p) => {
+                self.collect_pattern_bindings(p, bindings);
+            }
             Pattern::ListCons(head, tail) => {
                 self.collect_pattern_bindings(head, bindings);
                 self.collect_pattern_bindings(tail, bindings);
@@ -5036,6 +5140,10 @@ impl TypeChecker {
             }
             TypedType::Option(ty) => {
                 self.check_temporal_escape(ty, allowed_temporals)?;
+            }
+            TypedType::Result { ok, err } => {
+                self.check_temporal_escape(ok, allowed_temporals)?;
+                self.check_temporal_escape(err, allowed_temporals)?;
             }
             TypedType::List(ty) => {
                 self.check_temporal_escape(ty, allowed_temporals)?;

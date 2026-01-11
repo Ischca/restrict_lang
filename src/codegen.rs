@@ -2535,10 +2535,56 @@ impl WasmCodeGen {
             Expr::ScopeConcat(sc) => {
                 self.generate_scope_concat_expr(sc)?;
             }
+            Expr::Ok(expr) => {
+                // Result::Ok - allocate tagged union: [tag=1, value]
+                self.output.push_str("    ;; Ok(expr) literal\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+
+                // Store tag (1 for Ok)
+                self.output.push_str("    i32.const 1\n");
+                self.output.push_str("    i32.store\n");
+
+                // Generate inner value
+                self.generate_expr(expr)?;
+
+                // Store value at offset 4
+                self.output.push_str("    local.get $match_tmp\n");
+                self.output.push_str("    i32.const 4\n");
+                self.output.push_str("    i32.add\n");
+                self.output.push_str("    i32.store\n");
+
+                // Leave pointer on stack
+                self.output.push_str("    local.get $match_tmp\n");
+            }
+            Expr::Err(expr) => {
+                // Result::Err - allocate tagged union: [tag=0, value]
+                self.output.push_str("    ;; Err(expr) literal\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+
+                // Store tag (0 for Err)
+                self.output.push_str("    i32.const 0\n");
+                self.output.push_str("    i32.store\n");
+
+                // Generate inner value
+                self.generate_expr(expr)?;
+
+                // Store value at offset 4
+                self.output.push_str("    local.get $match_tmp\n");
+                self.output.push_str("    i32.const 4\n");
+                self.output.push_str("    i32.add\n");
+                self.output.push_str("    i32.store\n");
+
+                // Leave pointer on stack
+                self.output.push_str("    local.get $match_tmp\n");
+            }
         }
         Ok(())
     }
-    
+
     fn generate_lambda_expr(&mut self, lambda: &LambdaExpr) -> Result<(), CodeGenError> {
         // Generate a unique name for this lambda
         let lambda_name = format!("lambda_{}", self.lambda_counter);
@@ -3565,11 +3611,59 @@ impl WasmCodeGen {
                 self.output.push_str("    i32.const 0 ;; None tag\n");
                 self.output.push_str("    i32.eq\n");
             }
+            Pattern::Ok(inner_pattern) => {
+                // Check if tag is 1 (Ok) for Result
+                self.output.push_str("    local.tee $match_tmp ;; save for value extraction\n");
+                self.output.push_str("    i32.load ;; load tag\n");
+                self.output.push_str("    i32.const 1 ;; Ok tag\n");
+                self.output.push_str("    i32.eq\n");
+
+                // If tag matches, match the inner pattern
+                self.output.push_str("    (if (result i32)\n");
+                self.output.push_str("      (then\n");
+                self.output.push_str("        local.get $match_tmp\n");
+                self.output.push_str("        i32.const 4\n");
+                self.output.push_str("        i32.add\n");
+                self.output.push_str("        i32.load ;; load value from offset 4\n");
+
+                let inner_bindings = self.generate_pattern_match(inner_pattern)?;
+                bindings.extend(inner_bindings);
+
+                self.output.push_str("      )\n");
+                self.output.push_str("      (else\n");
+                self.output.push_str("        i32.const 0 ;; tag mismatch\n");
+                self.output.push_str("      )\n");
+                self.output.push_str("    )\n");
+            }
+            Pattern::Err(inner_pattern) => {
+                // Check if tag is 0 (Err) for Result
+                self.output.push_str("    local.tee $match_tmp ;; save for value extraction\n");
+                self.output.push_str("    i32.load ;; load tag\n");
+                self.output.push_str("    i32.const 0 ;; Err tag\n");
+                self.output.push_str("    i32.eq\n");
+
+                // If tag matches, match the inner pattern
+                self.output.push_str("    (if (result i32)\n");
+                self.output.push_str("      (then\n");
+                self.output.push_str("        local.get $match_tmp\n");
+                self.output.push_str("        i32.const 4\n");
+                self.output.push_str("        i32.add\n");
+                self.output.push_str("        i32.load ;; load error value from offset 4\n");
+
+                let inner_bindings = self.generate_pattern_match(inner_pattern)?;
+                bindings.extend(inner_bindings);
+
+                self.output.push_str("      )\n");
+                self.output.push_str("      (else\n");
+                self.output.push_str("        i32.const 0 ;; tag mismatch\n");
+                self.output.push_str("      )\n");
+                self.output.push_str("    )\n");
+            }
         }
-        
+
         Ok(bindings)
     }
-    
+
     fn generate_then_expr(&mut self, then: &ThenExpr) -> Result<(), CodeGenError> {
         // Generate condition
         self.generate_expr(&then.condition)?;

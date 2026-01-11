@@ -626,6 +626,8 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         lambda_expr,  // Try lambda before other expressions that use |
         some_expr,  // Try Some before ident
         none_expr,  // Try None before ident
+        ok_expr,    // Try Ok before ident
+        err_expr,   // Try Err before ident
         array_lit,  // Try array literal before list
         list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
@@ -666,6 +668,22 @@ fn some_expr(input: &str) -> ParseResult<Expr> {
     let (input, expr) = expression(input)?;
     let (input, _) = expect_token(Token::RParen)(input)?;
     Ok((input, Expr::Some(Box::new(expr))))
+}
+
+fn ok_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::Ok)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, expr) = expression(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Expr::Ok(Box::new(expr))))
+}
+
+fn err_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::Err)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, expr) = expression(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Expr::Err(Box::new(expr))))
 }
 
 fn list_lit(input: &str) -> ParseResult<Expr> {
@@ -786,6 +804,8 @@ fn pattern(input: &str) -> ParseResult<Pattern> {
         },
         some_pattern,
         none_pattern,
+        ok_pattern,    // Result Ok pattern
+        err_pattern,   // Result Err pattern
         record_pattern,  // Try record patterns before identifiers
         list_pattern,  // Try list patterns before literals
         map(literal, |expr| match expr {
@@ -812,6 +832,22 @@ fn some_pattern(input: &str) -> ParseResult<Pattern> {
 fn none_pattern(input: &str) -> ParseResult<Pattern> {
     let (input, _) = expect_token(Token::None)(input)?;
     Ok((input, Pattern::None))
+}
+
+fn ok_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::Ok)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, inner_pattern) = pattern(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Ok(Box::new(inner_pattern))))
+}
+
+fn err_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::Err)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, inner_pattern) = pattern(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Err(Box::new(inner_pattern))))
 }
 
 fn record_pattern(input: &str) -> ParseResult<Pattern> {
@@ -1637,7 +1673,7 @@ fn expr_uses_it(expr: &Expr) -> bool {
         Expr::Lambda(lambda) => expr_uses_it(&lambda.body),
         Expr::FieldAccess(obj, _) => expr_uses_it(obj),
         Expr::ListLit(items) | Expr::ArrayLit(items) => items.iter().any(|item| expr_uses_it(item)),
-        Expr::Some(inner) => expr_uses_it(inner),
+        Expr::Some(inner) | Expr::Ok(inner) | Expr::Err(inner) => expr_uses_it(inner),
         Expr::RecordLit(rec) => rec.fields.iter().any(|f| expr_uses_it(&f.value)),
         Expr::Clone(clone) => {
             expr_uses_it(&clone.base) ||

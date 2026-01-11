@@ -455,7 +455,13 @@ pub enum Expr {
     None,
     /// None variant with explicit type (e.g., `none<Int>`)
     NoneTyped(Type),
-    
+
+    // Result constructors
+    /// Ok variant of Result type (e.g., `Ok(42)`)
+    Ok(Box<Expr>),
+    /// Err variant of Result type (e.g., `Err("error")`)
+    Err(Box<Expr>),
+
     // Lambda expression
     /// Anonymous function (e.g., `|x| x + 1`)
     Lambda(LambdaExpr),
@@ -618,6 +624,10 @@ pub enum Pattern {
     Some(Box<Pattern>),
     /// None variant pattern
     None,
+    /// Ok variant pattern for Result (e.g., `Ok(x)`)
+    Ok(Box<Pattern>),
+    /// Err variant pattern for Result (e.g., `Err(e)`)
+    Err(Box<Pattern>),
     /// Empty list pattern `[]`
     EmptyList,
     /// List cons pattern `[head | tail]`

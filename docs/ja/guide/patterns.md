@@ -51,6 +51,36 @@ maybe match {
 }
 ```
 
+## Resultパターン
+
+Result型に対するマッチングでエラーハンドリング：
+
+```rust
+val result: Result<Int, String> = Ok(42)
+result match {
+    Ok(value) => { value * 2 }
+    Err(msg) => { 0 }
+}
+```
+
+Resultは失敗する可能性のある関数に便利です：
+
+```rust
+fun safe_divide = (a: Int, b: Int) -> Result<Int, String> {
+    b == 0 then {
+        Err("ゼロ除算")
+    } else {
+        Ok(a / b)
+    }
+}
+
+val result = (10, 2) safe_divide
+result match {
+    Ok(n) => { n println }
+    Err(msg) => { msg println }
+}
+```
+
 ## リストパターン
 
 様々なパターンでリストを分解：

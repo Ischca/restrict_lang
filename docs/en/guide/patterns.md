@@ -51,6 +51,36 @@ maybe match {
 }
 ```
 
+## Result Patterns
+
+Match against Result types for error handling:
+
+```rust
+val result: Result<Int, String> = Ok(42)
+result match {
+    Ok(value) => { value * 2 }
+    Err(msg) => { 0 }
+}
+```
+
+Result is useful for functions that may fail:
+
+```rust
+fun safe_divide = (a: Int, b: Int) -> Result<Int, String> {
+    b == 0 then {
+        Err("Division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+
+val result = (10, 2) safe_divide
+result match {
+    Ok(n) => { n println }
+    Err(msg) => { msg println }
+}
+```
+
 ## List Patterns
 
 Destructure lists with various patterns:

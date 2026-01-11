@@ -199,14 +199,46 @@ After:  Affine type violation: variable 'p' has already been used.
 
 #### 2.1 Standard Library Expansion
 
-**Tasks**:
-- [ ] List operations: map, filter, fold, zip
-- [ ] String operations: split, join, substring
-- [ ] Option utilities: map, flatMap, unwrap_or
-- [ ] Math functions: min, max, abs, etc.
+**Status**: IN PROGRESS (2025-01-11)
+
+**Completed**:
+- [x] std/math.rl - abs, min, max, signum, pow, gcd, lcm, clamp
+- [x] std/option.rl - Basic Option operations
+- [x] std/string.rl - Character operations (is_digit, is_alpha, to_upper, to_lower, etc.)
+- [x] std/list.rl - Basic list operations
+- [x] std/prelude.rl - Core functions (not, identity, comparison helpers)
+
+**In Progress**:
+- [ ] String runtime (WASM-level): string_length, string_concat, string_equals
+- [ ] Memory allocator for dynamic string/list operations
+
+**Remaining Tasks**:
+- [ ] List operations: map, filter, fold, zip (blocked by affine type constraints)
+- [ ] String operations: split, join, substring (needs WASM runtime)
+- [ ] Option utilities: map, flatMap, and_then
 - [ ] I/O functions integrated with contexts
 
 **Success Criteria**: Usable standard library for real applications
+
+---
+
+#### 2.1.1 String Runtime Implementation (WASM)
+
+**Status**: IN PROGRESS (2025-01-11)
+
+**Goal**: Implement WASM-level string operations that cannot be written in pure Restrict
+
+**Tasks**:
+- [ ] `string_length`: Count bytes in null-terminated string
+- [ ] `string_concat`: Allocate new string and copy both sources
+- [ ] `string_equals`: Byte-by-byte comparison
+- [ ] `string_to_int`: Parse integer from string
+- [ ] `int_to_string`: Format integer as string
+
+**Technical Notes**:
+- Strings are stored as pointers (i32) to memory
+- Need simple bump allocator for concatenation
+- Consider null-termination vs length-prefixed format
 
 ---
 
@@ -259,6 +291,7 @@ After:  Affine type violation: variable 'p' has already been used.
 - [ ] Warder package manager completion
 - [ ] Build system optimization
 - [ ] Debugger integration (if feasible)
+- [ ] Improved type error messages
 
 **Success Criteria**: Good developer experience
 

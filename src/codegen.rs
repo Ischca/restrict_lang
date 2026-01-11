@@ -546,6 +546,221 @@ impl WasmCodeGen {
             result: None,
         });
 
+        // Generate string runtime functions
+        self.generate_string_functions()?;
+
+        Ok(())
+    }
+
+    fn generate_string_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; String runtime functions\n");
+
+        // string_length: Get the length of a string (reads 4-byte length prefix)
+        self.output.push_str("  (func $string_length (param $str i32) (result i32)\n");
+        self.output.push_str("    ;; Read the 4-byte length prefix\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_length".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // string_equals: Compare two strings for equality
+        self.output.push_str("  (func $string_equals (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    (local $len_a i32)\n");
+        self.output.push_str("    (local $len_b i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $ptr_a i32)\n");
+        self.output.push_str("    (local $ptr_b i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get lengths\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_b\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; If lengths differ, strings are not equal\n");
+        self.output.push_str("    local.get $len_a\n");
+        self.output.push_str("    local.get $len_b\n");
+        self.output.push_str("    i32.ne\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 0  ;; false\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Compare byte by byte\n");
+        self.output.push_str("        local.get $a\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $ptr_a\n");
+        self.output.push_str("        local.get $b\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $ptr_b\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        (block $done (result i32)\n");
+        self.output.push_str("          (loop $cmp\n");
+        self.output.push_str("            ;; Check if we've compared all bytes\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            local.get $len_a\n");
+        self.output.push_str("            i32.ge_u\n");
+        self.output.push_str("            (if\n");
+        self.output.push_str("              (then\n");
+        self.output.push_str("                i32.const 1  ;; true - all bytes match\n");
+        self.output.push_str("                br $done\n");
+        self.output.push_str("              )\n");
+        self.output.push_str("            )\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Compare current bytes\n");
+        self.output.push_str("            local.get $ptr_a\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            i32.load8_u\n");
+        self.output.push_str("            local.get $ptr_b\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            i32.load8_u\n");
+        self.output.push_str("            i32.ne\n");
+        self.output.push_str("            (if\n");
+        self.output.push_str("              (then\n");
+        self.output.push_str("                i32.const 0  ;; false - bytes differ\n");
+        self.output.push_str("                br $done\n");
+        self.output.push_str("              )\n");
+        self.output.push_str("            )\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Increment index\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $i\n");
+        self.output.push_str("            br $cmp\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("          i32.const 1  ;; unreachable, but needed for type\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_equals".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // string_concat: Concatenate two strings
+        self.output.push_str("  (func $string_concat (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    (local $len_a i32)\n");
+        self.output.push_str("    (local $len_b i32)\n");
+        self.output.push_str("    (local $new_len i32)\n");
+        self.output.push_str("    (local $new_str i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get lengths\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_b\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Calculate new length\n");
+        self.output.push_str("    local.get $len_a\n");
+        self.output.push_str("    local.get $len_b\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.set $new_len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate memory for new string: 4 bytes length + data\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_str\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Write length prefix\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy first string\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $copy1_done\n");
+        self.output.push_str("      (loop $copy1\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $len_a\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $copy1_done\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Copy byte from a to new_str\n");
+        self.output.push_str("        local.get $new_str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $a\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $copy1\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy second string\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $copy2_done\n");
+        self.output.push_str("      (loop $copy2\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $len_b\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $copy2_done\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Copy byte from b to new_str (offset by len_a)\n");
+        self.output.push_str("        local.get $new_str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $len_a\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $b\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $copy2\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Return new string pointer\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_concat".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
         Ok(())
     }
 

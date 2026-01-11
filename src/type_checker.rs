@@ -948,6 +948,7 @@ impl TypeChecker {
         self.register_std_option();
         self.register_std_io();
         self.register_std_prelude();
+        self.register_std_string();
         
         // Note: Arena is a built-in context but not added to _contexts by default
         // It only becomes available inside a "with Arena" block
@@ -1219,7 +1220,135 @@ impl TypeChecker {
         // some function - wraps a value in Option::Some
         // Note: We handle 'some' specially in check_call_expr to make it work with any type
     }
-    
+
+    fn register_std_string(&mut self) {
+        // ============================================================
+        // String runtime functions (WASM built-ins)
+        // ============================================================
+
+        // string_length: Get the length of a string
+        self.functions.insert("string_length".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_equals: Compare two strings for equality
+        self.functions.insert("string_equals".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::String),
+                ("b".to_string(), TypedType::String),
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_concat: Concatenate two strings
+        self.functions.insert("string_concat".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::String),
+                ("b".to_string(), TypedType::String),
+            ],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_is_empty: Check if a string is empty
+        self.functions.insert("string_is_empty".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // ============================================================
+        // Character functions
+        // ============================================================
+
+        // is_digit: Check if a character is a digit
+        self.functions.insert("is_digit".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_alpha: Check if a character is a letter
+        self.functions.insert("is_alpha".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_upper: Check if a character is uppercase
+        self.functions.insert("is_upper".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_lower: Check if a character is lowercase
+        self.functions.insert("is_lower".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_whitespace: Check if a character is whitespace
+        self.functions.insert("is_whitespace".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // to_upper: Convert to uppercase
+        self.functions.insert("to_upper".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Char,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // to_lower: Convert to lowercase
+        self.functions.insert("to_lower".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Char,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // char_to_int: Convert character to ASCII code
+        self.functions.insert("char_to_int".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // int_to_char: Convert ASCII code to character
+        self.functions.insert("int_to_char".to_string(), FunctionDef {
+            params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::Char,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // digit_value: Get numeric value of digit character
+        self.functions.insert("digit_value".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+    }
+
     fn register_std_prelude(&mut self) {
         // ============================================================
         // Prelude functions (auto-imported from std/prelude.rl)

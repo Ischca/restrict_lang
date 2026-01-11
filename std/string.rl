@@ -1,50 +1,32 @@
 // Restrict Language Standard Library: String Operations
 // 標準ライブラリ: 文字列操作
 //
-// Note: Strings in Restrict are represented as pointers to memory.
-// Many string operations require WASM-level runtime support.
+// Note: Core string functions (string_length, string_concat, string_equals)
+// are implemented as WASM built-ins and are always available.
+// This module provides additional string utilities.
 
 // ============================================================
-// String Properties
+// String Properties (WASM Built-ins)
 // ============================================================
+//
+// The following functions are built-in and always available:
+//
+// string_length: (String) -> Int
+//     Get the length of a string
+//
+// string_concat: (String, String) -> String
+//     Concatenate two strings
+//
+// string_equals: (String, String) -> Bool
+//     Compare two strings for equality
 
-// Get the length of a string (requires runtime support)
-// TODO: Implement at WASM level
-export fun string_length: (s: String) -> Int = {
-    // Placeholder - needs WASM runtime support
-    0
-}
+// ============================================================
+// String Utilities
+// ============================================================
 
 // Check if a string is empty
 export fun string_is_empty: (s: String) -> Bool = {
     (s) string_length == 0
-}
-
-// ============================================================
-// String Operations (require runtime support)
-// ============================================================
-
-// Concatenate two strings
-// TODO: Implement at WASM level with memory allocation
-export fun string_concat: (a: String, b: String) -> String = {
-    // Placeholder - needs WASM runtime support
-    a
-}
-
-// Append a string to another
-export fun string_append: (base: String, suffix: String) -> String = {
-    (base, suffix) string_concat
-}
-
-// ============================================================
-// String Comparison
-// ============================================================
-
-// Check if two strings are equal
-// TODO: Implement byte-by-byte comparison at WASM level
-export fun string_equals: (a: String, b: String) -> Bool = {
-    // Placeholder - needs WASM runtime support
-    true
 }
 
 // Check if two strings are not equal
@@ -52,8 +34,13 @@ export fun string_not_equals: (a: String, b: String) -> Bool = {
     (a, b) string_equals then { false } else { true }
 }
 
+// Append a string to another (alias for string_concat)
+export fun string_append: (base: String, suffix: String) -> String = {
+    (base, suffix) string_concat
+}
+
 // ============================================================
-// String Conversion
+// String Conversion (placeholders - need WASM runtime)
 // ============================================================
 
 // Convert a string to an integer

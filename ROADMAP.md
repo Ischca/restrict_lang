@@ -216,8 +216,11 @@ After:  Affine type violation: variable 'p' has already been used.
 - [x] String conversion: string_to_int, int_to_string
 - [x] String access: char_at, substring
 
+**Completed** (2025-01-11):
+- [x] List higher-order functions: map, filter, fold (working!)
+
 **Remaining Tasks**:
-- [ ] List operations: map, filter, fold, zip (blocked by affine type constraints)
+- [ ] List: zip function
 - [ ] String operations: split, join (needs WASM runtime)
 - [ ] Option utilities: map, flatMap, and_then
 - [ ] I/O functions integrated with contexts
@@ -250,11 +253,18 @@ After:  Affine type violation: variable 'p' has already been used.
 
 #### 2.2 Module System Completion
 
-**Tasks**:
-- [ ] Import/export functionality
-- [ ] Module path resolution
-- [ ] Namespace management
-- [ ] Circular dependency detection
+**Status**: MOSTLY COMPLETE (2025-01-11)
+
+**Completed**:
+- [x] Import/export functionality (`import std.math.*`, `export fun`)
+- [x] Module path resolution (search paths, file discovery)
+- [x] Circular dependency detection (with clear error messages)
+- [x] Type checker integration (imported types/functions available)
+- [x] Codegen integration (imported functions compiled)
+
+**Remaining Tasks**:
+- [ ] Qualified name access (`std.math.abs` syntax)
+- [ ] Re-exports (`export import module.*`)
 - [ ] Module-level documentation
 
 **Success Criteria**: Multi-file projects work correctly
@@ -596,4 +606,4 @@ This roadmap will be reviewed and updated:
 
 **End of Roadmap**
 
-*This is a living document. Last updated: 2025-12-27*
+*This is a living document. Last updated: 2025-01-11*

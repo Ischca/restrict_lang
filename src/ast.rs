@@ -274,6 +274,8 @@ pub struct FunDecl {
     pub temporal_constraints: Vec<TemporalConstraint>,
     /// Function parameters
     pub params: Vec<Param>,
+    /// Return type (None means inferred from body)
+    pub return_type: Option<Type>,
     /// Function body
     pub body: BlockExpr,
     /// Source location

@@ -1301,9 +1301,10 @@ impl WasmCodeGen {
                 span: None,
             },
             is_async: false,
+            return_type: None,
             span: None,
         };
-        
+
         // Generate println_Int32 specialization
         let int_func = FunDecl {
             name: "println_Int32".to_string(),
@@ -1325,9 +1326,10 @@ impl WasmCodeGen {
                 span: None,
             },
             is_async: false,
+            return_type: None,
             span: None,
         };
-        
+
         // Generate the specialized functions
         self.generate_function(&string_func)?;
         self.generate_function(&int_func)?;

@@ -1479,9 +1479,32 @@ impl TypeChecker {
             _ => false, // Other types don't implement traits for now
         }
     }
-    
+
+    /// Occurs check: returns true if type variable `name` occurs in `ty`
+    /// This prevents infinite types like T = List<T>
+    fn occurs_in(&self, name: &str, ty: &TypedType) -> bool {
+        match ty {
+            TypedType::TypeParam(param_name) => name == param_name,
+            TypedType::List(inner) => self.occurs_in(name, inner),
+            TypedType::Option(inner) => self.occurs_in(name, inner),
+            TypedType::Array(inner, _) => self.occurs_in(name, inner),
+            TypedType::Function { params, return_type } => {
+                params.iter().any(|p| self.occurs_in(name, p)) || self.occurs_in(name, return_type)
+            }
+            TypedType::Temporal { base_type, .. } => self.occurs_in(name, base_type),
+            _ => false, // Primitive types don't contain type parameters
+        }
+    }
+
     // Type unification for generic type inference
     fn unify(&self, expected: &TypedType, actual: &TypedType, substitution: &mut TypeSubstitution) -> Result<(), TypeError> {
+        // If both are the same type parameter, they unify without binding
+        if let (TypedType::TypeParam(n1), TypedType::TypeParam(n2)) = (expected, actual) {
+            if n1 == n2 {
+                return Ok(());
+            }
+        }
+
         match (expected, actual) {
             // If expected is a type parameter, bind it to the actual type
             (TypedType::TypeParam(name), actual_ty) => {
@@ -1489,6 +1512,12 @@ impl TypeChecker {
                     // Type parameter already bound, check consistency
                     self.unify(&existing, actual_ty, substitution)
                 } else {
+                    // Occurs check: prevent T = List<T> which causes infinite recursion
+                    if self.occurs_in(name, actual_ty) {
+                        // Type parameter occurs in actual type - skip binding
+                        // This is OK for recursive function signatures
+                        return Ok(());
+                    }
                     // Bind the type parameter
                     substitution.add(name.clone(), actual_ty.clone());
                     Ok(())
@@ -1499,6 +1528,10 @@ impl TypeChecker {
                 if let Some(bound_type) = substitution.substitutions.get(name).cloned() {
                     self.unify(expected_ty, &bound_type, substitution)
                 } else {
+                    // Occurs check: prevent T = List<T>
+                    if self.occurs_in(name, expected_ty) {
+                        return Ok(());
+                    }
                     // Reverse binding
                     substitution.add(name.clone(), expected_ty.clone());
                     Ok(())
@@ -1782,18 +1815,23 @@ impl TypeChecker {
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), TypeError> {
         // Push type parameter scope for generics
         self.push_type_param_scope(&func.type_params);
-        
+
         let mut param_types = Vec::new();
         for param in &func.params {
             let ty = self.convert_type(&param.ty)?;
             param_types.push((param.name.clone(), ty));
         }
-        
-        // For now, assume all functions return Int32 (will be refined during actual checking)
-        // This is just for forward reference resolution
+
+        // Convert the declared return type, or default to Unit if not specified
+        let return_type = if let Some(ref rt) = func.return_type {
+            self.convert_type(rt)?
+        } else {
+            TypedType::Unit
+        };
+
         self.functions.insert(func.name.clone(), FunctionDef {
             params: param_types,
-            return_type: TypedType::Int32,
+            return_type,
             type_params: func.type_params.clone(),
             temporal_constraints: func.temporal_constraints.iter()
                 .map(|c| TemporalConstraint {
@@ -1802,7 +1840,7 @@ impl TypeChecker {
                 })
                 .collect(),
         });
-        
+
         self.pop_type_param_scope();
         Ok(())
     }

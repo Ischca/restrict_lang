@@ -148,25 +148,14 @@ fn parse_type(input: &str) -> ParseResult<Type> {
 
     // Parse type name - handle both identifiers and the Unit keyword
     let (input, name) = type_name(input)?;
+
+    // Try to parse type parameters: <T>, <Option<T>>, <~f>
     let (input, type_params) = opt(
         delimited(
             expect_token(Token::Lt),
             separated_list0(
                 expect_token(Token::Comma),
-                alt((
-                    // Parse temporal parameter (~f)
-                    map(
-                        preceded(expect_token(Token::Tilde), ident),
-                        |name| (name, true)  // (name, is_temporal)
-                    ),
-                    // Parse regular type parameter
-                    map(parse_type, |ty| {
-                        match ty {
-                            Type::Named(n) => (n, false),
-                            _ => panic!("Complex types not supported as parameters yet")
-                        }
-                    })
-                ))
+                parse_generic_arg
             ),
             expect_token(Token::Gt)
         )
@@ -174,16 +163,27 @@ fn parse_type(input: &str) -> ParseResult<Type> {
 
     match type_params {
         Some(params) => {
-            // Check if all are temporal
-            let all_temporal = params.iter().all(|(_, is_temporal)| *is_temporal);
-            let all_regular = params.iter().all(|(_, is_temporal)| !*is_temporal);
+            // Check if all parameters are temporal
+            let all_temporal = params.iter().all(|p| matches!(p, GenericArg::Temporal(_)));
+            let all_types = params.iter().all(|p| matches!(p, GenericArg::Type(_)));
 
             if all_temporal {
                 // All temporal: File<~f>
-                Ok((input, Type::Temporal(name, params.into_iter().map(|(n, _)| n).collect())))
-            } else if all_regular {
-                // All regular types: Vec<String>
-                let types = params.into_iter().map(|(n, _)| Type::Named(n)).collect();
+                let temporal_names: Vec<String> = params.into_iter().map(|p| {
+                    match p {
+                        GenericArg::Temporal(n) => n,
+                        _ => unreachable!()
+                    }
+                }).collect();
+                Ok((input, Type::Temporal(name, temporal_names)))
+            } else if all_types {
+                // All regular types: Vec<String>, Option<Option<T>>
+                let types: Vec<Type> = params.into_iter().map(|p| {
+                    match p {
+                        GenericArg::Type(ty) => ty,
+                        _ => unreachable!()
+                    }
+                }).collect();
                 Ok((input, Type::Generic(name, types)))
             } else {
                 // Mixed not supported yet
@@ -192,6 +192,26 @@ fn parse_type(input: &str) -> ParseResult<Type> {
         }
         None => Ok((input, Type::Named(name)))
     }
+}
+
+/// Helper enum to distinguish between temporal parameters (~f) and type parameters (T, Option<T>)
+/// Named GenericArg to avoid conflict with ast::TypeParam
+enum GenericArg {
+    Temporal(String),
+    Type(Type),
+}
+
+/// Parse a single type parameter (either ~name for temporal or a full type)
+fn parse_generic_arg(input: &str) -> ParseResult<GenericArg> {
+    alt((
+        // Parse temporal parameter (~f)
+        map(
+            preceded(expect_token(Token::Tilde), ident),
+            GenericArg::Temporal
+        ),
+        // Parse regular type (can be nested generic like Option<T>)
+        map(parse_type, GenericArg::Type)
+    ))(input)
 }
 
 fn field_decl(input: &str) -> ParseResult<FieldDecl> {
@@ -427,11 +447,11 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::RParen)(input)?;
     
     // Parse optional return type: -> ReturnType
-    let (input, _return_type) = opt(|input| {
+    let (input, return_type) = opt(|input| {
         let (input, _) = expect_token(Token::ThinArrow)(input)?;
         parse_type(input)
     })(input)?;
-    
+
     // Parse optional temporal constraints: where ~tx within ~db
     let (input, temporal_constraints) = opt(|input| {
         let (input, _) = expect_token(Token::Where)(input)?;
@@ -441,16 +461,17 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
         )(input)
     })(input)?;
     let temporal_constraints = temporal_constraints.unwrap_or_default();
-    
+
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, body) = block_expr(input)?;
-    
+
     Ok((input, FunDecl {
         name,
         is_async,
         type_params,
         temporal_constraints,
         params,
+        return_type,
         body,
         span: None,
     }))

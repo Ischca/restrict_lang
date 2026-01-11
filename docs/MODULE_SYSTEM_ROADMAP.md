@@ -16,31 +16,37 @@
 
 ---
 
-## Phase 1: Prelude自動インポート
+## Phase 1: Prelude自動インポート ✅ COMPLETED
 
 **Goal**: ユーザーが何もimportしなくても基本関数が使える
 
-### 1.1 Preludeファイル作成
-- [ ] 現在のパーサーで動く構文でstd/prelude.rlを書き直す
-- [ ] 最小限の関数セット定義
-  - [ ] print<T: Display> (polymorphic)
-  - [ ] println<T: Display> (polymorphic)
-  - [ ] identity<T>
-  - [ ] not, and, or (Boolean)
+**Status**: Completed on 2025-01-11
 
-### 1.2 組み込み関数の整理
-- [ ] 型チェッカーの組み込み関数を整理 (register_std_*)
-- [ ] Preludeからre-exportする形に統一
-- [ ] 組み込み vs Prelude定義の境界を明確化
+### 1.1 Preludeファイル作成 ✅
+- [x] 現在のパーサーで動く構文でstd/prelude.rlを書き直す
+- [x] 最小限の関数セット定義 (16関数)
+  - [x] not (Boolean)
+  - [x] identity_int, identity_bool
+  - [x] eq_int, ne_int, lt_int, le_int, gt_int, ge_int (比較)
+  - [x] add, sub, mul, div, mod, neg (算術)
+  - [x] unit, panic, assert (ユーティリティ)
 
-### 1.3 Prelude自動読み込み
-- [ ] TypeChecker::new()でPreludeを自動ロード
-- [ ] Preludeの関数を初期スコープに登録
-- [ ] テスト: Prelude関数が使えることを確認
+### 1.2 組み込み関数の整理 ✅
+- [x] 型チェッカーの組み込み関数を整理 (register_std_prelude)
+- [x] print/println は polymorphic 実装済み (register_std_io)
+- [x] 組み込み vs Prelude定義の境界を明確化
 
-### 1.4 Codegen対応
-- [ ] Prelude関数のWASM生成
-- [ ] 組み込み関数との連携
+### 1.3 Prelude自動読み込み ✅
+- [x] TypeChecker::new()でPreludeを自動ロード (register_builtins → register_std_prelude)
+- [x] Preludeの関数を初期スコープに登録
+- [x] テスト: Prelude関数が使えることを確認
+
+### 1.4 Codegen対応 ✅
+- [x] Prelude関数のWASM生成 (generate_prelude_functions)
+- [x] 組み込み関数との連携
+
+**Note**: `and`, `or`, `xor`, `abs`, `max`, `min` はmatch armでのaffine制約により保留。
+今後のaffine checker改善で対応予定。
 
 ---
 

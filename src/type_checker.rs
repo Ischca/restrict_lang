@@ -1201,62 +1201,170 @@ impl TypeChecker {
     }
     
     fn register_std_prelude(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
-        
-        let t_param = TypeParam {
-            name: "T".to_string(),
-            bounds: vec![],
-            derivation_bound: None,
-            is_temporal: false,
-        };
-        
-        // identity<T>
-        self.functions.insert("identity".to_string(), FunctionDef {
-            params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
-            return_type: TypedType::TypeParam("T".to_string()),
-            type_params: vec![t_param.clone()],
-            temporal_constraints: vec![],
-        });
-        
-        // not function
+        // ============================================================
+        // Prelude functions (auto-imported from std/prelude.rl)
+        // These match the exported functions in the Prelude file
+        // ============================================================
+
+        // Boolean operations
         self.functions.insert("not".to_string(), FunctionDef {
             params: vec![("b".to_string(), TypedType::Boolean)],
             return_type: TypedType::Boolean,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // and function
-        self.functions.insert("and".to_string(), FunctionDef {
+
+        // Identity functions
+        self.functions.insert("identity_int".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("identity_bool".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Boolean)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Comparison helpers
+        self.functions.insert("eq_int".to_string(), FunctionDef {
             params: vec![
-                ("a".to_string(), TypedType::Boolean),
-                ("b".to_string(), TypedType::Boolean)
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
             ],
             return_type: TypedType::Boolean,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // or function
-        self.functions.insert("or".to_string(), FunctionDef {
+
+        self.functions.insert("ne_int".to_string(), FunctionDef {
             params: vec![
-                ("a".to_string(), TypedType::Boolean),
-                ("b".to_string(), TypedType::Boolean)
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
             ],
             return_type: TypedType::Boolean,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // panic function
+
+        self.functions.insert("lt_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("le_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("gt_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("ge_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Arithmetic helpers
+        self.functions.insert("add".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("sub".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("mul".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("div".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Note: 'mod' is a reserved keyword in some contexts, using mod_int
+        self.functions.insert("mod".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("neg".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Unit helper
+        self.functions.insert("unit".to_string(), FunctionDef {
+            params: vec![],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Additional utility functions (kept for backwards compatibility)
         self.functions.insert("panic".to_string(), FunctionDef {
             params: vec![("message".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // assert function
+
         self.functions.insert("assert".to_string(), FunctionDef {
             params: vec![
                 ("condition".to_string(), TypedType::Boolean),
@@ -3975,12 +4083,13 @@ mod tests {
     
     #[test]
     fn test_undefined_function() {
+        // Use a function name that's not in the Prelude
         let input = r#"
-            val result = (10, 20) add
+            val result = (10, 20) undefined_func
         "#;
         assert_eq!(
             check_program_str(input),
-            Err(TypeError::UndefinedFunction("add".to_string()))
+            Err(TypeError::UndefinedFunction("undefined_func".to_string()))
         );
     }
     

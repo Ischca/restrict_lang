@@ -198,7 +198,10 @@ impl WasmCodeGen {
         
         // Generate built-in functions
         self.generate_builtin_functions()?;
-        
+
+        // Generate prelude functions
+        self.generate_prelude_functions()?;
+
         // Generate arena allocator functions
         self.generate_arena_functions()?;
         
@@ -500,10 +503,215 @@ impl WasmCodeGen {
             _params: vec![WasmType::I32],
             result: None,
         });
-        
+
         Ok(())
     }
-    
+
+    fn generate_prelude_functions(&mut self) -> Result<(), CodeGenError> {
+        // ============================================================
+        // Prelude functions (matching std/prelude.rl)
+        // ============================================================
+        self.output.push_str("\n  ;; Prelude functions\n");
+
+        // not: (Bool) -> Bool
+        self.output.push_str("  (func $not (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("not".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // identity_int: (Int) -> Int
+        self.output.push_str("  (func $identity_int (param $x i32) (result i32)\n");
+        self.output.push_str("    local.get $x\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("identity_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // identity_bool: (Bool) -> Bool
+        self.output.push_str("  (func $identity_bool (param $x i32) (result i32)\n");
+        self.output.push_str("    local.get $x\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("identity_bool".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // eq_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $eq_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.eq\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("eq_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // ne_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $ne_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.ne\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("ne_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // lt_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $lt_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.lt_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("lt_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // le_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $le_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.le_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("le_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // gt_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $gt_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.gt_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("gt_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // ge_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $ge_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.ge_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("ge_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // add: (Int, Int) -> Int
+        self.output.push_str("  (func $add (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("add".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // sub: (Int, Int) -> Int
+        self.output.push_str("  (func $sub (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("sub".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // mul: (Int, Int) -> Int
+        self.output.push_str("  (func $mul (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("mul".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // div: (Int, Int) -> Int
+        self.output.push_str("  (func $div (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.div_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("div".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // mod: (Int, Int) -> Int
+        self.output.push_str("  (func $mod (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.rem_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("mod".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // neg: (Int) -> Int
+        self.output.push_str("  (func $neg (param $x i32) (result i32)\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.get $x\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("neg".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // unit: () -> Unit (returns nothing meaningful)
+        self.output.push_str("  (func $unit\n");
+        self.output.push_str("    ;; Does nothing, represents unit value\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("unit".to_string(), FunctionSig {
+            _params: vec![],
+            result: None,
+        });
+
+        // panic: (String) -> Unit
+        self.output.push_str("  (func $panic (param $msg i32)\n");
+        self.output.push_str("    local.get $msg\n");
+        self.output.push_str("    call $println\n");
+        self.output.push_str("    unreachable\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("panic".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: None,
+        });
+
+        // assert: (Bool, String) -> Unit
+        self.output.push_str("  (func $assert (param $cond i32) (param $msg i32)\n");
+        self.output.push_str("    local.get $cond\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $msg\n");
+        self.output.push_str("        call $panic\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("assert".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: None,
+        });
+
+        Ok(())
+    }
+
     fn generate_arena_functions(&mut self) -> Result<(), CodeGenError> {
         self.output.push_str("\n  ;; Arena allocator functions\n");
         

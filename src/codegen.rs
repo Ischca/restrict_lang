@@ -2009,6 +2009,13 @@ impl WasmCodeGen {
                 return Ok(());
             }
             
+            // Handle polymorphic print/println functions
+            if (func_name == "print" || func_name == "println") && !call.args.is_empty() {
+                let resolved_name = self.resolve_generic_function_call(func_name, &call.args[0])?;
+                self.output.push_str(&format!("    call ${}\n", resolved_name));
+                return Ok(());
+            }
+
             if self.functions.contains_key(func_name) {
                 self.output.push_str(&format!("    call ${}\n", func_name));
             } else {
@@ -2339,11 +2346,13 @@ impl WasmCodeGen {
     }
     
     fn resolve_generic_function_call(&self, name: &str, arg_expr: &Expr) -> Result<String, CodeGenError> {
-        // For built-in functions, use the original name for string types
-        if name == "println" {
+        // For built-in print/println functions, dispatch based on argument type
+        if name == "print" || name == "println" {
             match arg_expr {
-                Expr::StringLit(_) => Ok("println".to_string()),
+                Expr::StringLit(_) => Ok("println".to_string()),  // String always uses println
                 Expr::IntLit(_) => Ok("print_int".to_string()),
+                Expr::FloatLit(_) => Ok("print_float".to_string()),
+                Expr::BoolLit(_) => Ok("print_int".to_string()),  // Boolean as 0/1
                 Expr::Ident(var_name) => {
                     // Look up variable type from var_types
                     if let Some(type_name) = self.var_types.get(var_name) {
@@ -2351,6 +2360,10 @@ impl WasmCodeGen {
                             Ok("println".to_string())
                         } else if type_name == "Int32" || type_name == "Int" || type_name == "Int64" {
                             Ok("print_int".to_string())
+                        } else if type_name == "Float64" || type_name == "Float" {
+                            Ok("print_float".to_string())
+                        } else if type_name == "Boolean" || type_name == "Bool" {
+                            Ok("print_int".to_string())  // Boolean as 0/1
                         } else {
                             // Default to println for other types
                             Ok("println".to_string())
@@ -2367,6 +2380,8 @@ impl WasmCodeGen {
                             Ok("println".to_string())
                         } else if type_name == "Int32" || type_name == "Int" {
                             Ok("print_int".to_string())
+                        } else if type_name == "Float64" || type_name == "Float" {
+                            Ok("print_float".to_string())
                         } else {
                             Ok("println".to_string())
                         }

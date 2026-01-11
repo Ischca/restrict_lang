@@ -1138,14 +1138,32 @@ impl TypeChecker {
     }
     
     fn register_std_io(&mut self) {
-        // print function
+        use crate::ast::{TypeParam, TypeBound};
+
+        // Polymorphic print<T: Display> function
+        // Works with any type that implements Display (Int32, String, Boolean, Float64)
+        let t_display_param = TypeParam {
+            name: "T".to_string(),
+            bounds: vec![TypeBound { trait_name: "Display".to_string() }],
+            derivation_bound: None,
+            is_temporal: false,
+        };
         self.functions.insert("print".to_string(), FunctionDef {
-            params: vec![("s".to_string(), TypedType::String)],
+            params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
             return_type: TypedType::Unit,
-            type_params: vec![],
+            type_params: vec![t_display_param.clone()],
             temporal_constraints: vec![],
         });
-        
+
+        // println<T: Display> function (with newline)
+        self.functions.insert("println".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
+            return_type: TypedType::Unit,
+            type_params: vec![t_display_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // Keep specific functions for backwards compatibility
         // print_int function
         self.functions.insert("print_int".to_string(), FunctionDef {
             params: vec![("n".to_string(), TypedType::Int32)],
@@ -1153,7 +1171,7 @@ impl TypeChecker {
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
+
         // print_float function
         self.functions.insert("print_float".to_string(), FunctionDef {
             params: vec![("f".to_string(), TypedType::Float64)],

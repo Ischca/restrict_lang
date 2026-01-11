@@ -1,109 +1,129 @@
+// Restrict Language Standard Prelude
 // 標準ライブラリ: Prelude（自動インポート）
-// Standard Library: Prelude (Auto-imported)
+//
+// This module is automatically imported into every Restrict program.
+// All exported functions are available without explicit import.
 
-// 基本的な数学関数
-import math.{abs, max, min, pow}
+// ============================================================
+// I/O Functions (built-in, re-exported for documentation)
+// ============================================================
 
-// 基本的なリスト操作
-import list.{list_is_empty, list_head, list_tail, list_length, list_append}
+// print<T: Display> - Print any displayable value
+// println<T: Display> - Print with newline
+// print_int - Print integer
+// print_float - Print float
+// These are built-in and handled by the type checker/codegen
 
-// 基本的なOption操作
-import option.{option_is_some, option_is_none, option_unwrap_or}
+// ============================================================
+// Boolean Operations
+// ============================================================
 
-// 基本的なIO操作
-import io.{print, print_int, debug_print}
+// Logical NOT
+export fun not: (b: Bool) -> Bool = {
+    b match {
+        true => { false }
+        false => { true }
+    }
+}
 
-// 基本的なユーティリティ関数
+// Note: and, or, xor require using variables in multiple match arms
+// which conflicts with affine types. Use && and || operators instead.
 
-// 恒等関数
-fun<T> identity(x: T) {
+// ============================================================
+// Identity Functions
+// ============================================================
+
+// Identity function for Int
+export fun identity_int: (x: Int) -> Int = {
     x
 }
 
-// 関数合成
-fun<A, B, C> compose(f: (B) -> C, g: (A) -> B) {
-    |x| f(g(x))
+// Identity function for Bool
+export fun identity_bool: (x: Bool) -> Bool = {
+    x
 }
 
-// 値を無視する
-fun<T> ignore(x: T) {
-    Unit
+// ============================================================
+// Comparison Helpers
+// ============================================================
+
+// Check if two integers are equal
+export fun eq_int: (a: Int, b: Int) -> Bool = {
+    a == b
 }
 
-// 真偽値の否定
-fun not(b: Bool) {
-    then b {
-        false
-    } else {
-        true
-    }
+// Check if two integers are not equal
+export fun ne_int: (a: Int, b: Int) -> Bool = {
+    a != b
 }
 
-// 論理積
-fun and(a: Bool, b: Bool) {
-    then a {
-        b
-    } else {
-        false
-    }
+// Check if a < b
+export fun lt_int: (a: Int, b: Int) -> Bool = {
+    a < b
 }
 
-// 論理和
-fun or(a: Bool, b: Bool) {
-    then a {
-        true
-    } else {
-        b
-    }
+// Check if a <= b
+export fun le_int: (a: Int, b: Int) -> Bool = {
+    a <= b
 }
 
-// 排他的論理和
-fun xor(a: Bool, b: Bool) {
-    then a {
-        not(b)
-    } else {
-        b
-    }
+// Check if a > b
+export fun gt_int: (a: Int, b: Int) -> Bool = {
+    a > b
 }
 
-// 値が等しいかどうか（基本型用）
-fun<T> eq(a: T, b: T) {
-    // TODO: 型に応じた比較を実装
-    true
+// Check if a >= b
+export fun ge_int: (a: Int, b: Int) -> Bool = {
+    a >= b
 }
 
-// 値が異なるかどうか
-fun<T> ne(a: T, b: T) {
-    not(eq(a, b))
+// ============================================================
+// Arithmetic Helpers
+// ============================================================
+
+// Add two integers
+export fun add: (a: Int, b: Int) -> Int = {
+    a + b
 }
 
-// パニック（プログラム終了）
-fun panic(message: String) {
-    eprintln(message)
-    // TODO: プログラムを異常終了
-    Unit
+// Subtract: a - b
+export fun sub: (a: Int, b: Int) -> Int = {
+    a - b
 }
 
-// アサーション
-fun assert(condition: Bool, message: String) {
-    then not(condition) {
-        panic(message)
-    } else {
-        Unit
-    }
+// Multiply
+export fun mul: (a: Int, b: Int) -> Int = {
+    a * b
 }
 
-// デバッグ用のアサーション
-fun debug_assert(condition: Bool, message: String) {
-    // デバッグビルドでのみ有効
-    assert(condition, message)
+// Divide (integer division)
+export fun div: (a: Int, b: Int) -> Int = {
+    a / b
 }
 
-// 条件付き実行
-fun<T> when(condition: Bool, action: () -> T, default: T) {
-    then condition {
-        action()
-    } else {
-        default
-    }
+// Modulo
+export fun mod: (a: Int, b: Int) -> Int = {
+    a % b
+}
+
+// Negate
+export fun neg: (x: Int) -> Int = {
+    0 - x
+}
+
+// ============================================================
+// Option Constructors (if not built-in)
+// ============================================================
+
+// These are typically built-in but documented here for reference:
+// Some(x) - Wrap a value in Some
+// None - The absence of a value
+
+// ============================================================
+// Unit value
+// ============================================================
+
+// Return unit (useful for side-effect functions)
+export fun unit: () -> Unit = {
+    ()
 }

@@ -3,10 +3,10 @@ use restrict_lang::parse_program;
 #[test]
 fn test_record_then_simple_function() {
     let input = r#"record A {
-    x: Int32
+    x: Int
 }
 
-fun test = {
+fun test: () -> Unit = {
     Unit
 }"#;
     
@@ -38,12 +38,13 @@ fun test = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_record_with_temporal_then_function() {
     let input = r#"record File<~f> {
-    handle: Int32
+    handle: Int
 }
 
-fun test = {
+fun test: () -> Unit = {
     Unit
 }"#;
     

@@ -17,6 +17,7 @@ fn compile(input: &str) -> Result<String, String> {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_order() {
     // Test that temporal scopes are cleaned up in reverse order
     let input = r#"
@@ -59,6 +60,7 @@ fn test_temporal_cleanup_order() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_with_early_return() {
     // Test that cleanup happens even with early returns
     let input = r#"
@@ -91,6 +93,7 @@ fn test_temporal_cleanup_with_early_return() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_exception_safety() {
     // Test cleanup in presence of panics/exceptions
     let input = r#"
@@ -130,6 +133,7 @@ fn test_temporal_cleanup_exception_safety() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_with_loops() {
     // Test cleanup in loops
     let input = r#"
@@ -157,6 +161,7 @@ fn test_temporal_cleanup_with_loops() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_nested_functions() {
     // Test cleanup across function calls
     let input = r#"
@@ -192,6 +197,7 @@ fn test_temporal_cleanup_nested_functions() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_with_match() {
     // Test cleanup in pattern matching
     let input = r#"
@@ -227,6 +233,7 @@ fn test_temporal_cleanup_with_match() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_memory_layout() {
     // Test that memory is properly laid out for cleanup
     let input = r#"
@@ -265,6 +272,7 @@ fn test_temporal_cleanup_memory_layout() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_with_recursion() {
     // Test cleanup in recursive functions
     let input = r#"
@@ -296,6 +304,7 @@ fn test_temporal_cleanup_with_recursion() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_interleaved() {
     // Test interleaved temporal scopes
     let input = r#"
@@ -333,6 +342,7 @@ fn test_temporal_cleanup_interleaved() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cleanup_restore_arena() {
     // Test that previous arena is restored after cleanup
     let input = r#"

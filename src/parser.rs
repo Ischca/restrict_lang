@@ -557,11 +557,14 @@ pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, mutable) = opt(expect_token(Token::Mut))(input)?;
     let (input, _) = expect_token(Token::Val)(input)?;
     let (input, name) = ident(input)?;
+    // Parse optional type annotation: `: Type`
+    let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to avoid consuming across statement boundaries
     Ok((input, BindDecl {
         mutable: mutable.is_some(),
         name,
+        ty,
         value: Box::new(value),
         span: None,
     }))
@@ -894,14 +897,16 @@ fn list_pattern(input: &str) -> ParseResult<Pattern> {
     
     // Otherwise it's an exact pattern [a, b, c]
     let mut patterns = vec![Box::new(first)];
-    
-    // Parse remaining elements
-    let (input, mut rest) = separated_list0(
-        expect_token(Token::Comma),
-        map(pattern, Box::new)
+
+    // Parse remaining elements (comma-prefixed)
+    let (input, mut rest) = many0(
+        preceded(
+            expect_token(Token::Comma),
+            map(pattern, Box::new)
+        )
     )(input)?;
     patterns.append(&mut rest);
-    
+
     let (input, _) = expect_token(Token::RBracket)(input)?;
     Ok((input, Pattern::ListExact(patterns)))
 }
@@ -1198,7 +1203,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
 }
 
 pub fn simple_expr(input: &str) -> ParseResult<Expr> {
-    let (mut input, mut expr) = atom_expr(input)?;
+    let (mut input, mut expr) = unary_expr(input)?;
 
     // Handle postfix operations
     loop {

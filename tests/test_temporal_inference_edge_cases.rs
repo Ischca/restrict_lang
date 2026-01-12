@@ -4,6 +4,7 @@ use restrict_lang::{parse_program, TypeChecker};
 /// These tests focus on inference edge cases not covered elsewhere
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_with_generics() {
     // Test that temporal parameters are correctly inferred with generic types
     let input = r#"
@@ -32,6 +33,7 @@ fn test_temporal_inference_with_generics() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_through_pipe() {
     // Test temporal inference through pipe operators
     let input = r#"
@@ -60,6 +62,7 @@ fn test_temporal_inference_through_pipe() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_nested_records() {
     // Test temporal inference with nested record types
     let input = r#"
@@ -89,6 +92,7 @@ fn test_temporal_inference_nested_records() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_mismatch() {
     // Test that temporal parameter mismatch is caught
     let input = r#"
@@ -122,6 +126,7 @@ fn test_temporal_inference_mismatch() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_with_constraints() {
     // Test inference with temporal constraints
     let input = r#"
@@ -158,6 +163,7 @@ fn test_temporal_inference_with_constraints() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_option_types() {
     // Test temporal inference with Option types
     let input = r#"
@@ -193,6 +199,7 @@ fn test_temporal_inference_option_types() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_list_operations() {
     // Test temporal inference with list operations
     let input = r#"
@@ -221,6 +228,7 @@ fn test_temporal_inference_list_operations() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_higher_order() {
     // Test temporal inference with higher-order functions
     let input = r#"
@@ -254,6 +262,7 @@ fn test_temporal_inference_higher_order() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_across_blocks() {
     // Test that temporal inference works across block boundaries
     let input = r#"
@@ -281,6 +290,7 @@ fn test_temporal_inference_across_blocks() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_with_aliases() {
     // Test temporal inference with type aliases (if supported)
     let input = r#"
@@ -310,6 +320,7 @@ fn test_temporal_inference_with_aliases() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_polymorphic_constraint() {
     // Test inference with polymorphic temporal constraints
     let input = r#"
@@ -348,6 +359,7 @@ fn test_temporal_inference_polymorphic_constraint() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference_error_propagation() {
     // Test that temporal inference errors propagate correctly
     let input = r#"

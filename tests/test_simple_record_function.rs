@@ -3,8 +3,8 @@ use restrict_lang::parse_program;
 #[test]
 fn test_record_then_function_no_newline() {
     // Test without newline after }
-    let no_newline = "record A { x: Int32 } fun test = { Unit }";
-    
+    let no_newline = "record A { x: Int } fun test: () -> Unit = { Unit }";
+
     println!("=== No newline between ===");
     match parse_program(no_newline) {
         Ok((rem, prog)) => {
@@ -20,9 +20,9 @@ fn test_record_then_function_no_newline() {
 #[test]
 fn test_record_then_function_with_newline() {
     // Test with newline after }
-    let with_newline = r#"record A { x: Int32 }
-fun test = { Unit }"#;
-    
+    let with_newline = r#"record A { x: Int }
+fun test: () -> Unit = { Unit }"#;
+
     println!("\n=== With newline between ===");
     match parse_program(with_newline) {
         Ok((rem, prog)) => {
@@ -38,10 +38,10 @@ fun test = { Unit }"#;
 #[test]
 fn test_record_then_function_double_newline() {
     // Test with double newline
-    let double_newline = r#"record A { x: Int32 }
+    let double_newline = r#"record A { x: Int }
 
-fun test = { Unit }"#;
-    
+fun test: () -> Unit = { Unit }"#;
+
     println!("\n=== With double newline between ===");
     match parse_program(double_newline) {
         Ok((rem, prog)) => {

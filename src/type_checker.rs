@@ -1334,7 +1334,15 @@ impl TypeChecker {
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
+
+        // read_line function - reads a line from stdin
+        self.functions.insert("read_line".to_string(), FunctionDef {
+            params: vec![],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
         // some function - wraps a value in Option::Some
         // Note: We handle 'some' specially in check_call_expr to make it work with any type
     }
@@ -2406,7 +2414,22 @@ impl TypeChecker {
     }
     
     fn check_bind_decl(&mut self, bind: &BindDecl) -> Result<(), TypeError> {
-        let ty = self.check_expr(&bind.value)?;
+        // If there's a type annotation, use it as the expected type
+        let ty = if let Some(ref annotated_ty) = bind.ty {
+            let expected = self.convert_type(annotated_ty)?;
+            let inferred = self.check_expr_with_expected(&bind.value, Some(&expected))?;
+            // Verify inferred type is compatible with the annotation
+            let mut substitution = TypeSubstitution::new();
+            if self.unify(&expected, &inferred, &mut substitution).is_err() {
+                return Err(TypeError::TypeMismatch {
+                    expected: format_typed_type(&expected),
+                    found: format_typed_type(&inferred),
+                });
+            }
+            expected
+        } else {
+            self.check_expr(&bind.value)?
+        };
 
         // Check if this is a new binding or reassignment
         if let Ok((_existing_ty, _is_mutable)) = self.lookup_var_for_assignment(&bind.name) {

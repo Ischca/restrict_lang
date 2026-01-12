@@ -346,6 +346,7 @@ pub struct Param {
 /// ```restrict
 /// let x = 42;              // Immutable binding
 /// let mut count = 0;       // Mutable binding
+/// let x: Int = 42;         // Typed binding
 /// let (a, b) = (1, 2);     // Pattern binding
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -354,6 +355,8 @@ pub struct BindDecl {
     pub mutable: bool,
     /// Variable name
     pub name: String,
+    /// Optional type annotation
+    pub ty: Option<Type>,
     /// Initial value
     pub value: Box<Expr>,
     /// Source location

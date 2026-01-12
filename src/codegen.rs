@@ -184,6 +184,7 @@ impl WasmCodeGen {
         // Import WASI functions for I/O
         self.output.push_str("  ;; WASI imports\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n");
         
         // Memory
@@ -534,14 +535,147 @@ impl WasmCodeGen {
         self.output.push_str("    )\n");
         self.output.push_str("  )\n");
 
-        // Add println to function signatures  
+        // read_line function - reads a line from stdin
+        self.output.push_str("\n  ;; Read a line from stdin\n");
+        self.output.push_str("  (func $read_line (result i32)\n");
+        self.output.push_str("    (local $buffer i32)\n");
+        self.output.push_str("    (local $nread i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $char i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Use memory at 4096 for read buffer (1024 bytes)\n");
+        self.output.push_str("    i32.const 4096\n");
+        self.output.push_str("    local.set $buffer\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at address 4000\n");
+        self.output.push_str("    ;; iov_base = buffer address\n");
+        self.output.push_str("    i32.const 4000\n");
+        self.output.push_str("    local.get $buffer\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; iov_len = 1024 (max read size)\n");
+        self.output.push_str("    i32.const 4004\n");
+        self.output.push_str("    i32.const 1024\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call fd_read(stdin=0, iovs, iovs_len=1, nread)\n");
+        self.output.push_str("    i32.const 0    ;; stdin\n");
+        self.output.push_str("    i32.const 4000 ;; iovs\n");
+        self.output.push_str("    i32.const 1    ;; iovs_len\n");
+        self.output.push_str("    i32.const 4008 ;; nread ptr\n");
+        self.output.push_str("    call $fd_read\n");
+        self.output.push_str("    drop\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get number of bytes read\n");
+        self.output.push_str("    i32.const 4008\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $nread\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Find newline and calculate actual length\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    local.get $nread\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    (block $found\n");
+        self.output.push_str("      (loop $search\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $nread\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $found\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $buffer\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        local.tee $char\n");
+        self.output.push_str("        i32.const 10  ;; newline\n");
+        self.output.push_str("        i32.eq\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            local.set $len\n");
+        self.output.push_str("            br $found\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $search\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate result string at 5120 (length prefix + data)\n");
+        self.output.push_str("    i32.const 5120\n");
+        self.output.push_str("    local.set $result\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Store length\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy data\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add  ;; destination\n");
+        self.output.push_str("    local.get $buffer  ;; source\n");
+        self.output.push_str("    local.get $len  ;; size\n");
+        self.output.push_str("    memory.copy\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Return pointer to string\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("  )\n");
+
+        // eprint function - print to stderr
+        self.output.push_str("\n  ;; Print to stderr\n");
+        self.output.push_str("  (func $eprint (param $str i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Read string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at address 0\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; fd_write to stderr (fd=2)\n");
+        self.output.push_str("    i32.const 2   ;; stderr\n");
+        self.output.push_str("    i32.const 0   ;; iovs\n");
+        self.output.push_str("    i32.const 1   ;; iovs_len\n");
+        self.output.push_str("    i32.const 20  ;; nwritten\n");
+        self.output.push_str("    call $fd_write\n");
+        self.output.push_str("    drop\n");
+        self.output.push_str("  )\n");
+
+        // Add println to function signatures
         self.functions.insert("println".to_string(), FunctionSig {
             _params: vec![WasmType::I32],
             result: None,
         });
-        
+
         // Add print_int to function signatures
         self.functions.insert("print_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: None,
+        });
+
+        // Add read_line to function signatures
+        self.functions.insert("read_line".to_string(), FunctionSig {
+            _params: vec![],
+            result: Some(WasmType::I32),
+        });
+
+        // Add eprint to function signatures
+        self.functions.insert("eprint".to_string(), FunctionSig {
             _params: vec![WasmType::I32],
             result: None,
         });

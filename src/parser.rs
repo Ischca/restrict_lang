@@ -422,16 +422,16 @@ fn lazy_block_expr(input: &str) -> ParseResult<BlockExpr> {
 fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     // Skip leading whitespace
     let (input, _) = skip(input)?;
-    
+
     // Check for optional async keyword
     let (input, is_async) = opt(expect_token(Token::Async))(input)?;
     let is_async = is_async.is_some();
-    
+
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
-    let (input, _) = expect_token(Token::Colon)(input)?;
-    
+
     // Parse optional generic type parameters: <T: Display, U: Clone + Debug, ~t>
+    // Syntax: fun name<T, U>: (...) -> T
     let (input, type_params) = opt(|input| {
         let (input, _) = expect_token(Token::Lt)(input)?;
         let (input, params) = separated_list1(
@@ -442,7 +442,9 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
         Ok((input, params))
     })(input)?;
     let type_params = type_params.unwrap_or_default();
-    
+
+    let (input, _) = expect_token(Token::Colon)(input)?;
+
     // Parse parameter list: (x: Int32, y: Int32)
     let (input, _) = expect_token(Token::LParen)(input)?;
     let (input, params) = separated_list0(

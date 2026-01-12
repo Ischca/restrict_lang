@@ -2316,13 +2316,17 @@ impl TypeChecker {
     }
     
     fn check_record_decl(&mut self, record: &RecordDecl) -> Result<(), TypeError> {
-        // Register temporal type parameters
+        // Register type parameters (both regular and temporal)
+        let mut type_param_names: HashSet<String> = HashSet::new();
         for type_param in &record.type_params {
+            type_param_names.insert(type_param.name.clone());
             if type_param.is_temporal {
                 self.temporal_context.active_temporals.insert(type_param.name.clone());
             }
         }
-        
+        // Push type parameters onto the scope
+        self.type_param_env.push(type_param_names);
+
         // Register temporal constraints
         for constraint in &record.temporal_constraints {
             self.temporal_context.constraints.push(TemporalConstraint {
@@ -2332,13 +2336,14 @@ impl TypeChecker {
             // Validate constraint: both temporals should be defined
             if !self.temporal_context.active_temporals.contains(&constraint.inner) ||
                !self.temporal_context.active_temporals.contains(&constraint.outer) {
+                self.type_param_env.pop(); // Clean up before returning error
                 return Err(TypeError::InvalidTemporalConstraint(
                     constraint.inner.clone(),
                     constraint.outer.clone()
                 ));
             }
         }
-        
+
         let mut fields = HashMap::new();
         for field in &record.fields {
             let ty = self.convert_type(&field.ty)?;
@@ -2359,10 +2364,13 @@ impl TypeChecker {
         // Clear temporal context for this record
         self.temporal_context.active_temporals.clear();
         self.temporal_context.constraints.clear();
-        
+
+        // Pop type parameter scope
+        self.type_param_env.pop();
+
         Ok(())
     }
-    
+
     fn check_function_decl(&mut self, func: &FunDecl) -> Result<(), TypeError> {
         // Push type parameter scope for generics (including temporal parameters)
         self.push_type_param_scope(&func.type_params);

@@ -1931,6 +1931,32 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    /// Convert an AST Type to a string for type tracking
+    fn type_to_string(&self, ty: &crate::ast::Type) -> String {
+        match ty {
+            crate::ast::Type::Named(name) => name.clone(),
+            crate::ast::Type::Generic(base, params) => {
+                let params_str: Vec<String> = params.iter()
+                    .map(|p| self.type_to_string(p))
+                    .collect();
+                format!("{}<{}>", base, params_str.join(", "))
+            }
+            crate::ast::Type::Function(params, return_type) => {
+                let params_str: Vec<String> = params.iter()
+                    .map(|p| self.type_to_string(p))
+                    .collect();
+                format!("({}) -> {}", params_str.join(", "), self.type_to_string(return_type))
+            }
+            crate::ast::Type::Temporal(name, temporals) => {
+                // Temporal types like File<~f>
+                format!("{}<{}>", name, temporals.iter()
+                    .map(|t| format!("~{}", t))
+                    .collect::<Vec<_>>()
+                    .join(", "))
+            }
+        }
+    }
+
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
         // Handle generic functions
         if !func.type_params.is_empty() {
@@ -2103,23 +2129,28 @@ impl WasmCodeGen {
         if !func.type_params.is_empty() {
             return self.generate_generic_function(func);
         }
-        
+
         self.current_function = Some(func.name.clone());
         self.push_scope();
-        
+
         // First, collect all local variables by analyzing the function body
         let mut locals: Vec<(String, WasmType)> = Vec::new();
         self.collect_locals_from_block(&func.body, &mut locals)?;
-        
+
         // Function header
         self.output.push_str(&format!("  (func ${}", func.name));
-        
+
         // Parameters
         let mut next_idx = 0u32;
         for param in func.params.iter() {
             let wasm_type = self.convert_type(&param.ty)?;
             self.output.push_str(&format!(" (param ${} {})", param.name, self.wasm_type_str(wasm_type)));
             self.add_local(&param.name, next_idx);
+
+            // Track parameter type for field access
+            let type_name = self.type_to_string(&param.ty);
+            self.var_types.insert(param.name.clone(), type_name);
+
             next_idx += 1;
         }
         

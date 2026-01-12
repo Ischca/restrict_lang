@@ -248,8 +248,13 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
     let temporal_constraints = temporal_constraints.unwrap_or_default();
     
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    // Parse fields - they should be space-separated, not comma-separated
-    let (input, fields) = many0(field_decl)(input)?;
+    // Parse fields - optionally comma-separated (supports both `a: Int, b: Int` and `a: Int b: Int`)
+    let (input, fields) = many0(|input| {
+        let (input, field) = field_decl(input)?;
+        // Consume optional comma after each field
+        let (input, _) = opt(expect_token(Token::Comma))(input)?;
+        Ok((input, field))
+    })(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
     
     // For now, skip freeze/sealed checks to debug parsing issue

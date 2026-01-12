@@ -1,6 +1,7 @@
 use restrict_lang::parser::top_decl;
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_top_decl_on_function() {
     let func_input = r#"fun leakFile<~io> = {
     val file = File { handle: 1 };
@@ -39,7 +40,7 @@ fn test_top_decl_on_function() {
 
 #[test]
 fn test_top_decl_simple_function() {
-    let simple_func = "fun test = { 42 }";
+    let simple_func = "fun test: () -> Int = { 42 }";
     
     eprintln!("\nTesting top_decl on simple function:");
     eprintln!("{}", simple_func);

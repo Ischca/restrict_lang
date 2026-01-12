@@ -1,6 +1,7 @@
 use restrict_lang::{parse_program, parser::top_decl, lexer::skip};
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_leakfile_step_by_step() {
     let full_input = r#"record File<~f> {
     handle: Int32

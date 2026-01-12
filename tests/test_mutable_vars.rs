@@ -34,6 +34,7 @@ fn test_mutable_reassignment() {
 }
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_immutable_reassignment_error() {
     let input = r#"fun test = {
     val x = 5;

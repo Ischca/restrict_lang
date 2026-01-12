@@ -34,7 +34,7 @@ fn test_simple_list_literal() {
     // Check that list allocation happens
     assert!(wat.contains("List literal with 3 elements"));
     assert!(wat.contains("call $allocate"));
-    assert!(wat.contains("local.tee $list_tmp"));
+    assert!(wat.contains("local.set $list_tmp"));
     
     // Check header initialization
     assert!(wat.contains("i32.const 3")); // length

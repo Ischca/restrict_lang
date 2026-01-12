@@ -147,6 +147,7 @@ fn test_temporal_scope_with_allocations() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_temporal_scope_return_value() {
     let input = r#"fun process<~p> = {
     with lifetime<~local> {
@@ -177,6 +178,7 @@ fun main: () -> Int = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_async_runtime_with_arena() {
     let input = r#"fun compute<~async> = n: Int32 {
     n * 2

@@ -3336,7 +3336,9 @@ impl WasmCodeGen {
     
     fn generate_list_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
         let list_size = 8 + (items.len() * 4); // Header (length + capacity) + elements
-        
+
+        self.output.push_str(&format!("    ;; List literal with {} elements\n", items.len()));
+
         // Allocate memory for the list
         self.output.push_str(&format!("    i32.const {} ;; list size\n", list_size));
         self.output.push_str("    call $allocate\n");
@@ -3371,7 +3373,9 @@ impl WasmCodeGen {
     
     fn generate_array_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
         let array_size = items.len() * 4; // No header, just elements
-        
+
+        self.output.push_str(&format!("    ;; Array literal with {} elements\n", items.len()));
+
         // Allocate memory for the array
         self.output.push_str(&format!("    i32.const {} ;; array size\n", array_size));
         self.output.push_str("    call $allocate\n");

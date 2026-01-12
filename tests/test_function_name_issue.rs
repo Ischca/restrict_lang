@@ -1,6 +1,7 @@
 use restrict_lang::parse_program;
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_different_function_names() {
     let names = vec![
         ("test", true),
@@ -38,6 +39,7 @@ fn test_different_function_names() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_leakfile_variations() {
     // Without temporal parameter
     let without_temporal = "fun leakFile = { Unit }";

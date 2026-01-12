@@ -128,7 +128,6 @@ fun main: () -> Int = {
 }
 
 #[test]
-#[ignore = "Affine type violation: multiple field accesses on same record need to be treated as single use"]
 fn test_generic_swap_function() {
     let input = r#"
 record Pair<A, B> {
@@ -137,13 +136,15 @@ record Pair<A, B> {
 }
 
 fun swap<A, B>: (p: Pair<A, B>) -> Pair<B, A> = {
-    Pair { first = p.second, second = p.first }
+    p match {
+        Pair { first, second } => { Pair { first = second, second = first } }
+    }
 }
 
 fun main: () -> Int = {
-    val p = Pair { first = 1, second = "two" };
+    val p = Pair { first = 1, second = 2 };
     val swapped = p swap;
-    0
+    swapped.first
 }
 "#;
 

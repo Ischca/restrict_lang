@@ -864,9 +864,10 @@ fn record_pattern(input: &str) -> ParseResult<Pattern> {
     // Try to parse an identifier followed by {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    
-    // Parse fields
-    let (input, fields) = many0(
+
+    // Parse comma-separated fields
+    let (input, fields) = separated_list0(
+        expect_token(Token::Comma),
         |input| {
             let (input, field_name) = ident(input)?;
             // Check if there's a colon for an explicit pattern
@@ -879,7 +880,7 @@ fn record_pattern(input: &str) -> ParseResult<Pattern> {
             }
         }
     )(input)?;
-    
+
     let (input, _) = expect_token(Token::RBrace)(input)?;
     Ok((input, Pattern::Record(name, fields)))
 }

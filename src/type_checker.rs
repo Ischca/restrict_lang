@@ -4127,6 +4127,12 @@ impl TypeChecker {
                     matches!(&arm.pattern, Pattern::Literal(Literal::Unit))
                 })
             }
+            TypedType::Record { name, .. } => {
+                // A record pattern matching the same record type is exhaustive
+                arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Record(pattern_name, _) if pattern_name == name)
+                })
+            }
             _ => false, // For other types, require wildcard
         }
     }

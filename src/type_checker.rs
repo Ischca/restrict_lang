@@ -1343,6 +1343,52 @@ impl TypeChecker {
             temporal_constraints: vec![],
         });
 
+        // File I/O functions (WASI-based)
+        // file_open: Opens a file and returns a file descriptor
+        // flags: 0 = read-only, 1 = write-only, 2 = read-write, 9 = write + create
+        self.functions.insert("file_open".to_string(), FunctionDef {
+            params: vec![
+                ("path".to_string(), TypedType::String),
+                ("flags".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // file_read: Reads from a file descriptor
+        // Returns the content as a String
+        self.functions.insert("file_read".to_string(), FunctionDef {
+            params: vec![
+                ("fd".to_string(), TypedType::Int32),
+                ("len".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // file_write: Writes a string to a file descriptor
+        // Returns number of bytes written
+        self.functions.insert("file_write".to_string(), FunctionDef {
+            params: vec![
+                ("fd".to_string(), TypedType::Int32),
+                ("content".to_string(), TypedType::String),
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // file_close: Closes a file descriptor
+        // Returns 0 on success
+        self.functions.insert("file_close".to_string(), FunctionDef {
+            params: vec![("fd".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
         // some function - wraps a value in Option::Some
         // Note: We handle 'some' specially in check_call_expr to make it work with any type
     }

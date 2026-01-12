@@ -185,6 +185,11 @@ impl WasmCodeGen {
         self.output.push_str("  ;; WASI imports\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_close\" (func $fd_close (param i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_seek\" (func $fd_seek (param i32 i64 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"path_open\" (func $path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_prestat_get\" (func $fd_prestat_get (param i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_prestat_dir_name\" (func $fd_prestat_dir_name (param i32 i32 i32) (result i32)))\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n");
         
         // Memory
@@ -709,8 +714,213 @@ impl WasmCodeGen {
             result: None,
         });
 
+        // File I/O functions
+        self.generate_file_io_functions()?;
+
         // Generate string runtime functions
         self.generate_string_functions()?;
+
+        Ok(())
+    }
+
+    fn generate_file_io_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; File I/O functions\n");
+
+        // file_open: Opens a file and returns a file descriptor
+        // Parameters: path (string pointer), flags (i32)
+        // Returns: fd (i32) or -1 on error
+        // Flags: 0 = read, 1 = write, 2 = read+write
+        self.output.push_str("  (func $file_open (param $path i32) (param $flags i32) (result i32)\n");
+        self.output.push_str("    (local $path_len i32)\n");
+        self.output.push_str("    (local $path_ptr i32)\n");
+        self.output.push_str("    (local $fd_out i32)\n");
+        self.output.push_str("    (local $oflags i32)\n");
+        self.output.push_str("    (local $rights i64)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get path length and pointer\n");
+        self.output.push_str("    local.get $path\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $path_len\n");
+        self.output.push_str("    local.get $path\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.set $path_ptr\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Set oflags based on flags parameter\n");
+        self.output.push_str("    ;; flags: 0=read, 1=write(create), 2=read+write\n");
+        self.output.push_str("    local.get $flags\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.and\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then i32.const 1)  ;; O_CREAT\n");
+        self.output.push_str("      (else i32.const 0)  ;; No flags\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.set $oflags\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Set rights - allow read and write\n");
+        self.output.push_str("    i64.const 0x1FFFFFFF  ;; All rights\n");
+        self.output.push_str("    local.set $rights\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; fd_out pointer at address 6200\n");
+        self.output.push_str("    i32.const 6200\n");
+        self.output.push_str("    local.set $fd_out\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call path_open(dirfd=3, dirflags=0, path, path_len, oflags, rights_base, rights_inheriting, fdflags, fd_out)\n");
+        self.output.push_str("    i32.const 3           ;; dirfd (preopened dir)\n");
+        self.output.push_str("    i32.const 0           ;; dirflags\n");
+        self.output.push_str("    local.get $path_ptr   ;; path\n");
+        self.output.push_str("    local.get $path_len   ;; path_len\n");
+        self.output.push_str("    local.get $oflags     ;; oflags\n");
+        self.output.push_str("    local.get $rights     ;; rights_base\n");
+        self.output.push_str("    local.get $rights     ;; rights_inheriting\n");
+        self.output.push_str("    i32.const 0           ;; fdflags\n");
+        self.output.push_str("    local.get $fd_out     ;; fd out pointer\n");
+        self.output.push_str("    call $path_open\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Check result\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; Success - return fd\n");
+        self.output.push_str("        local.get $fd_out\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Error - return -1\n");
+        self.output.push_str("        i32.const -1\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_open".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // file_read: Read from a file descriptor into a buffer
+        // Returns number of bytes read or -1 on error
+        self.output.push_str("  (func $file_read (param $fd i32) (param $len i32) (result i32)\n");
+        self.output.push_str("    (local $buffer i32)\n");
+        self.output.push_str("    (local $nread i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Use buffer at 6300\n");
+        self.output.push_str("    i32.const 6300\n");
+        self.output.push_str("    local.set $buffer\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at 6204\n");
+        self.output.push_str("    i32.const 6204\n");
+        self.output.push_str("    local.get $buffer\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 6208\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call fd_read\n");
+        self.output.push_str("    local.get $fd\n");
+        self.output.push_str("    i32.const 6204  ;; iovs\n");
+        self.output.push_str("    i32.const 1     ;; iovs_len\n");
+        self.output.push_str("    i32.const 6212  ;; nread out\n");
+        self.output.push_str("    call $fd_read\n");
+        self.output.push_str("    local.set $result\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Check result and return string pointer\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; Store length at result string location (7300)\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("        i32.const 6212\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        ;; Copy data\n");
+        self.output.push_str("        i32.const 7304\n");
+        self.output.push_str("        local.get $buffer\n");
+        self.output.push_str("        i32.const 6212\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        memory.copy\n");
+        self.output.push_str("        ;; Return string pointer\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Error - return empty string at 7300 with len 0\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_read".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // file_write: Write a string to a file descriptor
+        // Returns number of bytes written or -1 on error
+        self.output.push_str("  (func $file_write (param $fd i32) (param $str i32) (result i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at 6220\n");
+        self.output.push_str("    i32.const 6220\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 6224\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call fd_write\n");
+        self.output.push_str("    local.get $fd\n");
+        self.output.push_str("    i32.const 6220  ;; iovs\n");
+        self.output.push_str("    i32.const 1     ;; iovs_len\n");
+        self.output.push_str("    i32.const 6228  ;; nwritten out\n");
+        self.output.push_str("    call $fd_write\n");
+        self.output.push_str("    local.set $result\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Return nwritten or -1 on error\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 6228\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        i32.const -1\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_write".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // file_close: Close a file descriptor
+        self.output.push_str("  (func $file_close (param $fd i32) (result i32)\n");
+        self.output.push_str("    local.get $fd\n");
+        self.output.push_str("    call $fd_close\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then i32.const 0)   ;; Success\n");
+        self.output.push_str("      (else i32.const -1)  ;; Error\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_close".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
 
         Ok(())
     }

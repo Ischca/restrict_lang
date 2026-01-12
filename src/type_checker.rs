@@ -2711,21 +2711,42 @@ impl TypeChecker {
                 .ok_or_else(|| TypeError::UndefinedRecord(record_lit.name.clone()))?;
             (record_def.fields.clone(), record_def.type_params.clone(), record_def.temporal_constraints.clone())
         };
-        
-        // Check that all fields are present and have correct types
+
+        // Build type substitution map for generic type parameters
+        let mut type_subst: HashMap<String, TypedType> = HashMap::new();
+
+        // Check that all fields are present and collect type parameter bindings
         for field_init in &record_lit.fields {
             let expected_ty = field_types.get(&field_init.name)
                 .ok_or_else(|| TypeError::UnknownField {
                     record: record_lit.name.clone(),
                     field: field_init.name.clone(),
                 })?;
-            
+
             let actual_ty = self.check_expr(&field_init.value)?;
-            if &actual_ty != expected_ty {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("{:?}", expected_ty),
-                    found: format!("{:?}", actual_ty),
-                });
+
+            // If expected type is a type parameter, unify it with actual type
+            if let TypedType::TypeParam(param_name) = expected_ty {
+                if let Some(existing) = type_subst.get(param_name) {
+                    // Type parameter already bound - check consistency
+                    if existing != &actual_ty {
+                        return Err(TypeError::TypeMismatch {
+                            expected: format!("{:?}", existing),
+                            found: format!("{:?}", actual_ty),
+                        });
+                    }
+                } else {
+                    // Bind type parameter to actual type
+                    type_subst.insert(param_name.clone(), actual_ty.clone());
+                }
+            } else {
+                // Non-generic field - exact match required
+                if &actual_ty != expected_ty {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", expected_ty),
+                        found: format!("{:?}", actual_ty),
+                    });
+                }
             }
         }
         

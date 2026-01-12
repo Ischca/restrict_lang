@@ -136,11 +136,11 @@ record Pair<A, B> {
 }
 
 fun swap<A, B>: (p: Pair<A, B>) -> Pair<B, A> = {
-    Pair { first: p.second, second: p.first }
+    Pair { first = p.second, second = p.first }
 }
 
 fun main: () -> Int = {
-    val p = Pair { first: 1, second: "two" };
+    val p = Pair { first = 1, second = "two" };
     val swapped = p swap;
     0
 }
@@ -189,8 +189,8 @@ record Box<T> {
 }
 
 fun main: () -> Int = {
-    val intBox = Box { value: 42 };
-    val strBox = Box { value: "hello" };
+    val intBox = Box { value = 42 };
+    val strBox = Box { value = "hello" };
     intBox.value
 }
 "#;
@@ -213,7 +213,7 @@ fun unbox<T>: (b: Box<T>) -> T = {
 }
 
 fun main: () -> Int = {
-    val b = Box { value: 42 };
+    val b = Box { value = 42 };
     b unbox
 }
 "#;

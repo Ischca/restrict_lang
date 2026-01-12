@@ -333,7 +333,7 @@ pub enum TypedType {
     String,
     Char,
     Unit,
-    Record { name: String, frozen: bool, hash: Option<String>, parent_hash: Option<String> },
+    Record { name: String, frozen: bool, hash: Option<String>, parent_hash: Option<String>, type_args: Vec<TypedType> },
     Function { params: Vec<TypedType>, return_type: Box<TypedType> },
     Option(Box<TypedType>),
     Result { ok: Box<TypedType>, err: Box<TypedType> }, // Result<T, E> type for error handling
@@ -948,7 +948,7 @@ impl TypeChecker {
                     name: "Task".to_string(),
                     frozen: false,
                     hash: None,
-                    parent_hash: None,
+                    parent_hash: None, type_args: vec![],
                 }),
                 temporals: vec!["async".to_string()],
             },
@@ -968,7 +968,7 @@ impl TypeChecker {
                     name: "Task".to_string(),
                     frozen: false,
                     hash: None,
-                    parent_hash: None,
+                    parent_hash: None, type_args: vec![],
                 }),
                 temporals: vec!["async".to_string()],
             })],
@@ -989,7 +989,7 @@ impl TypeChecker {
                 name: "Channel".to_string(),
                 frozen: false,
                 hash: None,
-                parent_hash: None,
+                parent_hash: None, type_args: vec![],
             },
             type_params: vec![TypeParam {
                 name: "T".to_string(),
@@ -2113,7 +2113,7 @@ impl TypeChecker {
                     }
                     // Check if it's a record type
                     else if self.records.contains_key(name) {
-                        Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None })
+                        Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None, type_args: vec![] })
                     } else {
                         Err(TypeError::UnknownType(name.clone()))
                     }
@@ -2133,7 +2133,24 @@ impl TypeChecker {
                     "List" if params.len() == 1 => {
                         Ok(TypedType::List(Box::new(self.convert_type(&params[0])?)))
                     },
-                    _ => Err(TypeError::UnknownType(format!("{}<{}>", name, params.len())))
+                    _ => {
+                        // Check if it's a user-defined generic record
+                        if self.records.contains_key(name) {
+                            let type_args: Result<Vec<TypedType>, TypeError> = params
+                                .iter()
+                                .map(|p| self.convert_type(p))
+                                .collect();
+                            Ok(TypedType::Record {
+                                name: name.clone(),
+                                frozen: false,
+                                hash: None,
+                                parent_hash: None,
+                                type_args: type_args?,
+                            })
+                        } else {
+                            Err(TypeError::UnknownType(format!("{}<{}>", name, params.len())))
+                        }
+                    }
                 }
             },
             Type::Function(param_types, return_type) => {
@@ -2528,11 +2545,12 @@ impl TypeChecker {
             for (i, param) in func.params.iter().enumerate() {
                 let ty = if i == 0 && param.name == "self" {
                     // First parameter named 'self' should be the record type
-                    TypedType::Record { 
-                        name: target.clone(), 
+                    TypedType::Record {
+                        name: target.clone(),
                         frozen: false,  // Methods can be called on both frozen and unfrozen records
                         hash: None,
-                        parent_hash: None
+                        parent_hash: None,
+                        type_args: vec![],
                     }
                 } else {
                     self.convert_type(&param.ty)?
@@ -2785,11 +2803,12 @@ impl TypeChecker {
         }
         
         // Create the base record type
-        let base_type = TypedType::Record { 
-            name: record_lit.name.clone(), 
-            frozen: false, 
-            hash: None, 
-            parent_hash: None 
+        let base_type = TypedType::Record {
+            name: record_lit.name.clone(),
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+            type_args: vec![],
         };
         
         // If the record has temporal parameters, wrap it in a Temporal type
@@ -2849,7 +2868,7 @@ impl TypeChecker {
                         });
                     }
                 }
-                Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None })
+                Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None, type_args: vec![] })
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "record".to_string(),
@@ -2857,16 +2876,16 @@ impl TypeChecker {
             })
         }
     }
-    
+
     fn check_freeze_expr(&mut self, expr: &Expr) -> Result<TypedType, TypeError> {
         let ty = self.check_expr(expr)?;
-        
+
         match ty {
-            TypedType::Record { name, frozen, hash, parent_hash } => {
+            TypedType::Record { name, frozen, hash, parent_hash, type_args } => {
                 if frozen {
                     return Err(TypeError::FreezeAlreadyFrozen);
                 }
-                Ok(TypedType::Record { name, frozen: true, hash, parent_hash })
+                Ok(TypedType::Record { name, frozen: true, hash, parent_hash, type_args })
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "record".to_string(),
@@ -3636,7 +3655,7 @@ impl TypeChecker {
                 name: "Task".to_string(),
                 frozen: false,
                 hash: None,
-                parent_hash: None,
+                parent_hash: None, type_args: vec![],
             }),
             temporals: vec![async_lifetime],
         })
@@ -4992,12 +5011,13 @@ impl TypeChecker {
         
         // Check field updates (similar to clone expression)
         // ... field checking logic ...
-        
-        Ok(TypedType::Record { 
+
+        Ok(TypedType::Record {
             name: format!("{}#{}", proto_clone.base, &new_hash[..8]), // Unique name
-            frozen: proto_clone.freeze_immediately, 
+            frozen: proto_clone.freeze_immediately,
             hash: Some(new_hash.clone()),
-            parent_hash 
+            parent_hash,
+            type_args: vec![],
         })
     }
     

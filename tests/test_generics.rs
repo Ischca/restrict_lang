@@ -80,7 +80,6 @@ fun main: () -> Int = {
 }
 
 #[test]
-#[ignore = "Requires monomorphization - generic functions don't generate code yet"]
 fn test_generic_identity_function_codegen() {
     // Test that generic identity function generates code
     let input = r#"
@@ -129,7 +128,7 @@ fun main: () -> Int = {
 }
 
 #[test]
-#[ignore = "Requires generic type parameters in function signatures (Pair<A, B>)"]
+#[ignore = "Affine type violation: multiple field accesses on same record need to be treated as single use"]
 fn test_generic_swap_function() {
     let input = r#"
 record Pair<A, B> {
@@ -204,7 +203,6 @@ fun main: () -> Int = {
 }
 
 #[test]
-#[ignore = "Requires monomorphization - generic functions don't generate code yet"]
 fn test_generic_box_codegen() {
     let input = r#"
 record Box<T> {

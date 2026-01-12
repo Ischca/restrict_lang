@@ -103,6 +103,10 @@ pub struct WasmCodeGen {
     imported_functions: Vec<FunDecl>,
     /// Imported records to be included
     imported_records: Vec<RecordDecl>,
+    /// Generic function definitions for monomorphization
+    generic_functions: HashMap<String, FunDecl>,
+    /// Tracked instantiations: function_name -> Vec<(type_args, mangled_name)>
+    instantiations: HashMap<String, Vec<(Vec<String>, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +149,8 @@ impl WasmCodeGen {
             var_types: HashMap::new(),
             imported_functions: Vec::new(),
             imported_records: Vec::new(),
+            generic_functions: HashMap::new(),
+            instantiations: HashMap::new(),
         }
     }
     
@@ -337,7 +343,10 @@ impl WasmCodeGen {
                 }
             }
         }
-        
+
+        // Generate monomorphized versions of generic functions
+        self.generate_monomorphized_functions()?;
+
         // Generate lambda functions
         for lambda_func in &self.lambda_functions {
             self.output.push_str(lambda_func);
@@ -2306,10 +2315,230 @@ impl WasmCodeGen {
             "some" => self.generate_some_specializations(func),
             "none" => self.generate_none_specializations(func),
             _ => {
-                // For other generic functions, we'll need to generate on demand
-                // This is a placeholder for future monomorphization
+                // Store generic function for later monomorphization
+                self.generic_functions.insert(func.name.clone(), func.clone());
                 Ok(())
             }
+        }
+    }
+
+    /// Record that a generic function is being instantiated with specific types
+    fn record_instantiation(&mut self, func_name: &str, type_args: Vec<String>) -> String {
+        // Generate mangled name: identity_Int, swap_Int_String, etc.
+        let mangled_name = if type_args.is_empty() {
+            func_name.to_string()
+        } else {
+            format!("{}_{}", func_name, type_args.join("_"))
+        };
+
+        // Check if this instantiation already exists
+        let instantiations = self.instantiations.entry(func_name.to_string()).or_insert_with(Vec::new);
+        if !instantiations.iter().any(|(args, _)| args == &type_args) {
+            instantiations.push((type_args, mangled_name.clone()));
+        }
+
+        mangled_name
+    }
+
+    /// Generate all monomorphized versions of generic functions
+    fn generate_monomorphized_functions(&mut self) -> Result<(), CodeGenError> {
+        // Clone to avoid borrow issues
+        let generic_functions = self.generic_functions.clone();
+        let instantiations = self.instantiations.clone();
+
+        for (func_name, type_instantiations) in instantiations {
+            if let Some(generic_func) = generic_functions.get(&func_name) {
+                for (type_args, mangled_name) in type_instantiations {
+                    self.generate_monomorphized_function(generic_func, &type_args, &mangled_name)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Generate a monomorphized version of a generic function
+    fn generate_monomorphized_function(
+        &mut self,
+        func: &FunDecl,
+        type_args: &[String],
+        mangled_name: &str
+    ) -> Result<(), CodeGenError> {
+        // Build type substitution map
+        let mut type_subst: HashMap<String, String> = HashMap::new();
+        for (i, type_param) in func.type_params.iter().enumerate() {
+            if i < type_args.len() {
+                type_subst.insert(type_param.name.clone(), type_args[i].clone());
+            }
+        }
+
+        self.current_function = Some(mangled_name.to_string());
+        self.push_scope();
+
+        // Collect locals
+        let mut locals: Vec<(String, WasmType)> = Vec::new();
+        self.collect_locals_from_block(&func.body, &mut locals)?;
+
+        // Function header with mangled name
+        self.output.push_str(&format!("  (func ${}", mangled_name));
+
+        // Parameters with substituted types
+        let mut next_idx = 0u32;
+        for param in func.params.iter() {
+            let substituted_type = self.substitute_type(&param.ty, &type_subst);
+            let wasm_type = self.convert_type(&substituted_type)?;
+            self.output.push_str(&format!(" (param ${} {})", param.name, self.wasm_type_str(wasm_type)));
+            self.add_local(&param.name, next_idx);
+
+            // Track parameter type
+            let type_name = self.type_to_string(&substituted_type);
+            self.var_types.insert(param.name.clone(), type_name);
+
+            next_idx += 1;
+        }
+
+        // Result type with substitution
+        if let Some(ref ret_type) = func.return_type {
+            let substituted_ret = self.substitute_type(ret_type, &type_subst);
+            let wasm_ret = self.convert_type(&substituted_ret)?;
+            self.output.push_str(&format!(" (result {})", self.wasm_type_str(wasm_ret)));
+        }
+        self.output.push_str("\n");
+
+        // Declare locals
+        for (i, (name, wasm_type)) in locals.iter().enumerate() {
+            self.output.push_str(&format!("    (local ${} {})\n", name, self.wasm_type_str(*wasm_type)));
+            self.add_local(name, next_idx + i as u32);
+        }
+
+        // Generate body
+        self.generate_block(&func.body)?;
+
+        self.output.push_str("  )\n\n");
+        self.pop_scope();
+        self.current_function = None;
+
+        Ok(())
+    }
+
+    /// Substitute type parameters with concrete types
+    fn substitute_type(&self, ty: &Type, subst: &HashMap<String, String>) -> Type {
+        match ty {
+            Type::Named(name) => {
+                if let Some(concrete) = subst.get(name) {
+                    Type::Named(concrete.clone())
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Generic(name, params) => {
+                let new_params: Vec<Type> = params.iter()
+                    .map(|p| self.substitute_type(p, subst))
+                    .collect();
+                Type::Generic(name.clone(), new_params)
+            }
+            Type::Function(param_types, ret_type) => {
+                let new_params: Vec<Type> = param_types.iter()
+                    .map(|p| self.substitute_type(p, subst))
+                    .collect();
+                let new_ret = Box::new(self.substitute_type(ret_type, subst));
+                Type::Function(new_params, new_ret)
+            }
+            _ => ty.clone()
+        }
+    }
+
+    /// Infer type arguments from a generic function call
+    fn infer_type_args_from_call(&self, func_name: &str, args: &[Box<Expr>]) -> Result<Vec<String>, CodeGenError> {
+        let generic_func = self.generic_functions.get(func_name)
+            .ok_or_else(|| CodeGenError::UndefinedFunction(func_name.to_string()))?;
+
+        let mut type_args = Vec::new();
+
+        // Match each argument with the corresponding parameter
+        for (i, param) in generic_func.params.iter().enumerate() {
+            if i >= args.len() {
+                break;
+            }
+
+            // Check if parameter type is a type parameter
+            if let Type::Named(param_type_name) = &param.ty {
+                // Check if this is one of the type parameters
+                let is_type_param = generic_func.type_params.iter()
+                    .any(|tp| &tp.name == param_type_name);
+
+                if is_type_param {
+                    // Infer the concrete type from the argument
+                    let concrete_type = self.infer_expr_type_name(&args[i])?;
+
+                    // Find the index of this type parameter
+                    let param_idx = generic_func.type_params.iter()
+                        .position(|tp| &tp.name == param_type_name);
+
+                    if let Some(idx) = param_idx {
+                        // Ensure we have space in type_args
+                        while type_args.len() <= idx {
+                            type_args.push(String::new());
+                        }
+                        type_args[idx] = concrete_type;
+                    }
+                }
+            }
+        }
+
+        // Filter out empty strings
+        type_args.retain(|s| !s.is_empty());
+
+        Ok(type_args)
+    }
+
+    /// Infer the type name from an expression (for monomorphization)
+    fn infer_expr_type_name(&self, expr: &Expr) -> Result<String, CodeGenError> {
+        match expr {
+            Expr::IntLit(_) => Ok("Int".to_string()),
+            Expr::FloatLit(_) => Ok("Float".to_string()),
+            Expr::StringLit(_) => Ok("String".to_string()),
+            Expr::BoolLit(_) => Ok("Bool".to_string()),
+            Expr::Ident(name) => {
+                // Check if we know the type of this variable
+                if let Some(type_name) = self.var_types.get(name) {
+                    Ok(type_name.clone())
+                } else {
+                    // Default to Int for unknown identifiers
+                    Ok("Int".to_string())
+                }
+            }
+            Expr::FieldAccess(object, field) => {
+                // Get type of the record and the field
+                if let Some(record_type) = self.var_types.get(&self.expr_to_var_name(object)) {
+                    if let Some(fields) = self.records.get(record_type) {
+                        for (field_name, field_type) in fields {
+                            if field_name == field {
+                                return Ok(self.type_to_string(field_type));
+                            }
+                        }
+                    }
+                }
+                Ok("Int".to_string())
+            }
+            Expr::RecordLit(rl) => Ok(rl.name.clone()),
+            Expr::Block(block) => {
+                // Get type from the block's final expression
+                if let Some(ref final_expr) = block.expr {
+                    self.infer_expr_type_name(final_expr)
+                } else {
+                    Ok("Unit".to_string())
+                }
+            }
+            _ => Ok("Int".to_string()) // Default fallback
+        }
+    }
+
+    /// Helper to extract variable name from expression
+    fn expr_to_var_name(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Ident(name) => name.clone(),
+            _ => String::new()
         }
     }
     
@@ -2798,11 +3027,17 @@ impl WasmCodeGen {
                 // Get the type of the object expression
                 let record_name = if let Expr::Ident(var_name) = obj_expr.as_ref() {
                     // For identifiers, look up the type from var_types
-                    self.var_types.get(var_name)
+                    let var_type = self.var_types.get(var_name)
                         .ok_or_else(|| CodeGenError::NotImplemented(
                             format!("field access on unknown variable: {}", var_name)
                         ))?
-                        .clone()
+                        .clone();
+                    // Strip generic type parameters if present (e.g., "Box<Int>" -> "Box")
+                    if let Some(idx) = var_type.find('<') {
+                        var_type[..idx].to_string()
+                    } else {
+                        var_type
+                    }
                 } else if let Some(obj_type) = self.expr_types.get(&(obj_expr.as_ref() as *const Expr)) {
                     // Fallback to expr_types if available
                     if let Some(name) = obj_type.strip_suffix(&format!("<~{}>", field)) {
@@ -3355,6 +3590,11 @@ impl WasmCodeGen {
 
             if self.functions.contains_key(func_name) {
                 self.output.push_str(&format!("    call ${}\n", func_name));
+            } else if self.generic_functions.contains_key(func_name) {
+                // Generic function call - infer type arguments and use monomorphized version
+                let type_args = self.infer_type_args_from_call(func_name, &call.args)?;
+                let mangled_name = self.record_instantiation(func_name, type_args);
+                self.output.push_str(&format!("    call ${}\n", mangled_name));
             } else {
                 // Check if it's a method call
                 if let Some(obj_expr) = call.args.first() {

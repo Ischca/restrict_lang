@@ -1,4 +1,4 @@
-record Point { x: Int y: Int }
+record Point { x: Int, y: Int }
 
 val p1 = Point { x = 10, y = 20 }
 val p2 = p1.clone { x = 30 }

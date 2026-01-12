@@ -1,5 +1,5 @@
 // This is a single-line comment
-record Point { x: Int y: Int }
+record Point { x: Int, y: Int }
 
 /* This is a 
    multi-line comment */

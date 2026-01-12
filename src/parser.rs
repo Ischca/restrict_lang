@@ -246,15 +246,15 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
         )(input)
     })(input)?;
     let temporal_constraints = temporal_constraints.unwrap_or_default();
-    
+
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    // Parse fields - optionally comma-separated (supports both `a: Int, b: Int` and `a: Int b: Int`)
-    let (input, fields) = many0(|input| {
-        let (input, field) = field_decl(input)?;
-        // Consume optional comma after each field
-        let (input, _) = opt(expect_token(Token::Comma))(input)?;
-        Ok((input, field))
-    })(input)?;
+    // Parse fields - strictly comma-separated with optional trailing comma
+    let (input, fields) = separated_list0(
+        expect_token(Token::Comma),
+        field_decl
+    )(input)?;
+    // Consume optional trailing comma
+    let (input, _) = opt(expect_token(Token::Comma))(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
     
     // For now, skip freeze/sealed checks to debug parsing issue
@@ -1709,7 +1709,7 @@ mod tests {
 
     #[test]
     fn test_record_decl() {
-        let input = "record Enemy { hp: Int atk: Int }";
+        let input = "record Enemy { hp: Int, atk: Int }";
         let (_, decl) = record_decl(input).unwrap();
         assert_eq!(decl.name, "Enemy");
         assert_eq!(decl.fields.len(), 2);

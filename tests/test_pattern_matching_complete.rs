@@ -92,7 +92,7 @@ fn test_list_pattern_matching() {
 #[ignore = "Record pattern matching codegen not fully implemented"]
 fn test_record_pattern_matching() {
     let source = r#"
-        record Point { x: Int y: Int }
+        record Point { x: Int, y: Int }
 
         fun is_origin: (p: Point) -> Int = {
             p match {

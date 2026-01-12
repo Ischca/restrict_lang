@@ -4402,7 +4402,7 @@ mod tests {
     fn test_affine_violation() {
         // Note: Int is a Copy type, so we use a Record to test affine violation
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val y = p
             val z = p
@@ -4427,7 +4427,7 @@ mod tests {
     #[test]
     fn test_record_types() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
         "#;
         assert!(check_program_str(input).is_ok());
@@ -4447,7 +4447,7 @@ mod tests {
     #[test]
     fn test_field_access() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val x = p.x
         "#;
@@ -4457,7 +4457,7 @@ mod tests {
     #[test]
     fn test_unknown_field() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val z = p.z
         "#;
@@ -4473,7 +4473,7 @@ mod tests {
     #[test]
     fn test_clone_freeze() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 }
             val p2 = p1.clone { x = 30 }
             val p3 = p2 freeze
@@ -4484,7 +4484,7 @@ mod tests {
     #[test]
     fn test_clone_frozen_error() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 } freeze
             val p2 = p1.clone { x = 30 }
         "#;
@@ -4497,7 +4497,7 @@ mod tests {
     #[test]
     fn test_affine_field_access() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val x = p.x
             val y = p.y
@@ -4512,7 +4512,7 @@ mod tests {
     fn test_affine_in_blocks() {
         // Note: Int is a Copy type, so we use a Record to test affine violation
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val y = { val z = p }
             val w = p
@@ -4537,7 +4537,7 @@ mod tests {
     #[test]
     fn test_function_params_affine() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun use_twice: (p: Point) -> Unit = {
                 val x = p.x
                 val y = p.x
@@ -4566,7 +4566,7 @@ mod tests {
         // Test affine checking in deeply nested blocks with intermediate variables
         // Note: Int is a Copy type, so we use a Record to test affine violation
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val y = {
                 val inner = {
@@ -4587,7 +4587,7 @@ mod tests {
     fn test_affine_conditionals() {
         // Test affine checking in conditional branches
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun conditional: (p: Point, flag: Bool) -> Int = {
                 val result = flag then {
                     p.x
@@ -4616,7 +4616,7 @@ mod tests {
     fn test_affine_conditional_violation() {
         // Using a non-Copy variable before AND inside a conditional should fail
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val y = p
             val z = true then { p } else { Point { x = 0, y = 0 } }
@@ -4642,7 +4642,7 @@ mod tests {
     fn test_affine_multiple_params() {
         // Multiple function parameters should be checked independently
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun use_both: (p1: Point, p2: Point) -> Int = {
                 val x1 = p1.x
                 val x2 = p2.x
@@ -4656,7 +4656,7 @@ mod tests {
     fn test_affine_multiple_params_violation() {
         // Using the same parameter twice should fail
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun use_twice: (p1: Point, p2: Point) -> Int = {
                 val x = p1.x
                 val y = p1.y
@@ -4672,7 +4672,7 @@ mod tests {
     #[test]
     fn test_clone_field_type_mismatch() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 }
             val p2 = p1.clone { x = "hello" }
         "#;
@@ -4685,7 +4685,7 @@ mod tests {
     #[test]
     fn test_clone_unknown_field() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 }
             val p2 = p1.clone { z = 30 }
         "#;

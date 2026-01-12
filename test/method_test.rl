@@ -1,4 +1,4 @@
-record Enemy { hp: Int atk: Int }
+record Enemy { hp: Int, atk: Int }
 
 impl Enemy {
     fun attack = self: Enemy tgt: Int { 

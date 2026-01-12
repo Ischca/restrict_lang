@@ -3,7 +3,7 @@ use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 #[test]
 fn test_exact_input_parsing() {
     let input = r#"record Point<~p> {
-    x: Int32
+    x: Int32,
     y: Int32
 }
 
@@ -51,7 +51,7 @@ fun main: () -> Int = {
 #[test]
 fn test_simple_parsing() {
     let input = r#"record Point {
-    x: Int32
+    x: Int32,
     y: Int32
 }
 

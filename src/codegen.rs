@@ -194,7 +194,12 @@ impl WasmCodeGen {
         
         // Collect string constants first
         self.collect_strings(program)?;
-        
+
+        // Collect strings from imported functions
+        for func in &self.imported_functions.clone() {
+            self.collect_strings_from_block(&func.body)?;
+        }
+
         // Generate string data section
         if !self.strings.is_empty() {
             self.output.push_str("\n  ;; String constants\n");
@@ -247,11 +252,19 @@ impl WasmCodeGen {
         
         // Collect record definitions first
         for decl in &program.declarations {
-            if let TopDecl::Record(record) = decl {
-                self.register_record_definition(record)?;
+            match decl {
+                TopDecl::Record(record) => {
+                    self.register_record_definition(record)?;
+                }
+                TopDecl::Export(export) => {
+                    if let TopDecl::Record(record) = export.item.as_ref() {
+                        self.register_record_definition(record)?;
+                    }
+                }
+                _ => {}
             }
         }
-        
+
         // Collect all function signatures first
         for decl in &program.declarations {
             match decl {
@@ -264,8 +277,16 @@ impl WasmCodeGen {
                 TopDecl::Record(record) => {
                     self.register_record_methods(record)?;
                 }
-                TopDecl::Export(_) => {
-                    // Not yet implemented
+                TopDecl::Export(export) => {
+                    match export.item.as_ref() {
+                        TopDecl::Function(func) => {
+                            self.register_function_signature(func)?;
+                        }
+                        TopDecl::Record(record) => {
+                            self.register_record_methods(record)?;
+                        }
+                        _ => {}
+                    }
                 }
                 TopDecl::Impl(_) | TopDecl::Context(_) => {
                     // Not yet implemented
@@ -295,8 +316,16 @@ impl WasmCodeGen {
                 TopDecl::Record(record) => {
                     self.generate_record_methods(record)?;
                 }
-                TopDecl::Export(_) => {
-                    // Not yet implemented
+                TopDecl::Export(export) => {
+                    match export.item.as_ref() {
+                        TopDecl::Function(func) => {
+                            self.generate_function(func)?;
+                        }
+                        TopDecl::Record(record) => {
+                            self.generate_record_methods(record)?;
+                        }
+                        _ => {}
+                    }
                 }
                 TopDecl::Impl(_) | TopDecl::Context(_) => {
                     // Not yet implemented
@@ -1801,8 +1830,16 @@ impl WasmCodeGen {
                 TopDecl::Record(_record) => {
                     // Records don't have methods in the current AST
                 }
-                TopDecl::Export(_) => {
-                    // Not yet implemented
+                TopDecl::Export(export) => {
+                    match export.item.as_ref() {
+                        TopDecl::Function(func) => {
+                            self.collect_strings_from_block(&func.body)?;
+                        }
+                        TopDecl::Binding(val) => {
+                            self.collect_strings_from_expr(&val.value)?;
+                        }
+                        _ => {}
+                    }
                 }
                 TopDecl::Impl(_) | TopDecl::Context(_) => {
                     // Not yet implemented

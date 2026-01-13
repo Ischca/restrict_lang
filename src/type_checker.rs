@@ -618,6 +618,9 @@ pub struct TypeChecker {
     collected_errors: Vec<SpannedTypeError>,
     // Symbol table for LSP features (all symbols with their info)
     symbol_table: Vec<SymbolInfo>,
+    // Expression types mapped by pointer address (for codegen)
+    // Safe because AST is not mutated between type checking and code generation
+    expr_types: HashMap<usize, TypedType>,
 }
 
 // ============================================================
@@ -698,6 +701,7 @@ impl TypeChecker {
             async_runtime_stack: Vec::new(),
             collected_errors: Vec::new(),
             symbol_table: Vec::new(),
+            expr_types: HashMap::new(),
         };
 
         // Register built-in functions and traits
@@ -721,6 +725,17 @@ impl TypeChecker {
     /// Clears the symbol table
     pub fn clear_symbols(&mut self) {
         self.symbol_table.clear();
+    }
+
+    /// Returns the expression types map (pointer address -> type)
+    pub fn expr_types(&self) -> &HashMap<usize, TypedType> {
+        &self.expr_types
+    }
+
+    /// Records an expression's type by its pointer address
+    fn record_expr_type(&mut self, expr: &Expr, ty: &TypedType) {
+        let ptr = expr as *const Expr as usize;
+        self.expr_types.insert(ptr, ty.clone());
     }
 
     /// Adds a symbol to the table
@@ -2604,8 +2619,15 @@ impl TypeChecker {
     fn check_expr(&mut self, expr: &Expr) -> Result<TypedType, TypeError> {
         self.check_expr_with_expected(expr, None)
     }
-    
+
     fn check_expr_with_expected(&mut self, expr: &Expr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
+        let result = self.check_expr_inner(expr, expected)?;
+        // Record the expression type for codegen
+        self.record_expr_type(expr, &result);
+        Ok(result)
+    }
+
+    fn check_expr_inner(&mut self, expr: &Expr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         match expr {
             Expr::IntLit(_) => Ok(TypedType::Int32),
             Expr::FloatLit(_) => Ok(TypedType::Float64),

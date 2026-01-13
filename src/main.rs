@@ -245,6 +245,9 @@ async fn main() {
     println!("\n=== WASM Code Generation ===");
     let mut codegen = WasmCodeGen::new();
 
+    // Pass expression types from type checker to codegen
+    codegen.set_expr_types(type_checker.expr_types());
+
     // Register imported declarations with codegen
     for (_name, decl) in &imported_decls {
         codegen.register_imported_decl(decl);

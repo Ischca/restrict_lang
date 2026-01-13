@@ -53,11 +53,13 @@ wasmtime hello.wat
 ## ✨ Features
 
 - **🔒 Affine Type System**: Variables can be used at most once, preventing accidental resource duplication
+- **🧬 Generics**: Parametric polymorphism with type inference and monomorphization
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
 - **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for Option, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition
+- **📦 Module System**: Import/export with file-based module resolution
 - **💬 Comments**: Full support for single-line (`//`) and multi-line (`/* */`) comments
 - **✂️ Semicolon-Free**: Kotlin-style newline-based statement termination (semicolons optional)
 
@@ -164,31 +166,50 @@ val sum = point match {
 }
 ```
 
+### Generics
+
+```rust
+// Generic function
+fun identity<T>: (x: T) -> T = {
+    x
+}
+
+// Generic record
+record Box<T> {
+    value: T
+}
+
+// Usage - types are inferred
+val a = 42 identity          // T = Int
+val b = "hello" identity     // T = String
+val box = Box { value = 42 } // Box<Int>
+```
+
 ### Records and Methods
 
 ```rust
-// Record definition (fields are space-separated)
+// Record definition (comma-separated fields)
 record Person {
-    name: String
-    age: Int
+    name: String,
+    age: Int,
     email: String
 }
 
 // Method implementation
 impl Person {
-    fun greet = self:Person {
+    fun greet: (self: Person) -> String = {
         "Hello, " + self.name + "!"
     }
-    
-    fun is_adult = self:Person {
+
+    fun is_adult: (self: Person) -> Bool = {
         self.age >= 18
     }
 }
 
-// Usage (fields are space-separated)
-val alice = Person { name: "Alice" age: 30 email: "alice@example.com" }
-val greeting = alice.greet()  // "Hello, Alice!"
-val adult = alice.is_adult()  // true
+// Usage
+val alice = Person { name = "Alice", age = 30, email = "alice@example.com" }
+val greeting = alice greet  // "Hello, Alice!"
+val adult = alice is_adult  // true
 ```
 
 ### Arena Memory Management

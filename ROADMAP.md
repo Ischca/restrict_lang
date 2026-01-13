@@ -1,6 +1,6 @@
 # Restrict Language Development Roadmap
 
-**Last Updated**: 2025-12-27
+**Last Updated**: 2025-01-13
 **Status**: Active Development
 **Target**: v1.0 Release
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 📊 Current Status (as of 2025-12-27)
+## 📊 Current Status (as of 2025-01-13)
 
 ### ✅ Implemented & Stable (70-95%)
 
@@ -31,20 +31,20 @@
 | Affine Types (Basic) | ⚠️ 80% | Working but needs refinement |
 | OSV Syntax | ✅ 95% | Right-associative calls functional |
 | Lambda Expressions | ✅ 85% | Closures working, some edge cases |
-| Pattern Matching (Parsing) | ✅ 90% | Option, List, Record patterns |
+| Pattern Matching | ✅ 90% | Option, List, Record patterns with codegen |
 | Arena Memory | ✅ 85% | Basic arena allocation |
 | Context System | ✅ 75% | Callback-based resource management |
+| **Generics** | ✅ 90% | Type params, inference, monomorphization |
+| **Module System** | ✅ 80% | Imports, exports, file resolution |
 
 ### 🚧 Partially Implemented (30-70%)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Pattern Matching (Codegen) | ⚠️ 60% | Some patterns missing codegen |
 | Affine Types (Complex) | ⚠️ 70% | Multiple refs, complex expressions |
-| Type Inference | ⚠️ 70% | Bidirectional working, needs expansion |
-| WebAssembly Codegen | ⚠️ 60% | Basic constructs work, advanced incomplete |
-| Module System | ⚠️ 40% | Structure exists, not fully functional |
-| Standard Library | ⚠️ 50% | Core functions exist, incomplete |
+| Type Inference | ⚠️ 75% | Bidirectional + generics working |
+| WebAssembly Codegen | ⚠️ 70% | Most constructs work |
+| Standard Library | ⚠️ 60% | Core functions, IO, Result type |
 
 ### 🔬 Experimental / On Hold (0-30%)
 

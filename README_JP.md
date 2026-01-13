@@ -156,6 +156,43 @@ val sum = 10 +
 
 ---
 
+## 4.1 ジェネリクス
+
+型パラメータを持つ関数とレコードを定義できます：
+
+```rust
+// ジェネリック関数（型パラメータは関数名の後）
+fun identity<T>: (x: T) -> T = {
+    x
+}
+
+// ジェネリックレコード
+record Box<T> {
+    value: T
+}
+
+record Pair<A, B> {
+    first: A,
+    second: B
+}
+
+// 使用時に型が推論される
+val a = 42 identity          // T = Int
+val b = "hello" identity     // T = String
+val box = Box { value = 42 } // Box<Int>
+```
+
+パターンマッチでレコードを分解：
+```rust
+fun swap<A, B>: (p: Pair<A, B>) -> Pair<B, A> = {
+    p match {
+        Pair { first, second } => { Pair { first = second, second = first } }
+    }
+}
+```
+
+---
+
 ## 5. 語順・演算子・関数
 
 * **OSV**: `obj subj.verb`

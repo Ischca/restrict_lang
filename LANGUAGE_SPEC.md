@@ -157,12 +157,12 @@ fun getAnswer: () -> Int32 = {
     42
 }
 
-// ジェネリクスと時相パラメータ
-fun identity: <T>(value: T) -> T = {
+// ジェネリクス（型パラメータは名前の後）
+fun identity<T>: (value: T) -> T = {
     value
 }
 
-fun process: <~t>(data: Data<~t>) -> Result<Data<~t>, Error> = {
+fun process<~t>: (data: Data<~t>) -> Result<Data<~t>, Error> = {
     data |> validate |> transform
 }
 ```
@@ -201,16 +201,85 @@ list match {
     _ => { "other" }
 }
 
-// Record
+// Record（パターンマッチでの分解）
 point match {
     Point { x = 0, y = 0 } => { "origin" }
-    Point { x, y } => { x + y }
+    Point { x, y } => { x + y }  // 各フィールドが独立した値として束縛
 }
 ```
 
-## 5. リソース管理
+レコードパターンでの分解により、アフィン型違反を回避できる：
+```rust
+// 複数フィールドアクセスもOK
+p match {
+    Pair { first, second } => { Pair { first = second, second = first } }
+}
+```
 
-### 5.1 環境スコープの統一構文
+## 5. ジェネリクス
+
+### 5.1 ジェネリック関数
+```rust
+// 型パラメータは関数名の後、コロンの前
+fun identity<T>: (x: T) -> T = {
+    x
+}
+
+// 複数の型パラメータ
+fun swap<A, B>: (p: Pair<A, B>) -> Pair<B, A> = {
+    p match {
+        Pair { first, second } => { Pair { first = second, second = first } }
+    }
+}
+
+// 使用時に型が推論される
+val a = 42 identity        // T = Int と推論
+val b = "hello" identity   // T = String と推論
+```
+
+### 5.2 ジェネリックレコード
+```rust
+// 型パラメータ付きレコード定義
+record Box<T> {
+    value: T
+}
+
+record Pair<A, B> {
+    first: A,
+    second: B
+}
+
+// インスタンス化
+val box_int = Box { value = 42 }       // Box<Int>
+val box_str = Box { value = "hello" }  // Box<String>
+```
+
+### 5.3 型境界 (Type Bounds)
+```rust
+// T は Display トレイトを実装している必要がある
+fun show<T: Display>: (x: T) -> Unit = {
+    x println
+}
+
+// 複数の境界
+fun compare<T: Ord + Eq>: (a: T, b: T) -> Bool = {
+    a == b
+}
+```
+
+### 5.4 単相化 (Monomorphization)
+ジェネリック関数は使用時に具体的な型で特殊化される：
+```rust
+fun identity<T>: (x: T) -> T = { x }
+
+// 以下の呼び出しで2つの特殊化された関数が生成される
+42 identity       // → identity_Int が生成
+"hello" identity  // → identity_String が生成
+```
+
+## 6. リソース管理
+
+### 6.1 環境スコープの統一構文
 すべての環境は `X { ... }` の形式で「Xが浸透した環境」を表現：
 
 1. `temporal ~t { ... }` - 時相環境（~tが存在）
@@ -228,7 +297,7 @@ Database {
 }
 ```
 
-### 5.2 Clone/Freeze
+### 6.2 Clone/Freeze
 ```rust
 // Clone with modification
 val newObj = obj.clone { field = newValue }

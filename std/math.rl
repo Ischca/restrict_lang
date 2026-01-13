@@ -1,72 +1,93 @@
+// Restrict Language Standard Library: Math Functions
 // 標準ライブラリ: 数学関数
-// Standard Library: Math Functions
 
-// 基本的な数学関数
-fun abs(x: Int) {
-    then x < 0 {
-        -x
-    } else {
-        x
+// ============================================================
+// Absolute Value
+// ============================================================
+
+// Get absolute value of an integer
+export fun abs: (x: Int) -> Int = {
+    x < 0 then { 0 - x } else { x }
+}
+
+// ============================================================
+// Min/Max Functions
+// ============================================================
+
+// Return the smaller of two integers
+export fun min: (a: Int, b: Int) -> Int = {
+    a < b then { a } else { b }
+}
+
+// Return the larger of two integers
+export fun max: (a: Int, b: Int) -> Int = {
+    a > b then { a } else { b }
+}
+
+// ============================================================
+// Sign Functions
+// ============================================================
+
+// Return the sign of an integer: -1, 0, or 1
+export fun signum: (x: Int) -> Int = {
+    x < 0 then { 0 - 1 } else { x > 0 then { 1 } else { 0 } }
+}
+
+// Check if a number is positive
+export fun is_positive: (x: Int) -> Bool = {
+    x > 0
+}
+
+// Check if a number is negative
+export fun is_negative: (x: Int) -> Bool = {
+    x < 0
+}
+
+// Check if a number is zero
+export fun is_zero: (x: Int) -> Bool = {
+    x == 0
+}
+
+// ============================================================
+// Integer Division Functions
+// ============================================================
+
+// Integer power: base^exp (for non-negative exponents)
+export fun pow: (base: Int, exp: Int) -> Int = {
+    exp == 0 then { 1 } else {
+        exp == 1 then { base } else {
+            val half = (base, exp / 2) pow
+            (exp % 2) == 0 then {
+                half * half
+            } else {
+                half * half * base
+            }
+        }
     }
 }
 
-fun max(a: Int, b: Int) {
-    then a > b {
-        a
-    } else {
-        b
+// Greatest common divisor (Euclidean algorithm)
+export fun gcd: (a: Int, b: Int) -> Int = {
+    b == 0 then { a abs } else {
+        (b, a % b) gcd
     }
 }
 
-fun min(a: Int, b: Int) {
-    then a < b {
-        a
-    } else {
-        b
+// Least common multiple
+export fun lcm: (a: Int, b: Int) -> Int = {
+    val g = (a, b) gcd
+    g == 0 then { 0 } else {
+        (a abs) / g * (b abs)
     }
 }
 
-// Float版
-fun abs_f(x: Float) {
-    then x < 0.0 {
-        -x
-    } else {
-        x
-    }
-}
+// ============================================================
+// Clamping
+// ============================================================
 
-fun max_f(a: Float, b: Float) {
-    then a > b {
-        a
-    } else {
-        b
-    }
-}
-
-fun min_f(a: Float, b: Float) {
-    then a < b {
-        a
-    } else {
-        b
-    }
-}
-
-// 累乗関数（簡単な実装）
-fun pow(base: Int, exp: Int) {
-    mut result = 1
-    mut i = 0
-    while i < exp {
-        result = result * base
-        i = i + 1
-    }
-    result
-}
-
-// 階乗
-fun factorial(n: Int) {
-    then n <= 1 {
-        1
-    } else {
-        n * factorial(n - 1)
+// Clamp a value to a range [lo, hi]
+export fun clamp: (x: Int, lo: Int, hi: Int) -> Int = {
+    x < lo then { lo } else {
+        x > hi then { hi } else { x }
     }
 }

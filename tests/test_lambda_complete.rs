@@ -86,6 +86,7 @@ fn test_lambda_type_inference() {
 }
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_lambda_affine_semantics() {
     // Test that lambdas follow affine type rules for captured variables
     

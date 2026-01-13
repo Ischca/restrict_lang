@@ -158,6 +158,10 @@ pub enum Token {
     Some,
     /// `None` variant constructor
     None,
+    /// `Ok` variant constructor for Result
+    Ok,
+    /// `Err` variant constructor for Result
+    Err,
     /// `import` keyword
     Import,
     /// `export` keyword
@@ -260,6 +264,8 @@ impl fmt::Display for Token {
             Token::Unit => write!(f, "Unit"),
             Token::Some => write!(f, "Some"),
             Token::None => write!(f, "None"),
+            Token::Ok => write!(f, "Ok"),
+            Token::Err => write!(f, "Err"),
             Token::Import => write!(f, "import"),
             Token::Export => write!(f, "export"),
             Token::Sealed => write!(f, "sealed"),
@@ -353,6 +359,8 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "Some" => Token::Some,
         "None" => Token::None,
         "none" => Token::None,  // Allow lowercase for inference
+        "Ok" => Token::Ok,
+        "Err" => Token::Err,
         "import" => Token::Import,
         "export" => Token::Export,
         "sealed" => Token::Sealed,

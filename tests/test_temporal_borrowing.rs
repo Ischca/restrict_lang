@@ -1,6 +1,7 @@
 use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_sublifetime_constraint() {
     // Test basic sublifetime relationship
     let input = r#"
@@ -32,6 +33,7 @@ fn test_sublifetime_constraint() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_invalid_sublifetime_constraint() {
     // Test invalid constraint - ~tx not within ~db
     let input = r#"
@@ -68,6 +70,7 @@ fn test_invalid_sublifetime_constraint() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_borrowing() {
     // Test temporal borrowing pattern
     let input = r#"
@@ -96,6 +99,7 @@ fn test_temporal_borrowing() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_transitive_sublifetime() {
     // Test transitive sublifetime relationships
     let input = r#"

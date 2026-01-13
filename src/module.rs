@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use anyhow::{Result, Context, bail};
 use crate::ast::{Program, ImportItems, TopDecl};
@@ -16,6 +16,8 @@ pub struct Module {
 pub struct ModuleResolver {
     modules: HashMap<Vec<String>, Module>,
     search_paths: Vec<PathBuf>,
+    /// Modules currently being resolved (for cycle detection)
+    resolving: HashSet<Vec<String>>,
 }
 
 impl ModuleResolver {
@@ -23,19 +25,36 @@ impl ModuleResolver {
         Self {
             modules: HashMap::new(),
             search_paths: vec![PathBuf::from(".")],
+            resolving: HashSet::new(),
         }
     }
-    
+
     pub fn add_search_path(&mut self, path: PathBuf) {
         self.search_paths.push(path);
     }
-    
+
     pub fn resolve_module(&mut self, module_path: &[String]) -> Result<Vec<String>> {
         // Check if already loaded
         if self.modules.contains_key(module_path) {
             return Ok(module_path.to_vec());
         }
-        
+
+        // Check for circular dependency
+        if self.resolving.contains(module_path) {
+            bail!(
+                "Circular dependency detected: {} is already being resolved.\n\
+                 Import chain involves: {}",
+                module_path.join("."),
+                self.resolving.iter()
+                    .map(|p| p.join("."))
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
+            );
+        }
+
+        // Mark as currently resolving
+        self.resolving.insert(module_path.to_vec());
+
         // Try to find the module file
         let file_path = self.find_module_file(module_path)?;
         
@@ -69,20 +88,24 @@ impl ModuleResolver {
         
         program.declarations = regular_decls;
         
+        // Process imports BEFORE inserting into modules
+        // This allows cycle detection to work properly
+        for import in &imports {
+            self.resolve_module(&import.module_path)?;
+        }
+
         let module = Module {
             path: file_path,
             name: module_path.to_vec(),
             program,
             exports,
         };
-        
+
         self.modules.insert(module_path.to_vec(), module);
-        
-        // Process imports after storing the module
-        for import in &imports {
-            self.resolve_module(&import.module_path)?;
-        }
-        
+
+        // Remove from resolving set (module is now fully resolved)
+        self.resolving.remove(module_path);
+
         Ok(module_path.to_vec())
     }
     

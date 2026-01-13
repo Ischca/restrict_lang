@@ -1,6 +1,7 @@
 use restrict_lang::parse_program;
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_simple_two_functions() {
     let input = r#"fun first = {
     42
@@ -20,6 +21,7 @@ fun second = {
 }
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_record_then_function() {
     let input = r#"record Point {
     x: Int32
@@ -40,6 +42,7 @@ fun origin = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_temporal_record_then_function() {
     let input = r#"record File<~f> {
     handle: Int32

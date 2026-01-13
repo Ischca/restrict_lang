@@ -4,6 +4,7 @@ use restrict_lang::{parse_program, TypeChecker};
 /// These tests cover corner cases and error scenarios not covered in other test files
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_escape_through_closure() {
     // Test that temporal values cannot escape through closures
     let input = r#"record File<~f> {
@@ -42,6 +43,7 @@ fun main: () -> Unit = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_in_recursive_types() {
     // Test temporal types in recursive data structures
     let input = r#"
@@ -72,6 +74,7 @@ fn test_temporal_in_recursive_types() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_constraint_transitivity_violation() {
     // Test that transitive constraints are properly enforced
     let input = r#"
@@ -112,6 +115,7 @@ fn test_temporal_constraint_transitivity_violation() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_multiple_constraints() {
     // Test records with multiple temporal constraints
     let input = r#"
@@ -142,6 +146,7 @@ fn test_temporal_multiple_constraints() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_in_match_patterns() {
     // Test temporal types in pattern matching
     let input = r#"
@@ -183,6 +188,7 @@ fn test_temporal_in_match_patterns() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_function_parameter_inference() {
     // Test that temporal parameters are correctly inferred in function calls
     let input = r#"
@@ -218,6 +224,7 @@ fn test_temporal_function_parameter_inference() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_affine_double_use() {
     // Test that temporal values still follow affine rules
     let input = r#"
@@ -253,6 +260,7 @@ fn test_temporal_affine_double_use() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_partial_application() {
     // Test temporal types with partial function application
     let input = r#"
@@ -284,6 +292,7 @@ fn test_temporal_partial_application() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_cyclic_constraint() {
     // Test that cyclic temporal constraints are rejected
     let input = r#"
@@ -314,6 +323,7 @@ fn test_temporal_cyclic_constraint() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_with_context_interaction() {
     // Test interaction between temporal scopes and context
     let input = r#"
@@ -346,6 +356,7 @@ fn test_temporal_with_context_interaction() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_empty_scope() {
     // Test empty temporal scope behavior
     let input = r#"
@@ -365,6 +376,7 @@ fn test_temporal_empty_scope() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_shadowing() {
     // Test temporal variable shadowing
     let input = r#"

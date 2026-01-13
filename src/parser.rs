@@ -148,25 +148,14 @@ fn parse_type(input: &str) -> ParseResult<Type> {
 
     // Parse type name - handle both identifiers and the Unit keyword
     let (input, name) = type_name(input)?;
+
+    // Try to parse type parameters: <T>, <Option<T>>, <~f>
     let (input, type_params) = opt(
         delimited(
             expect_token(Token::Lt),
             separated_list0(
                 expect_token(Token::Comma),
-                alt((
-                    // Parse temporal parameter (~f)
-                    map(
-                        preceded(expect_token(Token::Tilde), ident),
-                        |name| (name, true)  // (name, is_temporal)
-                    ),
-                    // Parse regular type parameter
-                    map(parse_type, |ty| {
-                        match ty {
-                            Type::Named(n) => (n, false),
-                            _ => panic!("Complex types not supported as parameters yet")
-                        }
-                    })
-                ))
+                parse_generic_arg
             ),
             expect_token(Token::Gt)
         )
@@ -174,16 +163,27 @@ fn parse_type(input: &str) -> ParseResult<Type> {
 
     match type_params {
         Some(params) => {
-            // Check if all are temporal
-            let all_temporal = params.iter().all(|(_, is_temporal)| *is_temporal);
-            let all_regular = params.iter().all(|(_, is_temporal)| !*is_temporal);
+            // Check if all parameters are temporal
+            let all_temporal = params.iter().all(|p| matches!(p, GenericArg::Temporal(_)));
+            let all_types = params.iter().all(|p| matches!(p, GenericArg::Type(_)));
 
             if all_temporal {
                 // All temporal: File<~f>
-                Ok((input, Type::Temporal(name, params.into_iter().map(|(n, _)| n).collect())))
-            } else if all_regular {
-                // All regular types: Vec<String>
-                let types = params.into_iter().map(|(n, _)| Type::Named(n)).collect();
+                let temporal_names: Vec<String> = params.into_iter().map(|p| {
+                    match p {
+                        GenericArg::Temporal(n) => n,
+                        _ => unreachable!()
+                    }
+                }).collect();
+                Ok((input, Type::Temporal(name, temporal_names)))
+            } else if all_types {
+                // All regular types: Vec<String>, Option<Option<T>>
+                let types: Vec<Type> = params.into_iter().map(|p| {
+                    match p {
+                        GenericArg::Type(ty) => ty,
+                        _ => unreachable!()
+                    }
+                }).collect();
                 Ok((input, Type::Generic(name, types)))
             } else {
                 // Mixed not supported yet
@@ -192,6 +192,26 @@ fn parse_type(input: &str) -> ParseResult<Type> {
         }
         None => Ok((input, Type::Named(name)))
     }
+}
+
+/// Helper enum to distinguish between temporal parameters (~f) and type parameters (T, Option<T>)
+/// Named GenericArg to avoid conflict with ast::TypeParam
+enum GenericArg {
+    Temporal(String),
+    Type(Type),
+}
+
+/// Parse a single type parameter (either ~name for temporal or a full type)
+fn parse_generic_arg(input: &str) -> ParseResult<GenericArg> {
+    alt((
+        // Parse temporal parameter (~f)
+        map(
+            preceded(expect_token(Token::Tilde), ident),
+            GenericArg::Temporal
+        ),
+        // Parse regular type (can be nested generic like Option<T>)
+        map(parse_type, GenericArg::Type)
+    ))(input)
 }
 
 fn field_decl(input: &str) -> ParseResult<FieldDecl> {
@@ -226,10 +246,15 @@ fn record_decl(input: &str) -> ParseResult<RecordDecl> {
         )(input)
     })(input)?;
     let temporal_constraints = temporal_constraints.unwrap_or_default();
-    
+
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    // Parse fields - they should be space-separated, not comma-separated
-    let (input, fields) = many0(field_decl)(input)?;
+    // Parse fields - strictly comma-separated with optional trailing comma
+    let (input, fields) = separated_list0(
+        expect_token(Token::Comma),
+        field_decl
+    )(input)?;
+    // Consume optional trailing comma
+    let (input, _) = opt(expect_token(Token::Comma))(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
     
     // For now, skip freeze/sealed checks to debug parsing issue
@@ -397,16 +422,16 @@ fn lazy_block_expr(input: &str) -> ParseResult<BlockExpr> {
 fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     // Skip leading whitespace
     let (input, _) = skip(input)?;
-    
+
     // Check for optional async keyword
     let (input, is_async) = opt(expect_token(Token::Async))(input)?;
     let is_async = is_async.is_some();
-    
+
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
-    let (input, _) = expect_token(Token::Colon)(input)?;
-    
+
     // Parse optional generic type parameters: <T: Display, U: Clone + Debug, ~t>
+    // Syntax: fun name<T, U>: (...) -> T
     let (input, type_params) = opt(|input| {
         let (input, _) = expect_token(Token::Lt)(input)?;
         let (input, params) = separated_list1(
@@ -417,7 +442,9 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
         Ok((input, params))
     })(input)?;
     let type_params = type_params.unwrap_or_default();
-    
+
+    let (input, _) = expect_token(Token::Colon)(input)?;
+
     // Parse parameter list: (x: Int32, y: Int32)
     let (input, _) = expect_token(Token::LParen)(input)?;
     let (input, params) = separated_list0(
@@ -427,11 +454,11 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     let (input, _) = expect_token(Token::RParen)(input)?;
     
     // Parse optional return type: -> ReturnType
-    let (input, _return_type) = opt(|input| {
+    let (input, return_type) = opt(|input| {
         let (input, _) = expect_token(Token::ThinArrow)(input)?;
         parse_type(input)
     })(input)?;
-    
+
     // Parse optional temporal constraints: where ~tx within ~db
     let (input, temporal_constraints) = opt(|input| {
         let (input, _) = expect_token(Token::Where)(input)?;
@@ -441,16 +468,17 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
         )(input)
     })(input)?;
     let temporal_constraints = temporal_constraints.unwrap_or_default();
-    
+
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, body) = block_expr(input)?;
-    
+
     Ok((input, FunDecl {
         name,
         is_async,
         type_params,
         temporal_constraints,
         params,
+        return_type,
         body,
         span: None,
     }))
@@ -536,11 +564,14 @@ pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
     let (input, mutable) = opt(expect_token(Token::Mut))(input)?;
     let (input, _) = expect_token(Token::Val)(input)?;
     let (input, name) = ident(input)?;
+    // Parse optional type annotation: `: Type`
+    let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to avoid consuming across statement boundaries
     Ok((input, BindDecl {
         mutable: mutable.is_some(),
         name,
+        ty,
         value: Box::new(value),
         span: None,
     }))
@@ -605,6 +636,8 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         lambda_expr,  // Try lambda before other expressions that use |
         some_expr,  // Try Some before ident
         none_expr,  // Try None before ident
+        ok_expr,    // Try Ok before ident
+        err_expr,   // Try Err before ident
         array_lit,  // Try array literal before list
         list_lit,  // Try list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
@@ -645,6 +678,22 @@ fn some_expr(input: &str) -> ParseResult<Expr> {
     let (input, expr) = expression(input)?;
     let (input, _) = expect_token(Token::RParen)(input)?;
     Ok((input, Expr::Some(Box::new(expr))))
+}
+
+fn ok_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::Ok)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, expr) = expression(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Expr::Ok(Box::new(expr))))
+}
+
+fn err_expr(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::Err)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, expr) = expression(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Expr::Err(Box::new(expr))))
 }
 
 fn list_lit(input: &str) -> ParseResult<Expr> {
@@ -765,6 +814,8 @@ fn pattern(input: &str) -> ParseResult<Pattern> {
         },
         some_pattern,
         none_pattern,
+        ok_pattern,    // Result Ok pattern
+        err_pattern,   // Result Err pattern
         record_pattern,  // Try record patterns before identifiers
         list_pattern,  // Try list patterns before literals
         map(literal, |expr| match expr {
@@ -793,13 +844,30 @@ fn none_pattern(input: &str) -> ParseResult<Pattern> {
     Ok((input, Pattern::None))
 }
 
+fn ok_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::Ok)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, inner_pattern) = pattern(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Ok(Box::new(inner_pattern))))
+}
+
+fn err_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::Err)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, inner_pattern) = pattern(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Err(Box::new(inner_pattern))))
+}
+
 fn record_pattern(input: &str) -> ParseResult<Pattern> {
     // Try to parse an identifier followed by {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::LBrace)(input)?;
-    
-    // Parse fields
-    let (input, fields) = many0(
+
+    // Parse comma-separated fields
+    let (input, fields) = separated_list0(
+        expect_token(Token::Comma),
         |input| {
             let (input, field_name) = ident(input)?;
             // Check if there's a colon for an explicit pattern
@@ -812,7 +880,7 @@ fn record_pattern(input: &str) -> ParseResult<Pattern> {
             }
         }
     )(input)?;
-    
+
     let (input, _) = expect_token(Token::RBrace)(input)?;
     Ok((input, Pattern::Record(name, fields)))
 }
@@ -837,14 +905,16 @@ fn list_pattern(input: &str) -> ParseResult<Pattern> {
     
     // Otherwise it's an exact pattern [a, b, c]
     let mut patterns = vec![Box::new(first)];
-    
-    // Parse remaining elements
-    let (input, mut rest) = separated_list0(
-        expect_token(Token::Comma),
-        map(pattern, Box::new)
+
+    // Parse remaining elements (comma-prefixed)
+    let (input, mut rest) = many0(
+        preceded(
+            expect_token(Token::Comma),
+            map(pattern, Box::new)
+        )
     )(input)?;
     patterns.append(&mut rest);
-    
+
     let (input, _) = expect_token(Token::RBracket)(input)?;
     Ok((input, Pattern::ListExact(patterns)))
 }
@@ -1141,7 +1211,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<Expr> 
 }
 
 pub fn simple_expr(input: &str) -> ParseResult<Expr> {
-    let (mut input, mut expr) = atom_expr(input)?;
+    let (mut input, mut expr) = unary_expr(input)?;
 
     // Handle postfix operations
     loop {
@@ -1616,7 +1686,7 @@ fn expr_uses_it(expr: &Expr) -> bool {
         Expr::Lambda(lambda) => expr_uses_it(&lambda.body),
         Expr::FieldAccess(obj, _) => expr_uses_it(obj),
         Expr::ListLit(items) | Expr::ArrayLit(items) => items.iter().any(|item| expr_uses_it(item)),
-        Expr::Some(inner) => expr_uses_it(inner),
+        Expr::Some(inner) | Expr::Ok(inner) | Expr::Err(inner) => expr_uses_it(inner),
         Expr::RecordLit(rec) => rec.fields.iter().any(|f| expr_uses_it(&f.value)),
         Expr::Clone(clone) => {
             expr_uses_it(&clone.base) ||
@@ -1642,7 +1712,7 @@ mod tests {
 
     #[test]
     fn test_record_decl() {
-        let input = "record Enemy { hp: Int atk: Int }";
+        let input = "record Enemy { hp: Int, atk: Int }";
         let (_, decl) = record_decl(input).unwrap();
         assert_eq!(decl.name, "Enemy");
         assert_eq!(decl.fields.len(), 2);

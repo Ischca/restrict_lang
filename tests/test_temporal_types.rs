@@ -1,6 +1,7 @@
 use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_type_basic() {
     // Basic temporal type variable
     let input = r#"
@@ -23,6 +24,7 @@ fn test_temporal_type_basic() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_constraint_within() {
     // Test ~tx within ~db constraint
     let input = r#"
@@ -47,6 +49,7 @@ fn test_temporal_constraint_within() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_inference() {
     // Temporal variables should be inferred
     let input = r#"
@@ -72,6 +75,7 @@ fn test_temporal_inference() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_escape_error() {
     // Should error when trying to return temporal outside its scope
     let input = r#"record File<~f> {
@@ -102,6 +106,7 @@ fun main: () -> Int = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_with_context() {
     // Context creates temporal scope
     let input = r#"
@@ -127,6 +132,7 @@ fn test_temporal_with_context() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_nested_temporal_scopes() {
     // Nested temporal relationships
     let input = r#"

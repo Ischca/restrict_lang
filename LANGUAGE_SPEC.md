@@ -66,6 +66,62 @@ record Point { x: Int32 y: Int32 }
 val p = Point { x = 10, y = 20 }
 ```
 
+### 1.10 命名規則 (Naming Conventions)
+
+Restrict Languageは **snake_case** を標準命名規則として採用する（OCaml/Rust風）。
+
+#### 関数名・変数名
+- **採用**: `snake_case`
+- **理由**:
+  - OSV構文での可読性（`(s) string_length` vs `(s) stringLength`）
+  - Rust（コンパイラ実装言語）との親和性
+  - 関数型言語（OCaml, Haskell）の慣例に準拠
+
+```rust
+// 良い例
+val user_name = "Alice"
+fun string_length: (s: String) -> Int = { ... }
+fun is_digit: (c: Char) -> Bool = { ... }
+fun char_to_int: (c: Char) -> Int = { ... }
+
+// 避けるべき例
+val userName = "Alice"      // camelCase は非推奨
+fun stringLength = { ... }  // camelCase は非推奨
+```
+
+#### 型名・レコード名
+- **採用**: `PascalCase`
+- **理由**: 値と型を視覚的に区別
+
+```rust
+// 型名は PascalCase
+record UserProfile { name: String, age: Int32 }
+enum HttpStatus { Ok, NotFound, ServerError }
+
+// ジェネリック型パラメータは大文字1文字
+fun map<T, U>: (list: List<T>, f: |T| -> U) -> List<U> = { ... }
+```
+
+#### 定数
+- **採用**: `SCREAMING_SNAKE_CASE`（オプション）
+- **理由**: 定数と変数を視覚的に区別
+
+```rust
+val MAX_BUFFER_SIZE = 1024
+val DEFAULT_TIMEOUT = 30
+```
+
+#### まとめ
+
+| 種類 | 規則 | 例 |
+|------|------|-----|
+| 関数名 | `snake_case` | `string_length`, `to_upper` |
+| 変数名 | `snake_case` | `user_name`, `total_count` |
+| 型名 | `PascalCase` | `UserProfile`, `HttpResponse` |
+| レコード名 | `PascalCase` | `Point`, `Rectangle` |
+| 型パラメータ | 大文字1文字 | `T`, `U`, `E` |
+| 定数（任意） | `SCREAMING_SNAKE_CASE` | `MAX_SIZE` |
+
 ## 2. 型システム
 
 ### 2.1 基本型
@@ -101,12 +157,12 @@ fun getAnswer: () -> Int32 = {
     42
 }
 
-// ジェネリクスと時相パラメータ
-fun identity: <T>(value: T) -> T = {
+// ジェネリクス（型パラメータは名前の後）
+fun identity<T>: (value: T) -> T = {
     value
 }
 
-fun process: <~t>(data: Data<~t>) -> Result<Data<~t>, Error> = {
+fun process<~t>: (data: Data<~t>) -> Result<Data<~t>, Error> = {
     data |> validate |> transform
 }
 ```
@@ -145,16 +201,85 @@ list match {
     _ => { "other" }
 }
 
-// Record
+// Record（パターンマッチでの分解）
 point match {
     Point { x = 0, y = 0 } => { "origin" }
-    Point { x, y } => { x + y }
+    Point { x, y } => { x + y }  // 各フィールドが独立した値として束縛
 }
 ```
 
-## 5. リソース管理
+レコードパターンでの分解により、アフィン型違反を回避できる：
+```rust
+// 複数フィールドアクセスもOK
+p match {
+    Pair { first, second } => { Pair { first = second, second = first } }
+}
+```
 
-### 5.1 環境スコープの統一構文
+## 5. ジェネリクス
+
+### 5.1 ジェネリック関数
+```rust
+// 型パラメータは関数名の後、コロンの前
+fun identity<T>: (x: T) -> T = {
+    x
+}
+
+// 複数の型パラメータ
+fun swap<A, B>: (p: Pair<A, B>) -> Pair<B, A> = {
+    p match {
+        Pair { first, second } => { Pair { first = second, second = first } }
+    }
+}
+
+// 使用時に型が推論される
+val a = 42 identity        // T = Int と推論
+val b = "hello" identity   // T = String と推論
+```
+
+### 5.2 ジェネリックレコード
+```rust
+// 型パラメータ付きレコード定義
+record Box<T> {
+    value: T
+}
+
+record Pair<A, B> {
+    first: A,
+    second: B
+}
+
+// インスタンス化
+val box_int = Box { value = 42 }       // Box<Int>
+val box_str = Box { value = "hello" }  // Box<String>
+```
+
+### 5.3 型境界 (Type Bounds)
+```rust
+// T は Display トレイトを実装している必要がある
+fun show<T: Display>: (x: T) -> Unit = {
+    x println
+}
+
+// 複数の境界
+fun compare<T: Ord + Eq>: (a: T, b: T) -> Bool = {
+    a == b
+}
+```
+
+### 5.4 単相化 (Monomorphization)
+ジェネリック関数は使用時に具体的な型で特殊化される：
+```rust
+fun identity<T>: (x: T) -> T = { x }
+
+// 以下の呼び出しで2つの特殊化された関数が生成される
+42 identity       // → identity_Int が生成
+"hello" identity  // → identity_String が生成
+```
+
+## 6. リソース管理
+
+### 6.1 環境スコープの統一構文
 すべての環境は `X { ... }` の形式で「Xが浸透した環境」を表現：
 
 1. `temporal ~t { ... }` - 時相環境（~tが存在）
@@ -172,7 +297,7 @@ Database {
 }
 ```
 
-### 5.2 Clone/Freeze
+### 6.2 Clone/Freeze
 ```rust
 // Clone with modification
 val newObj = obj.clone { field = newValue }

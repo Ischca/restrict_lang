@@ -1,6 +1,6 @@
 # Restrict Language Development Roadmap
 
-**Last Updated**: 2025-12-27
+**Last Updated**: 2025-01-13
 **Status**: Active Development
 **Target**: v1.0 Release
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 📊 Current Status (as of 2025-12-27)
+## 📊 Current Status (as of 2025-01-13)
 
 ### ✅ Implemented & Stable (70-95%)
 
@@ -31,20 +31,20 @@
 | Affine Types (Basic) | ⚠️ 80% | Working but needs refinement |
 | OSV Syntax | ✅ 95% | Right-associative calls functional |
 | Lambda Expressions | ✅ 85% | Closures working, some edge cases |
-| Pattern Matching (Parsing) | ✅ 90% | Option, List, Record patterns |
+| Pattern Matching | ✅ 90% | Option, List, Record patterns with codegen |
 | Arena Memory | ✅ 85% | Basic arena allocation |
 | Context System | ✅ 75% | Callback-based resource management |
+| **Generics** | ✅ 90% | Type params, inference, monomorphization |
+| **Module System** | ✅ 80% | Imports, exports, file resolution |
 
 ### 🚧 Partially Implemented (30-70%)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Pattern Matching (Codegen) | ⚠️ 60% | Some patterns missing codegen |
 | Affine Types (Complex) | ⚠️ 70% | Multiple refs, complex expressions |
-| Type Inference | ⚠️ 70% | Bidirectional working, needs expansion |
-| WebAssembly Codegen | ⚠️ 60% | Basic constructs work, advanced incomplete |
-| Module System | ⚠️ 40% | Structure exists, not fully functional |
-| Standard Library | ⚠️ 50% | Core functions exist, incomplete |
+| Type Inference | ⚠️ 75% | Bidirectional + generics working |
+| WebAssembly Codegen | ⚠️ 70% | Most constructs work |
+| Standard Library | ⚠️ 60% | Core functions, IO, Result type |
 
 ### 🔬 Experimental / On Hold (0-30%)
 
@@ -199,24 +199,72 @@ After:  Affine type violation: variable 'p' has already been used.
 
 #### 2.1 Standard Library Expansion
 
-**Tasks**:
-- [ ] List operations: map, filter, fold, zip
-- [ ] String operations: split, join, substring
-- [ ] Option utilities: map, flatMap, unwrap_or
-- [ ] Math functions: min, max, abs, etc.
+**Status**: IN PROGRESS (2025-01-11)
+
+**Completed**:
+- [x] std/math.rl - abs, min, max, signum, pow, gcd, lcm, clamp
+- [x] std/option.rl - Basic Option operations
+- [x] std/string.rl - Character operations (is_digit, is_alpha, to_upper, to_lower, etc.)
+- [x] std/list.rl - Basic list operations
+- [x] std/prelude.rl - Core functions (not, identity, comparison helpers)
+
+**In Progress**:
+- [ ] Memory allocator for dynamic string/list operations
+
+**Completed** (2025-01-11):
+- [x] String runtime (WASM-level): string_length, string_concat, string_equals
+- [x] String conversion: string_to_int, int_to_string
+- [x] String access: char_at, substring
+
+**Completed** (2025-01-11):
+- [x] List higher-order functions: map, filter, fold (working!)
+
+**Remaining Tasks**:
+- [ ] List: zip function
+- [ ] String operations: split, join (needs WASM runtime)
+- [ ] Option utilities: map, flatMap, and_then
 - [ ] I/O functions integrated with contexts
 
 **Success Criteria**: Usable standard library for real applications
 
 ---
 
+#### 2.1.1 String Runtime Implementation (WASM)
+
+**Status**: COMPLETED (2025-01-11)
+
+**Goal**: Implement WASM-level string operations that cannot be written in pure Restrict
+
+**Completed Tasks**:
+- [x] `string_length`: Read 4-byte length prefix
+- [x] `string_concat`: Allocate new string and copy both sources
+- [x] `string_equals`: Byte-by-byte comparison with length check
+- [x] `string_to_int`: Parse integer from string (handles negative numbers)
+- [x] `int_to_string`: Format integer as string (handles negative numbers)
+- [x] `char_at`: Get character at index (bounds checked)
+- [x] `substring`: Extract portion of string (start/end clamped)
+
+**Technical Notes**:
+- Strings use length-prefixed format (4 bytes length + data)
+- Uses arena allocator for dynamic allocation
+- All functions registered in type checker and codegen
+
+---
+
 #### 2.2 Module System Completion
 
-**Tasks**:
-- [ ] Import/export functionality
-- [ ] Module path resolution
-- [ ] Namespace management
-- [ ] Circular dependency detection
+**Status**: MOSTLY COMPLETE (2025-01-11)
+
+**Completed**:
+- [x] Import/export functionality (`import std.math.*`, `export fun`)
+- [x] Module path resolution (search paths, file discovery)
+- [x] Circular dependency detection (with clear error messages)
+- [x] Type checker integration (imported types/functions available)
+- [x] Codegen integration (imported functions compiled)
+
+**Remaining Tasks**:
+- [ ] Qualified name access (`std.math.abs` syntax)
+- [ ] Re-exports (`export import module.*`)
 - [ ] Module-level documentation
 
 **Success Criteria**: Multi-file projects work correctly
@@ -225,10 +273,23 @@ After:  Affine type violation: variable 'p' has already been used.
 
 #### 2.3 Error Handling
 
-**Tasks**:
-- [ ] Result type implementation
-- [ ] Error propagation patterns
-- [ ] Error context and messages
+**Status**: IN PROGRESS (2025-01-11)
+
+**Completed**:
+- [x] Result<T, E> type implementation
+  - Ok(expr) and Err(expr) constructors
+  - Pattern matching with Ok(x) and Err(e)
+  - Type inference for Result types
+  - WASM codegen with tagged unions
+- [x] std/result.rl utility functions
+  - is_ok, is_err predicates
+  - unwrap_or, unwrap_err_or extraction
+  - map_ok, map_err, and_then transformations
+  - ok, err conversion to Option
+
+**Remaining Tasks**:
+- [ ] Error propagation operator (? or similar)
+- [ ] Error context and stack traces
 - [ ] Panic handling in WASM
 - [ ] Graceful error recovery
 
@@ -238,11 +299,18 @@ After:  Affine type violation: variable 'p' has already been used.
 
 #### 2.4 Type System Polish
 
-**Tasks**:
+**Status**: IN PROGRESS (2025-01-11)
+
+**Completed**:
+- [x] Better type error messages with "did you mean" suggestions
+  - Levenshtein distance for fuzzy name matching
+  - Suggests similar variables, functions, records, and fields
+  - Rust-style colored error output with context
+
+**Remaining Tasks**:
 - [ ] Generic type inference improvements
 - [ ] Type aliases
 - [ ] Trait-like bounds (if needed)
-- [ ] Better type error messages
 - [ ] Type system documentation
 
 **Success Criteria**: Type inference "just works" in most cases
@@ -259,6 +327,7 @@ After:  Affine type violation: variable 'p' has already been used.
 - [ ] Warder package manager completion
 - [ ] Build system optimization
 - [ ] Debugger integration (if feasible)
+- [ ] Improved type error messages
 
 **Success Criteria**: Good developer experience
 
@@ -557,4 +626,4 @@ This roadmap will be reviewed and updated:
 
 **End of Roadmap**
 
-*This is a living document. Last updated: 2025-12-27*
+*This is a living document. Last updated: 2025-01-11*

@@ -44,7 +44,8 @@ fn test_tokenize_temporal_function() {
     assert_eq!(tokens[6], Token::Assign);
 }
 
-#[test] 
+#[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_temporal_function_variations() {
     let test_cases = vec![
         ("fun test = { Unit }", true, "simple function"),

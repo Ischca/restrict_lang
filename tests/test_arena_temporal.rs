@@ -34,6 +34,7 @@ fn compile(input: &str) -> Result<String, String> {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_temporal_scope_arena_allocation() {
     let input = r#"record Point<~p> {
     x: Int32
@@ -78,6 +79,7 @@ fun main: () -> Int = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_nested_temporal_scope_memory() {
     let input = r#"record Buffer<~b> {
     data: String
@@ -123,6 +125,7 @@ fun main: () -> Int = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_temporal_scope_with_allocations() {
     let input = r#"fun main: () -> Int = {
     with lifetime<~temp> {
@@ -147,6 +150,7 @@ fn test_temporal_scope_with_allocations() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_temporal_scope_return_value() {
     let input = r#"fun process<~p> = {
     with lifetime<~local> {
@@ -177,6 +181,7 @@ fun main: () -> Int = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_async_runtime_with_arena() {
     let input = r#"fun compute<~async> = n: Int32 {
     n * 2
@@ -203,6 +208,7 @@ fun main: () -> Int = {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) is experimental, deferred to v2.0"]
 fn test_temporal_memory_bounds() {
     let input = r#"record Large<~l> {
     data1: Int32

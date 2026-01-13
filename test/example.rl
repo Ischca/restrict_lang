@@ -1,4 +1,4 @@
-record Point { x: Int y: Int }
+record Point { x: Int, y: Int }
 
 fun distance = p1: Point p2: Point {
     val dx = p1.x

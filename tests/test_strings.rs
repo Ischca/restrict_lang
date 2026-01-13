@@ -70,17 +70,18 @@ fn test_multiple_strings() {
 #[test]
 fn test_string_in_function() {
     let source = r#"
-        fun greet = name: String {
+        fun greet: (name: String) -> Unit = {
             name println
         }
-        
+
         fun main: () -> Int = {
-            "Alice" greet
+            ("Alice") greet;
+            0
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify function call and string passing
     assert!(wat.contains("call $greet"));
     assert!(wat.contains("Alice"));

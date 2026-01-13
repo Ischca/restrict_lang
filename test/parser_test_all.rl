@@ -1,7 +1,7 @@
 // Test all major language constructs
 
 // Record declaration
-record Point { x: Int y: Int }
+record Point { x: Int, y: Int }
 
 // Context declaration  
 context Logger {

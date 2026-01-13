@@ -126,17 +126,25 @@ pub struct SpannedTypeError {
     pub error: TypeError,
     /// Source location where the error occurred
     pub span: Option<Span>,
+    /// Suggestions for "did you mean" hints
+    pub suggestions: Vec<String>,
 }
 
 impl SpannedTypeError {
     /// Creates a new spanned type error.
     pub fn new(error: TypeError, span: Option<Span>) -> Self {
-        Self { error, span }
+        Self { error, span, suggestions: Vec::new() }
     }
 
     /// Creates an error without span information.
     pub fn unspanned(error: TypeError) -> Self {
-        Self { error, span: None }
+        Self { error, span: None, suggestions: Vec::new() }
+    }
+
+    /// Adds suggestions to this error.
+    pub fn with_suggestions(mut self, suggestions: Vec<String>) -> Self {
+        self.suggestions = suggestions;
+        self
     }
 }
 
@@ -161,12 +169,12 @@ impl From<TypeError> for SpannedTypeError {
 impl SpannedTypeError {
     /// Converts this error to a rich Diagnostic for Rust-style output.
     pub fn to_diagnostic(&self) -> Diagnostic {
-        let (code, message, notes, help) = match &self.error {
+        let (code, message, notes, mut help) = match &self.error {
             TypeError::UndefinedVariable(name) => (
                 "E0001",
                 format!("cannot find value `{}` in this scope", name),
                 vec![],
-                vec![format!("consider declaring `{}` with `let`", name)],
+                vec![format!("consider declaring `{}` with `val`", name)],
             ),
             TypeError::TypeMismatch { expected, found } => (
                 "E0002",
@@ -189,7 +197,7 @@ impl SpannedTypeError {
                 "E0004",
                 format!("cannot assign twice to immutable variable `{}`", name),
                 vec![],
-                vec![format!("consider making `{}` mutable with `mut`", name)],
+                vec![format!("consider making `{}` mutable with `var`", name)],
             ),
             TypeError::UnknownType(name) => (
                 "E0005",
@@ -201,7 +209,7 @@ impl SpannedTypeError {
                 "E0006",
                 format!("no field `{}` on type `{}`", field, record),
                 vec![],
-                vec!["available fields: ...".to_string()], // TODO: list available fields
+                vec![], // Suggestions will be added from self.suggestions
             ),
             TypeError::CloneFrozenRecord => (
                 "E0007",
@@ -225,7 +233,7 @@ impl SpannedTypeError {
                 "E0010",
                 format!("cannot find function `{}` in this scope", name),
                 vec![],
-                vec!["check spelling or define the function".to_string()],
+                vec![], // Suggestions will be added from self.suggestions
             ),
             TypeError::ArityMismatch { expected, found } => (
                 "E0011",
@@ -288,6 +296,17 @@ impl SpannedTypeError {
             ),
         };
 
+        // Add "did you mean" suggestions if available
+        if !self.suggestions.is_empty() {
+            let suggestion_text = if self.suggestions.len() == 1 {
+                format!("did you mean `{}`?", self.suggestions[0])
+            } else {
+                let quoted: Vec<String> = self.suggestions.iter().map(|s| format!("`{}`", s)).collect();
+                format!("did you mean one of: {}?", quoted.join(", "))
+            };
+            help.insert(0, suggestion_text);
+        }
+
         let mut diag = Diagnostic::error(message).with_code(code);
 
         if let Some(span) = self.span {
@@ -314,9 +333,10 @@ pub enum TypedType {
     String,
     Char,
     Unit,
-    Record { name: String, frozen: bool, hash: Option<String>, parent_hash: Option<String> },
+    Record { name: String, frozen: bool, hash: Option<String>, parent_hash: Option<String>, type_args: Vec<TypedType> },
     Function { params: Vec<TypedType>, return_type: Box<TypedType> },
     Option(Box<TypedType>),
+    Result { ok: Box<TypedType>, err: Box<TypedType> }, // Result<T, E> type for error handling
     List(Box<TypedType>),
     Array(Box<TypedType>, usize),
     TypeParam(String), // Generic type parameter
@@ -347,6 +367,7 @@ pub fn format_typed_type(ty: &TypedType) -> String {
             format!("({}) -> {}", params_str, format_typed_type(return_type))
         }
         TypedType::Option(inner) => format!("Option<{}>", format_typed_type(inner)),
+        TypedType::Result { ok, err } => format!("Result<{}, {}>", format_typed_type(ok), format_typed_type(err)),
         TypedType::List(inner) => format!("List<{}>", format_typed_type(inner)),
         TypedType::Array(inner, size) => format!("[{}; {}]", format_typed_type(inner), size),
         TypedType::TypeParam(name) => name.clone(),
@@ -360,6 +381,27 @@ pub fn format_typed_type(ty: &TypedType) -> String {
 impl std::fmt::Display for TypedType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", format_typed_type(self))
+    }
+}
+
+/// Check if a type is a Copy type (can be used multiple times without moving)
+/// Primitive types like Int, Bool, Float, and Unit are Copy types.
+pub fn is_copy_type(ty: &TypedType) -> bool {
+    match ty {
+        TypedType::Int32 => true,
+        TypedType::Float64 => true,
+        TypedType::Boolean => true,
+        TypedType::Unit => true,
+        TypedType::Char => true,
+        TypedType::String => false,  // Strings are not Copy (heap allocated)
+        TypedType::Record { .. } => false,  // Records are not Copy by default
+        TypedType::List(_) => false,  // Lists are not Copy
+        TypedType::Array(_, _) => false,  // Arrays are not Copy
+        TypedType::Option(inner) => is_copy_type(inner),  // Option<Copy> is Copy
+        TypedType::Result { ok, err } => is_copy_type(ok) && is_copy_type(err),  // Result<Copy, Copy> is Copy
+        TypedType::Function { .. } => false,  // Functions are not Copy
+        TypedType::TypeParam(_) => false,  // Unknown, assume not Copy
+        TypedType::Temporal { base_type, .. } => is_copy_type(base_type),
     }
 }
 
@@ -414,6 +456,10 @@ impl TypeSubstitution {
             TypedType::List(inner) => TypedType::List(Box::new(self.apply(inner))),
             TypedType::Array(inner, size) => TypedType::Array(Box::new(self.apply(inner)), *size),
             TypedType::Option(inner) => TypedType::Option(Box::new(self.apply(inner))),
+            TypedType::Result { ok, err } => TypedType::Result {
+                ok: Box::new(self.apply(ok)),
+                err: Box::new(self.apply(err)),
+            },
             TypedType::Function { params, return_type } => TypedType::Function {
                 params: params.iter().map(|p| self.apply(p)).collect(),
                 return_type: Box::new(self.apply(return_type)),
@@ -574,6 +620,64 @@ pub struct TypeChecker {
     symbol_table: Vec<SymbolInfo>,
 }
 
+// ============================================================
+// String similarity utilities for "did you mean" suggestions
+// ============================================================
+
+/// Calculates the Levenshtein edit distance between two strings.
+/// Used for suggesting similar names when a typo is detected.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_len = a_chars.len();
+    let b_len = b_chars.len();
+
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
+
+    let mut matrix = vec![vec![0usize; b_len + 1]; a_len + 1];
+
+    for i in 0..=a_len {
+        matrix[i][0] = i;
+    }
+    for j in 0..=b_len {
+        matrix[0][j] = j;
+    }
+
+    for i in 1..=a_len {
+        for j in 1..=b_len {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            matrix[i][j] = (matrix[i - 1][j] + 1)
+                .min(matrix[i][j - 1] + 1)
+                .min(matrix[i - 1][j - 1] + cost);
+        }
+    }
+
+    matrix[a_len][b_len]
+}
+
+/// Finds similar names from a list of candidates.
+/// Returns names with Levenshtein distance <= max_distance, sorted by distance.
+fn find_similar_names<'a>(target: &str, candidates: impl Iterator<Item = &'a String>, max_distance: usize) -> Vec<&'a String> {
+    let mut results: Vec<(&String, usize)> = candidates
+        .filter_map(|name| {
+            let dist = levenshtein_distance(target, name);
+            if dist <= max_distance && dist > 0 {
+                Some((name, dist))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    results.sort_by_key(|(_, dist)| *dist);
+    results.into_iter().map(|(name, _)| name).take(3).collect()
+}
+
 impl TypeChecker {
     pub fn new() -> Self {
         let mut checker = Self {
@@ -650,6 +754,40 @@ impl TypeChecker {
         self.collected_errors.push(SpannedTypeError::new(error, span));
     }
 
+    /// Adds an error with span and suggestions to the collected errors.
+    pub fn add_error_with_suggestions(&mut self, error: TypeError, span: Option<Span>, suggestions: Vec<String>) {
+        self.collected_errors.push(SpannedTypeError::new(error, span).with_suggestions(suggestions));
+    }
+
+    /// Smart error adder that automatically generates suggestions based on error type.
+    /// This provides "did you mean" hints for typos in variable names, function names, etc.
+    pub fn add_error_smart(&mut self, error: TypeError, span: Option<Span>) {
+        let suggestions = match &error {
+            TypeError::UndefinedVariable(name) => self.suggest_similar_vars(name),
+            TypeError::UndefinedFunction(name) => self.suggest_similar_functions(name),
+            TypeError::UndefinedRecord(name) => self.suggest_similar_records(name),
+            TypeError::UnknownField { record, field } => {
+                // For unknown field, first try similar field names
+                let mut suggestions = self.suggest_similar_fields(record, field);
+                if suggestions.is_empty() {
+                    // If no similar fields, show all available fields
+                    let fields = self.get_record_fields(record);
+                    if !fields.is_empty() {
+                        suggestions = fields;
+                    }
+                }
+                suggestions
+            }
+            _ => Vec::new(),
+        };
+
+        if suggestions.is_empty() {
+            self.add_error(error, span);
+        } else {
+            self.add_error_with_suggestions(error, span, suggestions);
+        }
+    }
+
     /// Returns all collected errors and clears the error list.
     pub fn take_errors(&mut self) -> Vec<SpannedTypeError> {
         std::mem::take(&mut self.collected_errors)
@@ -677,18 +815,18 @@ impl TypeChecker {
             match decl {
                 TopDecl::Function(func) => {
                     if let Err(e) = self.register_function_signature(func) {
-                        self.add_error(e, func.span);
+                        self.add_error_smart(e, func.span);
                     }
                 }
                 TopDecl::Record(record) => {
                     if let Err(e) = self.check_record_decl(record) {
-                        self.add_error(e, record.span);
+                        self.add_error_smart(e, record.span);
                     }
                 }
                 TopDecl::Export(export) => {
                     if let TopDecl::Function(func) = export.item.as_ref() {
                         if let Err(e) = self.register_function_signature(func) {
-                            self.add_error(e, func.span);
+                            self.add_error_smart(e, func.span);
                         }
                     }
                 }
@@ -704,28 +842,28 @@ impl TypeChecker {
                 }
                 TopDecl::Function(func) => {
                     if let Err(e) = self.check_function_decl(func) {
-                        self.add_error(e, func.span);
+                        self.add_error_smart(e, func.span);
                     }
                 }
                 TopDecl::Context(context) => {
                     if let Err(e) = self.check_context_decl(context) {
-                        self.add_error(e, None);
+                        self.add_error_smart(e, None);
                     }
                 }
                 TopDecl::Impl(impl_block) => {
                     if let Err(e) = self.check_impl_block(impl_block) {
-                        self.add_error(e, None);
+                        self.add_error_smart(e, None);
                     }
                 }
                 TopDecl::Binding(bind) => {
                     if let Err(e) = self.check_bind_decl(bind) {
-                        self.add_error(e, bind.span);
+                        self.add_error_smart(e, bind.span);
                     }
                 }
                 TopDecl::Export(export) => {
                     if let TopDecl::Function(func) = export.item.as_ref() {
                         if let Err(e) = self.check_function_decl(func) {
-                            self.add_error(e, func.span);
+                            self.add_error_smart(e, func.span);
                         }
                     }
                 }
@@ -810,7 +948,7 @@ impl TypeChecker {
                     name: "Task".to_string(),
                     frozen: false,
                     hash: None,
-                    parent_hash: None,
+                    parent_hash: None, type_args: vec![],
                 }),
                 temporals: vec!["async".to_string()],
             },
@@ -830,7 +968,7 @@ impl TypeChecker {
                     name: "Task".to_string(),
                     frozen: false,
                     hash: None,
-                    parent_hash: None,
+                    parent_hash: None, type_args: vec![],
                 }),
                 temporals: vec!["async".to_string()],
             })],
@@ -851,7 +989,7 @@ impl TypeChecker {
                 name: "Channel".to_string(),
                 frozen: false,
                 hash: None,
-                parent_hash: None,
+                parent_hash: None, type_args: vec![],
             },
             type_params: vec![TypeParam {
                 name: "T".to_string(),
@@ -928,6 +1066,7 @@ impl TypeChecker {
         self.register_std_option();
         self.register_std_io();
         self.register_std_prelude();
+        self.register_std_string();
         
         // Note: Arena is a built-in context but not added to _contexts by default
         // It only becomes available inside a "with Arena" block
@@ -1138,14 +1277,32 @@ impl TypeChecker {
     }
     
     fn register_std_io(&mut self) {
-        // print function
+        use crate::ast::{TypeParam, TypeBound};
+
+        // Polymorphic print<T: Display> function
+        // Works with any type that implements Display (Int32, String, Boolean, Float64)
+        let t_display_param = TypeParam {
+            name: "T".to_string(),
+            bounds: vec![TypeBound { trait_name: "Display".to_string() }],
+            derivation_bound: None,
+            is_temporal: false,
+        };
         self.functions.insert("print".to_string(), FunctionDef {
-            params: vec![("s".to_string(), TypedType::String)],
+            params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
             return_type: TypedType::Unit,
-            type_params: vec![],
+            type_params: vec![t_display_param.clone()],
             temporal_constraints: vec![],
         });
-        
+
+        // println<T: Display> function (with newline)
+        self.functions.insert("println".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
+            return_type: TypedType::Unit,
+            type_params: vec![t_display_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // Keep specific functions for backwards compatibility
         // print_int function
         self.functions.insert("print_int".to_string(), FunctionDef {
             params: vec![("n".to_string(), TypedType::Int32)],
@@ -1153,7 +1310,7 @@ impl TypeChecker {
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
+
         // print_float function
         self.functions.insert("print_float".to_string(), FunctionDef {
             params: vec![("f".to_string(), TypedType::Float64)],
@@ -1177,68 +1334,397 @@ impl TypeChecker {
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
+
+        // read_line function - reads a line from stdin
+        self.functions.insert("read_line".to_string(), FunctionDef {
+            params: vec![],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // File I/O functions (WASI-based)
+        // file_open: Opens a file and returns a file descriptor
+        // flags: 0 = read-only, 1 = write-only, 2 = read-write, 9 = write + create
+        self.functions.insert("file_open".to_string(), FunctionDef {
+            params: vec![
+                ("path".to_string(), TypedType::String),
+                ("flags".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // file_read: Reads from a file descriptor
+        // Returns the content as a String
+        self.functions.insert("file_read".to_string(), FunctionDef {
+            params: vec![
+                ("fd".to_string(), TypedType::Int32),
+                ("len".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // file_write: Writes a string to a file descriptor
+        // Returns number of bytes written
+        self.functions.insert("file_write".to_string(), FunctionDef {
+            params: vec![
+                ("fd".to_string(), TypedType::Int32),
+                ("content".to_string(), TypedType::String),
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // file_close: Closes a file descriptor
+        // Returns 0 on success
+        self.functions.insert("file_close".to_string(), FunctionDef {
+            params: vec![("fd".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
         // some function - wraps a value in Option::Some
         // Note: We handle 'some' specially in check_call_expr to make it work with any type
     }
-    
-    fn register_std_prelude(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
-        
-        let t_param = TypeParam {
-            name: "T".to_string(),
-            bounds: vec![],
-            derivation_bound: None,
-            is_temporal: false,
-        };
-        
-        // identity<T>
-        self.functions.insert("identity".to_string(), FunctionDef {
-            params: vec![("x".to_string(), TypedType::TypeParam("T".to_string()))],
-            return_type: TypedType::TypeParam("T".to_string()),
-            type_params: vec![t_param.clone()],
+
+    fn register_std_string(&mut self) {
+        // ============================================================
+        // String runtime functions (WASM built-ins)
+        // ============================================================
+
+        // string_length: Get the length of a string
+        self.functions.insert("string_length".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // not function
+
+        // string_equals: Compare two strings for equality
+        self.functions.insert("string_equals".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::String),
+                ("b".to_string(), TypedType::String),
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_concat: Concatenate two strings
+        self.functions.insert("string_concat".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::String),
+                ("b".to_string(), TypedType::String),
+            ],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_is_empty: Check if a string is empty
+        self.functions.insert("string_is_empty".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // char_at: Get character at index (returns -1 if out of bounds)
+        self.functions.insert("char_at".to_string(), FunctionDef {
+            params: vec![
+                ("s".to_string(), TypedType::String),
+                ("index".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::Int32,  // Returns char code or -1
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // substring: Extract portion of string (start inclusive, end exclusive)
+        self.functions.insert("substring".to_string(), FunctionDef {
+            params: vec![
+                ("s".to_string(), TypedType::String),
+                ("start".to_string(), TypedType::Int32),
+                ("end".to_string(), TypedType::Int32),
+            ],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_to_int: Parse integer from string
+        self.functions.insert("string_to_int".to_string(), FunctionDef {
+            params: vec![("s".to_string(), TypedType::String)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // int_to_string: Format integer as string
+        self.functions.insert("int_to_string".to_string(), FunctionDef {
+            params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // ============================================================
+        // Character functions
+        // ============================================================
+
+        // is_digit: Check if a character is a digit
+        self.functions.insert("is_digit".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_alpha: Check if a character is a letter
+        self.functions.insert("is_alpha".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_upper: Check if a character is uppercase
+        self.functions.insert("is_upper".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_lower: Check if a character is lowercase
+        self.functions.insert("is_lower".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // is_whitespace: Check if a character is whitespace
+        self.functions.insert("is_whitespace".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // to_upper: Convert to uppercase
+        self.functions.insert("to_upper".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Char,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // to_lower: Convert to lowercase
+        self.functions.insert("to_lower".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Char,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // char_to_int: Convert character to ASCII code
+        self.functions.insert("char_to_int".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // int_to_char: Convert ASCII code to character
+        self.functions.insert("int_to_char".to_string(), FunctionDef {
+            params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::Char,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // digit_value: Get numeric value of digit character
+        self.functions.insert("digit_value".to_string(), FunctionDef {
+            params: vec![("c".to_string(), TypedType::Char)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+    }
+
+    fn register_std_prelude(&mut self) {
+        // ============================================================
+        // Prelude functions (auto-imported from std/prelude.rl)
+        // These match the exported functions in the Prelude file
+        // ============================================================
+
+        // Boolean operations
         self.functions.insert("not".to_string(), FunctionDef {
             params: vec![("b".to_string(), TypedType::Boolean)],
             return_type: TypedType::Boolean,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // and function
-        self.functions.insert("and".to_string(), FunctionDef {
+
+        // Identity functions
+        self.functions.insert("identity_int".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("identity_bool".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Boolean)],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Comparison helpers
+        self.functions.insert("eq_int".to_string(), FunctionDef {
             params: vec![
-                ("a".to_string(), TypedType::Boolean),
-                ("b".to_string(), TypedType::Boolean)
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
             ],
             return_type: TypedType::Boolean,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // or function
-        self.functions.insert("or".to_string(), FunctionDef {
+
+        self.functions.insert("ne_int".to_string(), FunctionDef {
             params: vec![
-                ("a".to_string(), TypedType::Boolean),
-                ("b".to_string(), TypedType::Boolean)
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
             ],
             return_type: TypedType::Boolean,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // panic function
+
+        self.functions.insert("lt_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("le_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("gt_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("ge_int".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Boolean,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Arithmetic helpers
+        self.functions.insert("add".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("sub".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("mul".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("div".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Note: 'mod' is a reserved keyword in some contexts, using mod_int
+        self.functions.insert("mod".to_string(), FunctionDef {
+            params: vec![
+                ("a".to_string(), TypedType::Int32),
+                ("b".to_string(), TypedType::Int32)
+            ],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        self.functions.insert("neg".to_string(), FunctionDef {
+            params: vec![("x".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Unit helper
+        self.functions.insert("unit".to_string(), FunctionDef {
+            params: vec![],
+            return_type: TypedType::Unit,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Additional utility functions (kept for backwards compatibility)
         self.functions.insert("panic".to_string(), FunctionDef {
             params: vec![("message".to_string(), TypedType::String)],
             return_type: TypedType::Unit,
             type_params: vec![],
             temporal_constraints: vec![],
         });
-        
-        // assert function
+
         self.functions.insert("assert".to_string(), FunctionDef {
             params: vec![
                 ("condition".to_string(), TypedType::Boolean),
@@ -1333,9 +1819,33 @@ impl TypeChecker {
             _ => false, // Other types don't implement traits for now
         }
     }
-    
+
+    /// Occurs check: returns true if type variable `name` occurs in `ty`
+    /// This prevents infinite types like T = List<T>
+    fn occurs_in(&self, name: &str, ty: &TypedType) -> bool {
+        match ty {
+            TypedType::TypeParam(param_name) => name == param_name,
+            TypedType::List(inner) => self.occurs_in(name, inner),
+            TypedType::Option(inner) => self.occurs_in(name, inner),
+            TypedType::Result { ok, err } => self.occurs_in(name, ok) || self.occurs_in(name, err),
+            TypedType::Array(inner, _) => self.occurs_in(name, inner),
+            TypedType::Function { params, return_type } => {
+                params.iter().any(|p| self.occurs_in(name, p)) || self.occurs_in(name, return_type)
+            }
+            TypedType::Temporal { base_type, .. } => self.occurs_in(name, base_type),
+            _ => false, // Primitive types don't contain type parameters
+        }
+    }
+
     // Type unification for generic type inference
     fn unify(&self, expected: &TypedType, actual: &TypedType, substitution: &mut TypeSubstitution) -> Result<(), TypeError> {
+        // If both are the same type parameter, they unify without binding
+        if let (TypedType::TypeParam(n1), TypedType::TypeParam(n2)) = (expected, actual) {
+            if n1 == n2 {
+                return Ok(());
+            }
+        }
+
         match (expected, actual) {
             // If expected is a type parameter, bind it to the actual type
             (TypedType::TypeParam(name), actual_ty) => {
@@ -1343,6 +1853,12 @@ impl TypeChecker {
                     // Type parameter already bound, check consistency
                     self.unify(&existing, actual_ty, substitution)
                 } else {
+                    // Occurs check: prevent T = List<T> which causes infinite recursion
+                    if self.occurs_in(name, actual_ty) {
+                        // Type parameter occurs in actual type - skip binding
+                        // This is OK for recursive function signatures
+                        return Ok(());
+                    }
                     // Bind the type parameter
                     substitution.add(name.clone(), actual_ty.clone());
                     Ok(())
@@ -1353,6 +1869,10 @@ impl TypeChecker {
                 if let Some(bound_type) = substitution.substitutions.get(name).cloned() {
                     self.unify(expected_ty, &bound_type, substitution)
                 } else {
+                    // Occurs check: prevent T = List<T>
+                    if self.occurs_in(name, expected_ty) {
+                        return Ok(());
+                    }
                     // Reverse binding
                     substitution.add(name.clone(), expected_ty.clone());
                     Ok(())
@@ -1387,7 +1907,13 @@ impl TypeChecker {
             (TypedType::Option(e1), TypedType::Option(e2)) => {
                 self.unify(e1, e2, substitution)
             }
-            
+
+            // Result types must have same ok and err types
+            (TypedType::Result { ok: ok1, err: err1 }, TypedType::Result { ok: ok2, err: err2 }) => {
+                self.unify(ok1, ok2, substitution)?;
+                self.unify(err1, err2, substitution)
+            }
+
             // Array types must have same element type and size
             (TypedType::Array(e1, s1), TypedType::Array(e2, s2)) => {
                 if s1 == s2 {
@@ -1443,11 +1969,13 @@ impl TypeChecker {
         // Search from innermost to outermost scope
         for scope in self.var_env.iter_mut().rev() {
             if let Some(var) = scope.get_mut(name) {
-                // Mutable variables can be used multiple times
-                if var.used && !var.mutable {
+                // Copy types and mutable variables can be used multiple times
+                let is_copy = is_copy_type(&var.ty);
+                if var.used && !var.mutable && !is_copy {
                     return Err(TypeError::AffineViolation(name.to_string()));
                 }
-                if !var.mutable {
+                // Only mark as used if not mutable and not a Copy type
+                if !var.mutable && !is_copy {
                     var.used = true;
                 }
                 return Ok(var.ty.clone());
@@ -1501,7 +2029,72 @@ impl TypeChecker {
         }
         Err(TypeError::UndefinedVariable(name.to_string()))
     }
-    
+
+    // ============================================================
+    // Name suggestion helpers for "did you mean" errors
+    // ============================================================
+
+    /// Get all variable names currently in scope
+    fn get_all_var_names(&self) -> Vec<String> {
+        self.var_env.iter()
+            .flat_map(|scope| scope.keys())
+            .cloned()
+            .collect()
+    }
+
+    /// Get all function names currently defined
+    fn get_all_function_names(&self) -> Vec<String> {
+        self.functions.keys().cloned().collect()
+    }
+
+    /// Get all record names currently defined
+    fn get_all_record_names(&self) -> Vec<String> {
+        self.records.keys().cloned().collect()
+    }
+
+    /// Find similar variable names for suggestions
+    fn suggest_similar_vars(&self, name: &str) -> Vec<String> {
+        let candidates = self.get_all_var_names();
+        find_similar_names(name, candidates.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Find similar function names for suggestions
+    fn suggest_similar_functions(&self, name: &str) -> Vec<String> {
+        let candidates = self.get_all_function_names();
+        find_similar_names(name, candidates.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Find similar record names for suggestions
+    fn suggest_similar_records(&self, name: &str) -> Vec<String> {
+        let candidates = self.get_all_record_names();
+        find_similar_names(name, candidates.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Get field names for a record type
+    fn get_record_fields(&self, record_name: &str) -> Vec<String> {
+        self.records.get(record_name)
+            .map(|def| def.fields.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Find similar field names for suggestions
+    fn suggest_similar_fields(&self, record_name: &str, field_name: &str) -> Vec<String> {
+        let fields = self.get_record_fields(record_name);
+        find_similar_names(field_name, fields.iter(), 3)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     fn convert_type(&mut self, ty: &Type) -> Result<TypedType, TypeError> {
         match ty {
             Type::Named(name) => match name.as_str() {
@@ -1520,7 +2113,7 @@ impl TypeChecker {
                     }
                     // Check if it's a record type
                     else if self.records.contains_key(name) {
-                        Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None })
+                        Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None, type_args: vec![] })
                     } else {
                         Err(TypeError::UnknownType(name.clone()))
                     }
@@ -1531,10 +2124,33 @@ impl TypeChecker {
                     "Option" if params.len() == 1 => {
                         Ok(TypedType::Option(Box::new(self.convert_type(&params[0])?)))
                     },
+                    "Result" if params.len() == 2 => {
+                        Ok(TypedType::Result {
+                            ok: Box::new(self.convert_type(&params[0])?),
+                            err: Box::new(self.convert_type(&params[1])?),
+                        })
+                    },
                     "List" if params.len() == 1 => {
                         Ok(TypedType::List(Box::new(self.convert_type(&params[0])?)))
                     },
-                    _ => Err(TypeError::UnknownType(format!("{}<{}>", name, params.len())))
+                    _ => {
+                        // Check if it's a user-defined generic record
+                        if self.records.contains_key(name) {
+                            let type_args: Result<Vec<TypedType>, TypeError> = params
+                                .iter()
+                                .map(|p| self.convert_type(p))
+                                .collect();
+                            Ok(TypedType::Record {
+                                name: name.clone(),
+                                frozen: false,
+                                hash: None,
+                                parent_hash: None,
+                                type_args: type_args?,
+                            })
+                        } else {
+                            Err(TypeError::UnknownType(format!("{}<{}>", name, params.len())))
+                        }
+                    }
                 }
             },
             Type::Function(param_types, return_type) => {
@@ -1634,18 +2250,23 @@ impl TypeChecker {
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), TypeError> {
         // Push type parameter scope for generics
         self.push_type_param_scope(&func.type_params);
-        
+
         let mut param_types = Vec::new();
         for param in &func.params {
             let ty = self.convert_type(&param.ty)?;
             param_types.push((param.name.clone(), ty));
         }
-        
-        // For now, assume all functions return Int32 (will be refined during actual checking)
-        // This is just for forward reference resolution
+
+        // Convert the declared return type, or default to Unit if not specified
+        let return_type = if let Some(ref rt) = func.return_type {
+            self.convert_type(rt)?
+        } else {
+            TypedType::Unit
+        };
+
         self.functions.insert(func.name.clone(), FunctionDef {
             params: param_types,
-            return_type: TypedType::Int32,
+            return_type,
             type_params: func.type_params.clone(),
             temporal_constraints: func.temporal_constraints.iter()
                 .map(|c| TemporalConstraint {
@@ -1654,11 +2275,47 @@ impl TypeChecker {
                 })
                 .collect(),
         });
-        
+
         self.pop_type_param_scope();
         Ok(())
     }
-    
+
+    /// Register an imported declaration (function or record) into the type checker's scope.
+    /// This is called for each exported item from imported modules.
+    pub fn register_imported_decl(&mut self, _name: &str, decl: &crate::ast::TopDecl) -> Result<(), TypeError> {
+        match decl {
+            crate::ast::TopDecl::Function(func) => {
+                self.register_function_signature(func)?;
+            }
+            crate::ast::TopDecl::Record(record) => {
+                self.check_record_decl(record)?;
+            }
+            crate::ast::TopDecl::Context(ctx) => {
+                // Register context as a record type (contexts are similar to records)
+                // Collect fields first to avoid borrow issue
+                let fields: HashMap<String, TypedType> = ctx.fields.iter().filter_map(|f| {
+                    self.convert_type(&f.ty).ok().map(|ty| (f.name.clone(), ty))
+                }).collect();
+                self.records.insert(ctx.name.clone(), RecordDef {
+                    fields,
+                    type_params: vec![],
+                    temporal_constraints: vec![],
+                });
+            }
+            crate::ast::TopDecl::Binding(_bind) => {
+                // Global bindings are currently not fully supported in imports
+                // They would need their value to be evaluated at module load time
+            }
+            crate::ast::TopDecl::Impl(_) => {
+                // Impl blocks need special handling - skip for now
+            }
+            crate::ast::TopDecl::Export(_) => {
+                // Export wrapper - should not happen as we unwrap exports
+            }
+        }
+        Ok(())
+    }
+
     // Wrapper function for compatibility
     pub fn type_check(&mut self, program: &Program) -> Result<(), TypeError> {
         self.check_program(program)
@@ -1676,13 +2333,17 @@ impl TypeChecker {
     }
     
     fn check_record_decl(&mut self, record: &RecordDecl) -> Result<(), TypeError> {
-        // Register temporal type parameters
+        // Register type parameters (both regular and temporal)
+        let mut type_param_names: HashSet<String> = HashSet::new();
         for type_param in &record.type_params {
+            type_param_names.insert(type_param.name.clone());
             if type_param.is_temporal {
                 self.temporal_context.active_temporals.insert(type_param.name.clone());
             }
         }
-        
+        // Push type parameters onto the scope
+        self.type_param_env.push(type_param_names);
+
         // Register temporal constraints
         for constraint in &record.temporal_constraints {
             self.temporal_context.constraints.push(TemporalConstraint {
@@ -1692,13 +2353,14 @@ impl TypeChecker {
             // Validate constraint: both temporals should be defined
             if !self.temporal_context.active_temporals.contains(&constraint.inner) ||
                !self.temporal_context.active_temporals.contains(&constraint.outer) {
+                self.type_param_env.pop(); // Clean up before returning error
                 return Err(TypeError::InvalidTemporalConstraint(
                     constraint.inner.clone(),
                     constraint.outer.clone()
                 ));
             }
         }
-        
+
         let mut fields = HashMap::new();
         for field in &record.fields {
             let ty = self.convert_type(&field.ty)?;
@@ -1719,10 +2381,13 @@ impl TypeChecker {
         // Clear temporal context for this record
         self.temporal_context.active_temporals.clear();
         self.temporal_context.constraints.clear();
-        
+
+        // Pop type parameter scope
+        self.type_param_env.pop();
+
         Ok(())
     }
-    
+
     fn check_function_decl(&mut self, func: &FunDecl) -> Result<(), TypeError> {
         // Push type parameter scope for generics (including temporal parameters)
         self.push_type_param_scope(&func.type_params);
@@ -1820,7 +2485,22 @@ impl TypeChecker {
     }
     
     fn check_bind_decl(&mut self, bind: &BindDecl) -> Result<(), TypeError> {
-        let ty = self.check_expr(&bind.value)?;
+        // If there's a type annotation, use it as the expected type
+        let ty = if let Some(ref annotated_ty) = bind.ty {
+            let expected = self.convert_type(annotated_ty)?;
+            let inferred = self.check_expr_with_expected(&bind.value, Some(&expected))?;
+            // Verify inferred type is compatible with the annotation
+            let mut substitution = TypeSubstitution::new();
+            if self.unify(&expected, &inferred, &mut substitution).is_err() {
+                return Err(TypeError::TypeMismatch {
+                    expected: format_typed_type(&expected),
+                    found: format_typed_type(&inferred),
+                });
+            }
+            expected
+        } else {
+            self.check_expr(&bind.value)?
+        };
 
         // Check if this is a new binding or reassignment
         if let Ok((_existing_ty, _is_mutable)) = self.lookup_var_for_assignment(&bind.name) {
@@ -1865,11 +2545,12 @@ impl TypeChecker {
             for (i, param) in func.params.iter().enumerate() {
                 let ty = if i == 0 && param.name == "self" {
                     // First parameter named 'self' should be the record type
-                    TypedType::Record { 
-                        name: target.clone(), 
+                    TypedType::Record {
+                        name: target.clone(),
                         frozen: false,  // Methods can be called on both frozen and unfrozen records
                         hash: None,
-                        parent_hash: None
+                        parent_hash: None,
+                        type_args: vec![],
                     }
                 } else {
                     self.convert_type(&param.ty)?
@@ -2000,9 +2681,47 @@ impl TypeChecker {
                 let typed_type = self.convert_type(ty)?;
                 Ok(TypedType::Option(Box::new(typed_type)))
             },
+            Expr::Ok(expr) => {
+                // Infer the ok type from the inner expression
+                let expected_inner = if let Some(TypedType::Result { ok, .. }) = expected {
+                    Some(ok.as_ref())
+                } else {
+                    None
+                };
+                let ok_type = self.check_expr_with_expected(expr, expected_inner)?;
+                // For error type, use expected if available, otherwise TypeParam
+                let err_type = if let Some(TypedType::Result { err, .. }) = expected {
+                    err.as_ref().clone()
+                } else {
+                    TypedType::TypeParam("E".to_string())
+                };
+                Ok(TypedType::Result {
+                    ok: Box::new(ok_type),
+                    err: Box::new(err_type),
+                })
+            },
+            Expr::Err(expr) => {
+                // Infer the error type from the inner expression
+                let expected_inner = if let Some(TypedType::Result { err, .. }) = expected {
+                    Some(err.as_ref())
+                } else {
+                    None
+                };
+                let err_type = self.check_expr_with_expected(expr, expected_inner)?;
+                // For ok type, use expected if available, otherwise TypeParam
+                let ok_type = if let Some(TypedType::Result { ok, .. }) = expected {
+                    ok.as_ref().clone()
+                } else {
+                    TypedType::TypeParam("T".to_string())
+                };
+                Ok(TypedType::Result {
+                    ok: Box::new(ok_type),
+                    err: Box::new(err_type),
+                })
+            },
         }
     }
-    
+
     fn check_record_lit(&mut self, record_lit: &RecordLit) -> Result<TypedType, TypeError> {
         // First check if record exists and collect field types
         let (field_types, type_params, temporal_constraints): (HashMap<String, TypedType>, Vec<TypeParam>, Vec<TemporalConstraint>) = {
@@ -2010,21 +2729,42 @@ impl TypeChecker {
                 .ok_or_else(|| TypeError::UndefinedRecord(record_lit.name.clone()))?;
             (record_def.fields.clone(), record_def.type_params.clone(), record_def.temporal_constraints.clone())
         };
-        
-        // Check that all fields are present and have correct types
+
+        // Build type substitution map for generic type parameters
+        let mut type_subst: HashMap<String, TypedType> = HashMap::new();
+
+        // Check that all fields are present and collect type parameter bindings
         for field_init in &record_lit.fields {
             let expected_ty = field_types.get(&field_init.name)
                 .ok_or_else(|| TypeError::UnknownField {
                     record: record_lit.name.clone(),
                     field: field_init.name.clone(),
                 })?;
-            
+
             let actual_ty = self.check_expr(&field_init.value)?;
-            if &actual_ty != expected_ty {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("{:?}", expected_ty),
-                    found: format!("{:?}", actual_ty),
-                });
+
+            // If expected type is a type parameter, unify it with actual type
+            if let TypedType::TypeParam(param_name) = expected_ty {
+                if let Some(existing) = type_subst.get(param_name) {
+                    // Type parameter already bound - check consistency
+                    if existing != &actual_ty {
+                        return Err(TypeError::TypeMismatch {
+                            expected: format!("{:?}", existing),
+                            found: format!("{:?}", actual_ty),
+                        });
+                    }
+                } else {
+                    // Bind type parameter to actual type
+                    type_subst.insert(param_name.clone(), actual_ty.clone());
+                }
+            } else {
+                // Non-generic field - exact match required
+                if &actual_ty != expected_ty {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("{:?}", expected_ty),
+                        found: format!("{:?}", actual_ty),
+                    });
+                }
             }
         }
         
@@ -2063,11 +2803,12 @@ impl TypeChecker {
         }
         
         // Create the base record type
-        let base_type = TypedType::Record { 
-            name: record_lit.name.clone(), 
-            frozen: false, 
-            hash: None, 
-            parent_hash: None 
+        let base_type = TypedType::Record {
+            name: record_lit.name.clone(),
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+            type_args: vec![],
         };
         
         // If the record has temporal parameters, wrap it in a Temporal type
@@ -2127,7 +2868,7 @@ impl TypeChecker {
                         });
                     }
                 }
-                Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None })
+                Ok(TypedType::Record { name: name.clone(), frozen: false, hash: None, parent_hash: None, type_args: vec![] })
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "record".to_string(),
@@ -2135,16 +2876,16 @@ impl TypeChecker {
             })
         }
     }
-    
+
     fn check_freeze_expr(&mut self, expr: &Expr) -> Result<TypedType, TypeError> {
         let ty = self.check_expr(expr)?;
-        
+
         match ty {
-            TypedType::Record { name, frozen, hash, parent_hash } => {
+            TypedType::Record { name, frozen, hash, parent_hash, type_args } => {
                 if frozen {
                     return Err(TypeError::FreezeAlreadyFrozen);
                 }
-                Ok(TypedType::Record { name, frozen: true, hash, parent_hash })
+                Ok(TypedType::Record { name, frozen: true, hash, parent_hash, type_args })
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "record".to_string(),
@@ -2914,7 +3655,7 @@ impl TypeChecker {
                 name: "Task".to_string(),
                 frozen: false,
                 hash: None,
-                parent_hash: None,
+                parent_hash: None, type_args: vec![],
             }),
             temporals: vec![async_lifetime],
         })
@@ -3224,6 +3965,26 @@ impl TypeChecker {
                     })
                 }
             }
+            Pattern::Ok(inner_pattern) => {
+                if let TypedType::Result { ok, .. } = expected_type {
+                    self.check_pattern(inner_pattern, ok)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "Result type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
+            Pattern::Err(inner_pattern) => {
+                if let TypedType::Result { err, .. } = expected_type {
+                    self.check_pattern(inner_pattern, err)
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "Result type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
             Pattern::EmptyList => {
                 if matches!(expected_type, TypedType::List(_)) {
                     Ok(())
@@ -3299,6 +4060,20 @@ impl TypeChecker {
                 }
             }
             Pattern::None => Ok(()),
+            Pattern::Ok(inner_pattern) => {
+                if let TypedType::Result { ok, .. } = ty {
+                    self.bind_pattern_vars(inner_pattern, ok)
+                } else {
+                    Ok(())
+                }
+            }
+            Pattern::Err(inner_pattern) => {
+                if let TypedType::Result { err, .. } = ty {
+                    self.bind_pattern_vars(inner_pattern, err)
+                } else {
+                    Ok(())
+                }
+            }
             Pattern::EmptyList => Ok(()),
             Pattern::ListCons(head_pattern, tail_pattern) => {
                 if let TypedType::List(element_type) = ty {
@@ -3350,6 +4125,12 @@ impl TypeChecker {
                 // Unit only has one value
                 arms.iter().any(|arm| {
                     matches!(&arm.pattern, Pattern::Literal(Literal::Unit))
+                })
+            }
+            TypedType::Record { name, .. } => {
+                // A record pattern matching the same record type is exhaustive
+                arms.iter().any(|arm| {
+                    matches!(&arm.pattern, Pattern::Record(pattern_name, _) if pattern_name == name)
                 })
             }
             _ => false, // For other types, require wildcard
@@ -3673,21 +4454,34 @@ mod tests {
     
     #[test]
     fn test_affine_violation() {
+        // Note: Int is a Copy type, so we use a Record to test affine violation
+        let input = r#"
+            record Point { x: Int, y: Int }
+            val p = Point { x = 10, y = 20 }
+            val y = p
+            val z = p
+        "#;
+        assert_eq!(
+            check_program_str(input),
+            Err(TypeError::AffineViolation("p".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_copy_types_allowed() {
+        // Copy types (Int, Bool, Float) can be used multiple times
         let input = r#"
             val x = 42
             val y = x
             val z = x
         "#;
-        assert_eq!(
-            check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
-        );
+        assert!(check_program_str(input).is_ok());
     }
     
     #[test]
     fn test_record_types() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
         "#;
         assert!(check_program_str(input).is_ok());
@@ -3707,7 +4501,7 @@ mod tests {
     #[test]
     fn test_field_access() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val x = p.x
         "#;
@@ -3717,7 +4511,7 @@ mod tests {
     #[test]
     fn test_unknown_field() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val z = p.z
         "#;
@@ -3733,7 +4527,7 @@ mod tests {
     #[test]
     fn test_clone_freeze() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 }
             val p2 = p1.clone { x = 30 }
             val p3 = p2 freeze
@@ -3744,7 +4538,7 @@ mod tests {
     #[test]
     fn test_clone_frozen_error() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 } freeze
             val p2 = p1.clone { x = 30 }
         "#;
@@ -3757,7 +4551,7 @@ mod tests {
     #[test]
     fn test_affine_field_access() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p = Point { x = 10, y = 20 }
             val x = p.x
             val y = p.y
@@ -3770,21 +4564,34 @@ mod tests {
     
     #[test]
     fn test_affine_in_blocks() {
+        // Note: Int is a Copy type, so we use a Record to test affine violation
         let input = r#"
-            val x = 42
-            val y = { val z = x }
-            val w = x
+            record Point { x: Int, y: Int }
+            val p = Point { x = 10, y = 20 }
+            val y = { val z = p }
+            val w = p
         "#;
         assert_eq!(
             check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
+            Err(TypeError::AffineViolation("p".to_string()))
         );
+    }
+
+    #[test]
+    fn test_copy_types_in_blocks() {
+        // Copy types can be used in blocks and still be available outside
+        let input = r#"
+            val x = 42
+            val y = { x }
+            val w = x
+        "#;
+        assert!(check_program_str(input).is_ok());
     }
     
     #[test]
     fn test_function_params_affine() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun use_twice: (p: Point) -> Unit = {
                 val x = p.x
                 val y = p.x
@@ -3811,20 +4618,22 @@ mod tests {
     #[test]
     fn test_affine_nested_blocks() {
         // Test affine checking in deeply nested blocks with intermediate variables
+        // Note: Int is a Copy type, so we use a Record to test affine violation
         let input = r#"
-            val x = 42
+            record Point { x: Int, y: Int }
+            val p = Point { x = 10, y = 20 }
             val y = {
                 val inner = {
-                    val deep = x
+                    val deep = p
                     deep
                 }
                 inner
             }
-            val z = x
+            val z = p
         "#;
         assert_eq!(
             check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
+            Err(TypeError::AffineViolation("p".to_string()))
         );
     }
 
@@ -3832,7 +4641,7 @@ mod tests {
     fn test_affine_conditionals() {
         // Test affine checking in conditional branches
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun conditional: (p: Point, flag: Bool) -> Int = {
                 val result = flag then {
                     p.x
@@ -3859,23 +4668,35 @@ mod tests {
 
     #[test]
     fn test_affine_conditional_violation() {
-        // Using a variable before AND inside a conditional should fail
+        // Using a non-Copy variable before AND inside a conditional should fail
+        let input = r#"
+            record Point { x: Int, y: Int }
+            val p = Point { x = 10, y = 20 }
+            val y = p
+            val z = true then { p } else { Point { x = 0, y = 0 } }
+        "#;
+        assert_eq!(
+            check_program_str(input),
+            Err(TypeError::AffineViolation("p".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_copy_types_in_conditionals() {
+        // Copy types can be used multiple times in conditionals
         let input = r#"
             val x = 42
             val y = x
             val z = true then { x } else { 0 }
         "#;
-        assert_eq!(
-            check_program_str(input),
-            Err(TypeError::AffineViolation("x".to_string()))
-        );
+        assert!(check_program_str(input).is_ok());
     }
 
     #[test]
     fn test_affine_multiple_params() {
         // Multiple function parameters should be checked independently
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun use_both: (p1: Point, p2: Point) -> Int = {
                 val x1 = p1.x
                 val x2 = p2.x
@@ -3889,7 +4710,7 @@ mod tests {
     fn test_affine_multiple_params_violation() {
         // Using the same parameter twice should fail
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             fun use_twice: (p1: Point, p2: Point) -> Int = {
                 val x = p1.x
                 val y = p1.y
@@ -3905,7 +4726,7 @@ mod tests {
     #[test]
     fn test_clone_field_type_mismatch() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 }
             val p2 = p1.clone { x = "hello" }
         "#;
@@ -3918,7 +4739,7 @@ mod tests {
     #[test]
     fn test_clone_unknown_field() {
         let input = r#"
-            record Point { x: Int y: Int }
+            record Point { x: Int, y: Int }
             val p1 = Point { x = 10, y = 20 }
             val p2 = p1.clone { z = 30 }
         "#;
@@ -3957,12 +4778,13 @@ mod tests {
     
     #[test]
     fn test_undefined_function() {
+        // Use a function name that's not in the Prelude
         let input = r#"
-            val result = (10, 20) add
+            val result = (10, 20) undefined_func
         "#;
         assert_eq!(
             check_program_str(input),
-            Err(TypeError::UndefinedFunction("add".to_string()))
+            Err(TypeError::UndefinedFunction("undefined_func".to_string()))
         );
     }
     
@@ -4195,12 +5017,13 @@ impl TypeChecker {
         
         // Check field updates (similar to clone expression)
         // ... field checking logic ...
-        
-        Ok(TypedType::Record { 
+
+        Ok(TypedType::Record {
             name: format!("{}#{}", proto_clone.base, &new_hash[..8]), // Unique name
-            frozen: proto_clone.freeze_immediately, 
+            frozen: proto_clone.freeze_immediately,
             hash: Some(new_hash.clone()),
-            parent_hash 
+            parent_hash,
+            type_args: vec![],
         })
     }
     
@@ -4337,6 +5160,12 @@ impl TypeChecker {
             Expr::Some(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
+            Expr::Ok(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
+            Expr::Err(expr) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
             Expr::Await(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
@@ -4344,8 +5173,8 @@ impl TypeChecker {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
             // Literals and None have no free variables
-            Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) | 
-            Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit | 
+            Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) |
+            Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit |
             Expr::None | Expr::NoneTyped(_) => {}
         }
         
@@ -4394,6 +5223,12 @@ impl TypeChecker {
             Pattern::Some(p) => {
                 self.collect_pattern_bindings(p, bindings);
             }
+            Pattern::Ok(p) => {
+                self.collect_pattern_bindings(p, bindings);
+            }
+            Pattern::Err(p) => {
+                self.collect_pattern_bindings(p, bindings);
+            }
             Pattern::ListCons(head, tail) => {
                 self.collect_pattern_bindings(head, bindings);
                 self.collect_pattern_bindings(tail, bindings);
@@ -4429,6 +5264,10 @@ impl TypeChecker {
             }
             TypedType::Option(ty) => {
                 self.check_temporal_escape(ty, allowed_temporals)?;
+            }
+            TypedType::Result { ok, err } => {
+                self.check_temporal_escape(ok, allowed_temporals)?;
+                self.check_temporal_escape(err, allowed_temporals)?;
             }
             TypedType::List(ty) => {
                 self.check_temporal_escape(ty, allowed_temporals)?;

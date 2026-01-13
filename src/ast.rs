@@ -274,6 +274,8 @@ pub struct FunDecl {
     pub temporal_constraints: Vec<TemporalConstraint>,
     /// Function parameters
     pub params: Vec<Param>,
+    /// Return type (None means inferred from body)
+    pub return_type: Option<Type>,
     /// Function body
     pub body: BlockExpr,
     /// Source location
@@ -344,6 +346,7 @@ pub struct Param {
 /// ```restrict
 /// let x = 42;              // Immutable binding
 /// let mut count = 0;       // Mutable binding
+/// let x: Int = 42;         // Typed binding
 /// let (a, b) = (1, 2);     // Pattern binding
 /// ```
 #[derive(Debug, Clone, PartialEq)]
@@ -352,6 +355,8 @@ pub struct BindDecl {
     pub mutable: bool,
     /// Variable name
     pub name: String,
+    /// Optional type annotation
+    pub ty: Option<Type>,
     /// Initial value
     pub value: Box<Expr>,
     /// Source location
@@ -453,7 +458,13 @@ pub enum Expr {
     None,
     /// None variant with explicit type (e.g., `none<Int>`)
     NoneTyped(Type),
-    
+
+    // Result constructors
+    /// Ok variant of Result type (e.g., `Ok(42)`)
+    Ok(Box<Expr>),
+    /// Err variant of Result type (e.g., `Err("error")`)
+    Err(Box<Expr>),
+
     // Lambda expression
     /// Anonymous function (e.g., `|x| x + 1`)
     Lambda(LambdaExpr),
@@ -616,6 +627,10 @@ pub enum Pattern {
     Some(Box<Pattern>),
     /// None variant pattern
     None,
+    /// Ok variant pattern for Result (e.g., `Ok(x)`)
+    Ok(Box<Pattern>),
+    /// Err variant pattern for Result (e.g., `Err(e)`)
+    Err(Box<Pattern>),
     /// Empty list pattern `[]`
     EmptyList,
     /// List cons pattern `[head | tail]`

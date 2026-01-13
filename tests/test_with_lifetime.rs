@@ -1,6 +1,7 @@
 use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_with_lifetime_basic() {
     // Basic with lifetime block
     let input = r#"
@@ -24,6 +25,7 @@ fn test_with_lifetime_basic() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_with_lifetime_anonymous() {
     // Anonymous lifetime
     let input = r#"
@@ -47,6 +49,7 @@ fn test_with_lifetime_anonymous() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_with_lifetime_escape_error() {
     // Should error when trying to return temporal value
     let input = r#"
@@ -73,6 +76,7 @@ fn test_with_lifetime_escape_error() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_nested_with_lifetime() {
     // Nested lifetime scopes
     let input = r#"

@@ -1,6 +1,6 @@
 // Record definitions
-record Point { x: Int y: Int }
-record Enemy { hp: Int atk: Int name: String }
+record Point { x: Int, y: Int }
+record Enemy { hp: Int, atk: Int name: String }
 
 // Functions
 fun makePoint = x: Int y: Int {

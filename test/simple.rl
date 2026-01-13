@@ -1,4 +1,4 @@
-record Enemy { hp: Int atk: Int }
+record Enemy { hp: Int, atk: Int }
 
 val base = Enemy { hp = 100, atk = 10 }
 val boss = base.clone { hp = 500 } freeze

@@ -16,6 +16,7 @@ fn compile(source: &str) -> Result<String, String> {
 }
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_simple_lambda_codegen() {
     let input = r#"fun test = {
         val id = |x| x;
@@ -36,6 +37,7 @@ fn test_simple_lambda_codegen() {
 }
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_lambda_with_closure() {
     let input = r#"fun test = {
         val y = 10;

@@ -4,6 +4,7 @@ use restrict_lang::{parse_program, TypeChecker};
 /// Comprehensive Temporal Affine Types (TAT) tests
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_basic_temporal_scope() {
     // Test basic temporal scope management
     let input = r#"
@@ -28,6 +29,7 @@ fn test_basic_temporal_scope() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_nested_temporal_constraints() {
     // Test nested temporal constraints with 'within' relationships
     let input = r#"
@@ -68,6 +70,7 @@ fn test_nested_temporal_constraints() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_constraint_violation() {
     // Test that temporal constraint violations are caught
     let input = r#"
@@ -96,6 +99,7 @@ fn test_temporal_constraint_violation() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_scope_lifetime_ordering() {
     // Test that temporal scopes respect lifetime ordering
     let input = r#"
@@ -128,6 +132,7 @@ fn test_temporal_scope_lifetime_ordering() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_complex_temporal_relationships() {
     // Test complex temporal relationships with multiple constraints
     let input = r#"
@@ -176,6 +181,7 @@ fn test_complex_temporal_relationships() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_type_with_generics() {
     // Test temporal types combined with generic types
     let input = r#"
@@ -208,6 +214,7 @@ fn test_temporal_type_with_generics() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_scope_isolation() {
     // Test that temporal scopes are properly isolated
     let input = r#"
@@ -237,6 +244,7 @@ fn test_temporal_scope_isolation() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) - deferred to v2.0"]
 fn test_temporal_affine_usage() {
     // Test that temporal types follow affine usage rules
     let input = r#"

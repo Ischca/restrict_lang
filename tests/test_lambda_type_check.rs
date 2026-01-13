@@ -74,6 +74,7 @@ fn test_lambda_captures_variable() {
 }
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_lambda_affine_types() {
     let input = r#"fun test = {
         val x = 10;

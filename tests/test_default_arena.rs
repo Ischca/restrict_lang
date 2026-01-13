@@ -44,12 +44,12 @@ fn test_default_arena_in_main() {
 #[test]
 fn test_no_default_arena_in_other_functions() {
     let source = r#"
-        fun helper = x: Int {
+        fun helper: (x: Int) -> Int = {
             x + 1
         }
-        
+
         fun main: () -> Int = {
-            42 helper
+            (42) helper
         }
     "#;
     

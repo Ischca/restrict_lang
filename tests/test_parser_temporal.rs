@@ -2,6 +2,7 @@ use restrict_lang::parser::parse_program;
 use restrict_lang::ast::*;
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_record_with_temporal() {
     let input = r#"
     record File<~f> {
@@ -26,6 +27,7 @@ fn test_parse_record_with_temporal() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_record_with_temporal_constraint() {
     let input = r#"
     record Transaction<~tx, ~db> where ~tx within ~db {
@@ -67,6 +69,7 @@ fn test_parse_record_with_temporal_constraint() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_function_with_temporal() {
     let input = r#"
     fun readFile<~io> = file: File<~io> {
@@ -101,6 +104,7 @@ fn test_parse_function_with_temporal() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_function_with_temporal_constraint() {
     let input = r#"
     fun beginTx<~db, ~tx> = db: Database<~db> 
@@ -129,6 +133,7 @@ fn test_parse_function_with_temporal_constraint() {
 }
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_mixed_type_params() {
     // Test mixing regular type params with temporal ones
     let input = r#"

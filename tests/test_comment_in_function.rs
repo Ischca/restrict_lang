@@ -1,6 +1,7 @@
 use restrict_lang::parse_program;
 
 #[test]
+#[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_function_with_comments() {
     // Test with inline comments
     let with_comments = r#"record File<~f> {

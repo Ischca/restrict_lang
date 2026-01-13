@@ -548,8 +548,8 @@ fn get_semantic_tokens_internal(source: &str) -> Vec<SemanticToken> {
                 Token::Le | Token::Ge | Token::Tilde |
                 Token::Dot | Token::Colon | Token::Comma | Token::Semicolon => "operator",
 
-                // Option types
-                Token::Some | Token::None => "keyword",
+                // Option and Result types
+                Token::Some | Token::None | Token::Ok | Token::Err => "keyword",
 
                 // Lifetime/temporal
                 Token::Lifetime | Token::Within => "keyword",

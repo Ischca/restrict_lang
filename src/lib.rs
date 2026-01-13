@@ -104,6 +104,7 @@ pub use ast::*;
 pub use parser::*;
 pub use type_checker::*;
 pub use codegen::{WasmCodeGen, CodeGenError};
+pub use module::{ModuleResolver, Module};
 
 /// Legacy convenience function for tests
 /// 

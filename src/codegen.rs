@@ -99,6 +99,14 @@ pub struct WasmCodeGen {
     record_field_offsets: HashMap<String, HashMap<String, u32>>,
     /// Variable types: var_name -> type_name (e.g., "Point", "Buffer")
     var_types: HashMap<String, String>,
+    /// Imported functions to be inlined
+    imported_functions: Vec<FunDecl>,
+    /// Imported records to be included
+    imported_records: Vec<RecordDecl>,
+    /// Generic function definitions for monomorphization
+    generic_functions: HashMap<String, FunDecl>,
+    /// Tracked instantiations: function_name -> Vec<(type_args, mangled_name)>
+    instantiations: HashMap<String, Vec<(Vec<String>, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -139,18 +147,55 @@ impl WasmCodeGen {
             records: HashMap::new(),
             record_field_offsets: HashMap::new(),
             var_types: HashMap::new(),
+            imported_functions: Vec::new(),
+            imported_records: Vec::new(),
+            generic_functions: HashMap::new(),
+            instantiations: HashMap::new(),
         }
     }
     
+    /// Register imported declarations to be included in the generated WASM.
+    /// These declarations will be generated as part of the module instead of
+    /// being imported from external modules.
+    pub fn register_imported_decl(&mut self, decl: &TopDecl) {
+        match decl {
+            TopDecl::Function(func) => {
+                // Register the function signature so codegen knows about it
+                let params: Vec<WasmType> = func.params.iter().map(|_| WasmType::I32).collect();
+                let result = Some(WasmType::I32); // Default to I32 for now
+                self.functions.insert(func.name.clone(), FunctionSig {
+                    _params: params,
+                    result,
+                });
+                // Store the function for later generation
+                self.imported_functions.push(func.clone());
+            }
+            TopDecl::Record(record) => {
+                // Store record for later registration
+                self.imported_records.push(record.clone());
+            }
+            _ => {
+                // Other declaration types not yet supported for import
+            }
+        }
+    }
+
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
         self.output.push_str("(module\n");
-        
-        // Process module imports first
-        self.generate_imports(&program.imports)?;
+
+        // Skip WASM imports for functions we have inlined declarations for
+        // This prevents generating "import" statements for functions we'll define locally
+        // (No-op if we have the functions inlined)
         
         // Import WASI functions for I/O
         self.output.push_str("  ;; WASI imports\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_close\" (func $fd_close (param i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_seek\" (func $fd_seek (param i32 i64 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"path_open\" (func $path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_prestat_get\" (func $fd_prestat_get (param i32 i32) (result i32)))\n");
+        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_prestat_dir_name\" (func $fd_prestat_dir_name (param i32 i32 i32) (result i32)))\n");
         self.output.push_str("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n");
         
         // Memory
@@ -160,7 +205,12 @@ impl WasmCodeGen {
         
         // Collect string constants first
         self.collect_strings(program)?;
-        
+
+        // Collect strings from imported functions
+        for func in &self.imported_functions.clone() {
+            self.collect_strings_from_block(&func.body)?;
+        }
+
         // Generate string data section
         if !self.strings.is_empty() {
             self.output.push_str("\n  ;; String constants\n");
@@ -198,7 +248,10 @@ impl WasmCodeGen {
         
         // Generate built-in functions
         self.generate_builtin_functions()?;
-        
+
+        // Generate prelude functions
+        self.generate_prelude_functions()?;
+
         // Generate arena allocator functions
         self.generate_arena_functions()?;
         
@@ -210,11 +263,19 @@ impl WasmCodeGen {
         
         // Collect record definitions first
         for decl in &program.declarations {
-            if let TopDecl::Record(record) = decl {
-                self.register_record_definition(record)?;
+            match decl {
+                TopDecl::Record(record) => {
+                    self.register_record_definition(record)?;
+                }
+                TopDecl::Export(export) => {
+                    if let TopDecl::Record(record) = export.item.as_ref() {
+                        self.register_record_definition(record)?;
+                    }
+                }
+                _ => {}
             }
         }
-        
+
         // Collect all function signatures first
         for decl in &program.declarations {
             match decl {
@@ -227,8 +288,16 @@ impl WasmCodeGen {
                 TopDecl::Record(record) => {
                     self.register_record_methods(record)?;
                 }
-                TopDecl::Export(_) => {
-                    // Not yet implemented
+                TopDecl::Export(export) => {
+                    match export.item.as_ref() {
+                        TopDecl::Function(func) => {
+                            self.register_function_signature(func)?;
+                        }
+                        TopDecl::Record(record) => {
+                            self.register_record_methods(record)?;
+                        }
+                        _ => {}
+                    }
                 }
                 TopDecl::Impl(_) | TopDecl::Context(_) => {
                     // Not yet implemented
@@ -236,6 +305,15 @@ impl WasmCodeGen {
             }
         }
         
+        // Generate imported functions first
+        if !self.imported_functions.is_empty() {
+            self.output.push_str("\n  ;; Imported functions (inlined)\n");
+            let imported_funcs: Vec<_> = self.imported_functions.clone();
+            for func in &imported_funcs {
+                self.generate_function(func)?;
+            }
+        }
+
         // Generate functions
         self.output.push_str("\n  ;; Functions\n");
         for decl in &program.declarations {
@@ -249,15 +327,26 @@ impl WasmCodeGen {
                 TopDecl::Record(record) => {
                     self.generate_record_methods(record)?;
                 }
-                TopDecl::Export(_) => {
-                    // Not yet implemented
+                TopDecl::Export(export) => {
+                    match export.item.as_ref() {
+                        TopDecl::Function(func) => {
+                            self.generate_function(func)?;
+                        }
+                        TopDecl::Record(record) => {
+                            self.generate_record_methods(record)?;
+                        }
+                        _ => {}
+                    }
                 }
                 TopDecl::Impl(_) | TopDecl::Context(_) => {
                     // Not yet implemented
                 }
             }
         }
-        
+
+        // Generate monomorphized versions of generic functions
+        self.generate_monomorphized_functions()?;
+
         // Generate lambda functions
         for lambda_func in &self.lambda_functions {
             self.output.push_str(lambda_func);
@@ -489,21 +578,1191 @@ impl WasmCodeGen {
         self.output.push_str("    )\n");
         self.output.push_str("  )\n");
 
-        // Add println to function signatures  
+        // read_line function - reads a line from stdin
+        self.output.push_str("\n  ;; Read a line from stdin\n");
+        self.output.push_str("  (func $read_line (result i32)\n");
+        self.output.push_str("    (local $buffer i32)\n");
+        self.output.push_str("    (local $nread i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $char i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Use memory at 4096 for read buffer (1024 bytes)\n");
+        self.output.push_str("    i32.const 4096\n");
+        self.output.push_str("    local.set $buffer\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at address 4000\n");
+        self.output.push_str("    ;; iov_base = buffer address\n");
+        self.output.push_str("    i32.const 4000\n");
+        self.output.push_str("    local.get $buffer\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; iov_len = 1024 (max read size)\n");
+        self.output.push_str("    i32.const 4004\n");
+        self.output.push_str("    i32.const 1024\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call fd_read(stdin=0, iovs, iovs_len=1, nread)\n");
+        self.output.push_str("    i32.const 0    ;; stdin\n");
+        self.output.push_str("    i32.const 4000 ;; iovs\n");
+        self.output.push_str("    i32.const 1    ;; iovs_len\n");
+        self.output.push_str("    i32.const 4008 ;; nread ptr\n");
+        self.output.push_str("    call $fd_read\n");
+        self.output.push_str("    drop\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get number of bytes read\n");
+        self.output.push_str("    i32.const 4008\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $nread\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Find newline and calculate actual length\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    local.get $nread\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    (block $found\n");
+        self.output.push_str("      (loop $search\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $nread\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $found\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $buffer\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        local.tee $char\n");
+        self.output.push_str("        i32.const 10  ;; newline\n");
+        self.output.push_str("        i32.eq\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            local.set $len\n");
+        self.output.push_str("            br $found\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $search\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate result string at 5120 (length prefix + data)\n");
+        self.output.push_str("    i32.const 5120\n");
+        self.output.push_str("    local.set $result\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Store length\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy data\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add  ;; destination\n");
+        self.output.push_str("    local.get $buffer  ;; source\n");
+        self.output.push_str("    local.get $len  ;; size\n");
+        self.output.push_str("    memory.copy\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Return pointer to string\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("  )\n");
+
+        // eprint function - print to stderr
+        self.output.push_str("\n  ;; Print to stderr\n");
+        self.output.push_str("  (func $eprint (param $str i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Read string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at address 0\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; fd_write to stderr (fd=2)\n");
+        self.output.push_str("    i32.const 2   ;; stderr\n");
+        self.output.push_str("    i32.const 0   ;; iovs\n");
+        self.output.push_str("    i32.const 1   ;; iovs_len\n");
+        self.output.push_str("    i32.const 20  ;; nwritten\n");
+        self.output.push_str("    call $fd_write\n");
+        self.output.push_str("    drop\n");
+        self.output.push_str("  )\n");
+
+        // Add println to function signatures
         self.functions.insert("println".to_string(), FunctionSig {
             _params: vec![WasmType::I32],
             result: None,
         });
-        
+
         // Add print_int to function signatures
         self.functions.insert("print_int".to_string(), FunctionSig {
             _params: vec![WasmType::I32],
             result: None,
         });
-        
+
+        // Add read_line to function signatures
+        self.functions.insert("read_line".to_string(), FunctionSig {
+            _params: vec![],
+            result: Some(WasmType::I32),
+        });
+
+        // Add eprint to function signatures
+        self.functions.insert("eprint".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: None,
+        });
+
+        // File I/O functions
+        self.generate_file_io_functions()?;
+
+        // Generate string runtime functions
+        self.generate_string_functions()?;
+
         Ok(())
     }
-    
+
+    fn generate_file_io_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; File I/O functions\n");
+
+        // file_open: Opens a file and returns a file descriptor
+        // Parameters: path (string pointer), flags (i32)
+        // Returns: fd (i32) or -1 on error
+        // Flags: 0 = read, 1 = write, 2 = read+write
+        self.output.push_str("  (func $file_open (param $path i32) (param $flags i32) (result i32)\n");
+        self.output.push_str("    (local $path_len i32)\n");
+        self.output.push_str("    (local $path_ptr i32)\n");
+        self.output.push_str("    (local $fd_out i32)\n");
+        self.output.push_str("    (local $oflags i32)\n");
+        self.output.push_str("    (local $rights i64)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get path length and pointer\n");
+        self.output.push_str("    local.get $path\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $path_len\n");
+        self.output.push_str("    local.get $path\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.set $path_ptr\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Set oflags based on flags parameter\n");
+        self.output.push_str("    ;; flags: 0=read, 1=write(create), 2=read+write\n");
+        self.output.push_str("    local.get $flags\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.and\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then i32.const 1)  ;; O_CREAT\n");
+        self.output.push_str("      (else i32.const 0)  ;; No flags\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.set $oflags\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Set rights - allow read and write\n");
+        self.output.push_str("    i64.const 0x1FFFFFFF  ;; All rights\n");
+        self.output.push_str("    local.set $rights\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; fd_out pointer at address 6200\n");
+        self.output.push_str("    i32.const 6200\n");
+        self.output.push_str("    local.set $fd_out\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call path_open(dirfd=3, dirflags=0, path, path_len, oflags, rights_base, rights_inheriting, fdflags, fd_out)\n");
+        self.output.push_str("    i32.const 3           ;; dirfd (preopened dir)\n");
+        self.output.push_str("    i32.const 0           ;; dirflags\n");
+        self.output.push_str("    local.get $path_ptr   ;; path\n");
+        self.output.push_str("    local.get $path_len   ;; path_len\n");
+        self.output.push_str("    local.get $oflags     ;; oflags\n");
+        self.output.push_str("    local.get $rights     ;; rights_base\n");
+        self.output.push_str("    local.get $rights     ;; rights_inheriting\n");
+        self.output.push_str("    i32.const 0           ;; fdflags\n");
+        self.output.push_str("    local.get $fd_out     ;; fd out pointer\n");
+        self.output.push_str("    call $path_open\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Check result\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; Success - return fd\n");
+        self.output.push_str("        local.get $fd_out\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Error - return -1\n");
+        self.output.push_str("        i32.const -1\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_open".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // file_read: Read from a file descriptor into a buffer
+        // Returns number of bytes read or -1 on error
+        self.output.push_str("  (func $file_read (param $fd i32) (param $len i32) (result i32)\n");
+        self.output.push_str("    (local $buffer i32)\n");
+        self.output.push_str("    (local $nread i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Use buffer at 6300\n");
+        self.output.push_str("    i32.const 6300\n");
+        self.output.push_str("    local.set $buffer\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at 6204\n");
+        self.output.push_str("    i32.const 6204\n");
+        self.output.push_str("    local.get $buffer\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 6208\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call fd_read\n");
+        self.output.push_str("    local.get $fd\n");
+        self.output.push_str("    i32.const 6204  ;; iovs\n");
+        self.output.push_str("    i32.const 1     ;; iovs_len\n");
+        self.output.push_str("    i32.const 6212  ;; nread out\n");
+        self.output.push_str("    call $fd_read\n");
+        self.output.push_str("    local.set $result\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Check result and return string pointer\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; Store length at result string location (7300)\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("        i32.const 6212\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        ;; Copy data\n");
+        self.output.push_str("        i32.const 7304\n");
+        self.output.push_str("        local.get $buffer\n");
+        self.output.push_str("        i32.const 6212\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        memory.copy\n");
+        self.output.push_str("        ;; Return string pointer\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Error - return empty string at 7300 with len 0\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        i32.const 7300\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_read".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // file_write: Write a string to a file descriptor
+        // Returns number of bytes written or -1 on error
+        self.output.push_str("  (func $file_write (param $fd i32) (param $str i32) (result i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Setup iovec at 6220\n");
+        self.output.push_str("    i32.const 6220\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 6224\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Call fd_write\n");
+        self.output.push_str("    local.get $fd\n");
+        self.output.push_str("    i32.const 6220  ;; iovs\n");
+        self.output.push_str("    i32.const 1     ;; iovs_len\n");
+        self.output.push_str("    i32.const 6228  ;; nwritten out\n");
+        self.output.push_str("    call $fd_write\n");
+        self.output.push_str("    local.set $result\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Return nwritten or -1 on error\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 6228\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        i32.const -1\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_write".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // file_close: Close a file descriptor
+        self.output.push_str("  (func $file_close (param $fd i32) (result i32)\n");
+        self.output.push_str("    local.get $fd\n");
+        self.output.push_str("    call $fd_close\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then i32.const 0)   ;; Success\n");
+        self.output.push_str("      (else i32.const -1)  ;; Error\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("file_close".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        Ok(())
+    }
+
+    fn generate_string_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; String runtime functions\n");
+
+        // string_length: Get the length of a string (reads 4-byte length prefix)
+        self.output.push_str("  (func $string_length (param $str i32) (result i32)\n");
+        self.output.push_str("    ;; Read the 4-byte length prefix\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_length".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // string_equals: Compare two strings for equality
+        self.output.push_str("  (func $string_equals (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    (local $len_a i32)\n");
+        self.output.push_str("    (local $len_b i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $ptr_a i32)\n");
+        self.output.push_str("    (local $ptr_b i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get lengths\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_b\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; If lengths differ, strings are not equal\n");
+        self.output.push_str("    local.get $len_a\n");
+        self.output.push_str("    local.get $len_b\n");
+        self.output.push_str("    i32.ne\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 0  ;; false\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Compare byte by byte\n");
+        self.output.push_str("        local.get $a\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $ptr_a\n");
+        self.output.push_str("        local.get $b\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $ptr_b\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        (block $done (result i32)\n");
+        self.output.push_str("          (loop $cmp\n");
+        self.output.push_str("            ;; Check if we've compared all bytes\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            local.get $len_a\n");
+        self.output.push_str("            i32.ge_u\n");
+        self.output.push_str("            (if\n");
+        self.output.push_str("              (then\n");
+        self.output.push_str("                i32.const 1  ;; true - all bytes match\n");
+        self.output.push_str("                br $done\n");
+        self.output.push_str("              )\n");
+        self.output.push_str("            )\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Compare current bytes\n");
+        self.output.push_str("            local.get $ptr_a\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            i32.load8_u\n");
+        self.output.push_str("            local.get $ptr_b\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            i32.load8_u\n");
+        self.output.push_str("            i32.ne\n");
+        self.output.push_str("            (if\n");
+        self.output.push_str("              (then\n");
+        self.output.push_str("                i32.const 0  ;; false - bytes differ\n");
+        self.output.push_str("                br $done\n");
+        self.output.push_str("              )\n");
+        self.output.push_str("            )\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Increment index\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $i\n");
+        self.output.push_str("            br $cmp\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("          i32.const 1  ;; unreachable, but needed for type\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_equals".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // string_concat: Concatenate two strings
+        self.output.push_str("  (func $string_concat (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    (local $len_a i32)\n");
+        self.output.push_str("    (local $len_b i32)\n");
+        self.output.push_str("    (local $new_len i32)\n");
+        self.output.push_str("    (local $new_str i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get lengths\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len_b\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Calculate new length\n");
+        self.output.push_str("    local.get $len_a\n");
+        self.output.push_str("    local.get $len_b\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.set $new_len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate memory for new string: 4 bytes length + data\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_str\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Write length prefix\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy first string\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $copy1_done\n");
+        self.output.push_str("      (loop $copy1\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $len_a\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $copy1_done\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Copy byte from a to new_str\n");
+        self.output.push_str("        local.get $new_str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $a\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $copy1\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy second string\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $copy2_done\n");
+        self.output.push_str("      (loop $copy2\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $len_b\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $copy2_done\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Copy byte from b to new_str (offset by len_a)\n");
+        self.output.push_str("        local.get $new_str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $len_a\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $b\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $copy2\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Return new string pointer\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_concat".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // char_at: Get character at index (returns -1 if out of bounds)
+        self.output.push_str("  (func $char_at (param $str i32) (param $index i32) (result i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Check bounds\n");
+        self.output.push_str("    local.get $index\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.lt_s\n");
+        self.output.push_str("    local.get $index\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.ge_s\n");
+        self.output.push_str("    i32.or\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const -1  ;; Out of bounds\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Return character at index\n");
+        self.output.push_str("        local.get $str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $index\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("char_at".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // substring: Extract portion of string (start inclusive, end exclusive)
+        self.output.push_str("  (func $substring (param $str i32) (param $start i32) (param $end i32) (result i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $new_len i32)\n");
+        self.output.push_str("    (local $new_str i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Clamp start to [0, len]\n");
+        self.output.push_str("    local.get $start\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.lt_s\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $start\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.get $start\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.gt_s\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $len\n");
+        self.output.push_str("        local.set $start\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Clamp end to [start, len]\n");
+        self.output.push_str("    local.get $end\n");
+        self.output.push_str("    local.get $start\n");
+        self.output.push_str("    i32.lt_s\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $start\n");
+        self.output.push_str("        local.set $end\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.get $end\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.gt_s\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $len\n");
+        self.output.push_str("        local.set $end\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Calculate new length\n");
+        self.output.push_str("    local.get $end\n");
+        self.output.push_str("    local.get $start\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    local.set $new_len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate new string\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_str\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Write length prefix\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy bytes\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $copy_done\n");
+        self.output.push_str("      (loop $copy\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $new_len\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $copy_done\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Copy byte\n");
+        self.output.push_str("        local.get $new_str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $start\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $copy\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("substring".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // string_to_int: Parse integer from string (returns 0 on invalid input)
+        self.output.push_str("  (func $string_to_int (param $str i32) (result i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    (local $char i32)\n");
+        self.output.push_str("    (local $is_negative i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Empty string returns 0\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $result\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $is_negative\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Check for negative sign\n");
+        self.output.push_str("        local.get $str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.const 45  ;; '-'\n");
+        self.output.push_str("        i32.eq\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            local.set $is_negative\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            local.set $i\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Parse digits\n");
+        self.output.push_str("        (block $parse_done\n");
+        self.output.push_str("          (loop $parse\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            local.get $len\n");
+        self.output.push_str("            i32.ge_u\n");
+        self.output.push_str("            br_if $parse_done\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Get character\n");
+        self.output.push_str("            local.get $str\n");
+        self.output.push_str("            i32.const 4\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            i32.load8_u\n");
+        self.output.push_str("            local.set $char\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Check if digit (48-57 = '0'-'9')\n");
+        self.output.push_str("            local.get $char\n");
+        self.output.push_str("            i32.const 48\n");
+        self.output.push_str("            i32.lt_u\n");
+        self.output.push_str("            local.get $char\n");
+        self.output.push_str("            i32.const 57\n");
+        self.output.push_str("            i32.gt_u\n");
+        self.output.push_str("            i32.or\n");
+        self.output.push_str("            br_if $parse_done  ;; Stop on non-digit\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; result = result * 10 + (char - '0')\n");
+        self.output.push_str("            local.get $result\n");
+        self.output.push_str("            i32.const 10\n");
+        self.output.push_str("            i32.mul\n");
+        self.output.push_str("            local.get $char\n");
+        self.output.push_str("            i32.const 48\n");
+        self.output.push_str("            i32.sub\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $result\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $i\n");
+        self.output.push_str("            br $parse\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        ;; Apply negative sign if needed\n");
+        self.output.push_str("        local.get $is_negative\n");
+        self.output.push_str("        (if (result i32)\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            i32.const 0\n");
+        self.output.push_str("            local.get $result\n");
+        self.output.push_str("            i32.sub\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("          (else\n");
+        self.output.push_str("            local.get $result\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_to_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // int_to_string: Format integer as string
+        self.output.push_str("  (func $int_to_string (param $value i32) (result i32)\n");
+        self.output.push_str("    (local $num i32)\n");
+        self.output.push_str("    (local $digit i32)\n");
+        self.output.push_str("    (local $buffer_start i32)\n");
+        self.output.push_str("    (local $buffer_end i32)\n");
+        self.output.push_str("    (local $is_negative i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $new_str i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Use memory starting at address 500 for temp buffer\n");
+        self.output.push_str("    i32.const 520  ;; Start from end and work backwards\n");
+        self.output.push_str("    local.set $buffer_end\n");
+        self.output.push_str("    local.get $buffer_end\n");
+        self.output.push_str("    local.set $buffer_start\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Check if negative\n");
+        self.output.push_str("    local.get $value\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.lt_s\n");
+        self.output.push_str("    local.set $is_negative\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get absolute value\n");
+        self.output.push_str("    local.get $is_negative\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.get $value\n");
+        self.output.push_str("        i32.sub\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        local.get $value\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.set $num\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Handle zero special case\n");
+        self.output.push_str("    local.get $num\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $buffer_start\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.sub\n");
+        self.output.push_str("        local.tee $buffer_start\n");
+        self.output.push_str("        i32.const 48  ;; '0'\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Convert digits\n");
+        self.output.push_str("        (block $break\n");
+        self.output.push_str("          (loop $digit_loop\n");
+        self.output.push_str("            local.get $num\n");
+        self.output.push_str("            i32.eqz\n");
+        self.output.push_str("            br_if $break\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Get last digit\n");
+        self.output.push_str("            local.get $num\n");
+        self.output.push_str("            i32.const 10\n");
+        self.output.push_str("            i32.rem_u\n");
+        self.output.push_str("            local.set $digit\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Store digit character\n");
+        self.output.push_str("            local.get $buffer_start\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.sub\n");
+        self.output.push_str("            local.tee $buffer_start\n");
+        self.output.push_str("            local.get $digit\n");
+        self.output.push_str("            i32.const 48  ;; '0'\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            i32.store8\n");
+        self.output.push_str("            \n");
+        self.output.push_str("            ;; Divide by 10\n");
+        self.output.push_str("            local.get $num\n");
+        self.output.push_str("            i32.const 10\n");
+        self.output.push_str("            i32.div_u\n");
+        self.output.push_str("            local.set $num\n");
+        self.output.push_str("            br $digit_loop\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Add negative sign if needed\n");
+        self.output.push_str("    local.get $is_negative\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $buffer_start\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.sub\n");
+        self.output.push_str("        local.tee $buffer_start\n");
+        self.output.push_str("        i32.const 45  ;; '-'\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Calculate length\n");
+        self.output.push_str("    local.get $buffer_end\n");
+        self.output.push_str("    local.get $buffer_start\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate new string\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_str\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Write length prefix\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Copy from buffer to new string\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $copy_done\n");
+        self.output.push_str("      (loop $copy\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $len\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $copy_done\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $new_str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $buffer_start\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("        \n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $copy\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("int_to_string".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        Ok(())
+    }
+
+    fn generate_prelude_functions(&mut self) -> Result<(), CodeGenError> {
+        // ============================================================
+        // Prelude functions (matching std/prelude.rl)
+        // ============================================================
+        self.output.push_str("\n  ;; Prelude functions\n");
+
+        // not: (Bool) -> Bool
+        self.output.push_str("  (func $not (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("not".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // identity_int: (Int) -> Int
+        self.output.push_str("  (func $identity_int (param $x i32) (result i32)\n");
+        self.output.push_str("    local.get $x\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("identity_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // identity_bool: (Bool) -> Bool
+        self.output.push_str("  (func $identity_bool (param $x i32) (result i32)\n");
+        self.output.push_str("    local.get $x\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("identity_bool".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // eq_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $eq_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.eq\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("eq_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // ne_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $ne_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.ne\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("ne_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // lt_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $lt_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.lt_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("lt_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // le_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $le_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.le_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("le_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // gt_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $gt_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.gt_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("gt_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // ge_int: (Int, Int) -> Bool
+        self.output.push_str("  (func $ge_int (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.ge_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("ge_int".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // add: (Int, Int) -> Int
+        self.output.push_str("  (func $add (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("add".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // sub: (Int, Int) -> Int
+        self.output.push_str("  (func $sub (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("sub".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // mul: (Int, Int) -> Int
+        self.output.push_str("  (func $mul (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("mul".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // div: (Int, Int) -> Int
+        self.output.push_str("  (func $div (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.div_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("div".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // mod: (Int, Int) -> Int
+        self.output.push_str("  (func $mod (param $a i32) (param $b i32) (result i32)\n");
+        self.output.push_str("    local.get $a\n");
+        self.output.push_str("    local.get $b\n");
+        self.output.push_str("    i32.rem_s\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("mod".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // neg: (Int) -> Int
+        self.output.push_str("  (func $neg (param $x i32) (result i32)\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.get $x\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("neg".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // unit: () -> Unit (returns nothing meaningful)
+        self.output.push_str("  (func $unit\n");
+        self.output.push_str("    ;; Does nothing, represents unit value\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("unit".to_string(), FunctionSig {
+            _params: vec![],
+            result: None,
+        });
+
+        // panic: (String) -> Unit
+        self.output.push_str("  (func $panic (param $msg i32)\n");
+        self.output.push_str("    local.get $msg\n");
+        self.output.push_str("    call $println\n");
+        self.output.push_str("    unreachable\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("panic".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: None,
+        });
+
+        // assert: (Bool, String) -> Unit
+        self.output.push_str("  (func $assert (param $cond i32) (param $msg i32)\n");
+        self.output.push_str("    local.get $cond\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $msg\n");
+        self.output.push_str("        call $panic\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+        self.functions.insert("assert".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: None,
+        });
+
+        Ok(())
+    }
+
     fn generate_arena_functions(&mut self) -> Result<(), CodeGenError> {
         self.output.push_str("\n  ;; Arena allocator functions\n");
         
@@ -790,8 +2049,16 @@ impl WasmCodeGen {
                 TopDecl::Record(_record) => {
                     // Records don't have methods in the current AST
                 }
-                TopDecl::Export(_) => {
-                    // Not yet implemented
+                TopDecl::Export(export) => {
+                    match export.item.as_ref() {
+                        TopDecl::Function(func) => {
+                            self.collect_strings_from_block(&func.body)?;
+                        }
+                        TopDecl::Binding(val) => {
+                            self.collect_strings_from_expr(&val.value)?;
+                        }
+                        _ => {}
+                    }
                 }
                 TopDecl::Impl(_) | TopDecl::Context(_) => {
                     // Not yet implemented
@@ -920,6 +2187,32 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    /// Convert an AST Type to a string for type tracking
+    fn type_to_string(&self, ty: &crate::ast::Type) -> String {
+        match ty {
+            crate::ast::Type::Named(name) => name.clone(),
+            crate::ast::Type::Generic(base, params) => {
+                let params_str: Vec<String> = params.iter()
+                    .map(|p| self.type_to_string(p))
+                    .collect();
+                format!("{}<{}>", base, params_str.join(", "))
+            }
+            crate::ast::Type::Function(params, return_type) => {
+                let params_str: Vec<String> = params.iter()
+                    .map(|p| self.type_to_string(p))
+                    .collect();
+                format!("({}) -> {}", params_str.join(", "), self.type_to_string(return_type))
+            }
+            crate::ast::Type::Temporal(name, temporals) => {
+                // Temporal types like File<~f>
+                format!("{}<{}>", name, temporals.iter()
+                    .map(|t| format!("~{}", t))
+                    .collect::<Vec<_>>()
+                    .join(", "))
+            }
+        }
+    }
+
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
         // Handle generic functions
         if !func.type_params.is_empty() {
@@ -1014,75 +2307,429 @@ impl WasmCodeGen {
     
     // Generate specialized versions of generic functions
     fn generate_generic_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
-        // Handle special generic functions
-        match func.name.as_str() {
-            "println" => self.generate_println_specializations(func),
-            "new_list" => self.generate_new_list_specializations(func),
-            "list_add" => self.generate_list_add_specializations(func),
-            "some" => self.generate_some_specializations(func),
-            "none" => self.generate_none_specializations(func),
-            _ => {
-                // For other generic functions, we'll need to generate on demand
-                // This is a placeholder for future monomorphization
-                Ok(())
+        // Store all generic functions for later monomorphization
+        // Built-in functions (println, new_list, etc.) will be handled
+        // specially in generate_monomorphized_function based on type
+        self.generic_functions.insert(func.name.clone(), func.clone());
+        Ok(())
+    }
+
+    /// Record that a generic function is being instantiated with specific types
+    fn record_instantiation(&mut self, func_name: &str, type_args: Vec<String>) -> String {
+        // Generate mangled name: identity_Int, swap_Int_String, etc.
+        let mangled_name = if type_args.is_empty() {
+            func_name.to_string()
+        } else {
+            format!("{}_{}", func_name, type_args.join("_"))
+        };
+
+        // Check if this instantiation already exists
+        let instantiations = self.instantiations.entry(func_name.to_string()).or_insert_with(Vec::new);
+        if !instantiations.iter().any(|(args, _)| args == &type_args) {
+            instantiations.push((type_args, mangled_name.clone()));
+        }
+
+        mangled_name
+    }
+
+    /// Generate all monomorphized versions of generic functions
+    fn generate_monomorphized_functions(&mut self) -> Result<(), CodeGenError> {
+        // Clone to avoid borrow issues
+        let generic_functions = self.generic_functions.clone();
+        let instantiations = self.instantiations.clone();
+
+        for (func_name, type_instantiations) in instantiations {
+            if let Some(generic_func) = generic_functions.get(&func_name) {
+                for (type_args, mangled_name) in type_instantiations {
+                    self.generate_monomorphized_function(generic_func, &type_args, &mangled_name)?;
+                }
             }
         }
-    }
-    
-    fn generate_println_specializations(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate println_String specialization
-        let string_func = FunDecl {
-            name: "println_String".to_string(),
-            type_params: vec![],
-            temporal_constraints: vec![],
-            params: vec![Param {
-                name: func.params[0].name.clone(),
-                ty: Type::Named("String".to_string()),
-                context_bound: None,
-            }],
-            body: BlockExpr {
-                statements: vec![],
-                expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("println".to_string())),
-                    args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
-                }))),
-                is_lazy: false,
-                has_implicit_it: false,
-                span: None,
-            },
-            is_async: false,
-            span: None,
-        };
-        
-        // Generate println_Int32 specialization
-        let int_func = FunDecl {
-            name: "println_Int32".to_string(),
-            type_params: vec![],
-            temporal_constraints: vec![],
-            params: vec![Param {
-                name: func.params[0].name.clone(),
-                ty: Type::Named("Int32".to_string()),
-                context_bound: None,
-            }],
-            body: BlockExpr {
-                statements: vec![],
-                expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("print_int".to_string())),
-                    args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
-                }))),
-                is_lazy: false,
-                has_implicit_it: false,
-                span: None,
-            },
-            is_async: false,
-            span: None,
-        };
-        
-        // Generate the specialized functions
-        self.generate_function(&string_func)?;
-        self.generate_function(&int_func)?;
-        
+
         Ok(())
+    }
+
+    /// Generate a monomorphized version of a generic function
+    fn generate_monomorphized_function(
+        &mut self,
+        func: &FunDecl,
+        type_args: &[String],
+        mangled_name: &str
+    ) -> Result<(), CodeGenError> {
+        // Handle built-in generic functions specially
+        if self.generate_builtin_monomorphization(&func.name, type_args, mangled_name)? {
+            return Ok(());
+        }
+
+        // Build type substitution map
+        let mut type_subst: HashMap<String, String> = HashMap::new();
+        for (i, type_param) in func.type_params.iter().enumerate() {
+            if i < type_args.len() {
+                type_subst.insert(type_param.name.clone(), type_args[i].clone());
+            }
+        }
+
+        self.current_function = Some(mangled_name.to_string());
+        self.push_scope();
+
+        // Collect locals
+        let mut locals: Vec<(String, WasmType)> = Vec::new();
+        self.collect_locals_from_block(&func.body, &mut locals)?;
+
+        // Function header with mangled name
+        self.output.push_str(&format!("  (func ${}", mangled_name));
+
+        // Parameters with substituted types
+        let mut next_idx = 0u32;
+        for param in func.params.iter() {
+            let substituted_type = self.substitute_type(&param.ty, &type_subst);
+            let wasm_type = self.convert_type(&substituted_type)?;
+            self.output.push_str(&format!(" (param ${} {})", param.name, self.wasm_type_str(wasm_type)));
+            self.add_local(&param.name, next_idx);
+
+            // Track parameter type
+            let type_name = self.type_to_string(&substituted_type);
+            self.var_types.insert(param.name.clone(), type_name);
+
+            next_idx += 1;
+        }
+
+        // Result type with substitution
+        if let Some(ref ret_type) = func.return_type {
+            let substituted_ret = self.substitute_type(ret_type, &type_subst);
+            let wasm_ret = self.convert_type(&substituted_ret)?;
+            self.output.push_str(&format!(" (result {})", self.wasm_type_str(wasm_ret)));
+        }
+        self.output.push_str("\n");
+
+        // Declare locals
+        for (i, (name, wasm_type)) in locals.iter().enumerate() {
+            self.output.push_str(&format!("    (local ${} {})\n", name, self.wasm_type_str(*wasm_type)));
+            self.add_local(name, next_idx + i as u32);
+        }
+
+        // Generate body
+        self.generate_block(&func.body)?;
+
+        self.output.push_str("  )\n\n");
+        self.pop_scope();
+        self.current_function = None;
+
+        Ok(())
+    }
+
+    /// Generate built-in function specializations (println, new_list, etc.)
+    /// Returns true if handled, false if should use normal monomorphization
+    fn generate_builtin_monomorphization(
+        &mut self,
+        func_name: &str,
+        type_args: &[String],
+        mangled_name: &str
+    ) -> Result<bool, CodeGenError> {
+        match func_name {
+            "println" => {
+                self.generate_println_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "new_list" => {
+                self.generate_new_list_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "list_add" => {
+                self.generate_list_add_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "some" => {
+                self.generate_some_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "none" => {
+                self.generate_none_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            _ => Ok(false)
+        }
+    }
+
+    /// Generate println specialization for a specific type
+    fn generate_println_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        if type_args.is_empty() {
+            return Ok(());
+        }
+
+        let ty = &type_args[0];
+        self.output.push_str(&format!("  (func ${} (param $x i32)\n", mangled_name));
+
+        match ty.as_str() {
+            "String" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $println\n");
+            }
+            "Int" | "Int32" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_int\n");
+            }
+            "Float" | "Float64" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_float\n");
+            }
+            "Bool" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_bool\n");
+            }
+            _ => {
+                // For other types, try to print as int (fallback)
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_int\n");
+            }
+        }
+
+        self.output.push_str("  )\n\n");
+        Ok(())
+    }
+
+    /// Generate new_list specialization for a specific type
+    fn generate_new_list_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // new_list<T> creates an empty list
+        // Returns a pointer to [length=0, capacity=4, ...data...]
+        self.output.push_str(&format!("  (func ${} (result i32)\n", mangled_name));
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    ;; Allocate list header + initial capacity (4 elements)\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    local.set $ptr\n");
+        self.output.push_str("    ;; Store length = 0\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Store capacity = 4\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Advance heap: header (8) + capacity * 4\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    i32.const 24\n");  // 8 + 4*4
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    global.set $heap_ptr\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args; // Type doesn't affect allocation
+        Ok(())
+    }
+
+    /// Generate list_add specialization for a specific type
+    fn generate_list_add_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // list_add<T> adds an element to a list
+        self.output.push_str(&format!("  (func ${} (param $list i32) (param $item i32) (result i32)\n", mangled_name));
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $cap i32)\n");
+        self.output.push_str("    (local $data_ptr i32)\n");
+        self.output.push_str("    ;; Get current length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    ;; Calculate data pointer: list + 8 + len * 4\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.set $data_ptr\n");
+        self.output.push_str("    ;; Store item\n");
+        self.output.push_str("    local.get $data_ptr\n");
+        self.output.push_str("    local.get $item\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Increment length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Return list\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args;
+        Ok(())
+    }
+
+    /// Generate some specialization for a specific type
+    fn generate_some_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // some<T> wraps a value in Option::Some
+        // Option layout: [tag=1, value]
+        self.output.push_str(&format!("  (func ${} (param $value i32) (result i32)\n", mangled_name));
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    local.set $ptr\n");
+        self.output.push_str("    ;; Store tag = 1 (Some)\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Store value\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $value\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Advance heap\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    global.set $heap_ptr\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args;
+        Ok(())
+    }
+
+    /// Generate none specialization for a specific type
+    fn generate_none_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // none<T> creates Option::None
+        // Option layout: [tag=0]
+        self.output.push_str(&format!("  (func ${} (result i32)\n", mangled_name));
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    local.set $ptr\n");
+        self.output.push_str("    ;; Store tag = 0 (None)\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Advance heap\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    global.set $heap_ptr\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args;
+        Ok(())
+    }
+
+    /// Substitute type parameters with concrete types
+    fn substitute_type(&self, ty: &Type, subst: &HashMap<String, String>) -> Type {
+        match ty {
+            Type::Named(name) => {
+                if let Some(concrete) = subst.get(name) {
+                    Type::Named(concrete.clone())
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Generic(name, params) => {
+                let new_params: Vec<Type> = params.iter()
+                    .map(|p| self.substitute_type(p, subst))
+                    .collect();
+                Type::Generic(name.clone(), new_params)
+            }
+            Type::Function(param_types, ret_type) => {
+                let new_params: Vec<Type> = param_types.iter()
+                    .map(|p| self.substitute_type(p, subst))
+                    .collect();
+                let new_ret = Box::new(self.substitute_type(ret_type, subst));
+                Type::Function(new_params, new_ret)
+            }
+            _ => ty.clone()
+        }
+    }
+
+    /// Infer type arguments from a generic function call
+    fn infer_type_args_from_call(&self, func_name: &str, args: &[Box<Expr>]) -> Result<Vec<String>, CodeGenError> {
+        let generic_func = self.generic_functions.get(func_name)
+            .ok_or_else(|| CodeGenError::UndefinedFunction(func_name.to_string()))?;
+
+        let mut type_args = Vec::new();
+
+        // Match each argument with the corresponding parameter
+        for (i, param) in generic_func.params.iter().enumerate() {
+            if i >= args.len() {
+                break;
+            }
+
+            // Check if parameter type is a type parameter
+            if let Type::Named(param_type_name) = &param.ty {
+                // Check if this is one of the type parameters
+                let is_type_param = generic_func.type_params.iter()
+                    .any(|tp| &tp.name == param_type_name);
+
+                if is_type_param {
+                    // Infer the concrete type from the argument
+                    let concrete_type = self.infer_expr_type_name(&args[i])?;
+
+                    // Find the index of this type parameter
+                    let param_idx = generic_func.type_params.iter()
+                        .position(|tp| &tp.name == param_type_name);
+
+                    if let Some(idx) = param_idx {
+                        // Ensure we have space in type_args
+                        while type_args.len() <= idx {
+                            type_args.push(String::new());
+                        }
+                        type_args[idx] = concrete_type;
+                    }
+                }
+            }
+        }
+
+        // Filter out empty strings
+        type_args.retain(|s| !s.is_empty());
+
+        Ok(type_args)
+    }
+
+    /// Infer the type name from an expression (for monomorphization)
+    fn infer_expr_type_name(&self, expr: &Expr) -> Result<String, CodeGenError> {
+        match expr {
+            Expr::IntLit(_) => Ok("Int".to_string()),
+            Expr::FloatLit(_) => Ok("Float".to_string()),
+            Expr::StringLit(_) => Ok("String".to_string()),
+            Expr::BoolLit(_) => Ok("Bool".to_string()),
+            Expr::Ident(name) => {
+                // Check if we know the type of this variable
+                if let Some(type_name) = self.var_types.get(name) {
+                    Ok(type_name.clone())
+                } else {
+                    // Default to Int for unknown identifiers
+                    Ok("Int".to_string())
+                }
+            }
+            Expr::FieldAccess(object, field) => {
+                // Get type of the record and the field
+                if let Some(record_type) = self.var_types.get(&self.expr_to_var_name(object)) {
+                    if let Some(fields) = self.records.get(record_type) {
+                        for (field_name, field_type) in fields {
+                            if field_name == field {
+                                return Ok(self.type_to_string(field_type));
+                            }
+                        }
+                    }
+                }
+                Ok("Int".to_string())
+            }
+            Expr::RecordLit(rl) => Ok(rl.name.clone()),
+            Expr::Block(block) => {
+                // Get type from the block's final expression
+                if let Some(ref final_expr) = block.expr {
+                    self.infer_expr_type_name(final_expr)
+                } else {
+                    Ok("Unit".to_string())
+                }
+            }
+            _ => Ok("Int".to_string()) // Default fallback
+        }
+    }
+
+    /// Helper to extract variable name from expression
+    fn expr_to_var_name(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::Ident(name) => name.clone(),
+            _ => String::new()
+        }
     }
     
     fn generate_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
@@ -1090,23 +2737,28 @@ impl WasmCodeGen {
         if !func.type_params.is_empty() {
             return self.generate_generic_function(func);
         }
-        
+
         self.current_function = Some(func.name.clone());
         self.push_scope();
-        
+
         // First, collect all local variables by analyzing the function body
         let mut locals: Vec<(String, WasmType)> = Vec::new();
         self.collect_locals_from_block(&func.body, &mut locals)?;
-        
+
         // Function header
         self.output.push_str(&format!("  (func ${}", func.name));
-        
+
         // Parameters
         let mut next_idx = 0u32;
         for param in func.params.iter() {
             let wasm_type = self.convert_type(&param.ty)?;
             self.output.push_str(&format!(" (param ${} {})", param.name, self.wasm_type_str(wasm_type)));
             self.add_local(&param.name, next_idx);
+
+            // Track parameter type for field access
+            let type_name = self.type_to_string(&param.ty);
+            self.var_types.insert(param.name.clone(), type_name);
+
             next_idx += 1;
         }
         
@@ -1507,11 +3159,17 @@ impl WasmCodeGen {
                 // Get the type of the object expression
                 let record_name = if let Expr::Ident(var_name) = obj_expr.as_ref() {
                     // For identifiers, look up the type from var_types
-                    self.var_types.get(var_name)
+                    let var_type = self.var_types.get(var_name)
                         .ok_or_else(|| CodeGenError::NotImplemented(
                             format!("field access on unknown variable: {}", var_name)
                         ))?
-                        .clone()
+                        .clone();
+                    // Strip generic type parameters if present (e.g., "Box<Int>" -> "Box")
+                    if let Some(idx) = var_type.find('<') {
+                        var_type[..idx].to_string()
+                    } else {
+                        var_type
+                    }
                 } else if let Some(obj_type) = self.expr_types.get(&(obj_expr.as_ref() as *const Expr)) {
                     // Fallback to expr_types if available
                     if let Some(name) = obj_type.strip_suffix(&format!("<~{}>", field)) {
@@ -1656,10 +3314,56 @@ impl WasmCodeGen {
             Expr::ScopeConcat(sc) => {
                 self.generate_scope_concat_expr(sc)?;
             }
+            Expr::Ok(expr) => {
+                // Result::Ok - allocate tagged union: [tag=1, value]
+                self.output.push_str("    ;; Ok(expr) literal\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+
+                // Store tag (1 for Ok)
+                self.output.push_str("    i32.const 1\n");
+                self.output.push_str("    i32.store\n");
+
+                // Generate inner value
+                self.generate_expr(expr)?;
+
+                // Store value at offset 4
+                self.output.push_str("    local.get $match_tmp\n");
+                self.output.push_str("    i32.const 4\n");
+                self.output.push_str("    i32.add\n");
+                self.output.push_str("    i32.store\n");
+
+                // Leave pointer on stack
+                self.output.push_str("    local.get $match_tmp\n");
+            }
+            Expr::Err(expr) => {
+                // Result::Err - allocate tagged union: [tag=0, value]
+                self.output.push_str("    ;; Err(expr) literal\n");
+                self.output.push_str("    i32.const 8\n");
+                self.output.push_str("    call $allocate\n");
+                self.output.push_str("    local.tee $match_tmp\n");
+
+                // Store tag (0 for Err)
+                self.output.push_str("    i32.const 0\n");
+                self.output.push_str("    i32.store\n");
+
+                // Generate inner value
+                self.generate_expr(expr)?;
+
+                // Store value at offset 4
+                self.output.push_str("    local.get $match_tmp\n");
+                self.output.push_str("    i32.const 4\n");
+                self.output.push_str("    i32.add\n");
+                self.output.push_str("    i32.store\n");
+
+                // Leave pointer on stack
+                self.output.push_str("    local.get $match_tmp\n");
+            }
         }
         Ok(())
     }
-    
+
     fn generate_lambda_expr(&mut self, lambda: &LambdaExpr) -> Result<(), CodeGenError> {
         // Generate a unique name for this lambda
         let lambda_name = format!("lambda_{}", self.lambda_counter);
@@ -2009,8 +3713,20 @@ impl WasmCodeGen {
                 return Ok(());
             }
             
+            // Handle polymorphic print/println functions
+            if (func_name == "print" || func_name == "println") && !call.args.is_empty() {
+                let resolved_name = self.resolve_generic_function_call(func_name, &call.args[0])?;
+                self.output.push_str(&format!("    call ${}\n", resolved_name));
+                return Ok(());
+            }
+
             if self.functions.contains_key(func_name) {
                 self.output.push_str(&format!("    call ${}\n", func_name));
+            } else if self.generic_functions.contains_key(func_name) {
+                // Generic function call - infer type arguments and use monomorphized version
+                let type_args = self.infer_type_args_from_call(func_name, &call.args)?;
+                let mangled_name = self.record_instantiation(func_name, type_args);
+                self.output.push_str(&format!("    call ${}\n", mangled_name));
             } else {
                 // Check if it's a method call
                 if let Some(obj_expr) = call.args.first() {
@@ -2339,11 +4055,13 @@ impl WasmCodeGen {
     }
     
     fn resolve_generic_function_call(&self, name: &str, arg_expr: &Expr) -> Result<String, CodeGenError> {
-        // For built-in functions, use the original name for string types
-        if name == "println" {
+        // For built-in print/println functions, dispatch based on argument type
+        if name == "print" || name == "println" {
             match arg_expr {
-                Expr::StringLit(_) => Ok("println".to_string()),
+                Expr::StringLit(_) => Ok("println".to_string()),  // String always uses println
                 Expr::IntLit(_) => Ok("print_int".to_string()),
+                Expr::FloatLit(_) => Ok("print_float".to_string()),
+                Expr::BoolLit(_) => Ok("print_int".to_string()),  // Boolean as 0/1
                 Expr::Ident(var_name) => {
                     // Look up variable type from var_types
                     if let Some(type_name) = self.var_types.get(var_name) {
@@ -2351,6 +4069,10 @@ impl WasmCodeGen {
                             Ok("println".to_string())
                         } else if type_name == "Int32" || type_name == "Int" || type_name == "Int64" {
                             Ok("print_int".to_string())
+                        } else if type_name == "Float64" || type_name == "Float" {
+                            Ok("print_float".to_string())
+                        } else if type_name == "Boolean" || type_name == "Bool" {
+                            Ok("print_int".to_string())  // Boolean as 0/1
                         } else {
                             // Default to println for other types
                             Ok("println".to_string())
@@ -2367,6 +4089,8 @@ impl WasmCodeGen {
                             Ok("println".to_string())
                         } else if type_name == "Int32" || type_name == "Int" {
                             Ok("print_int".to_string())
+                        } else if type_name == "Float64" || type_name == "Float" {
+                            Ok("print_float".to_string())
                         } else {
                             Ok("println".to_string())
                         }
@@ -2396,7 +4120,9 @@ impl WasmCodeGen {
     
     fn generate_list_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
         let list_size = 8 + (items.len() * 4); // Header (length + capacity) + elements
-        
+
+        self.output.push_str(&format!("    ;; List literal with {} elements\n", items.len()));
+
         // Allocate memory for the list
         self.output.push_str(&format!("    i32.const {} ;; list size\n", list_size));
         self.output.push_str("    call $allocate\n");
@@ -2431,7 +4157,9 @@ impl WasmCodeGen {
     
     fn generate_array_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
         let array_size = items.len() * 4; // No header, just elements
-        
+
+        self.output.push_str(&format!("    ;; Array literal with {} elements\n", items.len()));
+
         // Allocate memory for the array
         self.output.push_str(&format!("    i32.const {} ;; array size\n", array_size));
         self.output.push_str("    call $allocate\n");
@@ -2671,11 +4399,59 @@ impl WasmCodeGen {
                 self.output.push_str("    i32.const 0 ;; None tag\n");
                 self.output.push_str("    i32.eq\n");
             }
+            Pattern::Ok(inner_pattern) => {
+                // Check if tag is 1 (Ok) for Result
+                self.output.push_str("    local.tee $match_tmp ;; save for value extraction\n");
+                self.output.push_str("    i32.load ;; load tag\n");
+                self.output.push_str("    i32.const 1 ;; Ok tag\n");
+                self.output.push_str("    i32.eq\n");
+
+                // If tag matches, match the inner pattern
+                self.output.push_str("    (if (result i32)\n");
+                self.output.push_str("      (then\n");
+                self.output.push_str("        local.get $match_tmp\n");
+                self.output.push_str("        i32.const 4\n");
+                self.output.push_str("        i32.add\n");
+                self.output.push_str("        i32.load ;; load value from offset 4\n");
+
+                let inner_bindings = self.generate_pattern_match(inner_pattern)?;
+                bindings.extend(inner_bindings);
+
+                self.output.push_str("      )\n");
+                self.output.push_str("      (else\n");
+                self.output.push_str("        i32.const 0 ;; tag mismatch\n");
+                self.output.push_str("      )\n");
+                self.output.push_str("    )\n");
+            }
+            Pattern::Err(inner_pattern) => {
+                // Check if tag is 0 (Err) for Result
+                self.output.push_str("    local.tee $match_tmp ;; save for value extraction\n");
+                self.output.push_str("    i32.load ;; load tag\n");
+                self.output.push_str("    i32.const 0 ;; Err tag\n");
+                self.output.push_str("    i32.eq\n");
+
+                // If tag matches, match the inner pattern
+                self.output.push_str("    (if (result i32)\n");
+                self.output.push_str("      (then\n");
+                self.output.push_str("        local.get $match_tmp\n");
+                self.output.push_str("        i32.const 4\n");
+                self.output.push_str("        i32.add\n");
+                self.output.push_str("        i32.load ;; load error value from offset 4\n");
+
+                let inner_bindings = self.generate_pattern_match(inner_pattern)?;
+                bindings.extend(inner_bindings);
+
+                self.output.push_str("      )\n");
+                self.output.push_str("      (else\n");
+                self.output.push_str("        i32.const 0 ;; tag mismatch\n");
+                self.output.push_str("      )\n");
+                self.output.push_str("    )\n");
+            }
         }
-        
+
         Ok(bindings)
     }
-    
+
     fn generate_then_expr(&mut self, then: &ThenExpr) -> Result<(), CodeGenError> {
         // Generate condition
         self.generate_expr(&then.condition)?;
@@ -2861,154 +4637,7 @@ impl WasmCodeGen {
         Ok(())
     }
     
-    // Generate specialized versions for generic list functions
-    fn generate_new_list_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate new_list_Int32 specialization
-        self.output.push_str("  (func $new_list_Int32 (result i32)\n");
-        self.output.push_str("    ;; Allocate empty list: 8 bytes header\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.tee $list_tmp\n");
-        self.output.push_str("    ;; Set length to 0\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    ;; Set capacity to 0\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("new_list_Int32".to_string(), FunctionSig {
-            _params: vec![],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
-    
-    fn generate_list_add_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate list_add_Int32 specialization
-        self.output.push_str("  (func $list_add_Int32 (param $list i32) (param $value i32) (result i32)\n");
-        self.output.push_str("    (local $length i32)\n");
-        self.output.push_str("    (local $capacity i32)\n");
-        self.output.push_str("    (local $new_list i32)\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Load current length and capacity\n");
-        self.output.push_str("    local.get $list\n");
-        self.output.push_str("    i32.load\n");
-        self.output.push_str("    local.set $length\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    local.get $list\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.load\n");
-        self.output.push_str("    local.set $capacity\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Calculate new size: header + (length + 1) * 4\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.mul\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.set $new_list\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Set new length\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Set new capacity\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Copy existing elements\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $list\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.mul\n");
-        self.output.push_str("    memory.copy\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add new element\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.mul\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $value\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("list_add_Int32".to_string(), FunctionSig {
-            _params: vec![WasmType::I32, WasmType::I32],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
-    
-    fn generate_some_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate some_Int32 specialization
-        self.output.push_str("  (func $some_Int32 (param $value i32) (result i32)\n");
-        self.output.push_str("    ;; Allocate Option: tag (1 for Some) + value\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.tee $list_tmp\n");
-        self.output.push_str("    ;; Set tag to 1 (Some)\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    ;; Set value\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $value\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("some_Int32".to_string(), FunctionSig {
-            _params: vec![WasmType::I32],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
-    
-    fn generate_none_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate none_Int32 specialization
-        self.output.push_str("  (func $none_Int32 (result i32)\n");
-        self.output.push_str("    ;; Return NULL pointer for None\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("none_Int32".to_string(), FunctionSig {
-            _params: vec![],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
+    // Old specialization functions removed - now handled by generate_builtin_monomorphization
     
     fn generate_imports(&mut self, imports: &[ImportDecl]) -> Result<(), CodeGenError> {
         if imports.is_empty() {

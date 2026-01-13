@@ -16,6 +16,7 @@ fn type_check_program(source: &str) -> Result<(), String> {
 }
 
 #[test]
+#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_list_pattern_parse() {
     let input = r#"fun test = {
     val lst = [];

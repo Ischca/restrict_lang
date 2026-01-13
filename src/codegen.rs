@@ -108,6 +108,8 @@ pub struct WasmCodeGen {
     generic_functions: HashMap<String, FunDecl>,
     /// Tracked instantiations: function_name -> Vec<(type_args, mangled_name)>
     instantiations: HashMap<String, Vec<(Vec<String>, String)>>,
+    /// Function return types: function_name -> type_name (e.g., "String", "Int32")
+    function_return_types: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +154,7 @@ impl WasmCodeGen {
             imported_records: Vec::new(),
             generic_functions: HashMap::new(),
             instantiations: HashMap::new(),
+            function_return_types: HashMap::new(),
         }
     }
     
@@ -168,6 +171,11 @@ impl WasmCodeGen {
                     _params: params,
                     result,
                 });
+                // Track return type for println dispatch
+                let return_type = func.return_type.as_ref()
+                    .map(|t| self.type_to_string(t))
+                    .unwrap_or_else(|| "Int32".to_string());
+                self.function_return_types.insert(func.name.clone(), return_type);
                 // Store the function for later generation
                 self.imported_functions.push(func.clone());
             }
@@ -1564,6 +1572,7 @@ impl WasmCodeGen {
             _params: vec![WasmType::I32],
             result: Some(WasmType::I32),
         });
+        self.function_return_types.insert("int_to_string".to_string(), "String".to_string());
 
         Ok(())
     }
@@ -2249,10 +2258,16 @@ impl WasmCodeGen {
             _params: params,
             result,
         });
-        
+
+        // Track return type for println dispatch
+        let return_type = func.return_type.as_ref()
+            .map(|t| self.type_to_string(t))
+            .unwrap_or_else(|| "Int32".to_string());
+        self.function_return_types.insert(func.name.clone(), return_type);
+
         Ok(())
     }
-    
+
     fn register_record_methods(&mut self, _record: &RecordDecl) -> Result<(), CodeGenError> {
         // Records don't have methods in the current AST
         Ok(())
@@ -4090,12 +4105,41 @@ impl WasmCodeGen {
                         } else if type_name == "Boolean" || type_name == "Bool" {
                             Ok("print_int".to_string())  // Boolean as 0/1
                         } else {
-                            // Default to println for other types
-                            Ok("println".to_string())
+                            Err(CodeGenError::UnsupportedType(
+                                format!("println does not support type '{}' for variable '{}'", type_name, var_name)
+                            ))
                         }
                     } else {
-                        // Variable not found - default to print_int for numeric context
-                        Ok("print_int".to_string())
+                        Err(CodeGenError::UndefinedVariable(
+                            format!("cannot determine type of '{}' for println", var_name)
+                        ))
+                    }
+                }
+                Expr::Call(call) => {
+                    // Look up function return type by extracting function name
+                    if let Expr::Ident(func_name) = call.function.as_ref() {
+                        if let Some(return_type) = self.function_return_types.get(func_name) {
+                            if return_type == "String" {
+                                return Ok("println".to_string());
+                            } else if return_type == "Int32" || return_type == "Int" || return_type == "Int64" {
+                                return Ok("print_int".to_string());
+                            } else if return_type == "Float64" || return_type == "Float" {
+                                return Ok("print_float".to_string());
+                            } else if return_type == "Boolean" || return_type == "Bool" {
+                                return Ok("print_int".to_string());
+                            } else {
+                                return Err(CodeGenError::UnsupportedType(
+                                    format!("println does not support return type '{}' from function '{}'", return_type, func_name)
+                                ));
+                            }
+                        }
+                        Err(CodeGenError::UndefinedFunction(
+                            format!("cannot determine return type of '{}' for println", func_name)
+                        ))
+                    } else {
+                        Err(CodeGenError::NotImplemented(
+                            "println with non-identifier function call".to_string()
+                        ))
                     }
                 }
                 _ => {
@@ -4107,12 +4151,17 @@ impl WasmCodeGen {
                             Ok("print_int".to_string())
                         } else if type_name == "Float64" || type_name == "Float" {
                             Ok("print_float".to_string())
+                        } else if type_name == "Boolean" || type_name == "Bool" {
+                            Ok("print_int".to_string())
                         } else {
-                            Ok("println".to_string())
+                            Err(CodeGenError::UnsupportedType(
+                                format!("println does not support type '{}'", type_name)
+                            ))
                         }
                     } else {
-                        // Default to print_int for numeric expressions
-                        Ok("print_int".to_string())
+                        Err(CodeGenError::NotImplemented(
+                            "cannot determine type of expression for println".to_string()
+                        ))
                     }
                 }
             }

@@ -249,6 +249,7 @@ async function executeWasm(watCode) {
             fd_seek: () => 0,
             fd_close: () => 0,
             fd_read: () => 0,
+            path_open: () => 8, // EBADF - file operations not supported in browser
             fd_prestat_get: () => 8, // EBADF
             fd_prestat_dir_name: () => 8,
             environ_sizes_get: (count_ptr, buf_size_ptr) => {

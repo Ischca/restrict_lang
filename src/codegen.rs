@@ -4471,27 +4471,28 @@ impl WasmCodeGen {
     fn generate_then_expr(&mut self, then: &ThenExpr) -> Result<(), CodeGenError> {
         // Generate condition
         self.generate_expr(&then.condition)?;
-        
-        self.output.push_str("    (if\n");
+
+        // All if expressions produce a value (result i32)
+        self.output.push_str("    (if (result i32)\n");
         self.output.push_str("      (then\n");
         self.generate_block(&then.then_block)?;
         self.output.push_str("      )\n");
-        
+
         if !then.else_ifs.is_empty() || then.else_block.is_some() {
             self.output.push_str("      (else\n");
-            
+
             // Generate else-if chain
             for (i, (cond, block)) in then.else_ifs.iter().enumerate() {
                 if i > 0 {
                     self.output.push_str("        (else\n");
                 }
                 self.generate_expr(cond)?;
-                self.output.push_str("        (if\n");
+                self.output.push_str("        (if (result i32)\n");
                 self.output.push_str("          (then\n");
                 self.generate_block(block)?;
                 self.output.push_str("          )\n");
             }
-            
+
             // Final else block
             if let Some(else_block) = &then.else_block {
                 if !then.else_ifs.is_empty() {
@@ -4507,12 +4508,12 @@ impl WasmCodeGen {
                 self.output.push_str("            i32.const 0 ;; unit\n");
                 self.output.push_str("          )\n");
             }
-            
+
             // Close all the nested ifs
             for _ in 0..then.else_ifs.len() {
                 self.output.push_str("        )\n");
             }
-            
+
             self.output.push_str("      )\n");
         } else {
             // No else block, provide unit value
@@ -4520,9 +4521,9 @@ impl WasmCodeGen {
             self.output.push_str("        i32.const 0 ;; unit\n");
             self.output.push_str("      )\n");
         }
-        
+
         self.output.push_str("    )\n");
-        
+
         Ok(())
     }
     

@@ -21,9 +21,6 @@ output.txt
 /vscode-extension/node_modules/
 /vscode-extension/*.vsix
 
-# Web build artifacts  
-/web/pkg/
-
 # Test projects
 /test-projects/
 /test-warden/

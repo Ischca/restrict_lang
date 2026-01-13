@@ -1,0 +1,32 @@
+{
+  "name": "restrict_lang",
+  "type": "module",
+  "collaborators": [
+    "Restrict Language Team"
+  ],
+  "description": "A modern programming language for WebAssembly with affine types",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/restrict-lang/restrict_lang"
+  },
+  "files": [
+    "restrict_lang_bg.wasm",
+    "restrict_lang.js",
+    "restrict_lang.d.ts"
+  ],
+  "main": "restrict_lang.js",
+  "homepage": "https://restrict-lang.org",
+  "types": "restrict_lang.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ],
+  "keywords": [
+    "wasm",
+    "webassembly",
+    "affine-types",
+    "programming-language",
+    "compiler"
+  ]
+}

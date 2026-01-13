@@ -4105,12 +4105,14 @@ impl WasmCodeGen {
                         } else if type_name == "Boolean" || type_name == "Bool" {
                             Ok("print_int".to_string())  // Boolean as 0/1
                         } else {
-                            // Default to println for other types
-                            Ok("println".to_string())
+                            Err(CodeGenError::UnsupportedType(
+                                format!("println does not support type '{}' for variable '{}'", type_name, var_name)
+                            ))
                         }
                     } else {
-                        // Variable not found - default to print_int for numeric context
-                        Ok("print_int".to_string())
+                        Err(CodeGenError::UndefinedVariable(
+                            format!("cannot determine type of '{}' for println", var_name)
+                        ))
                     }
                 }
                 Expr::Call(call) => {
@@ -4119,13 +4121,26 @@ impl WasmCodeGen {
                         if let Some(return_type) = self.function_return_types.get(func_name) {
                             if return_type == "String" {
                                 return Ok("println".to_string());
-                            } else {
+                            } else if return_type == "Int32" || return_type == "Int" || return_type == "Int64" {
                                 return Ok("print_int".to_string());
+                            } else if return_type == "Float64" || return_type == "Float" {
+                                return Ok("print_float".to_string());
+                            } else if return_type == "Boolean" || return_type == "Bool" {
+                                return Ok("print_int".to_string());
+                            } else {
+                                return Err(CodeGenError::UnsupportedType(
+                                    format!("println does not support return type '{}' from function '{}'", return_type, func_name)
+                                ));
                             }
                         }
+                        Err(CodeGenError::UndefinedFunction(
+                            format!("cannot determine return type of '{}' for println", func_name)
+                        ))
+                    } else {
+                        Err(CodeGenError::NotImplemented(
+                            "println with non-identifier function call".to_string()
+                        ))
                     }
-                    // Default to print_int
-                    Ok("print_int".to_string())
                 }
                 _ => {
                     // Try to get type from expr_types map
@@ -4136,12 +4151,17 @@ impl WasmCodeGen {
                             Ok("print_int".to_string())
                         } else if type_name == "Float64" || type_name == "Float" {
                             Ok("print_float".to_string())
+                        } else if type_name == "Boolean" || type_name == "Bool" {
+                            Ok("print_int".to_string())
                         } else {
-                            Ok("println".to_string())
+                            Err(CodeGenError::UnsupportedType(
+                                format!("println does not support type '{}'", type_name)
+                            ))
                         }
                     } else {
-                        // Default to print_int for numeric expressions
-                        Ok("print_int".to_string())
+                        Err(CodeGenError::NotImplemented(
+                            "cannot determine type of expression for println".to_string()
+                        ))
                     }
                 }
             }

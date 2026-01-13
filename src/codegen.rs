@@ -2307,19 +2307,11 @@ impl WasmCodeGen {
     
     // Generate specialized versions of generic functions
     fn generate_generic_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
-        // Handle special generic functions
-        match func.name.as_str() {
-            "println" => self.generate_println_specializations(func),
-            "new_list" => self.generate_new_list_specializations(func),
-            "list_add" => self.generate_list_add_specializations(func),
-            "some" => self.generate_some_specializations(func),
-            "none" => self.generate_none_specializations(func),
-            _ => {
-                // Store generic function for later monomorphization
-                self.generic_functions.insert(func.name.clone(), func.clone());
-                Ok(())
-            }
-        }
+        // Store all generic functions for later monomorphization
+        // Built-in functions (println, new_list, etc.) will be handled
+        // specially in generate_monomorphized_function based on type
+        self.generic_functions.insert(func.name.clone(), func.clone());
+        Ok(())
     }
 
     /// Record that a generic function is being instantiated with specific types
@@ -2364,6 +2356,11 @@ impl WasmCodeGen {
         type_args: &[String],
         mangled_name: &str
     ) -> Result<(), CodeGenError> {
+        // Handle built-in generic functions specially
+        if self.generate_builtin_monomorphization(&func.name, type_args, mangled_name)? {
+            return Ok(());
+        }
+
         // Build type substitution map
         let mut type_subst: HashMap<String, String> = HashMap::new();
         for (i, type_param) in func.type_params.iter().enumerate() {
@@ -2418,6 +2415,199 @@ impl WasmCodeGen {
         self.pop_scope();
         self.current_function = None;
 
+        Ok(())
+    }
+
+    /// Generate built-in function specializations (println, new_list, etc.)
+    /// Returns true if handled, false if should use normal monomorphization
+    fn generate_builtin_monomorphization(
+        &mut self,
+        func_name: &str,
+        type_args: &[String],
+        mangled_name: &str
+    ) -> Result<bool, CodeGenError> {
+        match func_name {
+            "println" => {
+                self.generate_println_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "new_list" => {
+                self.generate_new_list_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "list_add" => {
+                self.generate_list_add_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "some" => {
+                self.generate_some_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            "none" => {
+                self.generate_none_mono(type_args, mangled_name)?;
+                Ok(true)
+            }
+            _ => Ok(false)
+        }
+    }
+
+    /// Generate println specialization for a specific type
+    fn generate_println_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        if type_args.is_empty() {
+            return Ok(());
+        }
+
+        let ty = &type_args[0];
+        self.output.push_str(&format!("  (func ${} (param $x i32)\n", mangled_name));
+
+        match ty.as_str() {
+            "String" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $println\n");
+            }
+            "Int" | "Int32" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_int\n");
+            }
+            "Float" | "Float64" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_float\n");
+            }
+            "Bool" => {
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_bool\n");
+            }
+            _ => {
+                // For other types, try to print as int (fallback)
+                self.output.push_str("    local.get $x\n");
+                self.output.push_str("    call $print_int\n");
+            }
+        }
+
+        self.output.push_str("  )\n\n");
+        Ok(())
+    }
+
+    /// Generate new_list specialization for a specific type
+    fn generate_new_list_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // new_list<T> creates an empty list
+        // Returns a pointer to [length=0, capacity=4, ...data...]
+        self.output.push_str(&format!("  (func ${} (result i32)\n", mangled_name));
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    ;; Allocate list header + initial capacity (4 elements)\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    local.set $ptr\n");
+        self.output.push_str("    ;; Store length = 0\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Store capacity = 4\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Advance heap: header (8) + capacity * 4\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    i32.const 24\n");  // 8 + 4*4
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    global.set $heap_ptr\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args; // Type doesn't affect allocation
+        Ok(())
+    }
+
+    /// Generate list_add specialization for a specific type
+    fn generate_list_add_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // list_add<T> adds an element to a list
+        self.output.push_str(&format!("  (func ${} (param $list i32) (param $item i32) (result i32)\n", mangled_name));
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $cap i32)\n");
+        self.output.push_str("    (local $data_ptr i32)\n");
+        self.output.push_str("    ;; Get current length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    ;; Calculate data pointer: list + 8 + len * 4\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.set $data_ptr\n");
+        self.output.push_str("    ;; Store item\n");
+        self.output.push_str("    local.get $data_ptr\n");
+        self.output.push_str("    local.get $item\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Increment length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Return list\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args;
+        Ok(())
+    }
+
+    /// Generate some specialization for a specific type
+    fn generate_some_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // some<T> wraps a value in Option::Some
+        // Option layout: [tag=1, value]
+        self.output.push_str(&format!("  (func ${} (param $value i32) (result i32)\n", mangled_name));
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    local.set $ptr\n");
+        self.output.push_str("    ;; Store tag = 1 (Some)\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Store value\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $value\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Advance heap\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    global.set $heap_ptr\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args;
+        Ok(())
+    }
+
+    /// Generate none specialization for a specific type
+    fn generate_none_mono(&mut self, type_args: &[String], mangled_name: &str) -> Result<(), CodeGenError> {
+        // none<T> creates Option::None
+        // Option layout: [tag=0]
+        self.output.push_str(&format!("  (func ${} (result i32)\n", mangled_name));
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    local.set $ptr\n");
+        self.output.push_str("    ;; Store tag = 0 (None)\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Advance heap\n");
+        self.output.push_str("    global.get $heap_ptr\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    global.set $heap_ptr\n");
+        self.output.push_str("    local.get $ptr\n");
+        self.output.push_str("  )\n\n");
+
+        let _ = type_args;
         Ok(())
     }
 
@@ -2540,64 +2730,6 @@ impl WasmCodeGen {
             Expr::Ident(name) => name.clone(),
             _ => String::new()
         }
-    }
-    
-    fn generate_println_specializations(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate println_String specialization
-        let string_func = FunDecl {
-            name: "println_String".to_string(),
-            type_params: vec![],
-            temporal_constraints: vec![],
-            params: vec![Param {
-                name: func.params[0].name.clone(),
-                ty: Type::Named("String".to_string()),
-                context_bound: None,
-            }],
-            body: BlockExpr {
-                statements: vec![],
-                expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("println".to_string())),
-                    args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
-                }))),
-                is_lazy: false,
-                has_implicit_it: false,
-                span: None,
-            },
-            is_async: false,
-            return_type: None,
-            span: None,
-        };
-
-        // Generate println_Int32 specialization
-        let int_func = FunDecl {
-            name: "println_Int32".to_string(),
-            type_params: vec![],
-            temporal_constraints: vec![],
-            params: vec![Param {
-                name: func.params[0].name.clone(),
-                ty: Type::Named("Int32".to_string()),
-                context_bound: None,
-            }],
-            body: BlockExpr {
-                statements: vec![],
-                expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("print_int".to_string())),
-                    args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
-                }))),
-                is_lazy: false,
-                has_implicit_it: false,
-                span: None,
-            },
-            is_async: false,
-            return_type: None,
-            span: None,
-        };
-
-        // Generate the specialized functions
-        self.generate_function(&string_func)?;
-        self.generate_function(&int_func)?;
-        
-        Ok(())
     }
     
     fn generate_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
@@ -4505,154 +4637,7 @@ impl WasmCodeGen {
         Ok(())
     }
     
-    // Generate specialized versions for generic list functions
-    fn generate_new_list_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate new_list_Int32 specialization
-        self.output.push_str("  (func $new_list_Int32 (result i32)\n");
-        self.output.push_str("    ;; Allocate empty list: 8 bytes header\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.tee $list_tmp\n");
-        self.output.push_str("    ;; Set length to 0\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    ;; Set capacity to 0\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("new_list_Int32".to_string(), FunctionSig {
-            _params: vec![],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
-    
-    fn generate_list_add_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate list_add_Int32 specialization
-        self.output.push_str("  (func $list_add_Int32 (param $list i32) (param $value i32) (result i32)\n");
-        self.output.push_str("    (local $length i32)\n");
-        self.output.push_str("    (local $capacity i32)\n");
-        self.output.push_str("    (local $new_list i32)\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Load current length and capacity\n");
-        self.output.push_str("    local.get $list\n");
-        self.output.push_str("    i32.load\n");
-        self.output.push_str("    local.set $length\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    local.get $list\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.load\n");
-        self.output.push_str("    local.set $capacity\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Calculate new size: header + (length + 1) * 4\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.mul\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.set $new_list\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Set new length\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Set new capacity\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Copy existing elements\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $list\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.mul\n");
-        self.output.push_str("    memory.copy\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add new element\n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $length\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.mul\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $value\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    local.get $new_list\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("list_add_Int32".to_string(), FunctionSig {
-            _params: vec![WasmType::I32, WasmType::I32],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
-    
-    fn generate_some_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate some_Int32 specialization
-        self.output.push_str("  (func $some_Int32 (param $value i32) (result i32)\n");
-        self.output.push_str("    ;; Allocate Option: tag (1 for Some) + value\n");
-        self.output.push_str("    i32.const 8\n");
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.tee $list_tmp\n");
-        self.output.push_str("    ;; Set tag to 1 (Some)\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    ;; Set value\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    local.get $value\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("some_Int32".to_string(), FunctionSig {
-            _params: vec![WasmType::I32],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
-    
-    fn generate_none_specializations(&mut self, _func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate none_Int32 specialization
-        self.output.push_str("  (func $none_Int32 (result i32)\n");
-        self.output.push_str("    ;; Return NULL pointer for None\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("  )\n");
-        
-        self.functions.insert("none_Int32".to_string(), FunctionSig {
-            _params: vec![],
-            result: Some(WasmType::I32),
-        });
-        
-        Ok(())
-    }
+    // Old specialization functions removed - now handled by generate_builtin_monomorphization
     
     fn generate_imports(&mut self, imports: &[ImportDecl]) -> Result<(), CodeGenError> {
         if imports.is_empty() {

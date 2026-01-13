@@ -2966,33 +2966,39 @@ impl WasmCodeGen {
     }
 
     fn generate_binding(&mut self, bind: &BindDecl) -> Result<(), CodeGenError> {
-        // Infer type of the value for variable tracking
-        match bind.value.as_ref() {
-            Expr::RecordLit(record_lit) => {
-                // Record the type of the variable for field access later
-                self.var_types.insert(bind.name.clone(), record_lit.name.clone());
-            }
-            Expr::IntLit(_) => {
-                self.var_types.insert(bind.name.clone(), "Int".to_string());
-            }
-            Expr::StringLit(_) => {
-                self.var_types.insert(bind.name.clone(), "String".to_string());
-            }
-            Expr::FloatLit(_) => {
-                self.var_types.insert(bind.name.clone(), "Float".to_string());
-            }
-            Expr::BoolLit(_) => {
-                self.var_types.insert(bind.name.clone(), "Bool".to_string());
-            }
-            Expr::Ident(other_var) => {
-                // Copy the type from the other variable if known
-                if let Some(type_name) = self.var_types.get(other_var).cloned() {
-                    self.var_types.insert(bind.name.clone(), type_name);
+        // First, check if there's an explicit type annotation
+        if let Some(ref ty) = bind.ty {
+            let type_name = self.type_to_string(ty);
+            self.var_types.insert(bind.name.clone(), type_name);
+        } else {
+            // Infer type of the value for variable tracking
+            match bind.value.as_ref() {
+                Expr::RecordLit(record_lit) => {
+                    // Record the type of the variable for field access later
+                    self.var_types.insert(bind.name.clone(), record_lit.name.clone());
                 }
-            }
-            _ => {
-                // For complex expressions, we'd need full type inference
-                // For now, leave the type unknown
+                Expr::IntLit(_) => {
+                    self.var_types.insert(bind.name.clone(), "Int".to_string());
+                }
+                Expr::StringLit(_) => {
+                    self.var_types.insert(bind.name.clone(), "String".to_string());
+                }
+                Expr::FloatLit(_) => {
+                    self.var_types.insert(bind.name.clone(), "Float".to_string());
+                }
+                Expr::BoolLit(_) => {
+                    self.var_types.insert(bind.name.clone(), "Bool".to_string());
+                }
+                Expr::Ident(other_var) => {
+                    // Copy the type from the other variable if known
+                    if let Some(type_name) = self.var_types.get(other_var).cloned() {
+                        self.var_types.insert(bind.name.clone(), type_name);
+                    }
+                }
+                _ => {
+                    // For complex expressions, we'd need full type inference
+                    // For now, leave the type unknown
+                }
             }
         }
 

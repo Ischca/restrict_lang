@@ -250,7 +250,10 @@ async fn main() {
 
     // Register imported declarations with codegen
     for (_name, decl) in &imported_decls {
-        codegen.register_imported_decl(decl);
+        if let Err(e) = codegen.register_imported_decl(decl) {
+            eprintln!("Code generation error in imported declaration: {}", e);
+            std::process::exit(1);
+        }
     }
 
     let wat = match codegen.generate(&ast) {

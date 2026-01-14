@@ -2283,8 +2283,14 @@ impl WasmCodeGen {
                 Some(WasmType::I32)
             }
         } else {
-            // No expression at all - Unit return
-            None
+            // Last statement is Binding or Assignment, or block is empty
+            // These do not produce values, so the function returns Unit
+            match func.body.statements.last() {
+                None => None, // Empty block returns Unit
+                Some(Stmt::Binding(_)) => None, // Bindings don't produce values
+                Some(Stmt::Assignment(_)) => None, // Assignments don't produce values
+                Some(Stmt::Expr(_)) => unreachable!(), // Already handled above
+            }
         };
 
         self.functions.insert(func.name.clone(), FunctionSig {
@@ -2304,8 +2310,14 @@ impl WasmCodeGen {
             // Infer from last statement if it's an expression
             self.infer_return_type_from_expr(last_expr)?
         } else {
-            // No body expression means Unit return type
-            "Unit".to_string()
+            // Last statement is Binding or Assignment, or block is empty
+            // These do not produce values, so the function returns Unit
+            match func.body.statements.last() {
+                None => "Unit".to_string(), // Empty block returns Unit
+                Some(Stmt::Binding(_)) => "Unit".to_string(), // Bindings don't produce values
+                Some(Stmt::Assignment(_)) => "Unit".to_string(), // Assignments don't produce values
+                Some(Stmt::Expr(_)) => unreachable!(), // Already handled above
+            }
         };
         self.function_return_types.insert(func.name.clone(), return_type);
 

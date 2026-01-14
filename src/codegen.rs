@@ -2238,11 +2238,11 @@ impl WasmCodeGen {
             // For now, we'll generate specialized versions when called
             return Ok(());
         }
-        
+
         let params: Vec<WasmType> = func.params.iter()
             .map(|_| WasmType::I32)  // All types are i32 for now
             .collect();
-        
+
         // TODO: Determine return type from function body analysis
         // For now, assume functions with expressions in their body return i32
         // Exception: main function never returns a value
@@ -2253,19 +2253,88 @@ impl WasmCodeGen {
         } else {
             None
         };
-        
+
         self.functions.insert(func.name.clone(), FunctionSig {
             _params: params,
             result,
         });
 
         // Track return type for println dispatch
-        let return_type = func.return_type.as_ref()
-            .map(|t| self.type_to_string(t))
-            .unwrap_or_else(|| "Int32".to_string());
+        // If explicit return type is provided, use it
+        // Otherwise, infer from the function body
+        let return_type = if let Some(ref ty) = func.return_type {
+            self.type_to_string(ty)
+        } else if let Some(ref expr) = func.body.expr {
+            // Infer return type from the body expression
+            self.infer_return_type_from_expr(expr)
+        } else {
+            "Int32".to_string()
+        };
         self.function_return_types.insert(func.name.clone(), return_type);
 
         Ok(())
+    }
+
+    /// Infer return type from an expression without depending on function_return_types
+    /// This is used during function registration before all functions are registered
+    fn infer_return_type_from_expr(&self, expr: &Expr) -> String {
+        match expr {
+            Expr::IntLit(_) => "Int".to_string(),
+            Expr::FloatLit(_) => "Float".to_string(),
+            Expr::StringLit(_) => "String".to_string(),
+            Expr::BoolLit(_) => "Bool".to_string(),
+            Expr::Block(block) => {
+                if let Some(ref final_expr) = block.expr {
+                    self.infer_return_type_from_expr(final_expr)
+                } else {
+                    "Unit".to_string()
+                }
+            }
+            Expr::Then(then_expr) => {
+                // Infer from the then block
+                if let Some(ref final_expr) = then_expr.then_block.expr {
+                    self.infer_return_type_from_expr(final_expr)
+                } else if let Some(ref else_block) = then_expr.else_block {
+                    if let Some(ref final_expr) = else_block.expr {
+                        self.infer_return_type_from_expr(final_expr)
+                    } else {
+                        "Unit".to_string()
+                    }
+                } else {
+                    "Unit".to_string()
+                }
+            }
+            Expr::Call(call) => {
+                // Check built-in functions
+                if let Expr::Ident(func_name) = call.function.as_ref() {
+                    match func_name.as_str() {
+                        "int_to_string" | "float_to_string" | "bool_to_string" => "String".to_string(),
+                        "string_to_int" | "string_length" | "char_to_int" => "Int".to_string(),
+                        "string_to_float" => "Float".to_string(),
+                        "int_to_char" => "Char".to_string(),
+                        _ => {
+                            // Check if we already have this function registered
+                            if let Some(return_type) = self.function_return_types.get(func_name) {
+                                return_type.clone()
+                            } else {
+                                "Int".to_string()
+                            }
+                        }
+                    }
+                } else {
+                    "Int".to_string()
+                }
+            }
+            Expr::Binary(_) => "Int".to_string(),
+            Expr::Ident(name) => {
+                if let Some(type_name) = self.var_types.get(name) {
+                    type_name.clone()
+                } else {
+                    "Int".to_string()
+                }
+            }
+            _ => "Int".to_string()
+        }
     }
 
     fn register_record_methods(&mut self, _record: &RecordDecl) -> Result<(), CodeGenError> {
@@ -2745,6 +2814,35 @@ impl WasmCodeGen {
                     Ok("Unit".to_string())
                 }
             }
+            Expr::Then(then_expr) => {
+                // Infer type from the then block (both branches should have same type)
+                if let Some(ref final_expr) = then_expr.then_block.expr {
+                    self.infer_expr_type_name(final_expr)
+                } else if let Some(ref else_block) = then_expr.else_block {
+                    if let Some(ref final_expr) = else_block.expr {
+                        self.infer_expr_type_name(final_expr)
+                    } else {
+                        Ok("Unit".to_string())
+                    }
+                } else {
+                    Ok("Unit".to_string())
+                }
+            }
+            Expr::Call(call) => {
+                // Look up the function's return type
+                if let Expr::Ident(func_name) = call.function.as_ref() {
+                    // Check built-in functions first
+                    if func_name == "int_to_string" {
+                        return Ok("String".to_string());
+                    }
+                    // Check registered function return types
+                    if let Some(return_type) = self.function_return_types.get(func_name) {
+                        return Ok(return_type.clone());
+                    }
+                }
+                Ok("Int".to_string())
+            }
+            Expr::Binary(_) => Ok("Int".to_string()), // Binary ops return Int (for now)
             _ => Ok("Int".to_string()) // Default fallback
         }
     }

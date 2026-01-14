@@ -443,31 +443,39 @@ fn fun_decl(input: &str) -> ParseResult<FunDecl> {
     })(input)?;
     let type_params = type_params.unwrap_or_default();
 
-    let (input, _) = expect_token(Token::Colon)(input)?;
+    // Parse optional signature: : (params) -> ReturnType
+    // If no colon, function has no parameters and no explicit return type
+    let (input, params, return_type, temporal_constraints) =
+        if let Ok((input_after_colon, _)) = expect_token(Token::Colon)(input) {
+            // Has colon - parse parameter list: (x: Int32, y: Int32)
+            let (input, _) = expect_token(Token::LParen)(input_after_colon)?;
+            let (input, params) = separated_list0(
+                expect_token(Token::Comma),
+                param
+            )(input)?;
+            let (input, _) = expect_token(Token::RParen)(input)?;
 
-    // Parse parameter list: (x: Int32, y: Int32)
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, params) = separated_list0(
-        expect_token(Token::Comma),
-        param
-    )(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
-    
-    // Parse optional return type: -> ReturnType
-    let (input, return_type) = opt(|input| {
-        let (input, _) = expect_token(Token::ThinArrow)(input)?;
-        parse_type(input)
-    })(input)?;
+            // Parse optional return type: -> ReturnType
+            let (input, return_type) = opt(|input| {
+                let (input, _) = expect_token(Token::ThinArrow)(input)?;
+                parse_type(input)
+            })(input)?;
 
-    // Parse optional temporal constraints: where ~tx within ~db
-    let (input, temporal_constraints) = opt(|input| {
-        let (input, _) = expect_token(Token::Where)(input)?;
-        separated_list1(
-            expect_token(Token::Comma),
-            temporal_constraint
-        )(input)
-    })(input)?;
-    let temporal_constraints = temporal_constraints.unwrap_or_default();
+            // Parse optional temporal constraints: where ~tx within ~db
+            let (input, temporal_constraints) = opt(|input| {
+                let (input, _) = expect_token(Token::Where)(input)?;
+                separated_list1(
+                    expect_token(Token::Comma),
+                    temporal_constraint
+                )(input)
+            })(input)?;
+            let temporal_constraints = temporal_constraints.unwrap_or_default();
+
+            (input, params, return_type, temporal_constraints)
+        } else {
+            // No colon - no params, no return type, no temporal constraints
+            (input, vec![], None, vec![])
+        };
 
     let (input, _) = expect_token(Token::Assign)(input)?;
     let (input, body) = block_expr(input)?;

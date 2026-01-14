@@ -62,7 +62,7 @@ fn test_nested_closure() {
 }
 
 #[test]
-#[ignore = "Lambda type inference needs work - unrelated to function syntax change"]
+#[ignore = "Lambda parameter type inference not yet implemented"]
 fn test_lambda_without_captures() {
     let input = r#"fun test = {
         val id = |x| x;

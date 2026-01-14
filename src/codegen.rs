@@ -2242,12 +2242,83 @@ impl WasmCodeGen {
         }
     }
 
+    /// Collect binding types from a block for type inference during function registration
+    /// This allows infer_return_type_from_expr to resolve local variable types
+    fn collect_binding_types_from_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
+        for stmt in &block.statements {
+            match stmt {
+                Stmt::Binding(bind) => {
+                    let type_name = if let Some(ref ty) = bind.ty {
+                        self.type_to_string(ty)
+                    } else {
+                        // Infer type from the value expression
+                        self.infer_return_type_from_expr(&bind.value)?
+                    };
+                    self.var_types.insert(bind.name.clone(), type_name);
+                }
+                Stmt::Expr(expr) => {
+                    // Recursively collect from nested blocks
+                    self.collect_binding_types_from_expr(expr)?;
+                }
+                Stmt::Assignment(_) => {
+                    // Assignments don't introduce new bindings
+                }
+            }
+        }
+        // Also check the final expression for nested blocks
+        if let Some(ref expr) = block.expr {
+            self.collect_binding_types_from_expr(expr)?;
+        }
+        Ok(())
+    }
+
+    /// Collect binding types from expressions that may contain nested blocks
+    fn collect_binding_types_from_expr(&mut self, expr: &Expr) -> Result<(), CodeGenError> {
+        match expr {
+            Expr::Block(block) => self.collect_binding_types_from_block(block)?,
+            Expr::Then(then_expr) => {
+                self.collect_binding_types_from_block(&then_expr.then_block)?;
+                for (_condition, block) in &then_expr.else_ifs {
+                    self.collect_binding_types_from_block(block)?;
+                }
+                if let Some(ref else_block) = then_expr.else_block {
+                    self.collect_binding_types_from_block(else_block)?;
+                }
+            }
+            Expr::While(while_expr) => {
+                self.collect_binding_types_from_block(&while_expr.body)?;
+            }
+            Expr::With(with_expr) => {
+                self.collect_binding_types_from_block(&with_expr.body)?;
+            }
+            Expr::WithLifetime(with_lifetime) => {
+                self.collect_binding_types_from_block(&with_lifetime.body)?;
+            }
+            Expr::Match(match_expr) => {
+                for arm in &match_expr.arms {
+                    self.collect_binding_types_from_block(&arm.body)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
         // Handle generic functions
         if !func.type_params.is_empty() {
             // For now, we'll generate specialized versions when called
             return Ok(());
         }
+
+        // First, register parameter types so they can be resolved during type inference
+        for param in &func.params {
+            let type_name = self.type_to_string(&param.ty);
+            self.var_types.insert(param.name.clone(), type_name);
+        }
+
+        // Collect binding types from function body for return type inference
+        self.collect_binding_types_from_block(&func.body)?;
 
         let params: Vec<WasmType> = func.params.iter()
             .map(|_| WasmType::I32)  // All types are i32 for now

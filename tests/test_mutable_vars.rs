@@ -16,7 +16,6 @@ fn compile(source: &str) -> Result<String, String> {
 }
 
 #[test]
-#[ignore = "Type inference for local variables in return type deduction needs work"]
 fn test_simple_mutable_binding() {
     let input = "fun test = { mut val x = 5; val result = x; result }";
     let wat = compile(input).unwrap();
@@ -24,13 +23,8 @@ fn test_simple_mutable_binding() {
 }
 
 #[test]
-#[ignore = "Type inference for local variables in return type deduction needs work"]
 fn test_mutable_reassignment() {
-    let input = r#"fun test = {
-        mut val x = 5
-        x = 10
-        x
-    }"#;
+    let input = "fun test = { mut val x = 5; x = 10; x }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("local.set"));
 }
@@ -54,13 +48,8 @@ fn test_immutable_reassignment_error() {
 }
 
 #[test]
-#[ignore = "Type inference for local variables in return type deduction needs work"]
 fn test_mutable_with_arithmetic() {
-    let input = r#"fun test = {
-        mut val x = 5
-        x = x + 1
-        x
-    }"#;
+    let input = "fun test = { mut val x = 5; x = x + 1; x }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("i32.add"));
 }
@@ -95,43 +84,29 @@ fn test_mutable_parameter_reassignment() {
 }
 
 #[test]
-#[ignore = "Type inference for local variables in return type deduction needs work"]
 fn test_multiple_reassignments() {
-    let input = r#"fun test = {
-        mut val x = 1
-        x = 2
-        x = 3
-        x = 4
-        x
-    }"#;
+    let input = "fun test = { mut val x = 1; x = 2; x = 3; x = 4; x }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("local.set"));
 }
 
 #[test]
-#[ignore = "Type inference for local variables in return type deduction needs work"]
 fn test_affine_with_mutable() {
-    let input = r#"fun test = {
-        val y = 5
-        mut val x = y
-        x = x + 1
-        x
-    }"#;
+    let input = "fun test = { val y = 5; mut val x = y; x = x + 1; x }";
     let wat = compile(input).unwrap();
     // Should compile successfully
 }
 
 #[test]
-#[ignore = "Type inference for local variables in return type deduction needs work"]
 fn test_mutable_record_field() {
     let input = r#"
     record Point { x: Int32, y: Int32 }
 
-    fun test = {
+    fun test: () -> Int = {
         with Arena {
-            val p = Point { x = 10, y = 20 }
-            mut val x = p.x
-            x = x + 1
+            val p = Point { x = 10, y = 20 };
+            mut val x = p.x;
+            x = x + 1;
             x
         }
     }"#;

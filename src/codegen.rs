@@ -2253,15 +2253,44 @@ impl WasmCodeGen {
             .map(|_| WasmType::I32)  // All types are i32 for now
             .collect();
 
-        // TODO: Determine return type from function body analysis
-        // For now, assume functions with expressions in their body return i32
-        // Exception: main function never returns a value
+        // Determine return type from function body analysis
+        // main function never returns a value in WASM
+        // Other functions: infer from final expression or last statement
         let result = if func.name == "main" {
             None
-        } else if func.body.expr.is_some() {
-            Some(WasmType::I32)
+        } else if let Some(ref return_ty) = func.return_type {
+            // Explicit return type - check if it's Unit
+            let type_name = self.type_to_string(return_ty);
+            if type_name == "Unit" || type_name == "()" {
+                None
+            } else {
+                Some(WasmType::I32)
+            }
+        } else if let Some(ref expr) = func.body.expr {
+            // Infer from final expression
+            let inferred = self.infer_return_type_from_expr(expr)?;
+            if inferred == "Unit" {
+                None
+            } else {
+                Some(WasmType::I32)
+            }
+        } else if let Some(Stmt::Expr(last_expr)) = func.body.statements.last() {
+            // Infer from last statement if it's an expression
+            let inferred = self.infer_return_type_from_expr(last_expr)?;
+            if inferred == "Unit" {
+                None
+            } else {
+                Some(WasmType::I32)
+            }
         } else {
-            None
+            // Last statement is Binding or Assignment, or block is empty
+            // These do not produce values, so the function returns Unit
+            match func.body.statements.last() {
+                None => None, // Empty block returns Unit
+                Some(Stmt::Binding(_)) => None, // Bindings don't produce values
+                Some(Stmt::Assignment(_)) => None, // Assignments don't produce values
+                Some(Stmt::Expr(_)) => unreachable!(), // Already handled above
+            }
         };
 
         self.functions.insert(func.name.clone(), FunctionSig {
@@ -2271,15 +2300,24 @@ impl WasmCodeGen {
 
         // Track return type for println dispatch
         // If explicit return type is provided, use it
-        // Otherwise, infer from the function body
+        // Otherwise, infer from the function body (final expression or last statement)
         let return_type = if let Some(ref ty) = func.return_type {
             self.type_to_string(ty)
         } else if let Some(ref expr) = func.body.expr {
             // Infer return type from the body expression
             self.infer_return_type_from_expr(expr)?
+        } else if let Some(Stmt::Expr(last_expr)) = func.body.statements.last() {
+            // Infer from last statement if it's an expression
+            self.infer_return_type_from_expr(last_expr)?
         } else {
-            // No body expression means Unit return type
-            "Unit".to_string()
+            // Last statement is Binding or Assignment, or block is empty
+            // These do not produce values, so the function returns Unit
+            match func.body.statements.last() {
+                None => "Unit".to_string(), // Empty block returns Unit
+                Some(Stmt::Binding(_)) => "Unit".to_string(), // Bindings don't produce values
+                Some(Stmt::Assignment(_)) => "Unit".to_string(), // Assignments don't produce values
+                Some(Stmt::Expr(_)) => unreachable!(), // Already handled above
+            }
         };
         self.function_return_types.insert(func.name.clone(), return_type);
 
@@ -3167,12 +3205,28 @@ impl WasmCodeGen {
         // Generate function body
         self.generate_block(&func.body)?;
         
-        // Drop return value for main function if it leaves a value
-        if func.name == "main" && func.body.expr.is_some() {
-            if let Some(expr) = &func.body.expr {
-                if self.expr_leaves_value(expr) {
-                    self.output.push_str("    drop\n");
-                }
+        // Drop return value for functions that return Unit if the body leaves a value
+        // This handles both final expressions and last statements that leave values
+        let function_returns_unit = if let Some(sig) = self.functions.get(&func.name) {
+            sig.result.is_none()
+        } else {
+            // If not registered, assume main returns Unit
+            func.name == "main"
+        };
+
+        if function_returns_unit {
+            let needs_drop = if let Some(expr) = &func.body.expr {
+                // Has final expression - check if it leaves a value
+                self.expr_leaves_value(expr)
+            } else if let Some(Stmt::Expr(last_expr)) = func.body.statements.last() {
+                // No final expression, but last statement might leave a value
+                self.expr_leaves_value(last_expr)
+            } else {
+                false
+            };
+
+            if needs_drop {
+                self.output.push_str("    drop\n");
             }
         }
         

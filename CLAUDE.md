@@ -42,6 +42,54 @@ The Restrict Language compiler is structured as follows:
 - **Context binding**: Resource management with `with` blocks
 - **Pipe operators**: `|>` for immutable binding, `|>>` for mutable
 
+## Compiler Development Principles
+
+### 1. No Silent Fallbacks
+
+**Never use default/fallback values when type information is missing or ambiguous.**
+
+Bad:
+```rust
+// Don't do this - silently assumes Int32
+} else {
+    "Int32".to_string()
+}
+```
+
+Good:
+```rust
+// Return an error when type cannot be determined
+} else {
+    return Err(CodeGenError::CannotInferType(
+        format!("cannot infer return type for function '{}'", func.name)
+    ));
+}
+```
+
+### 2. Fail Early, Fail Loudly
+
+- Type inference failures should be compile-time errors, not runtime surprises
+- If information is missing, report it clearly to the user
+- Error messages should indicate what was expected and what was found
+
+### 3. Type Safety
+
+- All expressions must have a determinable type at compile time
+- The compiler should never guess or assume types
+- When type annotation is optional, inference must be complete or fail explicitly
+
+### 4. Error Message Quality
+
+- Include source location (line, column) when possible
+- Explain what the compiler expected vs. what it found
+- Suggest possible fixes when applicable
+
+### 5. Code Generation Invariants
+
+- Never generate WASM code for expressions with unknown types
+- All function signatures must be fully resolved before code generation
+- Memory layout must be deterministic based on types
+
 ## Important Notes
 
 - The language compiles to WASM without GC

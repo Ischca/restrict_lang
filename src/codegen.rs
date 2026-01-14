@@ -39,18 +39,22 @@ pub enum CodeGenError {
     /// Variable not found in current scope
     #[error("Undefined variable: {0}")]
     UndefinedVariable(String),
-    
+
     /// Function not found
     #[error("Undefined function: {0}")]
     UndefinedFunction(String),
-    
+
     /// Type cannot be represented in WASM
     #[error("Type not supported in WASM: {0}")]
     UnsupportedType(String),
-    
+
     /// Feature not yet implemented
     #[error("Feature not implemented: {0}")]
     NotImplemented(String),
+
+    /// Type inference failed
+    #[error("Cannot infer type: {0}")]
+    CannotInferType(String),
 }
 
 /// WebAssembly Text Format (WAT) code generator.
@@ -161,7 +165,7 @@ impl WasmCodeGen {
     /// Register imported declarations to be included in the generated WASM.
     /// These declarations will be generated as part of the module instead of
     /// being imported from external modules.
-    pub fn register_imported_decl(&mut self, decl: &TopDecl) {
+    pub fn register_imported_decl(&mut self, decl: &TopDecl) -> Result<(), CodeGenError> {
         match decl {
             TopDecl::Function(func) => {
                 // Register the function signature so codegen knows about it
@@ -172,9 +176,14 @@ impl WasmCodeGen {
                     result,
                 });
                 // Track return type for println dispatch
-                let return_type = func.return_type.as_ref()
-                    .map(|t| self.type_to_string(t))
-                    .unwrap_or_else(|| "Int32".to_string());
+                // Use explicit annotation or infer from body
+                let return_type = if let Some(ref ty) = func.return_type {
+                    self.type_to_string(ty)
+                } else if let Some(ref expr) = func.body.expr {
+                    self.infer_return_type_from_expr(expr)?
+                } else {
+                    "Unit".to_string()
+                };
                 self.function_return_types.insert(func.name.clone(), return_type);
                 // Store the function for later generation
                 self.imported_functions.push(func.clone());
@@ -187,6 +196,7 @@ impl WasmCodeGen {
                 // Other declaration types not yet supported for import
             }
         }
+        Ok(())
     }
 
     /// Set the expression types from the type checker.
@@ -2266,9 +2276,10 @@ impl WasmCodeGen {
             self.type_to_string(ty)
         } else if let Some(ref expr) = func.body.expr {
             // Infer return type from the body expression
-            self.infer_return_type_from_expr(expr)
+            self.infer_return_type_from_expr(expr)?
         } else {
-            "Int32".to_string()
+            // No body expression means Unit return type
+            "Unit".to_string()
         };
         self.function_return_types.insert(func.name.clone(), return_type);
 
@@ -2277,17 +2288,18 @@ impl WasmCodeGen {
 
     /// Infer return type from an expression without depending on function_return_types
     /// This is used during function registration before all functions are registered
-    fn infer_return_type_from_expr(&self, expr: &Expr) -> String {
+    fn infer_return_type_from_expr(&self, expr: &Expr) -> Result<String, CodeGenError> {
         match expr {
-            Expr::IntLit(_) => "Int".to_string(),
-            Expr::FloatLit(_) => "Float".to_string(),
-            Expr::StringLit(_) => "String".to_string(),
-            Expr::BoolLit(_) => "Bool".to_string(),
+            Expr::IntLit(_) => Ok("Int".to_string()),
+            Expr::FloatLit(_) => Ok("Float".to_string()),
+            Expr::StringLit(_) => Ok("String".to_string()),
+            Expr::BoolLit(_) => Ok("Bool".to_string()),
+            Expr::Unit => Ok("Unit".to_string()),
             Expr::Block(block) => {
                 if let Some(ref final_expr) = block.expr {
                     self.infer_return_type_from_expr(final_expr)
                 } else {
-                    "Unit".to_string()
+                    Ok("Unit".to_string())
                 }
             }
             Expr::Then(then_expr) => {
@@ -2298,42 +2310,52 @@ impl WasmCodeGen {
                     if let Some(ref final_expr) = else_block.expr {
                         self.infer_return_type_from_expr(final_expr)
                     } else {
-                        "Unit".to_string()
+                        Ok("Unit".to_string())
                     }
                 } else {
-                    "Unit".to_string()
+                    Ok("Unit".to_string())
                 }
             }
             Expr::Call(call) => {
                 // Check built-in functions
                 if let Expr::Ident(func_name) = call.function.as_ref() {
                     match func_name.as_str() {
-                        "int_to_string" | "float_to_string" | "bool_to_string" => "String".to_string(),
-                        "string_to_int" | "string_length" | "char_to_int" => "Int".to_string(),
-                        "string_to_float" => "Float".to_string(),
-                        "int_to_char" => "Char".to_string(),
+                        "int_to_string" | "float_to_string" | "bool_to_string" => Ok("String".to_string()),
+                        "string_to_int" | "string_length" | "char_to_int" => Ok("Int".to_string()),
+                        "string_to_float" => Ok("Float".to_string()),
+                        "int_to_char" => Ok("Char".to_string()),
                         _ => {
                             // Check if we already have this function registered
                             if let Some(return_type) = self.function_return_types.get(func_name) {
-                                return_type.clone()
+                                Ok(return_type.clone())
                             } else {
-                                "Int".to_string()
+                                Err(CodeGenError::CannotInferType(
+                                    format!("unknown return type for function '{}'", func_name)
+                                ))
                             }
                         }
                     }
                 } else {
-                    "Int".to_string()
+                    Err(CodeGenError::CannotInferType(
+                        "cannot infer return type of non-identifier function call".to_string()
+                    ))
                 }
             }
-            Expr::Binary(_) => "Int".to_string(),
+            Expr::Binary(_) => Ok("Int".to_string()), // Arithmetic/comparison ops return Int
             Expr::Ident(name) => {
                 if let Some(type_name) = self.var_types.get(name) {
-                    type_name.clone()
+                    Ok(type_name.clone())
                 } else {
-                    "Int".to_string()
+                    Err(CodeGenError::CannotInferType(
+                        format!("unknown type for variable '{}'", name)
+                    ))
                 }
             }
-            _ => "Int".to_string()
+            Expr::RecordLit(rl) => Ok(rl.name.clone()),
+            Expr::While(_) => Ok("Unit".to_string()),
+            _ => Err(CodeGenError::CannotInferType(
+                format!("cannot infer type of expression: {:?}", std::mem::discriminant(expr))
+            ))
         }
     }
 
@@ -2783,27 +2805,38 @@ impl WasmCodeGen {
             Expr::FloatLit(_) => Ok("Float".to_string()),
             Expr::StringLit(_) => Ok("String".to_string()),
             Expr::BoolLit(_) => Ok("Bool".to_string()),
+            Expr::Unit => Ok("Unit".to_string()),
             Expr::Ident(name) => {
                 // Check if we know the type of this variable
                 if let Some(type_name) = self.var_types.get(name) {
                     Ok(type_name.clone())
                 } else {
-                    // Default to Int for unknown identifiers
-                    Ok("Int".to_string())
+                    Err(CodeGenError::CannotInferType(
+                        format!("unknown type for variable '{}'", name)
+                    ))
                 }
             }
             Expr::FieldAccess(object, field) => {
                 // Get type of the record and the field
-                if let Some(record_type) = self.var_types.get(&self.expr_to_var_name(object)) {
+                let var_name = self.expr_to_var_name(object);
+                if let Some(record_type) = self.var_types.get(&var_name) {
                     if let Some(fields) = self.records.get(record_type) {
                         for (field_name, field_type) in fields {
                             if field_name == field {
                                 return Ok(self.type_to_string(field_type));
                             }
                         }
+                        return Err(CodeGenError::CannotInferType(
+                            format!("field '{}' not found in record type '{}'", field, record_type)
+                        ));
                     }
+                    return Err(CodeGenError::CannotInferType(
+                        format!("'{}' is not a known record type", record_type)
+                    ));
                 }
-                Ok("Int".to_string())
+                Err(CodeGenError::CannotInferType(
+                    format!("cannot determine type of field access on '{}'", var_name)
+                ))
             }
             Expr::RecordLit(rl) => Ok(rl.name.clone()),
             Expr::Block(block) => {
@@ -2832,18 +2865,34 @@ impl WasmCodeGen {
                 // Look up the function's return type
                 if let Expr::Ident(func_name) = call.function.as_ref() {
                     // Check built-in functions first
-                    if func_name == "int_to_string" {
-                        return Ok("String".to_string());
+                    match func_name.as_str() {
+                        "int_to_string" | "float_to_string" | "bool_to_string" => {
+                            return Ok("String".to_string());
+                        }
+                        "string_to_int" | "string_length" | "char_to_int" => {
+                            return Ok("Int".to_string());
+                        }
+                        "string_to_float" => return Ok("Float".to_string()),
+                        "int_to_char" => return Ok("Char".to_string()),
+                        _ => {}
                     }
                     // Check registered function return types
                     if let Some(return_type) = self.function_return_types.get(func_name) {
                         return Ok(return_type.clone());
                     }
+                    return Err(CodeGenError::CannotInferType(
+                        format!("unknown return type for function '{}'", func_name)
+                    ));
                 }
-                Ok("Int".to_string())
+                Err(CodeGenError::CannotInferType(
+                    "cannot infer return type of non-identifier function call".to_string()
+                ))
             }
-            Expr::Binary(_) => Ok("Int".to_string()), // Binary ops return Int (for now)
-            _ => Ok("Int".to_string()) // Default fallback
+            Expr::Binary(_) => Ok("Int".to_string()), // Arithmetic/comparison ops return Int
+            Expr::While(_) => Ok("Unit".to_string()),
+            _ => Err(CodeGenError::CannotInferType(
+                format!("cannot infer type of expression: {:?}", std::mem::discriminant(expr))
+            ))
         }
     }
 

@@ -3168,11 +3168,20 @@ impl WasmCodeGen {
         self.generate_block(&func.body)?;
         
         // Drop return value for main function if it leaves a value
-        if func.name == "main" && func.body.expr.is_some() {
-            if let Some(expr) = &func.body.expr {
-                if self.expr_leaves_value(expr) {
-                    self.output.push_str("    drop\n");
-                }
+        // This handles both final expressions and last statements that leave values
+        if func.name == "main" {
+            let needs_drop = if let Some(expr) = &func.body.expr {
+                // Has final expression - check if it leaves a value
+                self.expr_leaves_value(expr)
+            } else if let Some(Stmt::Expr(last_expr)) = func.body.statements.last() {
+                // No final expression, but last statement might leave a value
+                self.expr_leaves_value(last_expr)
+            } else {
+                false
+            };
+
+            if needs_drop {
+                self.output.push_str("    drop\n");
             }
         }
         

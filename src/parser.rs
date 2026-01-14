@@ -1305,7 +1305,7 @@ fn statement(input: &str) -> ParseResult<Stmt> {
 fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
     let (input, name) = ident(input)?;
     let (input, _) = expect_token(Token::Assign)(input)?;
-    let (input, value) = expression(input)?;  // Use normal expression parsing for assignment values
+    let (input, value) = expression_in_statement(input)?;  // Use statement-aware parsing to respect newlines
     Ok((input, Stmt::Assignment(AssignStmt {
         name,
         value: Box::new(value)

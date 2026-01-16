@@ -543,6 +543,58 @@ fun countdown: (n: Int) = {
 
 fun main = {
     5 countdown
+}`,
+
+        'context': `// Context Binding - Implicit parameters via context
+
+record Connection { id: Int }
+
+// Define a context that provides a database connection
+context Database {
+    val conn: Connection
+}
+
+// Function requires Database context (like Reader monad)
+fun query: (sql: String) -> String with Database = {
+    sql  // In real code, would use conn from context
+}
+
+fun main = {
+    with Arena {
+        val conn = Connection { id = 1 }
+
+        // Provide the Database context
+        with Database { conn = conn } {
+            "SELECT * FROM users" query |> println
+        }
+    }
+}`,
+
+        'compose': `// Scope Composition - Multiple contexts
+
+record Logger { level: Int }
+record Config { debug: Int }
+
+context Logging { val logger: Logger }
+context Configuration { val config: Config }
+
+// Function requires BOTH contexts
+fun log_with_config: () with Logging, Configuration = {
+    "Logging with config" |> println
+}
+
+fun main = {
+    with Arena {
+        val log = Logger { level = 1 }
+        val cfg = Config { debug = 1 }
+
+        // Nested context scopes compose automatically
+        with Logging { logger = log } {
+            with Configuration { config = cfg } {
+                log_with_config
+            }
+        }
+    }
 }`
     };
 

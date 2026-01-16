@@ -464,53 +464,85 @@ function loadExample(exampleName) {
     const examples = {
         'hello': `// Hello World in Restrict Language
 
-fun main: () -> Int = {
-    val answer = 42;
-    answer
+fun main = {
+    "Hello, World!" |> println
 }`,
 
-        'affine': `// Affine Types Demo
-// Each value can only be used once!
+        'fizzbuzz': `// FizzBuzz - Classic programming challenge
 
-fun main: () -> Int = {
-    val x = 100;
-
-    // x can only be used once
-    // Try uncommenting the next lines to see the error:
-    // val first = x;
-    // val second = x;  // Error: use of moved value
-
-    x
-}`,
-
-        'function': `// Function Definition
-
-fun add: (a: Int, b: Int) -> Int = {
-    42  // placeholder - full arithmetic coming soon
+fun fizzbuzz: (n: Int) -> String = {
+    n % 15 == 0 then { "FizzBuzz" } else {
+        n % 3 == 0 then { "Fizz" } else {
+            n % 5 == 0 then { "Buzz" } else {
+                n int_to_string
+            }
+        }
+    }
 }
 
-fun main: () -> Int = {
-    val result = 10;
-    result
+fun main = {
+    mut val i = 1
+    i <= 20 while {
+        i fizzbuzz |> println
+        i = i + 1
+    }
 }`,
 
-        'record': `// Record Types
+        'affine': `// Affine Types - Each value can only be used once
 
-record Point = {
-    x: Int,
-    y: Int
+fun main = {
+    val message = "I can only be used once!"
+
+    // This works - message is used exactly once
+    message |> println
+
+    // Try uncommenting to see the error:
+    // message |> println  // Error: use of moved value
+}`,
+
+        'pipe': `// Pipe Operators & OSV Syntax
+// Object-Subject-Verb order: "data function" instead of "function(data)"
+
+fun double: (n: Int) -> Int = {
+    n * 2
 }
 
-fun main: () -> Int = {
-    42
+fun main = {
+    // Traditional: double(double(5))
+    // With pipes: 5 |> double |> double
+
+    val result = 5 double double
+    result int_to_string |> println
+
+    // Or with explicit pipes:
+    10 |> double |> int_to_string |> println
 }`,
 
-        'pipe': `// Pipe Operators (OSV Syntax)
-// Object-Subject-Verb order
+        'record': `// Records with Arena-based Memory
 
-fun main: () -> Int = {
-    val x = 42;
-    x
+record Point { x: Int, y: Int }
+
+fun main = {
+    with Arena {
+        val p = Point { x = 10, y = 20 }
+        val sum = p.x + p.y
+        sum int_to_string |> println
+    }
+}`,
+
+        'mutable': `// Mutable Variables
+
+fun countdown: (n: Int) = {
+    mut val i = n
+    i > 0 while {
+        i int_to_string |> println
+        i = i - 1
+    }
+    "Liftoff!" |> println
+}
+
+fun main = {
+    5 countdown
 }`
     };
 

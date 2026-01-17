@@ -59,9 +59,12 @@ wasmtime hello.wat
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition
+- **🔌 Context Binding**: Implicit parameter passing via algebraic effect-like contexts
+- **🧩 Scope Composition**: Combine multiple contexts with nested `with` blocks
 - **📦 Module System**: Import/export with file-based module resolution
 - **💬 Comments**: Full support for single-line (`//`) and multi-line (`/* */`) comments
 - **✂️ Semicolon-Free**: Kotlin-style newline-based statement termination (semicolons optional)
+- **🎨 Concise Syntax**: Parameter-less functions like `fun main = { ... }` without explicit `(): ()`
 
 ## 📖 Language Overview
 
@@ -215,15 +218,84 @@ val adult = alice is_adult  // true
 ### Arena Memory Management
 
 ```rust
-// Create an arena for memory management
-val arena = new_arena(1024)  // 1KB arena
+// Arena-based memory - automatically freed when scope ends
+fun main = {
+    with Arena {
+        val user = Person { name = "Bob", age = 25 }
+        // Process data...
+        // All memory automatically freed when leaving scope
+    }
+}
+```
 
-arena {
-    val big_list = [1, 2, 3, /* many elements */]
-    val user = Person { name: "Bob" age: 25 email: "bob@test.com" }
+### Context Binding (Implicit Parameters)
 
-    // Process data...
-    // All memory automatically freed when leaving scope
+```rust
+// Define a context (like Reader monad / algebraic effects)
+record Connection { id: Int }
+
+context Database {
+    val conn: Connection
+}
+
+// Function requires Database context
+fun query: (sql: String) -> String with Database = {
+    sql  // Would use conn from context in real code
+}
+
+fun main = {
+    with Arena {
+        val conn = Connection { id = 1 }
+        // Provide the context
+        with Database { conn = conn } {
+            "SELECT * FROM users" query |> println
+        }
+    }
+}
+```
+
+### Scope Composition (Multiple Contexts)
+
+```rust
+context Logging { val logger: Logger }
+context Config { val config: AppConfig }
+
+// Function requires BOTH contexts
+fun log_with_config: () with Logging, Config = {
+    "Logging with config" |> println
+}
+
+fun main = {
+    with Arena {
+        // Nested contexts compose automatically
+        with Logging { logger = myLogger } {
+            with Config { config = myConfig } {
+                log_with_config
+            }
+        }
+    }
+}
+```
+
+### FizzBuzz Example
+
+```rust
+fun fizzbuzz: (n: Int) -> String = {
+    n % 15 == 0 then { "FizzBuzz" } else {
+        n % 3 == 0 then { "Fizz" } else {
+            n % 5 == 0 then { "Buzz" } else {
+                n int_to_string
+            }
+        }
+    }
+}
+
+fun main = {
+    mut val i = 1
+    i <= 20 while {
+        i fizzbuzz |> println
+        i = i + 1
+    }
 }
 ```
 
@@ -284,15 +356,18 @@ val result = obj
 - [x] Bidirectional type inference
 - [x] Function tables for indirect calls
 - [x] Kotlin-style semicolon-free syntax
+- [x] Conditional expressions (`then`/`else` syntax)
+- [x] Context binding with `context` and `with` blocks
+- [x] Scope composition (multiple contexts)
+- [x] Concise syntax (`fun main = { ... }` without parameter list)
+- [x] Return type inference from function body
 
 ### 🚧 In Progress
 
 - [ ] Higher-order functions (map, filter, fold)
 - [ ] String interpolation
 - [ ] Module system
-- [ ] Conditional expressions (`then`/`else` syntax parsing works, but runtime issues remain)
 - [ ] Recursive functions (basic parsing works, but execution has limitations)
-- [ ] Complex affine type usage (multiple variable references in expressions)
 
 ### 📋 Planned Features
 
@@ -304,10 +379,8 @@ val result = obj
 
 ### ⚠️ Current Limitations
 
-- Conditional expressions (`then`/`else`) have parsing support but runtime limitations
 - Recursive functions are not fully supported yet
 - Complex pattern matching may not work in all cases
-- Some syntax features in examples may not be fully implemented
 - Use `mut val` instead of `val mut` for mutable variables
 
 ## 🔧 Architecture

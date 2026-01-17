@@ -9,11 +9,26 @@
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![WASM](https://img.shields.io/badge/target-WebAssembly-orange.svg)](https://webassembly.org/)
   [![Documentation](https://img.shields.io/badge/docs-mdBook-green.svg)](https://restrict-lang.github.io/restrict_lang/)
+  [![Playground](https://img.shields.io/badge/playground-try%20online-brightgreen.svg)](https://ischca.github.io/restrict_lang/)
 </div>
 
 ---
 
 A statically-typed functional programming language that compiles to WebAssembly, featuring an affine type system, pattern matching, lambda expressions with closures, and arena-based memory management.
+
+## 🎮 Try it Online
+
+Experience Restrict Language directly in your browser without any installation:
+
+**[🚀 Launch Playground](https://ischca.github.io/restrict_lang/)**
+
+The online playground allows you to:
+- ✍️ Write and execute Restrict Language code instantly
+- 🧪 Explore language features interactively  
+- 🔗 Share code snippets with others
+- 📚 Learn from built-in examples
+
+---
 
 ## 🚀 Quick Start
 

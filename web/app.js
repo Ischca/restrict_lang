@@ -522,11 +522,17 @@ fun main = {
 
 record Point { x: Int, y: Int }
 
+impl Point {
+    fun sum = self: Point {
+        self.x + self.y
+    }
+}
+
 fun main = {
     with Arena {
         val p = Point { x = 10, y = 20 }
-        val sum = p.x + p.y
-        sum int_to_string |> println
+        val result = p sum
+        result int_to_string |> println
     }
 }`,
 

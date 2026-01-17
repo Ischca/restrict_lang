@@ -522,17 +522,15 @@ fun main = {
 
 record Point { x: Int, y: Int }
 
-impl Point {
-    fun sum = self: Point {
-        self.x + self.y
-    }
-}
-
 fun main = {
     with Arena {
         val p = Point { x = 10, y = 20 }
-        val result = p sum
-        result int_to_string |> println
+
+        // Clone to create a copy
+        val p2 = p.clone {}
+
+        // Use the clone
+        p2.x int_to_string |> println
     }
 }`,
 

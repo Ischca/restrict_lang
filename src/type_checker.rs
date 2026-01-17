@@ -2999,13 +2999,13 @@ impl TypeChecker {
     
     fn check_field_access(&mut self, expr: &Expr, field: &str) -> Result<TypedType, TypeError> {
         let ty = self.check_expr(expr)?;
-        
+
         // Handle temporal types by unwrapping to the base type
         let base_ty = match &ty {
             TypedType::Temporal { base_type, .. } => base_type.as_ref(),
             _ => &ty,
         };
-        
+
         match base_ty {
             TypedType::Record { name, .. } => {
                 let record_def = self.records.get(name).unwrap();

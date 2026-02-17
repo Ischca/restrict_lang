@@ -525,8 +525,12 @@ record Point { x: Int, y: Int }
 fun main = {
     with Arena {
         val p = Point { x = 10, y = 20 }
-        val sum = p.x + p.y
-        sum int_to_string |> println
+
+        // Clone to create a copy
+        val p2 = p.clone {}
+
+        // Use the clone
+        p2.x int_to_string |> println
     }
 }`,
 

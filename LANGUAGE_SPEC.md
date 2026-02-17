@@ -9,10 +9,37 @@
 - **廃止**: `fn`, `let`, `Unit` (型名)
 - **理由**: パーサー実装との整合性、OSV哲学との一貫性
 
-### 1.2 impl ブロック
-- **採用しない**
-- **代替**: Prototype + Freeze + @context + switcher パターン
+### 1.2 レコードへのメソッド紐付け
+- **採用しない**: impl ブロック、record 内メソッド定義のいずれも採用しない
+- **代替**: 外部関数 + OSV 記法 + match による分解
 - **理由**: クラス的階層の再導入を避け、型システムの複雑化を防ぐ
+
+record 内メソッド定義は impl ブロックと本質的に同じ（record 型に関数を紐付ける）であり、
+開発者をクラス的な設計に誘導するリスクがある。
+OSV 記法により外部関数でもメソッド呼び出しと同等の記述が可能なため、
+レコードに関数を紐付ける構文は不要とする。
+
+```rust
+record Point { x: Int, y: Int }
+
+// 外部関数として定義
+fun sum: (p: Point) -> Int = {
+    p match { Point { x, y } => { x + y } }
+}
+
+// OSV 記法でメソッド呼び出しと同じ見た目になる
+val result = p sum
+
+// non-Copy フィールドを複数回使う場合は明示的に clone
+fun duplicate_name: (u: User) -> String = {
+    u match {
+        User { name, .. } => {
+            val name2 = name.clone()
+            name ++ " and " ++ name2
+        }
+    }
+}
+```
 
 ### 1.3 二項演算子
 - **実装範囲**: 

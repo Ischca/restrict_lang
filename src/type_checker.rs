@@ -1082,9 +1082,21 @@ impl TypeChecker {
         self.register_std_io();
         self.register_std_prelude();
         self.register_std_string();
+        self.register_std_contexts();
         
-        // Note: Arena is a built-in context but not added to _contexts by default
-        // It only becomes available inside a "with Arena" block
+        // Arena introspection functions
+        self.functions.insert("arena_bytes_used".to_string(), FunctionDef {
+            params: vec![("arena".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+        self.functions.insert("arena_bytes_remaining".to_string(), FunctionDef {
+            params: vec![("arena".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
     }
     
     fn register_std_math(&mut self) {
@@ -1289,6 +1301,55 @@ impl TypeChecker {
             type_params: vec![t_param.clone()],
             temporal_constraints: vec![],
         });
+
+        let u_param = TypeParam {
+            name: "U".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            is_temporal: false,
+        };
+
+        // option_map<T, U>
+        self.functions.insert("option_map".to_string(), FunctionDef {
+            params: vec![
+                ("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::Option(Box::new(TypedType::TypeParam("U".to_string()))),
+            type_params: vec![t_param.clone(), u_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // option_and_then<T, U>
+        self.functions.insert("option_and_then".to_string(), FunctionDef {
+            params: vec![
+                ("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Option(Box::new(TypedType::TypeParam("U".to_string())))),
+                }),
+            ],
+            return_type: TypedType::Option(Box::new(TypedType::TypeParam("U".to_string()))),
+            type_params: vec![t_param.clone(), u_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // option_or_else<T>
+        self.functions.insert("option_or_else".to_string(), FunctionDef {
+            params: vec![
+                ("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("fallback".to_string(), TypedType::Function {
+                    params: vec![],
+                    return_type: Box::new(TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                }),
+            ],
+            return_type: TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
+        });
     }
     
     fn register_std_io(&mut self) {
@@ -1485,6 +1546,28 @@ impl TypeChecker {
         // int_to_string: Format integer as string
         self.functions.insert("int_to_string".to_string(), FunctionDef {
             params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_split: Split string by delimiter character
+        self.functions.insert("string_split".to_string(), FunctionDef {
+            params: vec![
+                ("s".to_string(), TypedType::String),
+                ("delim".to_string(), TypedType::Int32),  // Char as Int32
+            ],
+            return_type: TypedType::List(Box::new(TypedType::String)),
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_join: Join list of strings with separator
+        self.functions.insert("string_join".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::String))),
+                ("sep".to_string(), TypedType::String),
+            ],
             return_type: TypedType::String,
             type_params: vec![],
             temporal_constraints: vec![],
@@ -1749,12 +1832,138 @@ impl TypeChecker {
             type_params: vec![],
             temporal_constraints: vec![],
         });
+
+        // Pair<T, U> record type
+        {
+            use crate::ast::TypeParam;
+            let mut pair_fields = HashMap::new();
+            pair_fields.insert("first".to_string(), TypedType::TypeParam("T".to_string()));
+            pair_fields.insert("second".to_string(), TypedType::TypeParam("U".to_string()));
+            self.records.insert("Pair".to_string(), RecordDef {
+                fields: pair_fields,
+                type_params: vec![
+                    TypeParam {
+                        name: "T".to_string(),
+                        bounds: vec![],
+                        derivation_bound: None,
+                        is_temporal: false,
+                    },
+                    TypeParam {
+                        name: "U".to_string(),
+                        bounds: vec![],
+                        derivation_bound: None,
+                        is_temporal: false,
+                    },
+                ],
+                temporal_constraints: vec![],
+            });
+        }
+
+        // list_zip<T, U>: Combine two lists into list of Pairs
+        {
+            use crate::ast::TypeParam;
+            let t_param = TypeParam {
+                name: "T".to_string(),
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: false,
+            };
+            let u_param = TypeParam {
+                name: "U".to_string(),
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: false,
+            };
+            self.functions.insert("list_zip".to_string(), FunctionDef {
+                params: vec![
+                    ("a".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                    ("b".to_string(), TypedType::List(Box::new(TypedType::TypeParam("U".to_string())))),
+                ],
+                return_type: TypedType::List(Box::new(TypedType::Record {
+                    name: "Pair".to_string(),
+                    frozen: false,
+                    hash: None,
+                    parent_hash: None,
+                    type_args: vec![TypedType::TypeParam("T".to_string()), TypedType::TypeParam("U".to_string())],
+                })),
+                type_params: vec![t_param, u_param],
+                temporal_constraints: vec![],
+            });
+        }
     }
     
+    fn register_std_contexts(&mut self) {
+        // ============================================================
+        // Standard Context Types
+        // These are registered as records so 'with ContextName { ... }'
+        // can be type-checked properly.
+        // ============================================================
+
+        // FileSystem context: wraps WASI file I/O
+        let mut fs_fields = HashMap::new();
+        fs_fields.insert("open".to_string(), TypedType::Function {
+            params: vec![TypedType::String, TypedType::Int32],
+            return_type: Box::new(TypedType::Int32),
+        });
+        fs_fields.insert("read".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::Int32],
+            return_type: Box::new(TypedType::String),
+        });
+        fs_fields.insert("write".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::String],
+            return_type: Box::new(TypedType::Int32),
+        });
+        fs_fields.insert("close".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32],
+            return_type: Box::new(TypedType::Int32),
+        });
+        self.records.insert("FileSystem".to_string(), RecordDef {
+            fields: fs_fields,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Database context: stub for future WASI-sql support
+        let mut db_fields = HashMap::new();
+        db_fields.insert("connect".to_string(), TypedType::Function {
+            params: vec![TypedType::String],
+            return_type: Box::new(TypedType::Int32),
+        });
+        db_fields.insert("query".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::String],
+            return_type: Box::new(TypedType::String),
+        });
+        db_fields.insert("execute".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::String],
+            return_type: Box::new(TypedType::Int32),
+        });
+        self.records.insert("Database".to_string(), RecordDef {
+            fields: db_fields,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // HttpClient context: stub for future WASI-http support
+        let mut http_fields = HashMap::new();
+        http_fields.insert("get".to_string(), TypedType::Function {
+            params: vec![TypedType::String],
+            return_type: Box::new(TypedType::String),
+        });
+        http_fields.insert("post".to_string(), TypedType::Function {
+            params: vec![TypedType::String, TypedType::String],
+            return_type: Box::new(TypedType::String),
+        });
+        self.records.insert("HttpClient".to_string(), RecordDef {
+            fields: http_fields,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+    }
+
     fn push_scope(&mut self) {
         self.var_env.push(HashMap::new());
     }
-    
+
     fn pop_scope(&mut self) {
         self.var_env.pop();
     }
@@ -2313,7 +2522,7 @@ impl TypeChecker {
                 }).collect();
                 self.records.insert(ctx.name.clone(), RecordDef {
                     fields,
-                    type_params: vec![],
+                    type_params: ctx.type_params.clone(),
                     temporal_constraints: vec![],
                 });
             }
@@ -2602,17 +2811,17 @@ impl TypeChecker {
             let ty = self.convert_type(&field.ty)?;
             fields.insert(field.name.clone(), ty);
         }
-        
+
         // Add to available contexts
         self._contexts.push(context.name.clone());
-        
+
         // Store as a special record type for field access
-        self.records.insert(context.name.clone(), RecordDef { 
+        self.records.insert(context.name.clone(), RecordDef {
             fields,
-            type_params: vec![],
+            type_params: context.type_params.clone(),
             temporal_constraints: vec![],
         });
-        
+
         Ok(())
     }
     

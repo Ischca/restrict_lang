@@ -119,6 +119,24 @@ export fun fold: <T, U> (list: List<T>, acc: U, f: |U, T| -> U) -> U = {
 }
 
 // ============================================================
+// Zip
+// ============================================================
+
+// Combine two lists element-wise into a list of Pairs
+// Stops at the shorter list's length
+export fun zip: <T, U> (a: List<T>, b: List<U>) -> List<Pair<T, U>> = {
+    a match {
+        [ha | ta] => {
+            b match {
+                [hb | tb] => { [Pair { first = ha, second = hb } | (ta, tb) zip] }
+                _ => { [] }
+            }
+        }
+        _ => { [] }
+    }
+}
+
+// ============================================================
 // Option-returning Operations
 // ============================================================
 

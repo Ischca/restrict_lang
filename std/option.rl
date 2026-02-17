@@ -1,9 +1,5 @@
 // Restrict Language Standard Library: Option Operations
 // 標準ライブラリ: Option型操作
-//
-// Note: Some functions (map, flatten, or_else) are not included because
-// the parser doesn't yet support nested generic types (Option<Option<T>>)
-// or function type parameters (|T| -> U).
 
 // ============================================================
 // Basic Predicates
@@ -34,5 +30,33 @@ export fun unwrap_or: <T> (opt: Option<T>, default: T) -> T = {
     opt match {
         Some(value) => { value }
         None => { default }
+    }
+}
+
+// ============================================================
+// Transformations
+// ============================================================
+
+// Map a function over the Option value
+export fun option_map: <T, U> (opt: Option<T>, f: |T| -> U) -> Option<U> = {
+    opt match {
+        Some(value) => { Some((value) f) }
+        None => { None }
+    }
+}
+
+// Flat map (and_then) - chain Option-returning functions
+export fun option_and_then: <T, U> (opt: Option<T>, f: |T| -> Option<U>) -> Option<U> = {
+    opt match {
+        Some(value) => { (value) f }
+        None => { None }
+    }
+}
+
+// Return the option if Some, otherwise evaluate fallback
+export fun option_or_else: <T> (opt: Option<T>, fallback: || -> Option<T>) -> Option<T> = {
+    opt match {
+        Some(value) => { Some(value) }
+        None => { fallback }
     }
 }

@@ -69,3 +69,33 @@ export fun append_file: (path: String, content: String) -> Unit = {
     fd file_close;
     Unit
 }
+
+// ============================================================
+// Context-aware I/O (use with FileSystem context)
+// ============================================================
+
+// Context-aware file reading with error handling
+// Usage: with FileSystem { "path" context_read_file }
+export fun context_read_file: (path: String) -> Result<String, Int> = {
+    val fd = (path, 0) file_open;
+    fd < 0 then {
+        Err(fd)
+    } else {
+        val content = (fd, 4096) file_read;
+        fd file_close;
+        Ok(content)
+    }
+}
+
+// Context-aware file writing with error handling
+// Usage: with FileSystem { ("path", "content") context_write_file }
+export fun context_write_file: (path: String, content: String) -> Result<Int, Int> = {
+    val fd = (path, 1) file_open;
+    fd < 0 then {
+        Err(fd)
+    } else {
+        val bytes_written = (fd, content) file_write;
+        fd file_close;
+        Ok(bytes_written)
+    }
+}

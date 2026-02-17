@@ -559,13 +559,12 @@ fn context_decl(input: &str) -> ParseResult<ContextDecl> {
         Ok((input, params))
     })(input)?;
     
-    // TODO: Handle type parameters in context declaration
-    // For now, we'll ignore them until we update the ContextDecl struct
-    
+    let type_params = _type_params.unwrap_or_default();
+
     let (input, _) = expect_token(Token::LBrace)(input)?;
     let (input, fields) = many0(field_decl)(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
-    Ok((input, ContextDecl { name, fields }))
+    Ok((input, ContextDecl { name, type_params, fields }))
 }
 
 pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {

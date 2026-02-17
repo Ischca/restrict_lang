@@ -1584,6 +1584,435 @@ impl WasmCodeGen {
         });
         self.function_return_types.insert("int_to_string".to_string(), "String".to_string());
 
+        // string_split: Split string by delimiter character, returns List<String>
+        // String format: [4-byte length][data bytes...]
+        // List format: [4-byte length][4-byte capacity][element pointers...]
+        self.output.push_str("  (func $string_split (param $str i32) (param $delim i32) (result i32)\n");
+        self.output.push_str("    (local $len i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $count i32)\n");
+        self.output.push_str("    (local $seg_start i32)\n");
+        self.output.push_str("    (local $seg_len i32)\n");
+        self.output.push_str("    (local $result_list i32)\n");
+        self.output.push_str("    (local $new_str i32)\n");
+        self.output.push_str("    (local $j i32)\n");
+        self.output.push_str("    (local $list_idx i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get string length\n");
+        self.output.push_str("    local.get $str\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Pass 1: Count delimiters to determine list size\n");
+        self.output.push_str("    i32.const 1\n");  // At least 1 segment
+        self.output.push_str("    local.set $count\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $count_done\n");
+        self.output.push_str("      (loop $count_loop\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $len\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $count_done\n");
+        self.output.push_str("        local.get $str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        local.get $delim\n");
+        self.output.push_str("        i32.eq\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            local.get $count\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $count\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $count_loop\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate result list: 8 bytes header + count * 4 bytes\n");
+        self.output.push_str("    local.get $count\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $result_list\n");
+        self.output.push_str("    ;; Write list length and capacity\n");
+        self.output.push_str("    local.get $result_list\n");
+        self.output.push_str("    local.get $count\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $result_list\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $count\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Pass 2: Extract segments\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $seg_start\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $list_idx\n");
+        self.output.push_str("    (block $split_done\n");
+        self.output.push_str("      (loop $split_loop\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $len\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $split_done\n");
+        self.output.push_str("        local.get $str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        local.get $delim\n");
+        self.output.push_str("        i32.eq\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            ;; Found delimiter: create segment string\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            local.get $seg_start\n");
+        self.output.push_str("            i32.sub\n");
+        self.output.push_str("            local.set $seg_len\n");
+        self.output.push_str("            ;; Allocate new string: 4 + seg_len\n");
+        self.output.push_str("            local.get $seg_len\n");
+        self.output.push_str("            i32.const 4\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            call $allocate\n");
+        self.output.push_str("            local.set $new_str\n");
+        self.output.push_str("            ;; Write length\n");
+        self.output.push_str("            local.get $new_str\n");
+        self.output.push_str("            local.get $seg_len\n");
+        self.output.push_str("            i32.store\n");
+        self.output.push_str("            ;; Copy bytes\n");
+        self.output.push_str("            i32.const 0\n");
+        self.output.push_str("            local.set $j\n");
+        self.output.push_str("            (block $seg_copy_done\n");
+        self.output.push_str("              (loop $seg_copy\n");
+        self.output.push_str("                local.get $j\n");
+        self.output.push_str("                local.get $seg_len\n");
+        self.output.push_str("                i32.ge_u\n");
+        self.output.push_str("                br_if $seg_copy_done\n");
+        self.output.push_str("                local.get $new_str\n");
+        self.output.push_str("                i32.const 4\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.get $j\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.get $str\n");
+        self.output.push_str("                i32.const 4\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.get $seg_start\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.get $j\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                i32.load8_u\n");
+        self.output.push_str("                i32.store8\n");
+        self.output.push_str("                local.get $j\n");
+        self.output.push_str("                i32.const 1\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.set $j\n");
+        self.output.push_str("                br $seg_copy\n");
+        self.output.push_str("              )\n");
+        self.output.push_str("            )\n");
+        self.output.push_str("            ;; Store in result list\n");
+        self.output.push_str("            local.get $result_list\n");
+        self.output.push_str("            i32.const 8\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $list_idx\n");
+        self.output.push_str("            i32.const 4\n");
+        self.output.push_str("            i32.mul\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $new_str\n");
+        self.output.push_str("            i32.store\n");
+        self.output.push_str("            local.get $list_idx\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $list_idx\n");
+        self.output.push_str("            ;; Move seg_start past delimiter\n");
+        self.output.push_str("            local.get $i\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $seg_start\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $split_loop\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    ;; Handle last segment (after last delimiter or entire string)\n");
+        self.output.push_str("    local.get $len\n");
+        self.output.push_str("    local.get $seg_start\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    local.set $seg_len\n");
+        self.output.push_str("    local.get $seg_len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_str\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("    local.get $seg_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $j\n");
+        self.output.push_str("    (block $last_copy_done\n");
+        self.output.push_str("      (loop $last_copy\n");
+        self.output.push_str("        local.get $j\n");
+        self.output.push_str("        local.get $seg_len\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $last_copy_done\n");
+        self.output.push_str("        local.get $new_str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $j\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $str\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $seg_start\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $j\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load8_u\n");
+        self.output.push_str("        i32.store8\n");
+        self.output.push_str("        local.get $j\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $j\n");
+        self.output.push_str("        br $last_copy\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.get $result_list\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $list_idx\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $new_str\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    local.get $result_list\n");
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_split".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+        self.function_return_types.insert("string_split".to_string(), "List".to_string());
+
+        // string_join: Join a list of strings with a separator string
+        self.output.push_str("  (func $string_join (param $list i32) (param $sep i32) (result i32)\n");
+        self.output.push_str("    (local $list_len i32)\n");
+        self.output.push_str("    (local $sep_len i32)\n");
+        self.output.push_str("    (local $total_len i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $cur_str i32)\n");
+        self.output.push_str("    (local $cur_len i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    (local $offset i32)\n");
+        self.output.push_str("    (local $j i32)\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Get list length and separator length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $list_len\n");
+        self.output.push_str("    local.get $sep\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $sep_len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Handle empty list: return empty string\n");
+        self.output.push_str("    local.get $list_len\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.set $result\n");
+        self.output.push_str("        local.get $result\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $result\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Pass 1: Calculate total length\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $total_len\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $calc_done\n");
+        self.output.push_str("      (loop $calc_loop\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $list_len\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $calc_done\n");
+        self.output.push_str("        ;; Get string pointer from list\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        i32.load\n");  // Read string length
+        self.output.push_str("        local.get $total_len\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $total_len\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $calc_loop\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    ;; Add separator lengths: (list_len - 1) * sep_len\n");
+        self.output.push_str("    local.get $total_len\n");
+        self.output.push_str("    local.get $list_len\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    local.get $sep_len\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.set $total_len\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Allocate result string\n");
+        self.output.push_str("    local.get $total_len\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $result\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    local.get $total_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Pass 2: Copy strings with separators\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $offset\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    (block $join_done\n");
+        self.output.push_str("      (loop $join_loop\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $list_len\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $join_done\n");
+        self.output.push_str("        ;; Add separator before element (except first)\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.gt_u\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            ;; Copy separator bytes\n");
+        self.output.push_str("            i32.const 0\n");
+        self.output.push_str("            local.set $j\n");
+        self.output.push_str("            (block $sep_done\n");
+        self.output.push_str("              (loop $sep_loop\n");
+        self.output.push_str("                local.get $j\n");
+        self.output.push_str("                local.get $sep_len\n");
+        self.output.push_str("                i32.ge_u\n");
+        self.output.push_str("                br_if $sep_done\n");
+        self.output.push_str("                local.get $result\n");
+        self.output.push_str("                i32.const 4\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.get $offset\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.get $sep\n");
+        self.output.push_str("                i32.const 4\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.get $j\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                i32.load8_u\n");
+        self.output.push_str("                i32.store8\n");
+        self.output.push_str("                local.get $j\n");
+        self.output.push_str("                i32.const 1\n");
+        self.output.push_str("                i32.add\n");
+        self.output.push_str("                local.set $j\n");
+        self.output.push_str("                br $sep_loop\n");
+        self.output.push_str("              )\n");
+        self.output.push_str("            )\n");
+        self.output.push_str("            local.get $offset\n");
+        self.output.push_str("            local.get $sep_len\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $offset\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        ;; Get current string\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.set $cur_str\n");
+        self.output.push_str("        local.get $cur_str\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.set $cur_len\n");
+        self.output.push_str("        ;; Copy string bytes\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $j\n");
+        self.output.push_str("        (block $str_done\n");
+        self.output.push_str("          (loop $str_loop\n");
+        self.output.push_str("            local.get $j\n");
+        self.output.push_str("            local.get $cur_len\n");
+        self.output.push_str("            i32.ge_u\n");
+        self.output.push_str("            br_if $str_done\n");
+        self.output.push_str("            local.get $result\n");
+        self.output.push_str("            i32.const 4\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $offset\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $cur_str\n");
+        self.output.push_str("            i32.const 4\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $j\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            i32.load8_u\n");
+        self.output.push_str("            i32.store8\n");
+        self.output.push_str("            local.get $j\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $j\n");
+        self.output.push_str("            br $str_loop\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        local.get $offset\n");
+        self.output.push_str("        local.get $cur_len\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $offset\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $join_loop\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.get $result\n");
+        self.output.push_str("    )\n");  // end else
+        self.output.push_str("    )\n");  // end if
+        self.output.push_str("  )\n\n");
+
+        self.functions.insert("string_join".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+        self.function_return_types.insert("string_join".to_string(), "String".to_string());
+
         Ok(())
     }
 
@@ -1794,36 +2223,59 @@ impl WasmCodeGen {
 
     fn generate_arena_functions(&mut self) -> Result<(), CodeGenError> {
         self.output.push_str("\n  ;; Arena allocator functions\n");
-        
+        self.output.push_str("  ;; Arena header layout (20 bytes):\n");
+        self.output.push_str("  ;;   offset 0:  start_addr    (i32) - start of arena data region\n");
+        self.output.push_str("  ;;   offset 4:  current_ptr   (i32) - next allocation position\n");
+        self.output.push_str("  ;;   offset 8:  capacity      (i32) - max size in bytes\n");
+        self.output.push_str("  ;;   offset 12: parent_arena  (i32) - parent arena pointer (0 = root)\n");
+        self.output.push_str("  ;;   offset 16: alloc_count   (i32) - number of allocations\n\n");
+
         // Global variable to track current arena
         self.output.push_str("  (global $current_arena (mut i32) (i32.const 0))\n\n");
-        
-        // Arena init function
-        self.output.push_str("  (func $arena_init (param $start i32) (result i32)\n");
-        self.output.push_str("    ;; Initialize arena header\n");
+
+        // Arena init function: (start, capacity) -> arena_ptr
+        self.output.push_str("  (func $arena_init (param $start i32) (param $capacity i32) (result i32)\n");
         self.output.push_str("    ;; Store start address at offset 0\n");
         self.output.push_str("    local.get $start\n");
         self.output.push_str("    local.get $start\n");
         self.output.push_str("    i32.store\n");
-        self.output.push_str("    ;; Store current address at offset 4 (start + 8 for header)\n");
+        self.output.push_str("    ;; Store current pointer at offset 4 (start + 20 for header)\n");
         self.output.push_str("    local.get $start\n");
         self.output.push_str("    i32.const 4\n");
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.get $start\n");
+        self.output.push_str("    i32.const 20\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Store capacity at offset 8\n");
+        self.output.push_str("    local.get $start\n");
         self.output.push_str("    i32.const 8\n");
         self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $capacity\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Store parent_arena = 0 at offset 12\n");
+        self.output.push_str("    local.get $start\n");
+        self.output.push_str("    i32.const 12\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Store alloc_count = 0 at offset 16\n");
+        self.output.push_str("    local.get $start\n");
+        self.output.push_str("    i32.const 16\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.const 0\n");
         self.output.push_str("    i32.store\n");
         self.output.push_str("    ;; Return arena header address\n");
         self.output.push_str("    local.get $start\n");
         self.output.push_str("  )\n");
-        
+
         // Add function signatures
         self.functions.insert("arena_init".to_string(), FunctionSig {
-            _params: vec![WasmType::I32],
+            _params: vec![WasmType::I32, WasmType::I32],
             result: Some(WasmType::I32),
         });
-        
-        // Arena alloc function
+
+        // Arena alloc function with bounds checking
         self.output.push_str("  (func $arena_alloc (param $arena i32) (param $size i32) (result i32)\n");
         self.output.push_str("    (local $current i32)\n");
         self.output.push_str("    (local $aligned_size i32)\n");
@@ -1850,7 +2302,33 @@ impl WasmCodeGen {
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.set $new_current\n");
         self.output.push_str("    \n");
-        self.output.push_str("    ;; TODO: Add bounds checking\n");
+        self.output.push_str("    ;; Bounds checking: new_current must not exceed start + capacity\n");
+        self.output.push_str("    local.get $new_current\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.load\n");          // start_addr
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.load\n");          // capacity
+        self.output.push_str("    i32.add\n");           // max_addr = start + capacity
+        self.output.push_str("    i32.gt_u\n");          // new_current > max_addr?
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        unreachable\n");   // Arena overflow trap
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    \n");
+        self.output.push_str("    ;; Increment alloc_count\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.const 16\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.const 16\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.store\n");
         self.output.push_str("    \n");
         self.output.push_str("    ;; Update current pointer\n");
         self.output.push_str("    local.get $arena\n");
@@ -1862,30 +2340,36 @@ impl WasmCodeGen {
         self.output.push_str("    ;; Return allocated address\n");
         self.output.push_str("    local.get $current\n");
         self.output.push_str("  )\n");
-        
+
         self.functions.insert("arena_alloc".to_string(), FunctionSig {
             _params: vec![WasmType::I32, WasmType::I32],
             result: Some(WasmType::I32),
         });
-        
+
         // Arena reset function
         self.output.push_str("  (func $arena_reset (param $arena i32)\n");
-        self.output.push_str("    ;; Reset current to start + 8 (after header)\n");
+        self.output.push_str("    ;; Reset current to start + 20 (after header)\n");
         self.output.push_str("    local.get $arena\n");
         self.output.push_str("    i32.const 4\n");
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.get $arena\n");
         self.output.push_str("    i32.load\n");
-        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.const 20\n");
         self.output.push_str("    i32.add\n");
         self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Reset alloc_count to 0\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.const 16\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
         self.output.push_str("  )\n");
-        
+
         self.functions.insert("arena_reset".to_string(), FunctionSig {
             _params: vec![WasmType::I32],
             result: None,
         });
-        
+
         // Allocate function (uses current arena)
         self.output.push_str("  (func $allocate (param $size i32) (result i32)\n");
         self.output.push_str("    ;; Use current arena or fail if none\n");
@@ -1893,12 +2377,53 @@ impl WasmCodeGen {
         self.output.push_str("    local.get $size\n");
         self.output.push_str("    call $arena_alloc\n");
         self.output.push_str("  )\n");
-        
+
         self.functions.insert("allocate".to_string(), FunctionSig {
             _params: vec![WasmType::I32],
             result: Some(WasmType::I32),
         });
-        
+
+        // Arena introspection: arena_bytes_used
+        self.output.push_str("  (func $arena_bytes_used (param $arena i32) (result i32)\n");
+        self.output.push_str("    ;; current_ptr - (start_addr + 20)\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.load\n");          // current_ptr
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.load\n");           // start_addr
+        self.output.push_str("    i32.const 20\n");
+        self.output.push_str("    i32.add\n");            // start + header_size
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("arena_bytes_used".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // Arena introspection: arena_bytes_remaining
+        self.output.push_str("  (func $arena_bytes_remaining (param $arena i32) (result i32)\n");
+        self.output.push_str("    ;; (start_addr + capacity) - current_ptr\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.load\n");           // start_addr
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.load\n");           // capacity
+        self.output.push_str("    i32.add\n");            // max_addr
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.load\n");           // current_ptr
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("arena_bytes_remaining".to_string(), FunctionSig {
+            _params: vec![WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
         Ok(())
     }
     
@@ -3267,8 +3792,10 @@ impl WasmCodeGen {
         // Initialize default arena for main function
         if func.name == "main" {
             self.default_arena = Some(self.next_arena_addr);
+            let arena_capacity = 0x1000; // 4KB default capacity
             self.output.push_str(&format!("    ;; Initialize default arena\n"));
             self.output.push_str(&format!("    i32.const {}\n", self.next_arena_addr));
+            self.output.push_str(&format!("    i32.const {}\n", arena_capacity));
             self.output.push_str("    call $arena_init\n");
             self.output.push_str("    global.set $current_arena\n\n");
         }
@@ -3457,17 +3984,27 @@ impl WasmCodeGen {
     fn generate_temporal_scope(&mut self, lifetime: &str, body: &BlockExpr) -> Result<(), CodeGenError> {
         // Create a new arena for this temporal scope
         let arena_addr = self.next_arena_addr;
-        self.next_arena_addr += 0x1000; // Reserve 4KB for each arena
-        
+        let arena_capacity = 0x1000; // 4KB per arena
+        self.next_arena_addr += arena_capacity; // Reserve capacity for each arena
+
         // Push arena onto stack
         self.arena_stack.push(arena_addr);
-        
-        // Generate arena initialization
+
+        // Generate arena initialization with capacity
         self.output.push_str(&format!("    ;; Initialize temporal scope arena for {} at address 0x{:x}\n", lifetime, arena_addr));
         self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+        self.output.push_str(&format!("    i32.const {}\n", arena_capacity));
         self.output.push_str("    call $arena_init\n");
         self.output.push_str("    drop\n"); // Drop arena address as we track it internally
-        
+
+        // Store parent arena pointer for nested arena tracking
+        self.output.push_str("    ;; Set parent arena for nested tracking\n");
+        self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+        self.output.push_str("    i32.const 12\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    global.get $current_arena\n");
+        self.output.push_str("    i32.store\n");
+
         // Set this arena as current
         self.output.push_str(&format!("    i32.const {}\n", arena_addr));
         self.output.push_str("    global.set $current_arena\n");
@@ -3994,10 +4531,8 @@ impl WasmCodeGen {
         // Generate the with function
         self.output.push_str(&format!("\n  (func {} (result i32)\n", func_name));
 
-        // For now, contexts don't generate actual code - they're compile-time constructs
-        // Just execute the body block
-        // TODO: Generate proper context setup/teardown for Arena and other contexts
-        self.output.push_str("    ;; Execute body with contexts: ");
+        // Context setup
+        self.output.push_str("    ;; Context setup for: ");
         for (i, ctx) in with.contexts.iter().enumerate() {
             if i > 0 {
                 self.output.push_str(", ");
@@ -4006,8 +4541,79 @@ impl WasmCodeGen {
         }
         self.output.push_str("\n");
 
+        let mut has_arena = false;
+        let mut arena_addr = 0u32;
+
+        for ctx in &with.contexts {
+            match ctx.as_str() {
+                "Arena" => {
+                    has_arena = true;
+                    arena_addr = self.next_arena_addr;
+                    let arena_capacity = 0x1000; // 4KB per arena
+                    self.next_arena_addr += arena_capacity;
+                    self.arena_stack.push(arena_addr);
+
+                    // Initialize arena with parent tracking
+                    self.output.push_str(&format!("    ;; Arena context: init at 0x{:x}\n", arena_addr));
+                    self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+                    self.output.push_str(&format!("    i32.const {}\n", arena_capacity));
+                    self.output.push_str("    call $arena_init\n");
+                    self.output.push_str("    drop\n");
+
+                    // Set parent arena
+                    self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+                    self.output.push_str("    i32.const 12\n");
+                    self.output.push_str("    i32.add\n");
+                    self.output.push_str("    global.get $current_arena\n");
+                    self.output.push_str("    i32.store\n");
+
+                    // Set as current arena
+                    self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+                    self.output.push_str("    global.set $current_arena\n");
+                }
+                "FileSystem" => {
+                    self.output.push_str("    ;; FileSystem context: WASI file I/O enabled\n");
+                }
+                "Database" => {
+                    self.output.push_str("    ;; Database context initialized (stub)\n");
+                }
+                "HttpClient" => {
+                    self.output.push_str("    ;; HttpClient context initialized (stub)\n");
+                }
+                _ => {
+                    self.output.push_str(&format!("    ;; User context: {}\n", ctx));
+                }
+            }
+        }
+
         // Generate the body
         self.generate_block_internal(&with.body, false)?;
+
+        // Context teardown in reverse order
+        for ctx in with.contexts.iter().rev() {
+            if ctx == "Arena" {
+                // Reset arena and restore parent
+                self.output.push_str(&format!("    ;; Arena context: teardown at 0x{:x}\n", arena_addr));
+                self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+                self.output.push_str("    call $arena_reset\n");
+
+                self.arena_stack.pop();
+                if let Some(prev_arena) = self.arena_stack.last() {
+                    self.output.push_str(&format!("    i32.const {}\n", prev_arena));
+                    self.output.push_str("    global.set $current_arena\n");
+                } else if let Some(default) = self.default_arena {
+                    self.output.push_str(&format!("    i32.const {}\n", default));
+                    self.output.push_str("    global.set $current_arena\n");
+                } else {
+                    // Restore from parent pointer
+                    self.output.push_str(&format!("    i32.const {}\n", arena_addr));
+                    self.output.push_str("    i32.const 12\n");
+                    self.output.push_str("    i32.add\n");
+                    self.output.push_str("    i32.load\n");
+                    self.output.push_str("    global.set $current_arena\n");
+                }
+            }
+        }
 
         self.output.push_str("  )\n");
 

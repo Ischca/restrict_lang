@@ -112,6 +112,13 @@ export fun neg: (x: Int) -> Int = {
 }
 
 // ============================================================
+// Common Data Structures
+// ============================================================
+
+// Generic pair type for combining two values
+record Pair<T, U> { first: T, second: U }
+
+// ============================================================
 // Option Constructors (if not built-in)
 // ============================================================
 

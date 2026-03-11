@@ -14,6 +14,7 @@ readme = "README.md"
 license = "MIT"
 keywords = ["wasm", "webassembly", "affine-types", "programming-language", "compiler"]
 categories = ["compilers", "development-tools", "wasm"]
+build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -50,9 +51,6 @@ path = "src/bin/debug_parser.rs"
 name = "trace_parser"
 path = "src/bin/trace_parser.rs"
 
-# Build script
-build = "build.rs"
-
 
 [dev-dependencies]
 pretty_assertions = "^1.3.0"
@@ -66,3 +64,13 @@ default = ["console_error_panic_hook"]
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "--html-logo-url", "https://restrict-lang.org/logo.svg",
+    "--html-favicon-url", "https://restrict-lang.org/favicon.ico",
+    "--html-playground-url", "https://play.restrict-lang.org",
+    "--extend-css", "docs/theme/rustdoc-restrict.css",
+    "--cfg", "docsrs"
+]

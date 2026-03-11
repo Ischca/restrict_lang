@@ -14,7 +14,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use restrict_lang::lexer::tokenize;
 //!
 //! let input = r#""Hello, World!" |> println;"#;

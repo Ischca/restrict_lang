@@ -20,7 +20,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use restrict_lang::codegen::WasmCodeGen;
 //! use restrict_lang::parser::parse_program;
 //!

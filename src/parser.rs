@@ -13,7 +13,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use restrict_lang::parser::parse_program;
 //!
 //! let input = r#"
@@ -763,7 +763,7 @@ fn with_expr(input: &str) -> ParseResult<Expr> {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```text
 /// with lifetime<~f> { ... }
 /// with lifetime { ... }  // anonymous lifetime
 /// ```

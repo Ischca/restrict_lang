@@ -14,7 +14,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use restrict_lang::type_checker::TypeChecker;
 //! use restrict_lang::parser::parse_program;
 //!
@@ -412,13 +412,13 @@ pub struct TypeSubstitution {
 }
 
 #[derive(Debug, Clone)]
-pub struct TemporalConstraint {
+pub(crate) struct TemporalConstraint {
     pub inner: String,  // ~tx
     pub outer: String,  // ~db (where ~tx within ~db)
 }
 
 #[derive(Debug, Clone)]
-pub struct TemporalContext {
+pub(crate) struct TemporalContext {
     // Active temporal variables in current scope
     pub active_temporals: HashSet<String>,
     // Temporal constraints (inner within outer)

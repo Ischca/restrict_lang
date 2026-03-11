@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: var keyword, try/catch, if/else,
+//   method dot syntax (.method()), panic(), lambda codegen
+// Planned for: v0.2.0+
+//
 // Simplified test framework for quick testing
 // Demonstrates Restrict Language's expressiveness
 

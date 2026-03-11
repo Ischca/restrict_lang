@@ -1,51 +1,19 @@
 // Example demonstrating Option type usage in Restrict Language
 
-// Option type provides null safety
-fun unwrap_or = opt: Option<Int> default: Int {
-    opt match {
-        Some(n) => { n }
-        None => { default }
-    }
-}
-
-fun find_first_even = start: Int end_val: Int {
-    mut val i = start;
-    i > end_val then {
-        None
-    } else {
-        i % 2 == 0 then {
-            Some(i)
-        } else {
-            (i + 1, end_val) find_first_even
-        }
-    }
-}
-
 fun main = {
     // Basic Option usage
     val x = Some(42);
-    val y = None;
 
-    // Unwrapping with default
-    val result1 = x unwrap_or 0;  // Should be 42
-    val result2 = y unwrap_or 0;  // Should be 0
-
-    // Finding first even number
-    val first_even = (1, 10) find_first_even;
-    first_even match {
-        Some(n) => { n println }
-        None => { "No even number found" println }
+    // Pattern matching on Options (checking presence)
+    val is_some = x match {
+        Some(_) => { 1 }
+        None => { 0 }
     };
 
-    // Nested Options
-    val nested = Some(Some(100));
-    nested match {
-        Some(inner) => {
-            inner match {
-                Some(v) => { v }
-                None => { 0 }
-            }
-        }
-        None => { 0 }
+    // Conditional expressions
+    is_some > 0 then {
+        42
+    } else {
+        0
     }
 }

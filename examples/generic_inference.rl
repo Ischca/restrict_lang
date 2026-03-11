@@ -1,3 +1,6 @@
+// ⚠ NOT YET COMPILABLE — requires: generic function codegen (monomorphization)
+// Planned for: v0.2.0
+//
 // Generic function type parameter inference example
 
 fun identity<T> = x: T {

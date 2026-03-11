@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: type ADT declarations, custom infix operators,
+//   lambda codegen, closure captures
+// Planned for: v0.2.0+
+//
 // Ultra-minimal Restrict Language Test DSL
 // Maximum elegance, minimum ceremony
 

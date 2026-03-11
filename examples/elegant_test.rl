@@ -1,3 +1,4 @@
+// NOTE: This example uses experimental features that may not be fully implemented yet.
 // Elegant Test DSL for Restrict Language
 // Natural and expressive test syntax
 

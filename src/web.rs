@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{lex, parse_program, TypeChecker, WasmCodeGen};
 use crate::parser::parse_program_recovering;
 use crate::diagnostic::{Diagnostic, DiagnosticBag, RenderConfig};
-use crate::type_checker::{SymbolInfo, SymbolKind, format_typed_type, TypedType};
+use crate::type_checker::{SymbolKind, TypedType};
 use crate::lexer::Span;
 
 #[derive(Serialize, Deserialize)]

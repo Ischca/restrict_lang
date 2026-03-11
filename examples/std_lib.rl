@@ -1,3 +1,4 @@
+// NOTE: This example uses standard library features that may require Arena context.
 // Standard Library for Restrict Language
 // Provides basic functionality for common operations
 

@@ -3,10 +3,10 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use crate::TypeChecker;
-use crate::lexer::Span;
+
 use crate::parser::parse_program_recovering;
 use crate::diagnostic::{Diagnostic as RichDiagnostic, DiagnosticBag};
-use crate::diagnostic::lsp_integration::span_to_range;
+
 
 #[derive(Debug)]
 pub struct RestrictLanguageServer {
@@ -65,18 +65,7 @@ impl RestrictLanguageServer {
     }
 
     /// Converts a byte-offset Span to an LSP Range (line/column).
-    fn span_to_range(&self, text: &str, span: &Span) -> Range {
-        let (start_line, start_col) = span.to_line_col(text);
-        let end_span = Span::new(span.end, span.end);
-        let (end_line, end_col) = end_span.to_line_col(text);
-
-        Range::new(
-            Position::new(start_line as u32, start_col as u32),
-            Position::new(end_line as u32, end_col as u32),
-        )
-    }
-
-    fn find_definition_at_position(&self, ast: &crate::ast::Program, text: &str, position: &Position) -> Option<Location> {
+    fn find_definition_at_position(&self, _ast: &crate::ast::Program, text: &str, position: &Position) -> Option<Location> {
         // Simple implementation: find function definitions
         let lines: Vec<&str> = text.lines().collect();
         let target_line_idx = position.line as usize;
@@ -165,6 +154,7 @@ impl RestrictLanguageServer {
         }
     }
 
+    #[allow(deprecated)]
     fn extract_document_symbols(&self, ast: &crate::ast::Program, text: &str) -> Vec<DocumentSymbol> {
         let mut symbols = Vec::new();
         let lines: Vec<&str> = text.lines().collect();
@@ -280,7 +270,7 @@ impl RestrictLanguageServer {
         Some((start, end))
     }
 
-    fn find_references_at_position(&self, ast: &crate::ast::Program, text: &str, position: &Position, include_declaration: bool) -> Vec<Location> {
+    fn find_references_at_position(&self, _ast: &crate::ast::Program, text: &str, position: &Position, include_declaration: bool) -> Vec<Location> {
         let mut references = Vec::new();
         let lines: Vec<&str> = text.lines().collect();
         let target_line_idx = position.line as usize;

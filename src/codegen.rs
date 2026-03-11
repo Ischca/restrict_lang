@@ -169,8 +169,17 @@ impl WasmCodeGen {
         match decl {
             TopDecl::Function(func) => {
                 // Register the function signature so codegen knows about it
-                let params: Vec<WasmType> = func.params.iter().map(|_| WasmType::I32).collect();
-                let result = Some(WasmType::I32); // Default to I32 for now
+                let params: Vec<WasmType> = func.params.iter()
+                    .map(|p| self.convert_type(&p.ty).unwrap_or(WasmType::I32))
+                    .collect();
+                let result = if let Some(ref return_ty) = func.return_type {
+                    match self.convert_type(return_ty) {
+                        Ok(ty) => Some(ty),
+                        Err(_) => Some(WasmType::I32),
+                    }
+                } else {
+                    Some(WasmType::I32)
+                };
                 self.functions.insert(func.name.clone(), FunctionSig {
                     _params: params,
                     result,
@@ -2846,7 +2855,7 @@ impl WasmCodeGen {
         self.collect_binding_types_from_block(&func.body)?;
 
         let params: Vec<WasmType> = func.params.iter()
-            .map(|_| WasmType::I32)  // All types are i32 for now
+            .map(|p| self.convert_type(&p.ty).unwrap_or(WasmType::I32))
             .collect();
 
         // Determine return type from function body analysis
@@ -2973,7 +2982,25 @@ impl WasmCodeGen {
                         "none" | "None" => Ok("Option".to_string()),
                         "ok" | "Ok" => Ok("Result".to_string()),
                         "err" | "Err" => Ok("Result".to_string()),
-                        "unwrap" | "unwrap_or" => Ok("Int".to_string()), // Generic, but default to Int
+                        "unwrap" | "unwrap_or" => {
+                            // Try to infer from the argument's type
+                            if let Some(arg) = call.args.first() {
+                                let arg_type = self.infer_return_type_from_expr(arg)?;
+                                // If argument is Option or Result, return the inner type
+                                // For unwrap_or, the second arg (default value) gives the type
+                                if func_name == "unwrap_or" {
+                                    if let Some(default_arg) = call.args.get(1) {
+                                        return self.infer_return_type_from_expr(default_arg);
+                                    }
+                                }
+                                // Fallback: use the arg type itself (covers most cases)
+                                Ok(arg_type)
+                            } else {
+                                Err(CodeGenError::CannotInferType(
+                                    "unwrap/unwrap_or requires an argument".to_string()
+                                ))
+                            }
+                        }
                         _ => {
                             // Check if we already have this function registered
                             if let Some(return_type) = self.function_return_types.get(func_name) {
@@ -2991,7 +3018,20 @@ impl WasmCodeGen {
                     ))
                 }
             }
-            Expr::Binary(_) => Ok("Int".to_string()), // Arithmetic/comparison ops return Int
+            Expr::Binary(binary) => {
+                match binary.op {
+                    BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt |
+                    BinaryOp::Le | BinaryOp::Ge => Ok("Bool".to_string()),
+                    _ => {
+                        let left_type = self.infer_return_type_from_expr(&binary.left)?;
+                        if left_type == "Float" || left_type == "Float64" {
+                            Ok("Float".to_string())
+                        } else {
+                            Ok("Int".to_string())
+                        }
+                    }
+                }
+            }
             Expr::Ident(name) => {
                 if let Some(type_name) = self.var_types.get(name) {
                     Ok(type_name.clone())
@@ -3184,6 +3224,42 @@ impl WasmCodeGen {
                 // Temporal types are treated like their base type
                 self.convert_type(&Type::Named(name.clone()))
             }
+        }
+    }
+
+    /// Get the size in bytes of a field based on its type.
+    fn field_size_bytes(&self, ty: &Type) -> u32 {
+        match ty {
+            Type::Named(name) => match name.as_str() {
+                "Float64" | "Float" => 8,
+                _ => 4, // Int32, Bool, Char, String (pointer), records (pointer)
+            },
+            _ => 4, // Generics, functions are all pointer-sized
+        }
+    }
+
+    /// Get the WASM load instruction for a field type.
+    fn wasm_load_for_type(&self, ty: &Type) -> &'static str {
+        match ty {
+            Type::Named(name) if name == "Float64" || name == "Float" => "f64.load",
+            _ => "i32.load",
+        }
+    }
+
+    /// Get the WASM store instruction for a field type.
+    fn wasm_store_for_type(&self, ty: &Type) -> &'static str {
+        match ty {
+            Type::Named(name) if name == "Float64" || name == "Float" => "f64.store",
+            _ => "i32.store",
+        }
+    }
+
+    /// Calculate the total size of a record from its field types.
+    fn record_total_size(&self, record_name: &str) -> u32 {
+        if let Some(fields) = self.records.get(record_name) {
+            fields.iter().map(|(_, ty)| self.field_size_bytes(ty)).sum()
+        } else {
+            0
         }
     }
     
@@ -3541,7 +3617,7 @@ impl WasmCodeGen {
 
                 if is_type_param {
                     // Infer the concrete type from the argument
-                    let concrete_type = self.infer_expr_type_name(&args[i])?;
+                    let concrete_type = self.infer_return_type_from_expr(&args[i])?;
 
                     // Find the index of this type parameter
                     let param_idx = generic_func.type_params.iter()
@@ -3565,125 +3641,6 @@ impl WasmCodeGen {
     }
 
     /// Infer the type name from an expression (for monomorphization)
-    fn infer_expr_type_name(&self, expr: &Expr) -> Result<String, CodeGenError> {
-        match expr {
-            Expr::IntLit(_) => Ok("Int".to_string()),
-            Expr::FloatLit(_) => Ok("Float".to_string()),
-            Expr::StringLit(_) => Ok("String".to_string()),
-            Expr::BoolLit(_) => Ok("Bool".to_string()),
-            Expr::Unit => Ok("Unit".to_string()),
-            Expr::Ident(name) => {
-                // Check if we know the type of this variable
-                if let Some(type_name) = self.var_types.get(name) {
-                    Ok(type_name.clone())
-                } else {
-                    Err(CodeGenError::CannotInferType(
-                        format!("unknown type for variable '{}'", name)
-                    ))
-                }
-            }
-            Expr::FieldAccess(object, field) => {
-                // Get type of the record and the field
-                let var_name = self.expr_to_var_name(object);
-                if let Some(record_type) = self.var_types.get(&var_name) {
-                    if let Some(fields) = self.records.get(record_type) {
-                        for (field_name, field_type) in fields {
-                            if field_name == field {
-                                return Ok(self.type_to_string(field_type));
-                            }
-                        }
-                        return Err(CodeGenError::CannotInferType(
-                            format!("field '{}' not found in record type '{}'", field, record_type)
-                        ));
-                    }
-                    return Err(CodeGenError::CannotInferType(
-                        format!("'{}' is not a known record type", record_type)
-                    ));
-                }
-                Err(CodeGenError::CannotInferType(
-                    format!("cannot determine type of field access on '{}'", var_name)
-                ))
-            }
-            Expr::RecordLit(rl) => Ok(rl.name.clone()),
-            Expr::Block(block) => {
-                // Get type from the block's final expression
-                if let Some(ref final_expr) = block.expr {
-                    self.infer_expr_type_name(final_expr)
-                } else {
-                    Ok("Unit".to_string())
-                }
-            }
-            Expr::Then(then_expr) => {
-                // Infer type from the then block (both branches should have same type)
-                if let Some(ref final_expr) = then_expr.then_block.expr {
-                    self.infer_expr_type_name(final_expr)
-                } else if let Some(ref else_block) = then_expr.else_block {
-                    if let Some(ref final_expr) = else_block.expr {
-                        self.infer_expr_type_name(final_expr)
-                    } else {
-                        Ok("Unit".to_string())
-                    }
-                } else {
-                    Ok("Unit".to_string())
-                }
-            }
-            Expr::Call(call) => {
-                // Look up the function's return type
-                if let Expr::Ident(func_name) = call.function.as_ref() {
-                    // Check built-in functions first
-                    match func_name.as_str() {
-                        // String conversion functions
-                        "int_to_string" | "float_to_string" | "bool_to_string" => {
-                            return Ok("String".to_string());
-                        }
-                        "string_to_int" | "string_length" | "char_to_int" => {
-                            return Ok("Int".to_string());
-                        }
-                        "string_to_float" => return Ok("Float".to_string()),
-                        "int_to_char" => return Ok("Char".to_string()),
-                        // Array/List functions
-                        "array_get" | "list_get" | "array_length" | "list_length" => {
-                            return Ok("Int".to_string());
-                        }
-                        "array_set" | "list_push" | "list_pop" => {
-                            return Ok("Unit".to_string());
-                        }
-                        "new_list" | "new_array" => return Ok("List".to_string()),
-                        // I/O functions
-                        "println" | "print" | "print_int" | "print_float" => {
-                            return Ok("Unit".to_string());
-                        }
-                        "read_line" => return Ok("String".to_string()),
-                        // Allocation
-                        "allocate" => return Ok("Int".to_string()),
-                        // Option/Result constructors
-                        "some" | "Some" => return Ok("Option".to_string()),
-                        "none" | "None" => return Ok("Option".to_string()),
-                        "ok" | "Ok" => return Ok("Result".to_string()),
-                        "err" | "Err" => return Ok("Result".to_string()),
-                        "unwrap" | "unwrap_or" => return Ok("Int".to_string()),
-                        _ => {}
-                    }
-                    // Check registered function return types
-                    if let Some(return_type) = self.function_return_types.get(func_name) {
-                        return Ok(return_type.clone());
-                    }
-                    return Err(CodeGenError::CannotInferType(
-                        format!("unknown return type for function '{}'", func_name)
-                    ));
-                }
-                Err(CodeGenError::CannotInferType(
-                    "cannot infer return type of non-identifier function call".to_string()
-                ))
-            }
-            Expr::Binary(_) => Ok("Int".to_string()), // Arithmetic/comparison ops return Int
-            Expr::While(_) => Ok("Unit".to_string()),
-            _ => Err(CodeGenError::CannotInferType(
-                format!("cannot infer type of expression: {:?}", std::mem::discriminant(expr))
-            ))
-        }
-    }
-
     /// Helper to extract variable name from expression
     fn expr_to_var_name(&self, expr: &Expr) -> String {
         match expr {
@@ -3906,7 +3863,7 @@ impl WasmCodeGen {
 
         // Collect free variables from the block (for closure support)
         // For now, we'll generate a simple lambda without captures
-        let free_vars: Vec<String> = vec![];  // TODO: implement free variable collection
+        let _free_vars: Vec<String> = vec![];  // TODO: implement free variable collection
 
         // Add to function table
         self.function_table.push(func_name.clone());
@@ -4085,8 +4042,10 @@ impl WasmCodeGen {
             }
             Expr::RecordLit(record_lit) => {
                 // Allocate memory for the record
-                let field_count = record_lit.fields.len();
-                let record_size = field_count * 4; // Simplified: 4 bytes per field
+                let record_size = {
+                    let computed = self.record_total_size(&record_lit.name);
+                    if computed > 0 { computed as usize } else { record_lit.fields.len() * 4 }
+                };
                 
                 self.output.push_str(&format!("    i32.const {}\n", record_size));
                 self.output.push_str("    call $allocate\n");
@@ -4109,7 +4068,12 @@ impl WasmCodeGen {
                     self.output.push_str(&format!("    i32.const {}\n", offset));
                     self.output.push_str("    i32.add\n");
                     self.generate_expr(&field.value)?;
-                    self.output.push_str("    i32.store\n");
+                    // Use correct store instruction based on field type
+                    let store_instr = self.records.get(&record_lit.name)
+                        .and_then(|fields| fields.iter().find(|(n, _)| n == &field.name))
+                        .map(|(_, ty)| self.wasm_store_for_type(ty))
+                        .unwrap_or("i32.store");
+                    self.output.push_str(&format!("    {}\n", store_instr));
                 }
                 
                 // Return the base address
@@ -4166,7 +4130,12 @@ impl WasmCodeGen {
                 
                 self.output.push_str(&format!("    i32.const {}\n", field_offset));
                 self.output.push_str("    i32.add\n");
-                self.output.push_str("    i32.load\n");
+                // Use correct load instruction based on field type
+                let load_instr = self.records.get(&record_name)
+                    .and_then(|fields| fields.iter().find(|(n, _)| n == field))
+                    .map(|(_, ty)| self.wasm_load_for_type(ty))
+                    .unwrap_or("i32.load");
+                self.output.push_str(&format!("    {}\n", load_instr));
             }
             Expr::StringLit(s) => {
                 if let Some(offset) = self.string_offsets.get(s) {
@@ -4386,8 +4355,12 @@ impl WasmCodeGen {
             lambda_code.push_str(" (param $closure i32)");
         }
         
-        // Result type (for now, always i32)
-        lambda_code.push_str(" (result i32)\n");
+        // Infer result type from lambda body
+        let result_wasm_type = match self.infer_expr_type(&lambda.body) {
+            Ok(ty) => ty,
+            Err(_) => WasmType::I32, // Fallback for complex bodies
+        };
+        lambda_code.push_str(&format!(" (result {})\n", self.wasm_type_str(result_wasm_type)));
         
         // Generate local declarations for captured variables
         if !free_vars.is_empty() {
@@ -4541,13 +4514,13 @@ impl WasmCodeGen {
         }
         self.output.push_str("\n");
 
-        let mut has_arena = false;
+        let mut _has_arena = false;
         let mut arena_addr = 0u32;
 
         for ctx in &with.contexts {
             match ctx.as_str() {
                 "Arena" => {
-                    has_arena = true;
+                    _has_arena = true;
                     arena_addr = self.next_arena_addr;
                     let arena_capacity = 0x1000; // 4KB per arena
                     self.next_arena_addr += arena_capacity;
@@ -4642,36 +4615,49 @@ impl WasmCodeGen {
             }
         }
 
+        // Determine if operands are float
+        let is_float = matches!(self.infer_expr_type(&binary.left), Ok(WasmType::F64));
+
         // Generate left operand
         self.generate_expr(&binary.left)?;
 
         // Generate right operand
         self.generate_expr(&binary.right)?;
 
-        // Generate operation
-        match binary.op {
-            BinaryOp::Add => self.output.push_str("    i32.add\n"),
-            BinaryOp::Sub => self.output.push_str("    i32.sub\n"),
-            BinaryOp::Mul => self.output.push_str("    i32.mul\n"),
-            BinaryOp::Div => self.output.push_str("    i32.div_s\n"),
-            BinaryOp::Mod => self.output.push_str("    i32.rem_s\n"),
-            BinaryOp::Eq => {
-                self.output.push_str("    i32.eq\n");
+        // Generate operation with correct instruction set
+        if is_float {
+            match binary.op {
+                BinaryOp::Add => self.output.push_str("    f64.add\n"),
+                BinaryOp::Sub => self.output.push_str("    f64.sub\n"),
+                BinaryOp::Mul => self.output.push_str("    f64.mul\n"),
+                BinaryOp::Div => self.output.push_str("    f64.div\n"),
+                BinaryOp::Mod => {
+                    // WASM has no f64.rem; use (a - trunc(a/b) * b)
+                    // For now, emit error as float modulo is uncommon
+                    return Err(CodeGenError::NotImplemented(
+                        "modulo operation on Float64 is not supported".to_string()
+                    ));
+                }
+                BinaryOp::Eq => self.output.push_str("    f64.eq\n"),
+                BinaryOp::Ne => self.output.push_str("    f64.ne\n"),
+                BinaryOp::Lt => self.output.push_str("    f64.lt\n"),
+                BinaryOp::Gt => self.output.push_str("    f64.gt\n"),
+                BinaryOp::Le => self.output.push_str("    f64.le\n"),
+                BinaryOp::Ge => self.output.push_str("    f64.ge\n"),
             }
-            BinaryOp::Ne => {
-                self.output.push_str("    i32.ne\n");
-            }
-            BinaryOp::Lt => {
-                self.output.push_str("    i32.lt_s\n");
-            }
-            BinaryOp::Gt => {
-                self.output.push_str("    i32.gt_s\n");
-            }
-            BinaryOp::Le => {
-                self.output.push_str("    i32.le_s\n");
-            }
-            BinaryOp::Ge => {
-                self.output.push_str("    i32.ge_s\n");
+        } else {
+            match binary.op {
+                BinaryOp::Add => self.output.push_str("    i32.add\n"),
+                BinaryOp::Sub => self.output.push_str("    i32.sub\n"),
+                BinaryOp::Mul => self.output.push_str("    i32.mul\n"),
+                BinaryOp::Div => self.output.push_str("    i32.div_s\n"),
+                BinaryOp::Mod => self.output.push_str("    i32.rem_s\n"),
+                BinaryOp::Eq => self.output.push_str("    i32.eq\n"),
+                BinaryOp::Ne => self.output.push_str("    i32.ne\n"),
+                BinaryOp::Lt => self.output.push_str("    i32.lt_s\n"),
+                BinaryOp::Gt => self.output.push_str("    i32.gt_s\n"),
+                BinaryOp::Le => self.output.push_str("    i32.le_s\n"),
+                BinaryOp::Ge => self.output.push_str("    i32.ge_s\n"),
             }
         }
         
@@ -4851,7 +4837,21 @@ impl WasmCodeGen {
                     ))
                 }
             }
-            Expr::Binary(_) => Ok(WasmType::I32), // Binary ops return i32
+            Expr::Binary(binary) => {
+                match binary.op {
+                    BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt |
+                    BinaryOp::Le | BinaryOp::Ge => Ok(WasmType::I32), // Bool is i32
+                    _ => {
+                        // Infer from left operand
+                        let left_type = self.infer_expr_type(&binary.left)?;
+                        if matches!(left_type, WasmType::F64) {
+                            Ok(WasmType::F64)
+                        } else {
+                            Ok(WasmType::I32)
+                        }
+                    }
+                }
+            }
             Expr::Block(block) => {
                 if let Some(ref final_expr) = block.expr {
                     self.infer_expr_type(final_expr)
@@ -4948,8 +4948,21 @@ impl WasmCodeGen {
             Expr::NoneTyped(_) => Ok(WasmType::I32),
             Expr::Ok(_) => Ok(WasmType::I32),
             Expr::Err(_) => Ok(WasmType::I32),
-            // Field access
-            Expr::FieldAccess(_, _) => Ok(WasmType::I32), // Could be any type, default to I32
+            // Field access - look up field type from record definition
+            Expr::FieldAccess(obj_expr, field) => {
+                let var_name = self.expr_to_var_name(obj_expr);
+                if let Some(record_type) = self.var_types.get(&var_name) {
+                    let base_name = record_type.split('<').next().unwrap_or(record_type);
+                    if let Some(fields) = self.records.get(base_name) {
+                        for (field_name, field_type) in fields {
+                            if field_name == field {
+                                return self.convert_type(field_type);
+                            }
+                        }
+                    }
+                }
+                Ok(WasmType::I32) // Fallback for complex expressions
+            }
             // Clone/Freeze
             Expr::Clone(_) => Ok(WasmType::I32),
             Expr::Freeze(_) => Ok(WasmType::I32),
@@ -4971,7 +4984,7 @@ impl WasmCodeGen {
     fn is_type_parameter(&self, name: &str) -> bool {
         // Single uppercase letters are typically type parameters
         if name.len() == 1 {
-            let c = name.chars().next().unwrap();
+            let c = name.chars().next().unwrap_or('_');
             return c.is_ascii_uppercase();
         }
         // Common type parameter patterns
@@ -5008,10 +5021,6 @@ impl WasmCodeGen {
             }
         }
         None
-    }
-    
-    fn bind_local(&mut self, name: &str, idx: u32) {
-        self.add_local(name, idx);
     }
     
     #[allow(dead_code)]
@@ -5317,8 +5326,13 @@ impl WasmCodeGen {
                     if let Some(type_name) = self.expr_types.get(&(arg_expr as *const Expr as usize)) {
                         Ok(format!("{}_{}", name, type_name))
                     } else {
-                        // Default to Int32 for now
-                        Ok(format!("{}_Int32", name))
+                        // Try to infer from the expression
+                        match self.infer_return_type_from_expr(arg_expr) {
+                            Ok(inferred) => Ok(format!("{}_{}", name, inferred)),
+                            Err(_) => Err(CodeGenError::CannotInferType(
+                                format!("cannot determine specialization type for generic function '{}'", name)
+                            ))
+                        }
                     }
                 }
             }
@@ -5747,15 +5761,16 @@ impl WasmCodeGen {
         // and updating specified fields with new values
         
         // First, get the record type from the base expression
-        let _record_type = match self.get_expr_type(&clone.base) {
+        let record_type = match self.get_expr_type(&clone.base) {
             Some(ty) => ty,
             None => return Err(CodeGenError::NotImplemented("clone with unknown base type".to_string())),
         };
-        
-        // Calculate record size (this is simplified - should use actual field info)
-        // For now, assume each field is 4 bytes (i32)
-        let field_count = clone.updates.fields.len() + 2; // Estimate base fields + updates
-        let record_size = field_count * 4;
+
+        // Calculate record size from actual type definition
+        let record_size = {
+            let computed = self.record_total_size(&record_type) as usize;
+            if computed > 0 { computed } else { (clone.updates.fields.len() + 2) * 4 }
+        };
         
         // Allocate memory for the new record
         self.output.push_str(&format!("    i32.const {} ;; record size\n", record_size));
@@ -5774,20 +5789,29 @@ impl WasmCodeGen {
         self.output.push_str("    memory.copy\n");
         
         // Now update the specified fields with new values
-        for (field_index, field_init) in clone.updates.fields.iter().enumerate() {
-            // Calculate field offset (simplified - assumes 4 bytes per field)
-            let field_offset = field_index * 4;
-            
+        let offsets_map = self.record_field_offsets.get(&record_type).cloned();
+        for field_init in clone.updates.fields.iter() {
+            // Use registered field offset
+            let field_offset = offsets_map
+                .as_ref()
+                .and_then(|offsets| offsets.get(&field_init.name))
+                .copied()
+                .unwrap_or(0) as usize;
+
             // Store the target address first
             self.output.push_str("    local.get $clone_tmp\n");
             self.output.push_str(&format!("    i32.const {} ;; field offset for {}\n", field_offset, field_init.name));
             self.output.push_str("    i32.add\n");
-            
+
             // Generate the new value for this field
             self.generate_expr(&field_init.value)?;
-            
-            // Store the new value at the correct field offset
-            self.output.push_str("    i32.store\n");
+
+            // Store with correct instruction based on field type
+            let store_instr = self.records.get(&record_type)
+                .and_then(|fields| fields.iter().find(|(n, _)| n == &field_init.name))
+                .map(|(_, ty)| self.wasm_store_for_type(ty))
+                .unwrap_or("i32.store");
+            self.output.push_str(&format!("    {}\n", store_instr));
         }
         
         // Return pointer to the new cloned record
@@ -5819,8 +5843,14 @@ impl WasmCodeGen {
         self.output.push_str("      (else\n");
         self.output.push_str("        ;; Not frozen, create frozen copy\n");
         
-        // Estimate record size (simplified)
-        let record_size = 20; // Assume 5 fields * 4 bytes each
+        // Compute record size from expression type
+        let record_size = match self.get_expr_type(expr) {
+            Some(ty) => {
+                let computed = self.record_total_size(&ty) as usize;
+                if computed > 0 { computed } else { 20 }
+            }
+            None => 20, // Fallback for unknown types
+        };
         
         // Allocate new record
         self.output.push_str(&format!("        i32.const {} ;; record size\n", record_size));
@@ -5846,45 +5876,6 @@ impl WasmCodeGen {
     }
     
     // Old specialization functions removed - now handled by generate_builtin_monomorphization
-    
-    fn generate_imports(&mut self, imports: &[ImportDecl]) -> Result<(), CodeGenError> {
-        if imports.is_empty() {
-            return Ok(());
-        }
-        
-        self.output.push_str("\n  ;; Module imports\n");
-        
-        for import in imports {
-            let module_name = import.module_path.join(".");
-            
-            match &import.items {
-                ImportItems::All => {
-                    // Import all items from module (simplified implementation)
-                    self.output.push_str(&format!("  ;; Import all from {}\n", module_name));
-                    // In a real implementation, we'd need to resolve what "all" means
-                    // For now, we'll generate a placeholder comment
-                }
-                ImportItems::Named(items) => {
-                    for item in items {
-                        // Generate WebAssembly import for each named item
-                        // Assume functions for now
-                        self.output.push_str(&format!(
-                            "  (import \"{}\" \"{}\" (func ${} (param i32) (result i32)))\n",
-                            module_name, item, item
-                        ));
-                        
-                        // Register the imported function
-                        self.functions.insert(item.clone(), FunctionSig {
-                            _params: vec![WasmType::I32],
-                            result: Some(WasmType::I32),
-                        });
-                    }
-                }
-            }
-        }
-        
-        Ok(())
-    }
     
     fn generate_exports(&mut self, program: &Program) -> Result<(), CodeGenError> {
         let mut has_exports = false;

@@ -667,7 +667,7 @@ pub fn lex_newline_aware(input: &str) -> Result<Vec<Token>, String> {
                 tokens.push(tok);
                 remaining = rest;
             }
-            Err(e) => {
+            Err(_e) => {
                 return Err(format!("Lexing error at: {}", &remaining[..remaining.len().min(20)]));
             }
         }
@@ -778,7 +778,7 @@ pub fn lex_tokens(input: &str) -> Result<Vec<Token>, String> {
 /// This is the preferred function for LSP and error reporting as it
 /// preserves source location information.
 pub fn lex_spanned(input: &str) -> IResult<&str, Vec<SpannedToken>> {
-    let original = input;
+    let _original = input;
     let original_len = input.len();
 
     let mut remaining = input;

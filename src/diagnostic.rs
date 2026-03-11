@@ -407,7 +407,7 @@ impl DiagnosticRenderer {
 
             // Render underlines for labels on this line
             for label in &labels {
-                let (label_line, label_col) = label.span.to_line_col(source);
+                let (label_line, _label_col) = label.span.to_line_col(source);
                 if label_line != line_idx {
                     continue;
                 }

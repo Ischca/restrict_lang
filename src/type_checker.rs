@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::lexer::Span;
 use crate::lifetime_inference::LifetimeInference;
-use crate::diagnostic::{Diagnostic, Severity};
+use crate::diagnostic::Diagnostic;
 use thiserror::Error;
 
 /// Type checking errors.
@@ -108,7 +108,7 @@ pub enum TypeError {
     TemporalConstraintViolation(String),
     
     /// Temporal variable escapes its scope
-    #[error("{message}")]
+    #[error("temporal escape: {temporal}: {message}")]
     TemporalEscape { temporal: String, message: String },
     
     /// Invalid temporal constraint
@@ -588,6 +588,7 @@ struct FunctionDef {
     params: Vec<(String, TypedType)>,
     return_type: TypedType,
     type_params: Vec<TypeParam>, // Store generic type parameters
+    #[allow(dead_code)]
     temporal_constraints: Vec<TemporalConstraint>,
 }
 
@@ -1100,7 +1101,7 @@ impl TypeChecker {
     }
     
     fn register_std_math(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
+
         
         // abs function
         self.functions.insert("abs".to_string(), FunctionDef {
@@ -1181,7 +1182,7 @@ impl TypeChecker {
     }
     
     fn register_std_list(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
+        use crate::ast::TypeParam;
         
         // Generic list functions
         let t_param = TypeParam {
@@ -1266,7 +1267,7 @@ impl TypeChecker {
     }
     
     fn register_std_option(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
+        use crate::ast::TypeParam;
         
         let t_param = TypeParam {
             name: "T".to_string(),
@@ -2017,17 +2018,6 @@ impl TypeChecker {
             }
         }
         Vec::new()
-    }
-    
-    fn check_type_bounds(&self, type_param: &str, required_trait: &str) -> Result<(), TypeError> {
-        let bounds = self.get_type_bounds(type_param);
-        if bounds.contains(&required_trait.to_string()) {
-            Ok(())
-        } else {
-            Err(TypeError::UnsupportedFeature(
-                format!("Type parameter {} does not implement required trait {}", type_param, required_trait)
-            ))
-        }
     }
     
     fn type_implements_trait(&self, ty: &TypedType, trait_name: &str) -> bool {
@@ -2872,7 +2862,7 @@ impl TypeChecker {
             Expr::Clone(clone_expr) => self.check_clone_expr(clone_expr),
             Expr::Freeze(expr) => self.check_freeze_expr(expr),
             Expr::FieldAccess(expr, field) => self.check_field_access(expr, field),
-            Expr::Call(call) => self.check_call_expr(call),
+            Expr::Call(call) => self.check_call_expr_with_expected(call, expected),
             Expr::Block(block) => self.check_block_expr(block),
             Expr::Binary(binary) => self.check_binary_expr(binary, expected),
             Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
@@ -3079,7 +3069,8 @@ impl TypeChecker {
                 }
                 // Check field updates
                 let field_types: HashMap<String, TypedType> = {
-                    let record_def = self.records.get(name).unwrap();
+                    let record_def = self.records.get(name)
+                        .ok_or_else(|| TypeError::UndefinedRecord(name.clone()))?;
                     record_def.fields.clone()
                 };
                 
@@ -3217,7 +3208,8 @@ impl TypeChecker {
 
         match base_ty {
             TypedType::Record { name, .. } => {
-                let record_def = self.records.get(name).unwrap();
+                let record_def = self.records.get(name)
+                    .ok_or_else(|| TypeError::UndefinedRecord(name.clone()))?;
                 record_def.fields.get(field)
                     .cloned()
                     .ok_or_else(|| TypeError::UnknownField {
@@ -3233,6 +3225,10 @@ impl TypeChecker {
     }
     
     fn check_call_expr(&mut self, call: &CallExpr) -> Result<TypedType, TypeError> {
+        self.check_call_expr_with_expected(call, None)
+    }
+
+    fn check_call_expr_with_expected(&mut self, call: &CallExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         // Special case: Detect scope concatenation
         // If function is a lazy block and all args are lazy blocks, treat as scope concatenation
         // Skip this check for identifier expressions (they are handled below)
@@ -3347,8 +3343,10 @@ impl TypeChecker {
                             found: call.args.len(),
                         });
                     }
-                    // For now, default to Option<Unit>
-                    // TODO: Implement proper type inference from context
+                    // Use expected type if available, otherwise default to Option<Unit>
+                    if let Some(TypedType::Option(inner)) = expected {
+                        return Ok(TypedType::Option(inner.clone()));
+                    }
                     return Ok(TypedType::Option(Box::new(TypedType::Unit)));
                 }
                 
@@ -3405,13 +3403,27 @@ impl TypeChecker {
                     Err(TypeError::UndefinedFunction(name.clone()))
                 }
             }
-            Expr::FieldAccess(obj_expr, _method_name) => {
+            Expr::FieldAccess(obj_expr, method_name) => {
                 // Method call on object
-                let _obj_ty = self.check_expr(obj_expr)?;
-                
-                // For now, assume method calls return Unit
-                // TODO: Implement proper method resolution
-                Ok(TypedType::Unit)
+                let obj_ty = self.check_expr(obj_expr)?;
+
+                // Try to resolve method from the object's record type
+                if let TypedType::Record { name, .. } = &obj_ty {
+                    let method_info = self.methods.get(name)
+                        .and_then(|methods| methods.get(method_name))
+                        .cloned();
+                    if let Some(info) = method_info {
+                        return self.check_function_call_with_inference(&info, call);
+                    }
+                }
+
+                // Fallback: check if it's a known function with the method name
+                if let Some(func_info) = self.functions.get(method_name).cloned() {
+                    return self.check_function_call_with_inference(&func_info, call);
+                }
+
+                Err(TypeError::UndefinedFunction(format!("{}.{}",
+                    format_typed_type(&obj_ty), method_name)))
             }
             _ => {
                 // For other function expressions (including lambdas)
@@ -3900,11 +3912,16 @@ impl TypeChecker {
         // In a full implementation, we'd look up the Task record definition
         // and extract the type parameter T
         match task_type {
-            TypedType::Record { name, .. } if name == "Task" => {
-                // For now, we'll return Int32 as a placeholder
-                // In a real implementation, we'd extract the generic parameter T
-                // from the Task<T> record definition
-                Ok(TypedType::Int32)
+            TypedType::Record { name, type_args, .. } if name == "Task" => {
+                // Extract the type parameter T from Task<T>
+                if let Some(result_type) = type_args.first() {
+                    Ok(result_type.clone())
+                } else {
+                    // No type args - async is experimental, return error
+                    Err(TypeError::UnsupportedFeature(
+                        "Task type requires a type parameter (e.g., Task<Int>) - async is experimental".to_string()
+                    ))
+                }
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "Task".to_string(),
@@ -4269,10 +4286,14 @@ impl TypeChecker {
                 if let TypedType::Record { name, .. } = ty {
                     // Clone to avoid borrow issues
                     let field_types: Vec<(String, TypedType)> = {
-                        let record_def = self.records.get(name).unwrap();
+                        let record_def = self.records.get(name)
+                            .ok_or_else(|| TypeError::UndefinedRecord(name.clone()))?;
                         fields.iter()
                             .map(|(field_name, _)| {
-                                (field_name.clone(), record_def.fields.get(field_name).unwrap().clone())
+                                let field_ty = record_def.fields.get(field_name)
+                                    .cloned()
+                                    .unwrap_or(TypedType::Unit);
+                                (field_name.clone(), field_ty)
                             })
                             .collect()
                     };
@@ -4374,7 +4395,8 @@ impl TypeChecker {
             if let Some(TypedType::List(elem_type)) = expected {
                 return Ok(TypedType::List(elem_type.clone()));
             } else {
-                // For now, default to List<Int32> if no context
+                // Known limitation: empty list without type annotation defaults to List<Int32>
+                // Proper fix requires bidirectional type inference from usage context
                 return Ok(TypedType::List(Box::new(TypedType::Int32)));
             }
         }
@@ -4401,7 +4423,8 @@ impl TypeChecker {
             if let Some(TypedType::Array(elem_type, _)) = expected {
                 return Ok(TypedType::Array(elem_type.clone(), 0));
             } else {
-                // For now, default to Array<Int32, 0> if no context
+                // Known limitation: empty array without type annotation defaults to Array<Int32, 0>
+                // Proper fix requires bidirectional type inference from usage context
                 return Ok(TypedType::Array(Box::new(TypedType::Int32), 0));
             }
         }
@@ -4610,7 +4633,7 @@ impl TypeChecker {
         // The composition should produce a new function type
         // TODO: Implement proper scope composition type checking
         match (&left_type, &right_type) {
-            (TypedType::Function { return_type: left_ret, .. },
+            (TypedType::Function { return_type: _left_ret, .. },
              TypedType::Function { return_type: right_ret, .. }) => {
                 // For now, return the right side's return type
                 // TODO: Properly merge scope types
@@ -5203,20 +5226,6 @@ impl TypeChecker {
         }
         
         Ok(depth)
-    }
-    
-    fn check_derivation_bounds_for_call(&self, func_def: &FunctionDef, arg_types: &[TypedType]) -> Result<(), TypeError> {
-        // Check derivation bounds for each type parameter
-        for (i, type_param) in func_def.type_params.iter().enumerate() {
-            if let Some(ref parent_type) = type_param.derivation_bound {
-                // Find the corresponding argument type
-                if i < arg_types.len() {
-                    let arg_type = &arg_types[i];
-                    self.check_derivation_bound(arg_type, parent_type)?;
-                }
-            }
-        }
-        Ok(())
     }
     
     fn check_prototype_clone_expr(&mut self, proto_clone: &PrototypeCloneExpr) -> Result<TypedType, TypeError> {

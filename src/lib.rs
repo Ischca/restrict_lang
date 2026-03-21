@@ -53,9 +53,10 @@
 //! - [`module`] - Module system for managing imports/exports
 //! - [`lsp`] - Language Server Protocol implementation for IDE support
 
-#![doc(html_logo_url = "https://restrict-lang.org/logo.svg")]
-#![doc(html_favicon_url = "https://restrict-lang.org/favicon.ico")]
-#![doc(html_playground_url = "https://play.restrict-lang.org")]
+#![cfg_attr(docsrs, doc(html_logo_url = "https://restrict-lang.org/logo.svg"))]
+#![cfg_attr(docsrs, doc(html_favicon_url = "https://restrict-lang.org/favicon.ico"))]
+#![cfg_attr(docsrs, doc(html_playground_url = "https://play.restrict-lang.org"))]
+#![allow(mismatched_lifetime_syntaxes)]
 
 /// Lexical analysis module for tokenizing Restrict Language source code
 pub mod lexer;
@@ -102,7 +103,7 @@ pub mod web;
 pub use lexer::*;
 pub use ast::*;
 pub use parser::*;
-pub use type_checker::*;
+pub use type_checker::{TypeError, SpannedTypeError, TypedType, format_typed_type, is_copy_type, TypeSubstitution, SymbolInfo, SymbolKind, TypeChecker, type_check};
 pub use codegen::{WasmCodeGen, CodeGenError};
 pub use module::{ModuleResolver, Module};
 

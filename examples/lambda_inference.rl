@@ -1,3 +1,6 @@
+// ⚠ NOT YET COMPILABLE — requires: lambda type inference in codegen
+// Planned for: v0.2.0
+//
 // Example demonstrating improved lambda type inference
 
 // 1. Basic inference from body usage

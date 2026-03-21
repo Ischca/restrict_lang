@@ -158,3 +158,22 @@ export fun space: () -> String = {
 export fun tab: () -> String = {
     "\t"
 }
+
+// ============================================================
+// String Split/Join (WASM built-in backed)
+// ============================================================
+
+// Split a string by delimiter character code
+// Returns a list of substrings
+// Must be called within an Arena scope for memory allocation
+// Example: ("a,b,c", 44) string_split  // 44 = ','
+export fun split: (s: String, delim: Int) -> List<String> = {
+    (s, delim) string_split
+}
+
+// Join a list of strings with a separator string
+// Must be called within an Arena scope for memory allocation
+// Example: (["a", "b", "c"], ",") string_join
+export fun join: (parts: List<String>, sep: String) -> String = {
+    (parts, sep) string_join
+}

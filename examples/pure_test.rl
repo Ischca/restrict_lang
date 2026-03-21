@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: import, type aliases, if/else,
+//   custom infix operators, __builtin_* intrinsics, lambda codegen
+// Planned for: v0.2.0+
+//
 // Pure Restrict Language Test Framework
 // Minimal dots, maximum OSV
 

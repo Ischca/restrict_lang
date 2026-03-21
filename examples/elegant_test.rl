@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: import, impl blocks, type aliases,
+//   custom infix operators, if/else (use then/else), method dot syntax
+// Planned for: v0.2.0+
+//
 // Elegant Test DSL for Restrict Language
 // Natural and expressive test syntax
 

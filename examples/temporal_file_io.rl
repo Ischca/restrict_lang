@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: context declarations, temporal where constraints,
+//   method dot syntax, lambda codegen
+// Planned for: v0.2.0+ (Temporal Affine Types)
+//
 // Temporal Types Example: File I/O with automatic cleanup
 //
 // This example demonstrates how temporal type variables ensure

@@ -1,11 +1,3 @@
-[build]
-rustdocflags = [
-    "--html-logo-url", "https://restrict-lang.org/logo.svg",
-    "--html-favicon-url", "https://restrict-lang.org/favicon.ico",
-    "--html-playground-url", "https://play.restrict-lang.org",
-    "--extend-css", "docs/theme/rustdoc-restrict.css"
-]
-
 [doc]
 browser = "open"
 

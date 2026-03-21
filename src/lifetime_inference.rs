@@ -46,6 +46,7 @@ pub struct LifetimeInferenceContext {
     /// Constraints between lifetimes
     constraints: Vec<LifetimeConstraint>,
     /// Mapping from expressions to their lifetimes
+    #[allow(dead_code)]
     expr_lifetimes: HashMap<ExprId, LifetimeVar>,
     /// Current scope's lifetime
     current_scope_lifetime: Option<LifetimeVar>,

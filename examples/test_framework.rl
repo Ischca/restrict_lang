@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: import, method dot syntax, if/else,
+//   lambda codegen, closure captures, generic codegen
+// Planned for: v0.2.0+
+//
 // Test Framework written in Restrict Language
 // This demonstrates the language's capabilities while providing a testing solution
 

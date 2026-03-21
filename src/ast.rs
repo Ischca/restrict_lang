@@ -228,6 +228,8 @@ pub struct ImplBlock {
 pub struct ContextDecl {
     /// Name of the context
     pub name: String,
+    /// Type parameters (e.g., `<~fs>` for temporal)
+    pub type_params: Vec<TypeParam>,
     /// Required fields/methods
     pub fields: Vec<FieldDecl>,
 }

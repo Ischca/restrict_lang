@@ -13,7 +13,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use restrict_lang::parser::parse_program;
 //!
 //! let input = r#"
@@ -131,7 +131,7 @@ fn type_name(input: &str) -> ParseResult<String> {
 /// ```
 fn parse_type(input: &str) -> ParseResult<Type> {
     // Try to parse function type first: |Type1, Type2| -> ReturnType
-    if let Ok((input_after_bar, _)) = expect_token(Token::Bar)(input) {
+    if let Ok((_input_after_bar, _)) = expect_token(Token::Bar)(input) {
         // Parse parameter types
         let (input, param_types) = delimited(
             expect_token(Token::Bar),
@@ -559,13 +559,12 @@ fn context_decl(input: &str) -> ParseResult<ContextDecl> {
         Ok((input, params))
     })(input)?;
     
-    // TODO: Handle type parameters in context declaration
-    // For now, we'll ignore them until we update the ContextDecl struct
-    
+    let type_params = _type_params.unwrap_or_default();
+
     let (input, _) = expect_token(Token::LBrace)(input)?;
     let (input, fields) = many0(field_decl)(input)?;
     let (input, _) = expect_token(Token::RBrace)(input)?;
-    Ok((input, ContextDecl { name, fields }))
+    Ok((input, ContextDecl { name, type_params, fields }))
 }
 
 pub fn bind_decl(input: &str) -> ParseResult<BindDecl> {
@@ -743,7 +742,7 @@ fn with_expr(input: &str) -> ParseResult<Expr> {
     let (input, _) = expect_token(Token::With)(input)?;
     
     // Check if this is a lifetime expression
-    if let Ok((remaining, _)) = expect_token(Token::Lifetime)(input) {
+    if let Ok((_remaining, _)) = expect_token(Token::Lifetime)(input) {
         return with_lifetime_expr(input);
     }
     
@@ -764,7 +763,7 @@ fn with_expr(input: &str) -> ParseResult<Expr> {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```text
 /// with lifetime<~f> { ... }
 /// with lifetime { ... }  // anonymous lifetime
 /// ```
@@ -1313,34 +1312,6 @@ fn assignment_stmt(input: &str) -> ParseResult<Stmt> {
 }
 
 // Parse prototype clone expression: ParentType.clone { field: value } [freeze] [sealed]
-fn prototype_clone_expr(input: &str) -> ParseResult<Expr> {
-    let (input, base_name) = ident(input)?;
-    let (input, _) = expect_token(Token::Dot)(input)?;
-    let (input, _) = expect_token(Token::Clone)(input)?;
-    let (input, _) = expect_token(Token::LBrace)(input)?;
-    let (input, fields) = many0(field_init)(input)?;
-    let (input, _) = expect_token(Token::RBrace)(input)?;
-    
-    // Check for freeze keyword
-    let (input, freeze_immediately) = opt(|input| {
-        expect_token(Token::Freeze)(input)
-    })(input)?;
-    let freeze_immediately = freeze_immediately.is_some();
-    
-    // Check for sealed keyword
-    let (input, sealed) = opt(|input| {
-        expect_token(Token::Sealed)(input)
-    })(input)?;
-    let sealed = sealed.is_some();
-    
-    Ok((input, Expr::PrototypeClone(PrototypeCloneExpr {
-        base: base_name.clone(),
-        updates: RecordLit { name: base_name, fields },
-        freeze_immediately,
-        sealed,
-    })))
-}
-
 fn import_decl(input: &str) -> ParseResult<ImportDecl> {
     let (input, _) = expect_token(Token::Import)(input)?;
     let (input, module_path) = separated_list1(

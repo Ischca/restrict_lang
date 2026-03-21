@@ -1,3 +1,8 @@
+// ⚠ NOT YET COMPILABLE — requires: impl blocks, __builtin_* intrinsics,
+//   method dot syntax, operator overloading
+// Planned for: v0.2.0+
+//
+// NOTE: This example uses standard library features that may require Arena context.
 // Standard Library for Restrict Language
 // Provides basic functionality for common operations
 

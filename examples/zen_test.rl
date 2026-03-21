@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: type aliases, Unicode operators,
+//   custom infix operators, lambda codegen
+// Planned for: v0.2.0+
+//
 // Zen of Restrict Language Testing
 // Where tests are just data transformations
 

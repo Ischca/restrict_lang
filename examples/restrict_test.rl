@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: import, custom infix operators,
+//   var keyword, method dot syntax, lambda codegen, closure captures
+// Planned for: v0.2.0+
+//
 // Restrict Language Native Test DSL
 // Embracing OSV syntax, pipes, and temporal types
 

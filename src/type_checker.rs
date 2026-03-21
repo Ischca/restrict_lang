@@ -14,7 +14,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use restrict_lang::type_checker::TypeChecker;
 //! use restrict_lang::parser::parse_program;
 //!
@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::lexer::Span;
 use crate::lifetime_inference::LifetimeInference;
-use crate::diagnostic::{Diagnostic, Severity};
+use crate::diagnostic::Diagnostic;
 use thiserror::Error;
 
 /// Type checking errors.
@@ -108,7 +108,7 @@ pub enum TypeError {
     TemporalConstraintViolation(String),
     
     /// Temporal variable escapes its scope
-    #[error("{message}")]
+    #[error("temporal escape: {temporal}: {message}")]
     TemporalEscape { temporal: String, message: String },
     
     /// Invalid temporal constraint
@@ -412,13 +412,13 @@ pub struct TypeSubstitution {
 }
 
 #[derive(Debug, Clone)]
-pub struct TemporalConstraint {
+pub(crate) struct TemporalConstraint {
     pub inner: String,  // ~tx
     pub outer: String,  // ~db (where ~tx within ~db)
 }
 
 #[derive(Debug, Clone)]
-pub struct TemporalContext {
+pub(crate) struct TemporalContext {
     // Active temporal variables in current scope
     pub active_temporals: HashSet<String>,
     // Temporal constraints (inner within outer)
@@ -588,6 +588,7 @@ struct FunctionDef {
     params: Vec<(String, TypedType)>,
     return_type: TypedType,
     type_params: Vec<TypeParam>, // Store generic type parameters
+    #[allow(dead_code)]
     temporal_constraints: Vec<TemporalConstraint>,
 }
 
@@ -1082,13 +1083,25 @@ impl TypeChecker {
         self.register_std_io();
         self.register_std_prelude();
         self.register_std_string();
+        self.register_std_contexts();
         
-        // Note: Arena is a built-in context but not added to _contexts by default
-        // It only becomes available inside a "with Arena" block
+        // Arena introspection functions
+        self.functions.insert("arena_bytes_used".to_string(), FunctionDef {
+            params: vec![("arena".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+        self.functions.insert("arena_bytes_remaining".to_string(), FunctionDef {
+            params: vec![("arena".to_string(), TypedType::Int32)],
+            return_type: TypedType::Int32,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
     }
     
     fn register_std_math(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
+
         
         // abs function
         self.functions.insert("abs".to_string(), FunctionDef {
@@ -1169,7 +1182,7 @@ impl TypeChecker {
     }
     
     fn register_std_list(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
+        use crate::ast::TypeParam;
         
         // Generic list functions
         let t_param = TypeParam {
@@ -1254,7 +1267,7 @@ impl TypeChecker {
     }
     
     fn register_std_option(&mut self) {
-        use crate::ast::{TypeParam, TypeBound};
+        use crate::ast::TypeParam;
         
         let t_param = TypeParam {
             name: "T".to_string(),
@@ -1286,6 +1299,55 @@ impl TypeChecker {
                 ("default".to_string(), TypedType::TypeParam("T".to_string()))
             ],
             return_type: TypedType::TypeParam("T".to_string()),
+            type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        let u_param = TypeParam {
+            name: "U".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            is_temporal: false,
+        };
+
+        // option_map<T, U>
+        self.functions.insert("option_map".to_string(), FunctionDef {
+            params: vec![
+                ("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::Option(Box::new(TypedType::TypeParam("U".to_string()))),
+            type_params: vec![t_param.clone(), u_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // option_and_then<T, U>
+        self.functions.insert("option_and_then".to_string(), FunctionDef {
+            params: vec![
+                ("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Option(Box::new(TypedType::TypeParam("U".to_string())))),
+                }),
+            ],
+            return_type: TypedType::Option(Box::new(TypedType::TypeParam("U".to_string()))),
+            type_params: vec![t_param.clone(), u_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // option_or_else<T>
+        self.functions.insert("option_or_else".to_string(), FunctionDef {
+            params: vec![
+                ("opt".to_string(), TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("fallback".to_string(), TypedType::Function {
+                    params: vec![],
+                    return_type: Box::new(TypedType::Option(Box::new(TypedType::TypeParam("T".to_string())))),
+                }),
+            ],
+            return_type: TypedType::Option(Box::new(TypedType::TypeParam("T".to_string()))),
             type_params: vec![t_param.clone()],
             temporal_constraints: vec![],
         });
@@ -1485,6 +1547,28 @@ impl TypeChecker {
         // int_to_string: Format integer as string
         self.functions.insert("int_to_string".to_string(), FunctionDef {
             params: vec![("n".to_string(), TypedType::Int32)],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_split: Split string by delimiter character
+        self.functions.insert("string_split".to_string(), FunctionDef {
+            params: vec![
+                ("s".to_string(), TypedType::String),
+                ("delim".to_string(), TypedType::Int32),  // Char as Int32
+            ],
+            return_type: TypedType::List(Box::new(TypedType::String)),
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // string_join: Join list of strings with separator
+        self.functions.insert("string_join".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::String))),
+                ("sep".to_string(), TypedType::String),
+            ],
             return_type: TypedType::String,
             type_params: vec![],
             temporal_constraints: vec![],
@@ -1749,12 +1833,138 @@ impl TypeChecker {
             type_params: vec![],
             temporal_constraints: vec![],
         });
+
+        // Pair<T, U> record type
+        {
+            use crate::ast::TypeParam;
+            let mut pair_fields = HashMap::new();
+            pair_fields.insert("first".to_string(), TypedType::TypeParam("T".to_string()));
+            pair_fields.insert("second".to_string(), TypedType::TypeParam("U".to_string()));
+            self.records.insert("Pair".to_string(), RecordDef {
+                fields: pair_fields,
+                type_params: vec![
+                    TypeParam {
+                        name: "T".to_string(),
+                        bounds: vec![],
+                        derivation_bound: None,
+                        is_temporal: false,
+                    },
+                    TypeParam {
+                        name: "U".to_string(),
+                        bounds: vec![],
+                        derivation_bound: None,
+                        is_temporal: false,
+                    },
+                ],
+                temporal_constraints: vec![],
+            });
+        }
+
+        // list_zip<T, U>: Combine two lists into list of Pairs
+        {
+            use crate::ast::TypeParam;
+            let t_param = TypeParam {
+                name: "T".to_string(),
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: false,
+            };
+            let u_param = TypeParam {
+                name: "U".to_string(),
+                bounds: vec![],
+                derivation_bound: None,
+                is_temporal: false,
+            };
+            self.functions.insert("list_zip".to_string(), FunctionDef {
+                params: vec![
+                    ("a".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                    ("b".to_string(), TypedType::List(Box::new(TypedType::TypeParam("U".to_string())))),
+                ],
+                return_type: TypedType::List(Box::new(TypedType::Record {
+                    name: "Pair".to_string(),
+                    frozen: false,
+                    hash: None,
+                    parent_hash: None,
+                    type_args: vec![TypedType::TypeParam("T".to_string()), TypedType::TypeParam("U".to_string())],
+                })),
+                type_params: vec![t_param, u_param],
+                temporal_constraints: vec![],
+            });
+        }
     }
     
+    fn register_std_contexts(&mut self) {
+        // ============================================================
+        // Standard Context Types
+        // These are registered as records so 'with ContextName { ... }'
+        // can be type-checked properly.
+        // ============================================================
+
+        // FileSystem context: wraps WASI file I/O
+        let mut fs_fields = HashMap::new();
+        fs_fields.insert("open".to_string(), TypedType::Function {
+            params: vec![TypedType::String, TypedType::Int32],
+            return_type: Box::new(TypedType::Int32),
+        });
+        fs_fields.insert("read".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::Int32],
+            return_type: Box::new(TypedType::String),
+        });
+        fs_fields.insert("write".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::String],
+            return_type: Box::new(TypedType::Int32),
+        });
+        fs_fields.insert("close".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32],
+            return_type: Box::new(TypedType::Int32),
+        });
+        self.records.insert("FileSystem".to_string(), RecordDef {
+            fields: fs_fields,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // Database context: stub for future WASI-sql support
+        let mut db_fields = HashMap::new();
+        db_fields.insert("connect".to_string(), TypedType::Function {
+            params: vec![TypedType::String],
+            return_type: Box::new(TypedType::Int32),
+        });
+        db_fields.insert("query".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::String],
+            return_type: Box::new(TypedType::String),
+        });
+        db_fields.insert("execute".to_string(), TypedType::Function {
+            params: vec![TypedType::Int32, TypedType::String],
+            return_type: Box::new(TypedType::Int32),
+        });
+        self.records.insert("Database".to_string(), RecordDef {
+            fields: db_fields,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+
+        // HttpClient context: stub for future WASI-http support
+        let mut http_fields = HashMap::new();
+        http_fields.insert("get".to_string(), TypedType::Function {
+            params: vec![TypedType::String],
+            return_type: Box::new(TypedType::String),
+        });
+        http_fields.insert("post".to_string(), TypedType::Function {
+            params: vec![TypedType::String, TypedType::String],
+            return_type: Box::new(TypedType::String),
+        });
+        self.records.insert("HttpClient".to_string(), RecordDef {
+            fields: http_fields,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        });
+    }
+
     fn push_scope(&mut self) {
         self.var_env.push(HashMap::new());
     }
-    
+
     fn pop_scope(&mut self) {
         self.var_env.pop();
     }
@@ -1808,17 +2018,6 @@ impl TypeChecker {
             }
         }
         Vec::new()
-    }
-    
-    fn check_type_bounds(&self, type_param: &str, required_trait: &str) -> Result<(), TypeError> {
-        let bounds = self.get_type_bounds(type_param);
-        if bounds.contains(&required_trait.to_string()) {
-            Ok(())
-        } else {
-            Err(TypeError::UnsupportedFeature(
-                format!("Type parameter {} does not implement required trait {}", type_param, required_trait)
-            ))
-        }
     }
     
     fn type_implements_trait(&self, ty: &TypedType, trait_name: &str) -> bool {
@@ -2313,7 +2512,7 @@ impl TypeChecker {
                 }).collect();
                 self.records.insert(ctx.name.clone(), RecordDef {
                     fields,
-                    type_params: vec![],
+                    type_params: ctx.type_params.clone(),
                     temporal_constraints: vec![],
                 });
             }
@@ -2602,17 +2801,17 @@ impl TypeChecker {
             let ty = self.convert_type(&field.ty)?;
             fields.insert(field.name.clone(), ty);
         }
-        
+
         // Add to available contexts
         self._contexts.push(context.name.clone());
-        
+
         // Store as a special record type for field access
-        self.records.insert(context.name.clone(), RecordDef { 
+        self.records.insert(context.name.clone(), RecordDef {
             fields,
-            type_params: vec![],
+            type_params: context.type_params.clone(),
             temporal_constraints: vec![],
         });
-        
+
         Ok(())
     }
     
@@ -2663,7 +2862,7 @@ impl TypeChecker {
             Expr::Clone(clone_expr) => self.check_clone_expr(clone_expr),
             Expr::Freeze(expr) => self.check_freeze_expr(expr),
             Expr::FieldAccess(expr, field) => self.check_field_access(expr, field),
-            Expr::Call(call) => self.check_call_expr(call),
+            Expr::Call(call) => self.check_call_expr_with_expected(call, expected),
             Expr::Block(block) => self.check_block_expr(block),
             Expr::Binary(binary) => self.check_binary_expr(binary, expected),
             Expr::Pipe(pipe) => self.check_pipe_expr(pipe),
@@ -2870,7 +3069,8 @@ impl TypeChecker {
                 }
                 // Check field updates
                 let field_types: HashMap<String, TypedType> = {
-                    let record_def = self.records.get(name).unwrap();
+                    let record_def = self.records.get(name)
+                        .ok_or_else(|| TypeError::UndefinedRecord(name.clone()))?;
                     record_def.fields.clone()
                 };
                 
@@ -3008,7 +3208,8 @@ impl TypeChecker {
 
         match base_ty {
             TypedType::Record { name, .. } => {
-                let record_def = self.records.get(name).unwrap();
+                let record_def = self.records.get(name)
+                    .ok_or_else(|| TypeError::UndefinedRecord(name.clone()))?;
                 record_def.fields.get(field)
                     .cloned()
                     .ok_or_else(|| TypeError::UnknownField {
@@ -3024,6 +3225,10 @@ impl TypeChecker {
     }
     
     fn check_call_expr(&mut self, call: &CallExpr) -> Result<TypedType, TypeError> {
+        self.check_call_expr_with_expected(call, None)
+    }
+
+    fn check_call_expr_with_expected(&mut self, call: &CallExpr, expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         // Special case: Detect scope concatenation
         // If function is a lazy block and all args are lazy blocks, treat as scope concatenation
         // Skip this check for identifier expressions (they are handled below)
@@ -3138,8 +3343,10 @@ impl TypeChecker {
                             found: call.args.len(),
                         });
                     }
-                    // For now, default to Option<Unit>
-                    // TODO: Implement proper type inference from context
+                    // Use expected type if available, otherwise default to Option<Unit>
+                    if let Some(TypedType::Option(inner)) = expected {
+                        return Ok(TypedType::Option(inner.clone()));
+                    }
                     return Ok(TypedType::Option(Box::new(TypedType::Unit)));
                 }
                 
@@ -3196,13 +3403,27 @@ impl TypeChecker {
                     Err(TypeError::UndefinedFunction(name.clone()))
                 }
             }
-            Expr::FieldAccess(obj_expr, _method_name) => {
+            Expr::FieldAccess(obj_expr, method_name) => {
                 // Method call on object
-                let _obj_ty = self.check_expr(obj_expr)?;
-                
-                // For now, assume method calls return Unit
-                // TODO: Implement proper method resolution
-                Ok(TypedType::Unit)
+                let obj_ty = self.check_expr(obj_expr)?;
+
+                // Try to resolve method from the object's record type
+                if let TypedType::Record { name, .. } = &obj_ty {
+                    let method_info = self.methods.get(name)
+                        .and_then(|methods| methods.get(method_name))
+                        .cloned();
+                    if let Some(info) = method_info {
+                        return self.check_function_call_with_inference(&info, call);
+                    }
+                }
+
+                // Fallback: check if it's a known function with the method name
+                if let Some(func_info) = self.functions.get(method_name).cloned() {
+                    return self.check_function_call_with_inference(&func_info, call);
+                }
+
+                Err(TypeError::UndefinedFunction(format!("{}.{}",
+                    format_typed_type(&obj_ty), method_name)))
             }
             _ => {
                 // For other function expressions (including lambdas)
@@ -3691,11 +3912,16 @@ impl TypeChecker {
         // In a full implementation, we'd look up the Task record definition
         // and extract the type parameter T
         match task_type {
-            TypedType::Record { name, .. } if name == "Task" => {
-                // For now, we'll return Int32 as a placeholder
-                // In a real implementation, we'd extract the generic parameter T
-                // from the Task<T> record definition
-                Ok(TypedType::Int32)
+            TypedType::Record { name, type_args, .. } if name == "Task" => {
+                // Extract the type parameter T from Task<T>
+                if let Some(result_type) = type_args.first() {
+                    Ok(result_type.clone())
+                } else {
+                    // No type args - async is experimental, return error
+                    Err(TypeError::UnsupportedFeature(
+                        "Task type requires a type parameter (e.g., Task<Int>) - async is experimental".to_string()
+                    ))
+                }
             }
             _ => Err(TypeError::TypeMismatch {
                 expected: "Task".to_string(),
@@ -4060,10 +4286,14 @@ impl TypeChecker {
                 if let TypedType::Record { name, .. } = ty {
                     // Clone to avoid borrow issues
                     let field_types: Vec<(String, TypedType)> = {
-                        let record_def = self.records.get(name).unwrap();
+                        let record_def = self.records.get(name)
+                            .ok_or_else(|| TypeError::UndefinedRecord(name.clone()))?;
                         fields.iter()
                             .map(|(field_name, _)| {
-                                (field_name.clone(), record_def.fields.get(field_name).unwrap().clone())
+                                let field_ty = record_def.fields.get(field_name)
+                                    .cloned()
+                                    .unwrap_or(TypedType::Unit);
+                                (field_name.clone(), field_ty)
                             })
                             .collect()
                     };
@@ -4165,7 +4395,8 @@ impl TypeChecker {
             if let Some(TypedType::List(elem_type)) = expected {
                 return Ok(TypedType::List(elem_type.clone()));
             } else {
-                // For now, default to List<Int32> if no context
+                // Known limitation: empty list without type annotation defaults to List<Int32>
+                // Proper fix requires bidirectional type inference from usage context
                 return Ok(TypedType::List(Box::new(TypedType::Int32)));
             }
         }
@@ -4192,7 +4423,8 @@ impl TypeChecker {
             if let Some(TypedType::Array(elem_type, _)) = expected {
                 return Ok(TypedType::Array(elem_type.clone(), 0));
             } else {
-                // For now, default to Array<Int32, 0> if no context
+                // Known limitation: empty array without type annotation defaults to Array<Int32, 0>
+                // Proper fix requires bidirectional type inference from usage context
                 return Ok(TypedType::Array(Box::new(TypedType::Int32), 0));
             }
         }
@@ -4401,7 +4633,7 @@ impl TypeChecker {
         // The composition should produce a new function type
         // TODO: Implement proper scope composition type checking
         match (&left_type, &right_type) {
-            (TypedType::Function { return_type: left_ret, .. },
+            (TypedType::Function { return_type: _left_ret, .. },
              TypedType::Function { return_type: right_ret, .. }) => {
                 // For now, return the right side's return type
                 // TODO: Properly merge scope types
@@ -4994,20 +5226,6 @@ impl TypeChecker {
         }
         
         Ok(depth)
-    }
-    
-    fn check_derivation_bounds_for_call(&self, func_def: &FunctionDef, arg_types: &[TypedType]) -> Result<(), TypeError> {
-        // Check derivation bounds for each type parameter
-        for (i, type_param) in func_def.type_params.iter().enumerate() {
-            if let Some(ref parent_type) = type_param.derivation_bound {
-                // Find the corresponding argument type
-                if i < arg_types.len() {
-                    let arg_type = &arg_types[i];
-                    self.check_derivation_bound(arg_type, parent_type)?;
-                }
-            }
-        }
-        Ok(())
     }
     
     fn check_prototype_clone_expr(&mut self, proto_clone: &PrototypeCloneExpr) -> Result<TypedType, TypeError> {

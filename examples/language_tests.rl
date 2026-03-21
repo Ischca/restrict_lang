@@ -1,3 +1,7 @@
+// ⚠ NOT YET COMPILABLE — requires: import, var keyword, try/catch,
+//   method dot syntax (.method()), closure captures, generic codegen
+// Planned for: v0.2.0+
+//
 // Comprehensive tests for Restrict Language features
 // Using our own test framework
 

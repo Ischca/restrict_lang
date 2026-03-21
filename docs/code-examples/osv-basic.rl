@@ -11,10 +11,14 @@ fun add: (a: Int, b: Int) -> Int = {
     a + b
 }
 
+// Single-argument function for pipe example
+fun double: (n: Int) -> Int = {
+    n + n
+}
+
 // Using pipe operator with function calls
 fun pipeExample = {
     val x = 10
-    val y = 20
-    val result = x |> add y
+    val result = x |> double
     result
 }

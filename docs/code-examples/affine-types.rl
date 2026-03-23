@@ -1,21 +1,15 @@
 // Affine type examples
-fun affineExample = {
-    val message = "This can only be used once"
 
-    // First use - OK
-    message println
-
-    // Second use - Compile error!
-    // message println  // Error: message already consumed
+fun greet: (name: String) -> String = {
+    name
 }
 
-// Using clone with records
-record Point { x: Int, y: Int }
+fun main = {
+    val message = "World"
 
-fun cloneExample = {
-    val original = Point { x = 10, y = 20 }
-    val copy = original.clone {}
+    // First use - OK (consumes message)
+    message greet |> println
 
-    // Now we can use copy while original is consumed by clone
-    copy
+    // Second use would be a compile error:
+    // message greet |> println  // Error: message already consumed
 }

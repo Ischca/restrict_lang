@@ -1,30 +1,16 @@
 // OSV syntax examples
 
-// Basic OSV: Object-Subject-Verb order
-fun basicOSV = {
-    val message = "Hello, World!"
-    message println  // Object Subject Verb
-}
-
-// Function with parameters
-fun add: (a: Int, b: Int) -> Int = {
-    a + b
-}
-
-// Single-argument function for pipe example
 fun double: (n: Int) -> Int = {
-    n + n
+    n * 2
 }
 
-// Using pipe operator: single argument
-fun pipeExample = {
+fun add_one: (n: Int) -> Int = {
+    n + 1
+}
+
+// Using pipe operator for left-to-right data flow
+fun main = {
     val x = 10
-    val result = x |> double
-    result
-}
-
-// Using pipe operator: tuple auto-expansion for multiple arguments
-fun pipeTupleExample = {
-    val result = (5, 3) |> add
-    result
+    val result = x |> double |> add_one
+    result int_to_string |> println
 }

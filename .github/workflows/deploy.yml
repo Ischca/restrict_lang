@@ -41,6 +41,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
 
+      # Verify samples compile and sync to web playground
+      - name: Verify and sync samples
+        run: |
+          cargo test --test test_samples
+          ./scripts/sync_samples.sh
+          echo "✅ Samples verified and synced"
+
       # Build playground (WASM)
       - name: Build WASM
         run: |

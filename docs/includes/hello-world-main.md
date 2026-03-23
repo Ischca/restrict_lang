@@ -1,6 +1,6 @@
 ```restrict
 // 最初のRestrict Languageプログラム
-fn main() {
+fun main = {
     "Hello, World!" |> println
 }
 ```

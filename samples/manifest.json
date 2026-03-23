@@ -1,0 +1,53 @@
+{
+  "samples": [
+    {
+      "id": "hello",
+      "title": "Hello World",
+      "description": "The simplest Restrict program",
+      "feature": "basics",
+      "file": "hello.rl"
+    },
+    {
+      "id": "pipe",
+      "title": "Pipe & OSV Syntax",
+      "description": "Left-to-right data flow with pipe operators",
+      "feature": "pipe-osv",
+      "file": "pipe.rl"
+    },
+    {
+      "id": "affine",
+      "title": "Affine Types",
+      "description": "Use-at-most-once ownership semantics",
+      "feature": "affine-types",
+      "file": "affine.rl"
+    },
+    {
+      "id": "mutable",
+      "title": "Mutable & Loops",
+      "description": "Mutable variables, while loops, and FizzBuzz",
+      "feature": "mutability",
+      "file": "mutable.rl"
+    },
+    {
+      "id": "record",
+      "title": "Records & Arena",
+      "description": "Struct-like records with arena-based memory",
+      "feature": "records",
+      "file": "record.rl"
+    },
+    {
+      "id": "context",
+      "title": "Context Binding",
+      "description": "Scoped capabilities via implicit parameters",
+      "feature": "context",
+      "file": "context.rl"
+    },
+    {
+      "id": "compose",
+      "title": "Scope Composition",
+      "description": "Composing multiple contexts for dependency injection",
+      "feature": "composition",
+      "file": "compose.rl"
+    }
+  ]
+}

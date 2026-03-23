@@ -52,6 +52,12 @@ jobs:
         curl https://mise.run | sh
         echo "$HOME/.local/bin" >> $GITHUB_PATH
     
+    - name: Verify samples compile
+      run: cargo test --test test_samples --verbose
+
+    - name: Check web/examples.js is in sync with samples/
+      run: ./scripts/sync_samples.sh --check
+
     - name: Check all example files compile
       run: |
         ~/.local/bin/mise run check || true

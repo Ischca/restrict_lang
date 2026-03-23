@@ -16,9 +16,15 @@ fun double: (n: Int) -> Int = {
     n + n
 }
 
-// Using pipe operator with function calls
+// Using pipe operator: single argument
 fun pipeExample = {
     val x = 10
     val result = x |> double
+    result
+}
+
+// Using pipe operator: tuple auto-expansion for multiple arguments
+fun pipeTupleExample = {
+    val result = (5, 3) |> add
     result
 }

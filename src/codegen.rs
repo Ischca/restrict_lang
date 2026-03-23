@@ -2773,6 +2773,12 @@ impl WasmCodeGen {
                     .collect::<Vec<_>>()
                     .join(", "))
             }
+            crate::ast::Type::Tuple(types) => {
+                let types_str: Vec<String> = types.iter()
+                    .map(|t| self.type_to_string(t))
+                    .collect();
+                format!("({})", types_str.join(", "))
+            }
         }
     }
 
@@ -3224,6 +3230,7 @@ impl WasmCodeGen {
                 // Temporal types are treated like their base type
                 self.convert_type(&Type::Named(name.clone()))
             }
+            Type::Tuple(_) => Ok(WasmType::I32), // Tuples are heap-allocated pointers
         }
     }
 
@@ -4155,6 +4162,9 @@ impl WasmCodeGen {
             }
             Expr::ArrayLit(items) => {
                 self.generate_array_literal(items)?;
+            }
+            Expr::TupleLit(elements) => {
+                self.generate_tuple_literal(elements)?;
             }
             Expr::Match(match_expr) => {
                 self.generate_match_expr(match_expr)?;
@@ -5174,56 +5184,69 @@ impl WasmCodeGen {
     }
     
     fn generate_pipe_expr(&mut self, pipe: &PipeExpr) -> Result<(), CodeGenError> {
-        // Generate the source expression
-        self.generate_expr(&pipe.expr)?;
-        
+        // Check if piped expression is a tuple literal being sent to a function.
+        // If so, auto-expand: generate each element on the stack instead of
+        // allocating a heap tuple.
+        let is_tuple = matches!(&*pipe.expr, Expr::TupleLit(_));
+
+        let generate_pipe_args = |codegen: &mut Self, pipe_expr: &Expr| -> Result<(), CodeGenError> {
+            if let Expr::TupleLit(elements) = pipe_expr {
+                for elem in elements {
+                    codegen.generate_expr(elem)?;
+                }
+            } else {
+                codegen.generate_expr(pipe_expr)?;
+            }
+            Ok(())
+        };
+
+        let call_func = |codegen: &mut Self, name: &str| {
+            codegen.output.push_str(&format!("    call ${}\n", name));
+            if let Some(sig) = codegen.functions.get(name) {
+                if sig.result.is_none() && codegen.current_function != Some("main".to_string()) {
+                    codegen.output.push_str("    i32.const 0\n");
+                }
+            }
+        };
+
         match &pipe.target {
             PipeTarget::Ident(name) => {
-                // Check if this is a function or a binding
                 if name == "println" {
-                    // Special handling for generic println - determine type at runtime
+                    // println: no tuple expansion (single arg)
+                    self.generate_expr(&pipe.expr)?;
                     let specialized_name = self.resolve_generic_function_call(name, &pipe.expr)?;
                     self.output.push_str(&format!("    call ${}\n", specialized_name));
-                    // These functions return nothing, so we need to push unit value for pipe result
-                    // But only if we're not in main function (which returns nothing)
                     if self.current_function != Some("main".to_string()) {
                         self.output.push_str("    i32.const 0\n");
                     }
                 } else if self.functions.contains_key(name) {
-                    // It's a function call: expr |> func
-                    self.output.push_str(&format!("    call ${}\n", name));
-                    // If function returns nothing, push unit value for pipe result
-                    // But only if we're not in main function (which returns nothing)
-                    if let Some(sig) = self.functions.get(name) {
-                        if sig.result.is_none() && self.current_function != Some("main".to_string()) {
-                            self.output.push_str("    i32.const 0\n");
-                        }
+                    let func_name = name.clone();
+                    if is_tuple {
+                        generate_pipe_args(self, &pipe.expr)?;
+                    } else {
+                        self.generate_expr(&pipe.expr)?;
                     }
+                    call_func(self, &func_name);
                 } else if self.lookup_local(name).is_some() {
-                    // It's an existing local variable, error
                     return Err(CodeGenError::NotImplemented("pipe to existing variable".to_string()));
                 } else {
-                    // It's a new binding: expr |> name
-                    // This should have been handled by the type checker to add the local
+                    // New binding
+                    self.generate_expr(&pipe.expr)?;
                     self.output.push_str(&format!("    local.set ${}\n", name));
-                    // And leave it on the stack as the result
                     self.output.push_str(&format!("    local.get ${}\n", name));
                 }
             }
             PipeTarget::Expr(target_expr) => {
-                // This is a complex expression
                 match &**target_expr {
                     Expr::Ident(func_name) => {
-                        // Single argument function call
                         if self.functions.contains_key(func_name) {
-                            self.output.push_str(&format!("    call ${}\n", func_name));
-                            // If function returns nothing, push unit value for pipe result
-                            // But only if we're not in main function (which returns nothing)
-                            if let Some(sig) = self.functions.get(func_name) {
-                                if sig.result.is_none() && self.current_function != Some("main".to_string()) {
-                                    self.output.push_str("    i32.const 0\n");
-                                }
+                            let fname = func_name.clone();
+                            if is_tuple {
+                                generate_pipe_args(self, &pipe.expr)?;
+                            } else {
+                                self.generate_expr(&pipe.expr)?;
                             }
+                            call_func(self, &fname);
                         } else {
                             return Err(CodeGenError::UndefinedFunction(func_name.clone()));
                         }
@@ -5232,7 +5255,7 @@ impl WasmCodeGen {
                 }
             }
         }
-        
+
         Ok(())
     }
     
@@ -5400,6 +5423,28 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    fn generate_tuple_literal(&mut self, elements: &[Box<Expr>]) -> Result<(), CodeGenError> {
+        let total_size = elements.len() * 4;
+        self.output.push_str(&format!("    ;; Tuple literal with {} elements\n", elements.len()));
+
+        // Allocate memory for the tuple
+        self.output.push_str(&format!("    i32.const {} ;; tuple size\n", total_size));
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.tee $list_tmp\n");
+
+        // Store each element at its offset
+        for (i, elem) in elements.iter().enumerate() {
+            self.output.push_str("    local.get $list_tmp\n");
+            self.output.push_str(&format!("    i32.const {} ;; offset to element {}\n", i * 4, i));
+            self.output.push_str("    i32.add\n");
+            self.generate_expr(elem)?;
+            self.output.push_str("    i32.store\n");
+        }
+
+        // Tuple pointer is already on stack from local.tee
+        Ok(())
+    }
+
     fn generate_match_expr(&mut self, match_expr: &MatchExpr) -> Result<(), CodeGenError> {
         // First evaluate the expression being matched
         self.generate_expr(&match_expr.expr)?;
@@ -5667,6 +5712,28 @@ impl WasmCodeGen {
                 self.output.push_str("        i32.const 0 ;; tag mismatch\n");
                 self.output.push_str("      )\n");
                 self.output.push_str("    )\n");
+            }
+            Pattern::Tuple(patterns) => {
+                // Tuple pattern: check each element
+                self.output.push_str("    i32.const 1 ;; tuple pattern starts as matching\n");
+                for (i, pattern) in patterns.iter().enumerate() {
+                    self.output.push_str("    (if (result i32)\n");
+                    self.output.push_str("      (then\n");
+                    self.output.push_str("        local.get $match_tmp\n");
+                    self.output.push_str(&format!("        i32.const {}\n", i * 4));
+                    self.output.push_str("        i32.add\n");
+                    self.output.push_str("        i32.load ;; load tuple element\n");
+
+                    let sub_bindings = self.generate_pattern_match(pattern)?;
+                    bindings.extend(sub_bindings);
+
+                    self.output.push_str("      )\n");
+                    self.output.push_str("      (else\n");
+                    self.output.push_str("        i32.const 0 ;; pattern failed\n");
+                    self.output.push_str("      )\n");
+                    self.output.push_str("    )\n");
+                    self.output.push_str("    i32.and ;; all patterns must match\n");
+                }
             }
         }
 

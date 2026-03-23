@@ -341,6 +341,7 @@ pub enum TypedType {
     Array(Box<TypedType>, usize),
     TypeParam(String), // Generic type parameter
     Temporal { base_type: Box<TypedType>, temporals: Vec<String> }, // Type with temporal parameters
+    Tuple(Vec<TypedType>), // Tuple type (e.g., (Int, String))
 }
 
 /// Formats a TypedType for display in LSP hints
@@ -375,6 +376,13 @@ pub fn format_typed_type(ty: &TypedType) -> String {
             let temporals_str = temporals.join(", ");
             format!("{} ~[{}]", format_typed_type(base_type), temporals_str)
         }
+        TypedType::Tuple(types) => {
+            let types_str = types.iter()
+                .map(format_typed_type)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({})", types_str)
+        }
     }
 }
 
@@ -402,6 +410,7 @@ pub fn is_copy_type(ty: &TypedType) -> bool {
         TypedType::Function { .. } => false,  // Functions are not Copy
         TypedType::TypeParam(_) => false,  // Unknown, assume not Copy
         TypedType::Temporal { base_type, .. } => is_copy_type(base_type),
+        TypedType::Tuple(types) => types.iter().all(is_copy_type),
     }
 }
 
@@ -2386,13 +2395,20 @@ impl TypeChecker {
             Type::Temporal(name, temporals) => {
                 // Validate temporal constraints before creating the type
                 self.validate_temporal_constraints(temporals)?;
-                
+
                 // Convert base type and wrap with temporal parameters
                 let base_type = self.convert_type(&Type::Named(name.clone()))?;
                 Ok(TypedType::Temporal {
                     base_type: Box::new(base_type),
                     temporals: temporals.clone(),
                 })
+            }
+            Type::Tuple(types) => {
+                let typed_elements: Result<Vec<TypedType>, TypeError> = types
+                    .iter()
+                    .map(|ty| self.convert_type(ty))
+                    .collect();
+                Ok(TypedType::Tuple(typed_elements?))
             }
         }
     }
@@ -2875,6 +2891,14 @@ impl TypeChecker {
             Expr::Match(match_expr) => self.check_match_expr(match_expr),
             Expr::ListLit(elements) => self.check_list_lit(elements, expected),
             Expr::ArrayLit(elements) => self.check_array_lit(elements, expected),
+            Expr::TupleLit(elements) => {
+                let mut element_types = Vec::new();
+                for elem in elements {
+                    let ty = self.check_expr(elem)?;
+                    element_types.push(ty);
+                }
+                Ok(TypedType::Tuple(element_types))
+            }
             Expr::Some(expr) => {
                 let expected_inner = if let Some(TypedType::Option(inner)) = expected {
                     Some(inner.as_ref())
@@ -3601,29 +3625,42 @@ impl TypeChecker {
     }
     
     fn check_pipe_expr(&mut self, pipe: &PipeExpr) -> Result<TypedType, TypeError> {
+        // Type-check the piped expression. Affine variables are consumed here,
+        // so we resolve function return types from signatures directly to avoid
+        // double-checking arguments (which would trigger affine violations).
         let expr_ty = self.check_expr(&pipe.expr)?;
-        
+
+        // Resolve pipe-to-function by looking up the function signature directly,
+        // returning its return type without re-checking arguments (already consumed above).
+        let resolve_pipe_call = |tc: &Self, func_name: &str| -> Result<TypedType, TypeError> {
+            if let Some(func_sig) = tc.functions.get(func_name) {
+                Ok(func_sig.return_type.clone())
+            } else {
+                Err(TypeError::UndefinedFunction(func_name.to_string()))
+            }
+        };
+
         match &pipe.target {
             PipeTarget::Ident(name) => {
-                // Pipe to binding: expr |> name
-                // This creates a new binding
-                self.bind_var(name.clone(), expr_ty.clone(), false)?;
-                Ok(expr_ty)
+                if self.functions.contains_key(name) {
+                    resolve_pipe_call(self, name)
+                } else {
+                    // Pipe to binding: expr |> name
+                    self.bind_var(name.clone(), expr_ty.clone(), false)?;
+                    Ok(expr_ty)
+                }
             }
             PipeTarget::Expr(target_expr) => {
-                // Pipe to expression: expr |> func
-                // This is like func(expr)
                 match &**target_expr {
                     Expr::Ident(func_name) => {
-                        // Single argument function call
-                        let call = CallExpr {
-                            function: Box::new(Expr::Ident(func_name.clone())),
-                            args: vec![pipe.expr.clone()],
-                        };
-                        self.check_call_expr(&call)
+                        if self.functions.contains_key(func_name) {
+                            resolve_pipe_call(self, func_name)
+                        } else {
+                            // Fall back to old behavior
+                            self.check_expr(target_expr)
+                        }
                     }
                     _ => {
-                        // For now, just return the target expression's type
                         self.check_expr(target_expr)
                     }
                 }
@@ -4271,9 +4308,28 @@ impl TypeChecker {
                     })
                 }
             }
+            Pattern::Tuple(patterns) => {
+                if let TypedType::Tuple(element_types) = expected_type {
+                    if patterns.len() != element_types.len() {
+                        return Err(TypeError::TypeMismatch {
+                            expected: format!("tuple of {} elements", element_types.len()),
+                            found: format!("tuple pattern of {} elements", patterns.len()),
+                        });
+                    }
+                    for (pattern, ty) in patterns.iter().zip(element_types.iter()) {
+                        self.check_pattern(pattern, ty)?;
+                    }
+                    Ok(())
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: "Tuple type".to_string(),
+                        found: format!("{:?}", expected_type),
+                    })
+                }
+            }
         }
     }
-    
+
     fn bind_pattern_vars(&mut self, pattern: &Pattern, ty: &TypedType) -> Result<(), TypeError> {
         match pattern {
             Pattern::Wildcard => Ok(()),
@@ -4343,6 +4399,14 @@ impl TypeChecker {
                     // Bind each pattern with element type
                     for pattern in patterns {
                         self.bind_pattern_vars(pattern, element_type)?;
+                    }
+                }
+                Ok(())
+            }
+            Pattern::Tuple(patterns) => {
+                if let TypedType::Tuple(element_types) = ty {
+                    for (pattern, elem_ty) in patterns.iter().zip(element_types.iter()) {
+                        self.bind_pattern_vars(pattern, elem_ty)?;
                     }
                 }
                 Ok(())
@@ -5337,6 +5401,11 @@ impl TypeChecker {
                     free_vars.extend(self.collect_free_variables(elem, bound_vars));
                 }
             }
+            Expr::TupleLit(elements) => {
+                for elem in elements {
+                    free_vars.extend(self.collect_free_variables(elem, bound_vars));
+                }
+            }
             Expr::Match(match_expr) => {
                 free_vars.extend(self.collect_free_variables(&match_expr.expr, bound_vars));
                 for arm in &match_expr.arms {
@@ -5479,6 +5548,11 @@ impl TypeChecker {
                 }
             }
             Pattern::Literal(_) | Pattern::None | Pattern::EmptyList => {}
+            Pattern::Tuple(patterns) => {
+                for p in patterns {
+                    self.collect_pattern_bindings(p, bindings);
+                }
+            }
         }
     }
     

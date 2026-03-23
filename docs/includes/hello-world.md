@@ -1,5 +1,5 @@
 ```restrict
-fn main() {
+fun main = {
     "Hello, World!" |> println
 }
 ```

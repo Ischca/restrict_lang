@@ -452,6 +452,10 @@ pub enum Expr {
     // Array literal
     /// Array literal with fixed size
     ArrayLit(Vec<Box<Expr>>),
+
+    // Tuple literal
+    /// Tuple literal (e.g., `(1, 2)`, `("hello", 42, true)`)
+    TupleLit(Vec<Box<Expr>>),
     
     // Option constructors
     /// Some variant of Option type
@@ -639,6 +643,8 @@ pub enum Pattern {
     ListCons(Box<Pattern>, Box<Pattern>),
     /// Exact list pattern `[a, b, c]`
     ListExact(Vec<Box<Pattern>>),
+    /// Tuple destructuring pattern `(a, b, c)`
+    Tuple(Vec<Box<Pattern>>),
 }
 
 /// Literal values that can appear in patterns and expressions.
@@ -835,6 +841,7 @@ pub enum Type {
     Generic(String, Vec<Type>),
     Function(Vec<Type>, Box<Type>),  // (param_types, return_type)
     Temporal(String, Vec<String>),    // Type with temporal parameters (e.g., File<~f>)
+    Tuple(Vec<Type>),                 // Tuple type (e.g., (Int, String))
 }
 
 impl fmt::Display for Type {
@@ -870,6 +877,16 @@ impl fmt::Display for Type {
                     write!(f, "~{}", temporal)?;
                 }
                 write!(f, ">")
+            }
+            Type::Tuple(types) => {
+                write!(f, "(")?;
+                for (i, ty) in types.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", ty)?;
+                }
+                write!(f, ")")
             }
         }
     }

@@ -1,12 +1,9 @@
 ```restrict
-// Affine types prevent use-after-move
-let message = "Hello"
-message |> println     // OK: first use
-// message |> println  // ERROR: already consumed
+// Affine types: each value can be used at most once
+fun main = {
+    val x = 42
+    x int_to_string |> println   // OK: first (and only) use
 
-// Use clone when multiple uses needed
-let original = "Hello"
-let copy = clone original
-original |> println    // OK
-copy |> println       // OK
+    // x |> println              // Error: x already consumed
+}
 ```

@@ -1,4 +1,4 @@
 // Basic Hello World example
 fun main = {
-    "Hello, World!" println
+    "Hello, World!" |> println
 }

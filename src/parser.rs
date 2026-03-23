@@ -146,6 +146,29 @@ fn parse_type(input: &str) -> ParseResult<Type> {
         return Ok((input, Type::Function(param_types, Box::new(return_type))));
     }
 
+    // Try to parse tuple type: (Type1, Type2, ...)
+    if let Ok((input_after_lparen, _)) = expect_token::<'_>(Token::LParen)(input) {
+        // Check for unit type ()
+        if let Ok((input_after_rparen, _)) = expect_token::<'_>(Token::RParen)(input_after_lparen) {
+            return Ok((input_after_rparen, Type::Named("Unit".to_string())));
+        }
+        // Try parsing as tuple type: (T1, T2, ...)
+        if let Ok((remaining, first_type)) = parse_type(input_after_lparen) {
+            if let Ok((remaining, _)) = expect_token::<'_>(Token::Comma)(remaining) {
+                // It's a tuple type
+                let (remaining, rest) = separated_list0(
+                    expect_token(Token::Comma),
+                    parse_type
+                )(remaining)?;
+                let (remaining, _) = expect_token(Token::RParen)(remaining)?;
+                let mut types = vec![first_type];
+                types.extend(rest);
+                return Ok((remaining, Type::Tuple(types)));
+            }
+            // Single type in parens - just grouping, not a tuple
+        }
+    }
+
     // Parse type name - handle both identifiers and the Unit keyword
     let (input, name) = type_name(input)?;
 
@@ -637,6 +660,40 @@ fn unary_expr(input: &str) -> ParseResult<Expr> {
     ))(input)
 }
 
+/// Parse unit `()`, parenthesized expression `(expr)`, or tuple `(expr, expr, ...)`
+fn paren_or_tuple(input: &str) -> ParseResult<Expr> {
+    let (input, _) = expect_token(Token::LParen)(input)?;
+
+    // Check for empty parens: ()
+    if let Ok((input, _)) = expect_token::<'_>(Token::RParen)(input) {
+        return Ok((input, Expr::Unit));
+    }
+
+    // Parse first expression
+    let (input, first) = expression(input)?;
+
+    // Check if there's a comma (making it a tuple)
+    if let Ok((input, _)) = expect_token::<'_>(Token::Comma)(input) {
+        let mut elements = vec![Box::new(first)];
+
+        // Parse remaining elements
+        let (input, rest) = separated_list0(
+            expect_token(Token::Comma),
+            expression
+        )(input)?;
+        for elem in rest {
+            elements.push(Box::new(elem));
+        }
+
+        let (input, _) = expect_token(Token::RParen)(input)?;
+        Ok((input, Expr::TupleLit(elements)))
+    } else {
+        // Just a parenthesized expression
+        let (input, _) = expect_token(Token::RParen)(input)?;
+        Ok((input, first))
+    }
+}
+
 fn atom_expr(input: &str) -> ParseResult<Expr> {
     alt((
         literal,
@@ -650,16 +707,8 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
         value(Expr::It, expect_token(Token::It)),  // 'it' keyword
         map(ident, Expr::Ident),
-        // Unit literal () - must come before general parenthesized expressions
-        value(
-            Expr::Unit,
-            tuple((expect_token(Token::LParen), expect_token(Token::RParen)))
-        ),
-        delimited(
-            expect_token(Token::LParen),
-            expression,
-            expect_token(Token::RParen)
-        ),
+        // Unit (), parenthesized expression (expr), or tuple (expr, expr, ...)
+        paren_or_tuple,
         with_expr,
         map(lazy_block_expr, Expr::Block)  // Blocks in expression position are lazy
     ))(input)
@@ -1665,6 +1714,7 @@ fn expr_uses_it(expr: &Expr) -> bool {
         Expr::Lambda(lambda) => expr_uses_it(&lambda.body),
         Expr::FieldAccess(obj, _) => expr_uses_it(obj),
         Expr::ListLit(items) | Expr::ArrayLit(items) => items.iter().any(|item| expr_uses_it(item)),
+        Expr::TupleLit(items) => items.iter().any(|item| expr_uses_it(item)),
         Expr::Some(inner) | Expr::Ok(inner) | Expr::Err(inner) => expr_uses_it(inner),
         Expr::RecordLit(rec) => rec.fields.iter().any(|f| expr_uses_it(&f.value)),
         Expr::Clone(clone) => {

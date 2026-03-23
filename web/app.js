@@ -7,6 +7,7 @@ import init, {
     lex_only,
     parse_only
 } from './pkg/restrict_lang.js';
+import { examples } from './examples.js';
 
 let wasmModule = null;
 let wabtModule = null;
@@ -459,149 +460,8 @@ function setButtonsDisabled(disabled) {
     if (compileBtn) compileBtn.disabled = disabled;
 }
 
-// Load example
+// Load example (samples are imported from examples.js, generated from samples/)
 function loadExample(exampleName) {
-    const examples = {
-        'hello': `// Hello World in Restrict Language
-
-fun main = {
-    "Hello, World!" |> println
-}`,
-
-        'fizzbuzz': `// FizzBuzz - Classic programming challenge
-
-fun fizzbuzz: (n: Int) -> String = {
-    n % 15 == 0 then { "FizzBuzz" } else {
-        n % 3 == 0 then { "Fizz" } else {
-            n % 5 == 0 then { "Buzz" } else {
-                n int_to_string
-            }
-        }
-    }
-}
-
-fun main = {
-    mut val i = 1
-    i <= 20 while {
-        i fizzbuzz |> println
-        i = i + 1
-    }
-}`,
-
-        'affine': `// Affine Types - Each value can only be used once
-
-fun main = {
-    val message = "I can only be used once!"
-
-    // This works - message is used exactly once
-    message |> println
-
-    // Try uncommenting to see the error:
-    // message |> println  // Error: use of moved value
-}`,
-
-        'pipe': `// Pipe Operators & OSV Syntax
-// Object-Subject-Verb order: "data function" instead of "function(data)"
-
-fun double: (n: Int) -> Int = {
-    n * 2
-}
-
-fun main = {
-    // Traditional: double(double(5))
-    // With pipes: 5 |> double |> double
-
-    val result = 5 double double
-    result int_to_string |> println
-
-    // Or with explicit pipes:
-    10 |> double |> int_to_string |> println
-}`,
-
-        'record': `// Records with Arena-based Memory
-
-record Point { x: Int, y: Int }
-
-fun main = {
-    with Arena {
-        val p = Point { x = 10, y = 20 }
-
-        // Clone to create a copy
-        val p2 = p.clone {}
-
-        // Use the clone
-        p2.x int_to_string |> println
-    }
-}`,
-
-        'mutable': `// Mutable Variables
-
-fun countdown: (n: Int) = {
-    mut val i = n
-    i > 0 while {
-        i int_to_string |> println
-        i = i - 1
-    }
-    "Liftoff!" |> println
-}
-
-fun main = {
-    5 countdown
-}`,
-
-        'context': `// Context Binding - Implicit parameters via context
-
-record Connection { id: Int }
-
-// Define a context that provides a database connection
-context Database {
-    val conn: Connection
-}
-
-// Function requires Database context (like Reader monad)
-fun query: (sql: String) -> String with Database = {
-    sql  // In real code, would use conn from context
-}
-
-fun main = {
-    with Arena {
-        val conn = Connection { id = 1 }
-
-        // Provide the Database context
-        with Database { conn = conn } {
-            "SELECT * FROM users" query |> println
-        }
-    }
-}`,
-
-        'compose': `// Scope Composition - Multiple contexts
-
-record Logger { level: Int }
-record Config { debug: Int }
-
-context Logging { val logger: Logger }
-context Configuration { val config: Config }
-
-// Function requires BOTH contexts
-fun log_with_config: () with Logging, Configuration = {
-    "Logging with config" |> println
-}
-
-fun main = {
-    with Arena {
-        val log = Logger { level = 1 }
-        val cfg = Config { debug = 1 }
-
-        // Nested context scopes compose automatically
-        with Logging { logger = log } {
-            with Configuration { config = cfg } {
-                log_with_config
-            }
-        }
-    }
-}`
-    };
-
     const example = examples[exampleName];
     if (example) {
         setSourceCode(example);

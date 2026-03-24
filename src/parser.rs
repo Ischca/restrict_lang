@@ -858,6 +858,29 @@ fn with_lifetime_expr(input: &str) -> ParseResult<Expr> {
     })))
 }
 
+fn tuple_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::LParen)(input)?;
+
+    // Parse first pattern
+    let (input, first) = pattern(input)?;
+
+    // Require a comma to distinguish from grouping
+    let (input, _) = expect_token(Token::Comma)(input)?;
+    let mut elements = vec![Box::new(first)];
+
+    // Parse remaining patterns
+    let (input, rest) = separated_list0(
+        expect_token(Token::Comma),
+        pattern
+    )(input)?;
+    for elem in rest {
+        elements.push(Box::new(elem));
+    }
+
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Tuple(elements)))
+}
+
 fn pattern(input: &str) -> ParseResult<Pattern> {
     alt((
         // Check for wildcard pattern
@@ -872,6 +895,7 @@ fn pattern(input: &str) -> ParseResult<Pattern> {
         none_pattern,
         ok_pattern,    // Result Ok pattern
         err_pattern,   // Result Err pattern
+        tuple_pattern, // Tuple patterns before record/literal
         record_pattern,  // Try record patterns before identifiers
         list_pattern,  // Try list patterns before literals
         map(literal, |expr| match expr {

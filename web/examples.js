@@ -140,22 +140,17 @@ fun main = {
 
     'match': `// Pattern Matching — FizzBuzz
 //
-// The same FizzBuzz logic rewritten with 'match'.
-// In Restrict's OSV syntax, match comes after the expression:
-//   expr match { pattern => { body } }
+// The same FizzBuzz logic rewritten with tuple pattern matching.
+// Match the tuple (n % 3, n % 5) to avoid nested if-else.
 //
 // Compare with the if-else version in "Mutable & Loops".
 
 fun fizzbuzz: (n: Int) -> String = {
-    n % 15 match {
-        0 => { "FizzBuzz" }
-        _ => { n % 3 match {
-            0 => { "Fizz" }
-            _ => { n % 5 match {
-                0 => { "Buzz" }
-                _ => { n int_to_string }
-            }}
-        }}
+    (n % 3, n % 5) match {
+        (0, 0) => { "FizzBuzz" }
+        (0, _) => { "Fizz" }
+        (_, 0) => { "Buzz" }
+        _      => { n int_to_string }
     }
 }
 

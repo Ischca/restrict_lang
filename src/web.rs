@@ -546,7 +546,8 @@ fn get_semantic_tokens_internal(source: &str) -> Vec<SemanticToken> {
                 Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
                 Token::Assign | Token::Eq | Token::Ne | Token::Lt | Token::Gt |
                 Token::Le | Token::Ge | Token::Tilde |
-                Token::Dot | Token::Colon | Token::Comma | Token::Semicolon => "operator",
+                Token::Dot | Token::DotDot | Token::DotDotLt |
+                Token::Colon | Token::Comma | Token::Semicolon => "operator",
 
                 // Option and Result types
                 Token::Some | Token::None | Token::Ok | Token::Err => "keyword",

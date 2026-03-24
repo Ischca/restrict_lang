@@ -232,6 +232,8 @@ pub enum Token {
     RArrayBracket,  // |]
     Comma,          // ,
     Colon,          // :
+    DotDot,         // ..  (inclusive range)
+    DotDotLt,       // ..< (exclusive range)
     Dot,            // .
     Semicolon,      // ;
     
@@ -310,6 +312,8 @@ impl fmt::Display for Token {
             Token::RArrayBracket => write!(f, "|]"),
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
+            Token::DotDot => write!(f, ".."),
+            Token::DotDotLt => write!(f, "..<"),
             Token::Dot => write!(f, "."),
             Token::Semicolon => write!(f, ";"),
             Token::Newline => write!(f, "<newline>"),
@@ -458,6 +462,8 @@ fn delimiter(input: &str) -> IResult<&str, Token> {
         value(Token::RBracket, char(']')),
         value(Token::Comma, char(',')),
         value(Token::Colon, char(':')),
+        value(Token::DotDotLt, tag("..<")),  // Must come before DotDot and Dot
+        value(Token::DotDot, tag("..")),     // Must come before Dot
         value(Token::Dot, char('.')),
         value(Token::Semicolon, char(';')),
     ))(input)
@@ -579,6 +585,8 @@ fn suppresses_following_newline(token: &Token) -> bool {
         Token::Impl | Token::Import | Token::Export | Token::With | Token::Clone |
         Token::Match | Token::Then | Token::Else | Token::While | Token::Where |
         Token::From | Token::Within | Token::Async | Token::Return |
+        // Range operators
+        Token::DotDot | Token::DotDotLt |
         // Tilde (for temporal types)
         Token::Tilde
     )
@@ -1146,5 +1154,39 @@ mod tests {
         let tokens = lex_newline_aware(input).unwrap();
         let newline_count = tokens.iter().filter(|t| **t == Token::Newline).count();
         assert_eq!(newline_count, 1, "Multiple newlines should collapse to one");
+    }
+
+    #[test]
+    fn test_range_tokens() {
+        // Inclusive range
+        let tokens = lex("[1..5]").unwrap().1;
+        assert_eq!(tokens, vec![
+            Token::LBracket,
+            Token::IntLit(1),
+            Token::DotDot,
+            Token::IntLit(5),
+            Token::RBracket,
+        ]);
+
+        // Exclusive range
+        let tokens = lex("[1..<5]").unwrap().1;
+        assert_eq!(tokens, vec![
+            Token::LBracket,
+            Token::IntLit(1),
+            Token::DotDotLt,
+            Token::IntLit(5),
+            Token::RBracket,
+        ]);
+    }
+
+    #[test]
+    fn test_dot_vs_dotdot() {
+        // Single dot should still work
+        let tokens = lex("obj.field").unwrap().1;
+        assert_eq!(tokens, vec![
+            Token::Ident("obj".to_string()),
+            Token::Dot,
+            Token::Ident("field".to_string()),
+        ]);
     }
 }

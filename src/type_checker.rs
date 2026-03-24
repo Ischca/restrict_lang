@@ -342,6 +342,7 @@ pub enum TypedType {
     TypeParam(String), // Generic type parameter
     Temporal { base_type: Box<TypedType>, temporals: Vec<String> }, // Type with temporal parameters
     Tuple(Vec<TypedType>), // Tuple type (e.g., (Int, String))
+    Range(Box<TypedType>), // Range type (e.g., Range<Int>)
 }
 
 /// Formats a TypedType for display in LSP hints
@@ -383,6 +384,7 @@ pub fn format_typed_type(ty: &TypedType) -> String {
                 .join(", ");
             format!("({})", types_str)
         }
+        TypedType::Range(inner) => format!("Range<{}>", format_typed_type(inner)),
     }
 }
 
@@ -411,6 +413,7 @@ pub fn is_copy_type(ty: &TypedType) -> bool {
         TypedType::TypeParam(_) => false,  // Unknown, assume not Copy
         TypedType::Temporal { base_type, .. } => is_copy_type(base_type),
         TypedType::Tuple(types) => types.iter().all(is_copy_type),
+        TypedType::Range(inner) => is_copy_type(inner),  // Range<Copy> is Copy
     }
 }
 
@@ -2891,6 +2894,7 @@ impl TypeChecker {
             Expr::Match(match_expr) => self.check_match_expr(match_expr),
             Expr::ListLit(elements) => self.check_list_lit(elements, expected),
             Expr::ArrayLit(elements) => self.check_array_lit(elements, expected),
+            Expr::RangeLit(range) => self.check_range_lit(range),
             Expr::TupleLit(elements) => {
                 let mut element_types = Vec::new();
                 for elem in elements {
@@ -4453,6 +4457,32 @@ impl TypeChecker {
         }
     }
     
+    fn check_range_lit(&mut self, range: &RangeLit) -> Result<TypedType, TypeError> {
+        let start_type = self.check_expr(&range.start)?;
+        let end_type = self.check_expr(&range.end)?;
+
+        // Start and end must have the same numeric type
+        if start_type != end_type {
+            return Err(TypeError::TypeMismatch {
+                expected: format!("{:?}", start_type),
+                found: format!("{:?}", end_type),
+            });
+        }
+
+        // Range only supports numeric types
+        match &start_type {
+            TypedType::Int32 | TypedType::Float64 => {}
+            _ => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "numeric type (Int or Float)".to_string(),
+                    found: format!("{:?}", start_type),
+                });
+            }
+        }
+
+        Ok(TypedType::Range(Box::new(start_type)))
+    }
+
     fn check_list_lit(&mut self, elements: &[Box<Expr>], expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         if elements.is_empty() {
             // Empty list - infer from expected type if available
@@ -5390,6 +5420,10 @@ impl TypeChecker {
                 for field in &proto_clone.updates.fields {
                     free_vars.extend(self.collect_free_variables(&field.value, bound_vars));
                 }
+            }
+            Expr::RangeLit(range) => {
+                free_vars.extend(self.collect_free_variables(&range.start, bound_vars));
+                free_vars.extend(self.collect_free_variables(&range.end, bound_vars));
             }
             Expr::ListLit(elements) => {
                 for elem in elements {

@@ -2693,6 +2693,10 @@ impl WasmCodeGen {
             Expr::FieldAccess(expr, _) => {
                 self.collect_strings_from_expr(expr)?;
             }
+            Expr::RangeLit(range) => {
+                self.collect_strings_from_expr(&range.start)?;
+                self.collect_strings_from_expr(&range.end)?;
+            }
             Expr::ListLit(items) => {
                 for item in items {
                     self.collect_strings_from_expr(item)?;
@@ -3065,6 +3069,7 @@ impl WasmCodeGen {
                     Ok("Unit".to_string())
                 }
             }
+            Expr::RangeLit(_) => Ok("Range".to_string()),
             Expr::ListLit(_) => Ok("List".to_string()),
             Expr::ArrayLit(_) => Ok("Array".to_string()),
             Expr::Pipe(pipe) => {
@@ -4156,6 +4161,9 @@ impl WasmCodeGen {
             }
             Expr::Pipe(pipe) => {
                 self.generate_pipe_expr(pipe)?;
+            }
+            Expr::RangeLit(range) => {
+                self.generate_range_literal(range)?;
             }
             Expr::ListLit(items) => {
                 self.generate_list_literal(items)?;
@@ -5362,6 +5370,46 @@ impl WasmCodeGen {
         }
     }
     
+    fn generate_range_literal(&mut self, range: &RangeLit) -> Result<(), CodeGenError> {
+        // Range is represented as a struct in memory: { start: i32, end: i32, inclusive: i32 }
+        // Total size: 12 bytes
+        let range_size = 12;
+
+        self.output.push_str("    ;; Range literal\n");
+
+        // Allocate memory for range struct
+        self.output.push_str(&format!("    i32.const {} ;; range size\n", range_size));
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $list_tmp\n");
+
+        // Store start value
+        self.output.push_str("    local.get $list_tmp\n");
+        self.generate_expr(&range.start)?;
+        self.output.push_str("    i32.store\n");
+
+        // Store end value
+        self.output.push_str("    local.get $list_tmp\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.generate_expr(&range.end)?;
+        self.output.push_str("    i32.store\n");
+
+        // Store inclusive flag (1 = inclusive, 0 = exclusive)
+        self.output.push_str("    local.get $list_tmp\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str(&format!("    i32.const {} ;; {}\n",
+            if range.inclusive { 1 } else { 0 },
+            if range.inclusive { "inclusive" } else { "exclusive" }
+        ));
+        self.output.push_str("    i32.store\n");
+
+        // Return the range pointer
+        self.output.push_str("    local.get $list_tmp\n");
+
+        Ok(())
+    }
+
     fn generate_list_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
         let list_size = 8 + (items.len() * 4); // Header (length + capacity) + elements
 

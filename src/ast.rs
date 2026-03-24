@@ -456,6 +456,10 @@ pub enum Expr {
     // Tuple literal
     /// Tuple literal (e.g., `(1, 2)`, `("hello", 42, true)`)
     TupleLit(Vec<Box<Expr>>),
+
+    // Range literal
+    /// Range literal (e.g., `[1..5]` inclusive, `[1..<5]` exclusive)
+    RangeLit(RangeLit),
     
     // Option constructors
     /// Some variant of Option type
@@ -908,6 +912,24 @@ impl fmt::Display for BinaryOp {
             BinaryOp::Ge => write!(f, ">="),
         }
     }
+}
+
+/// Range literal expression.
+///
+/// # Examples
+///
+/// ```restrict
+/// [1..5]    // inclusive: 1, 2, 3, 4, 5
+/// [1..<5]   // exclusive: 1, 2, 3, 4
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct RangeLit {
+    /// Start expression (inclusive)
+    pub start: Box<Expr>,
+    /// End expression
+    pub end: Box<Expr>,
+    /// Whether the end is inclusive (`..`) or exclusive (`..<`)
+    pub inclusive: bool,
 }
 
 /// Temporal constraint expressing relationships between temporal variables.

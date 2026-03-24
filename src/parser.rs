@@ -703,7 +703,7 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         ok_expr,    // Try Ok before ident
         err_expr,   // Try Err before ident
         array_lit,  // Try array literal before list
-        list_lit,  // Try list literal before record
+        range_or_list_lit,  // Try range or list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
         value(Expr::It, expect_token(Token::It)),  // 'it' keyword
         map(ident, Expr::Ident),
@@ -752,8 +752,35 @@ fn err_expr(input: &str) -> ParseResult<Expr> {
     Ok((input, Expr::Err(Box::new(expr))))
 }
 
-fn list_lit(input: &str) -> ParseResult<Expr> {
+fn range_or_list_lit(input: &str) -> ParseResult<Expr> {
     let (input, _) = expect_token(Token::LBracket)(input)?;
+
+    // Try to parse the first expression
+    if let Ok((after_first, first_expr)) = expression(input) {
+        // Check for range operator `..` or `..<`
+        if let Ok((after_op, _)) = expect_token::<'_>(Token::DotDotLt)(after_first) {
+            // Exclusive range: [start..<end]
+            let (input, end_expr) = expression(after_op)?;
+            let (input, _) = expect_token(Token::RBracket)(input)?;
+            return Ok((input, Expr::RangeLit(RangeLit {
+                start: Box::new(first_expr),
+                end: Box::new(end_expr),
+                inclusive: false,
+            })));
+        }
+        if let Ok((after_op, _)) = expect_token::<'_>(Token::DotDot)(after_first) {
+            // Inclusive range: [start..end]
+            let (input, end_expr) = expression(after_op)?;
+            let (input, _) = expect_token(Token::RBracket)(input)?;
+            return Ok((input, Expr::RangeLit(RangeLit {
+                start: Box::new(first_expr),
+                end: Box::new(end_expr),
+                inclusive: true,
+            })));
+        }
+    }
+
+    // Fall back to list literal parsing
     let (input, elements) = separated_list0(
         expect_token(Token::Comma),
         map(expression, Box::new)
@@ -1752,6 +1779,7 @@ fn expr_uses_it(expr: &Expr) -> bool {
         Expr::ScopeConcat(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
         Expr::WithLifetime(wl) => block_uses_it(&wl.body.statements, &wl.body.expr),
         Expr::Await(inner) | Expr::Spawn(inner) => expr_uses_it(inner),
+        Expr::RangeLit(range) => expr_uses_it(&range.start) || expr_uses_it(&range.end),
         // Literals and identifiers don't use 'it'
         Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) |
         Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit |
@@ -2004,5 +2032,66 @@ mod tests {
         let input = "fun main: () -> Unit = { 42 double println }";
         let result = parse_program(input);
         assert!(result.is_ok(), "Failed to parse OSV chain on same line: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_range_inclusive() {
+        let input = "fun main = { [1..5] }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse inclusive range: {:?}", result.err());
+        let (_, prog) = result.unwrap();
+        if let TopDecl::Function(fun) = &prog.declarations[0] {
+            if let Some(expr) = &fun.body.expr {
+                match expr.as_ref() {
+                    Expr::RangeLit(range) => {
+                        assert!(range.inclusive, "Expected inclusive range");
+                        assert_eq!(*range.start, Expr::IntLit(1));
+                        assert_eq!(*range.end, Expr::IntLit(5));
+                    }
+                    _ => panic!("Expected RangeLit, got {:?}", expr),
+                }
+            } else {
+                panic!("Expected expression in function body");
+            }
+        }
+    }
+
+    #[test]
+    fn test_range_exclusive() {
+        let input = "fun main = { [1..<5] }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse exclusive range: {:?}", result.err());
+        let (_, prog) = result.unwrap();
+        if let TopDecl::Function(fun) = &prog.declarations[0] {
+            if let Some(expr) = &fun.body.expr {
+                match expr.as_ref() {
+                    Expr::RangeLit(range) => {
+                        assert!(!range.inclusive, "Expected exclusive range");
+                        assert_eq!(*range.start, Expr::IntLit(1));
+                        assert_eq!(*range.end, Expr::IntLit(5));
+                    }
+                    _ => panic!("Expected RangeLit, got {:?}", expr),
+                }
+            } else {
+                panic!("Expected expression in function body");
+            }
+        }
+    }
+
+    #[test]
+    fn test_list_still_works() {
+        // Ensure list literals still parse correctly
+        let input = "fun main = { [1, 2, 3] }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse list literal: {:?}", result.err());
+        let (_, prog) = result.unwrap();
+        if let TopDecl::Function(fun) = &prog.declarations[0] {
+            if let Some(expr) = &fun.body.expr {
+                match expr.as_ref() {
+                    Expr::ListLit(items) => assert_eq!(items.len(), 3),
+                    _ => panic!("Expected ListLit, got {:?}", expr),
+                }
+            }
+        }
     }
 }

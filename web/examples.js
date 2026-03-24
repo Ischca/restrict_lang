@@ -138,6 +138,35 @@ fun main = {
     }
 }`,
 
+    'match': `// Pattern Matching — FizzBuzz
+//
+// The same FizzBuzz logic rewritten with 'match'.
+// In Restrict's OSV syntax, match comes after the expression:
+//   expr match { pattern => { body } }
+//
+// Compare with the if-else version in "Mutable & Loops".
+
+fun fizzbuzz: (n: Int) -> String = {
+    n % 15 match {
+        0 => { "FizzBuzz" }
+        _ => { n % 3 match {
+            0 => { "Fizz" }
+            _ => { n % 5 match {
+                0 => { "Buzz" }
+                _ => { n int_to_string }
+            }}
+        }}
+    }
+}
+
+fun main = {
+    mut val i = 1
+    i <= 20 while {
+        i fizzbuzz |> println
+        i = i + 1
+    }
+}`,
+
     'compose': `// Scope Composition — Multiple Contexts
 //
 // Functions can require multiple contexts.

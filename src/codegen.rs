@@ -4992,6 +4992,8 @@ impl WasmCodeGen {
             // Scope operations
             Expr::ScopeCompose(_) => Ok(WasmType::I32),
             Expr::ScopeConcat(_) => Ok(WasmType::I32),
+            // Range (pointer to memory)
+            Expr::RangeLit(_) => Ok(WasmType::I32),
             _ => Err(CodeGenError::CannotInferType(
                 format!("cannot infer WASM type of expression: {:?}", std::mem::discriminant(expr))
             ))

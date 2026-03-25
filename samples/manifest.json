@@ -48,6 +48,13 @@
       "description": "Composing multiple contexts for dependency injection",
       "feature": "composition",
       "file": "compose.rl"
+    },
+    {
+      "id": "range",
+      "title": "Range Literals",
+      "description": "Inclusive (..) and exclusive (..<) range syntax",
+      "feature": "range",
+      "file": "range.rl"
     }
   ]
 }

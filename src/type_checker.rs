@@ -1276,6 +1276,55 @@ impl TypeChecker {
             type_params: vec![t_param.clone()],
             temporal_constraints: vec![],
         });
+
+        let u_param = TypeParam {
+            name: "U".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            is_temporal: false,
+        };
+
+        // list_forEach<T>
+        self.functions.insert("list_forEach".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Unit),
+                }),
+            ],
+            return_type: TypedType::Unit,
+            type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // list_filter<T>
+        self.functions.insert("list_filter".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("predicate".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Boolean),
+                }),
+            ],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // list_map<T, U>
+        self.functions.insert("list_map".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("U".to_string()))),
+            type_params: vec![t_param.clone(), u_param.clone()],
+            temporal_constraints: vec![],
+        });
     }
     
     fn register_std_option(&mut self) {

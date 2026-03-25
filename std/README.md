@@ -32,6 +32,7 @@
 - `list_append(list, item)` - 要素追加
 - `list_concat(a, b)` - リスト連結
 - `list_count(list)` - 要素数取得
+- `list_forEach(list, f)` - 各要素に関数を適用（副作用用）
 - `list_filter(list, predicate)` - フィルタリング
 - `list_map(list, f)` - マッピング
 - `list_fold_left(list, acc, f)` - 左畳み込み

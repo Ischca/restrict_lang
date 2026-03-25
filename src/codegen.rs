@@ -2557,7 +2557,228 @@ impl WasmCodeGen {
             _params: vec![WasmType::I32],
             result: Some(WasmType::I32),
         });
-        
+
+        // list_forEach: (list: i32, func_idx: i32) -> void
+        // Iterates over list elements, calling func for each element
+        self.output.push_str("  (func $list_forEach (param $list i32) (param $func_idx i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $length i32)\n");
+        self.output.push_str("    ;; Load list length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $length\n");
+        self.output.push_str("    ;; Initialize index to 0\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    ;; Loop over elements\n");
+        self.output.push_str("    (block $break\n");
+        self.output.push_str("      (loop $continue\n");
+        self.output.push_str("        ;; Check i < length\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $length\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $break\n");
+        self.output.push_str("        ;; Load element: list + 8 + (i * 4)\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        ;; Call function with element\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32)))\n");
+        self.output.push_str("        ;; Increment i\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $continue\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("list_forEach".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: None,
+        });
+
+        // list_filter: (list: i32, func_idx: i32) -> i32 (new list)
+        // Returns a new list containing only elements where predicate returns true (non-zero)
+        self.output.push_str("  (func $list_filter (param $list i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $length i32)\n");
+        self.output.push_str("    (local $new_list i32)\n");
+        self.output.push_str("    (local $new_len i32)\n");
+        self.output.push_str("    (local $elem i32)\n");
+        self.output.push_str("    ;; Load source list length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $length\n");
+        self.output.push_str("    ;; Allocate new list with max possible size (same as original)\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_list\n");
+        self.output.push_str("    ;; Set initial length to 0\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Set capacity\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Initialize counters\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $new_len\n");
+        self.output.push_str("    ;; Loop over elements\n");
+        self.output.push_str("    (block $break\n");
+        self.output.push_str("      (loop $continue\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $length\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $break\n");
+        self.output.push_str("        ;; Load element\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.set $elem\n");
+        self.output.push_str("        ;; Call predicate\n");
+        self.output.push_str("        local.get $elem\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        ;; If result is true (non-zero), add to new list\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            ;; Store element in new list\n");
+        self.output.push_str("            local.get $new_list\n");
+        self.output.push_str("            i32.const 8\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $new_len\n");
+        self.output.push_str("            i32.const 4\n");
+        self.output.push_str("            i32.mul\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $elem\n");
+        self.output.push_str("            i32.store\n");
+        self.output.push_str("            ;; Increment new_len\n");
+        self.output.push_str("            local.get $new_len\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $new_len\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        ;; Increment i\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $continue\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    ;; Update final length\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Return new list\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("list_filter".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // list_map: (list: i32, func_idx: i32) -> i32 (new list)
+        // Returns a new list with func applied to each element
+        self.output.push_str("  (func $list_map (param $list i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $length i32)\n");
+        self.output.push_str("    (local $new_list i32)\n");
+        self.output.push_str("    ;; Load source list length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $length\n");
+        self.output.push_str("    ;; Allocate new list: 8 bytes header + (length * 4) bytes data\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_list\n");
+        self.output.push_str("    ;; Set length\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Set capacity = length\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Initialize index\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    ;; Loop over elements\n");
+        self.output.push_str("    (block $break\n");
+        self.output.push_str("      (loop $continue\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $length\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $break\n");
+        self.output.push_str("        ;; Calculate destination address\n");
+        self.output.push_str("        local.get $new_list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        ;; Load source element\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        ;; Call map function\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        ;; Store result in new list\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        ;; Increment i\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $continue\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    ;; Return new list\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("list_map".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
         Ok(())
     }
     

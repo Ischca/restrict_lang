@@ -521,7 +521,8 @@ fn get_semantic_tokens_internal(source: &str) -> Vec<SemanticToken> {
                 Token::With | Token::Clone | Token::Freeze | Token::Import |
                 Token::From | Token::Context | Token::Impl | Token::Async |
                 Token::Await | Token::Return | Token::Sealed | Token::Export |
-                Token::Where | Token::Spawn => "keyword",
+                Token::Where | Token::Spawn | Token::Form | Token::Takes |
+                Token::Of => "keyword",
 
                 // Literals
                 Token::IntLit(_) | Token::FloatLit(_) => "number",

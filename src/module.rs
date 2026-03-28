@@ -157,5 +157,7 @@ fn get_decl_name(decl: &TopDecl) -> String {
         TopDecl::Binding(bind) => bind.name.clone(),
         TopDecl::Impl(impl_block) => impl_block.target.clone(),
         TopDecl::Export(_) => panic!("Nested exports not allowed"),
+        TopDecl::Form(form) => form.name.clone(),
+        TopDecl::Takes(takes) => format!("{}_takes_{}", takes.type_name, takes.form_name),
     }
 }

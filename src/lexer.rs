@@ -182,6 +182,12 @@ pub enum Token {
     Spawn,
     /// `it` keyword for implicit lambda parameter
     It,
+    /// `form` keyword for behavioral contract declaration
+    Form,
+    /// `takes` keyword for form adoption
+    Takes,
+    /// `of` keyword for form constraints in generics
+    Of,
 
     // Identifiers and Literals
     /// Identifier (variable/function name)
@@ -272,6 +278,9 @@ impl fmt::Display for Token {
             Token::Export => write!(f, "export"),
             Token::Sealed => write!(f, "sealed"),
             Token::From => write!(f, "from"),
+            Token::Form => write!(f, "form"),
+            Token::Takes => write!(f, "takes"),
+            Token::Of => write!(f, "of"),
             Token::Within => write!(f, "within"),
             Token::Where => write!(f, "where"),
             Token::Lifetime => write!(f, "lifetime"),
@@ -375,6 +384,9 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "await" => Token::Await,
         "spawn" => Token::Spawn,
         "it" => Token::It,
+        "form" => Token::Form,
+        "takes" => Token::Takes,
+        "of" => Token::Of,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))

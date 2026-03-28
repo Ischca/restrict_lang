@@ -336,7 +336,7 @@ impl WasmCodeGen {
                         _ => {}
                     }
                 }
-                TopDecl::Impl(_) | TopDecl::Context(_) => {
+                TopDecl::Impl(_) | TopDecl::Context(_) | TopDecl::Form(_) | TopDecl::Takes(_) => {
                     // Not yet implemented
                 }
             }
@@ -375,7 +375,7 @@ impl WasmCodeGen {
                         _ => {}
                     }
                 }
-                TopDecl::Impl(_) | TopDecl::Context(_) => {
+                TopDecl::Impl(_) | TopDecl::Context(_) | TopDecl::Form(_) | TopDecl::Takes(_) => {
                     // Not yet implemented
                 }
             }
@@ -2844,7 +2844,7 @@ impl WasmCodeGen {
                         _ => {}
                     }
                 }
-                TopDecl::Impl(_) | TopDecl::Context(_) => {
+                TopDecl::Impl(_) | TopDecl::Context(_) | TopDecl::Form(_) | TopDecl::Takes(_) => {
                     // Not yet implemented
                 }
             }

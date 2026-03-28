@@ -114,6 +114,22 @@ pub enum TypeError {
     /// Invalid temporal constraint
     #[error("Invalid temporal constraint: {0} within {1}")]
     InvalidTemporalConstraint(String, String),
+
+    /// Duplicate form declaration
+    #[error("Duplicate form: {0}")]
+    DuplicateForm(String),
+
+    /// Form not found
+    #[error("Undefined form: {0}")]
+    UndefinedForm(String),
+
+    /// Missing method in takes declaration
+    #[error("Missing form method `{method}` required by form `{form}`")]
+    MissingFormMethod { form: String, method: String },
+
+    /// Missing associated type in takes declaration
+    #[error("Missing associated type `{assoc_type}` required by form `{form}`")]
+    MissingAssociatedType { form: String, assoc_type: String },
 }
 
 /// A type error with optional source location information.
@@ -293,6 +309,30 @@ impl SpannedTypeError {
                 format!("invalid temporal constraint"),
                 vec![format!("`{}` cannot be used within `{}`", outer, inner)],
                 vec![],
+            ),
+            TypeError::DuplicateForm(name) => (
+                "E0020",
+                format!("duplicate form `{}`", name),
+                vec!["a form with this name is already defined".to_string()],
+                vec![],
+            ),
+            TypeError::UndefinedForm(name) => (
+                "E0021",
+                format!("cannot find form `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or define the form".to_string()],
+            ),
+            TypeError::MissingFormMethod { form, method } => (
+                "E0022",
+                format!("missing method `{}` required by form `{}`", method, form),
+                vec![],
+                vec![format!("add an implementation for `{}`", method)],
+            ),
+            TypeError::MissingAssociatedType { form, assoc_type } => (
+                "E0023",
+                format!("missing associated type `{}` required by form `{}`", assoc_type, form),
+                vec![],
+                vec![format!("add a type implementation for `{}`", assoc_type)],
             ),
         };
 
@@ -595,6 +635,20 @@ struct RecordDef {
     temporal_constraints: Vec<TemporalConstraint>,
 }
 
+#[derive(Debug)]
+struct FormMethodSig {
+    type_params: Vec<TypeParam>,
+    params: Vec<(String, TypedType)>,
+    return_type: TypedType,
+}
+
+#[derive(Debug)]
+struct FormDef {
+    type_params: Vec<TypeParam>,
+    associated_types: Vec<(String, Vec<TypeParam>)>,
+    methods: HashMap<String, FormMethodSig>,
+}
+
 #[derive(Debug, Clone)]
 struct FunctionDef {
     params: Vec<(String, TypedType)>,
@@ -634,6 +688,10 @@ pub struct TypeChecker {
     // Expression types mapped by pointer address (for codegen)
     // Safe because AST is not mutated between type checking and code generation
     expr_types: HashMap<usize, TypedType>,
+    // Form definitions (trait-like interfaces)
+    forms: HashMap<String, FormDef>,
+    // Track which types have taken which forms: type_name -> [form_names]
+    form_adoptions: HashMap<String, Vec<String>>,
 }
 
 // ============================================================
@@ -715,6 +773,8 @@ impl TypeChecker {
             collected_errors: Vec::new(),
             symbol_table: Vec::new(),
             expr_types: HashMap::new(),
+            forms: HashMap::new(),
+            form_adoptions: HashMap::new(),
         };
 
         // Register built-in functions and traits
@@ -895,6 +955,16 @@ impl TypeChecker {
                         }
                     }
                 }
+                TopDecl::Form(form) => {
+                    if let Err(e) = self.check_form_decl(form) {
+                        self.add_error_smart(e, form.span);
+                    }
+                }
+                TopDecl::Takes(takes) => {
+                    if let Err(e) = self.check_takes_decl(takes) {
+                        self.add_error_smart(e, takes.span);
+                    }
+                }
             }
         }
 
@@ -984,6 +1054,7 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             }],
             temporal_constraints: vec![],
@@ -1005,6 +1076,7 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             }],
             temporal_constraints: vec![],
@@ -1023,6 +1095,7 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             }],
             temporal_constraints: vec![],
@@ -1201,6 +1274,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         
@@ -1281,6 +1355,7 @@ impl TypeChecker {
             name: "U".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
 
@@ -1334,6 +1409,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         
@@ -1368,6 +1444,7 @@ impl TypeChecker {
             name: "U".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
 
@@ -1423,6 +1500,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![TypeBound { trait_name: "Display".to_string() }],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         self.functions.insert("print".to_string(), FunctionDef {
@@ -1908,12 +1986,14 @@ impl TypeChecker {
                         name: "T".to_string(),
                         bounds: vec![],
                         derivation_bound: None,
+                        of_forms: vec![],
                         is_temporal: false,
                     },
                     TypeParam {
                         name: "U".to_string(),
                         bounds: vec![],
                         derivation_bound: None,
+                        of_forms: vec![],
                         is_temporal: false,
                     },
                 ],
@@ -1928,12 +2008,14 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             };
             let u_param = TypeParam {
                 name: "U".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             };
             self.functions.insert("list_zip".to_string(), FunctionDef {
@@ -2594,6 +2676,9 @@ impl TypeChecker {
             crate::ast::TopDecl::Export(_) => {
                 // Export wrapper - should not happen as we unwrap exports
             }
+            crate::ast::TopDecl::Form(_) | crate::ast::TopDecl::Takes(_) => {
+                // TODO: Handle form/takes imports
+            }
         }
         Ok(())
     }
@@ -2611,9 +2696,116 @@ impl TypeChecker {
             TopDecl::Impl(impl_block) => self.check_impl_block(impl_block),
             TopDecl::Context(context) => self.check_context_decl(context),
             TopDecl::Export(export_decl) => self.check_top_decl(&export_decl.item),
+            TopDecl::Form(form) => self.check_form_decl(form),
+            TopDecl::Takes(takes) => self.check_takes_decl(takes),
         }
     }
-    
+
+    fn check_form_decl(&mut self, form: &FormDecl) -> Result<(), TypeError> {
+        // Check for duplicate form names
+        if self.forms.contains_key(&form.name) {
+            return Err(TypeError::DuplicateForm(form.name.clone()));
+        }
+
+        // Push type parameter scope for the form's own type params
+        self.push_type_param_scope(&form.type_params);
+
+        // Convert associated types
+        let associated_types: Vec<(String, Vec<TypeParam>)> = form.associated_types
+            .iter()
+            .map(|at| (at.name.clone(), at.type_params.clone()))
+            .collect();
+
+        // Convert method signatures
+        let mut methods = HashMap::new();
+        for method in &form.methods {
+            // Push method-level type params
+            self.push_type_param_scope(&method.type_params);
+
+            let mut params = Vec::new();
+            for (name, ty) in &method.params {
+                let typed_ty = self.convert_type(ty)?;
+                params.push((name.clone(), typed_ty));
+            }
+
+            let return_type = if let Some(ref rt) = method.return_type {
+                self.convert_type(rt)?
+            } else {
+                TypedType::Unit
+            };
+
+            methods.insert(method.name.clone(), FormMethodSig {
+                type_params: method.type_params.clone(),
+                params,
+                return_type,
+            });
+
+            self.pop_type_param_scope();
+        }
+
+        self.pop_type_param_scope();
+
+        // Register the form
+        self.forms.insert(form.name.clone(), FormDef {
+            type_params: form.type_params.clone(),
+            associated_types,
+            methods,
+        });
+
+        Ok(())
+    }
+
+    fn check_takes_decl(&mut self, takes: &TakesDecl) -> Result<(), TypeError> {
+        // Verify the referenced form exists
+        let form_def = match self.forms.get(&takes.form_name) {
+            Some(def) => def,
+            None => return Err(TypeError::UndefinedForm(takes.form_name.clone())),
+        };
+
+        // Collect required method names and associated type names
+        let required_methods: Vec<String> = form_def.methods.keys().cloned().collect();
+        let required_assoc_types: Vec<String> = form_def.associated_types
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        // Verify all required associated types are implemented
+        let provided_assoc_types: HashSet<String> = takes.associated_type_impls
+            .iter()
+            .map(|at| at.name.clone())
+            .collect();
+        for required in &required_assoc_types {
+            if !provided_assoc_types.contains(required) {
+                return Err(TypeError::MissingAssociatedType {
+                    form: takes.form_name.clone(),
+                    assoc_type: required.clone(),
+                });
+            }
+        }
+
+        // Verify all required methods are implemented
+        let provided_methods: HashSet<String> = takes.method_impls
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
+        for required in &required_methods {
+            if !provided_methods.contains(required) {
+                return Err(TypeError::MissingFormMethod {
+                    form: takes.form_name.clone(),
+                    method: required.clone(),
+                });
+            }
+        }
+
+        // Record the adoption
+        self.form_adoptions
+            .entry(takes.type_name.clone())
+            .or_insert_with(Vec::new)
+            .push(takes.form_name.clone());
+
+        Ok(())
+    }
+
     fn check_record_decl(&mut self, record: &RecordDecl) -> Result<(), TypeError> {
         // Register type parameters (both regular and temporal)
         let mut type_param_names: HashSet<String> = HashSet::new();

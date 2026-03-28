@@ -118,6 +118,10 @@ pub enum TopDecl {
     Binding(BindDecl),
     /// Export declaration (makes item public)
     Export(ExportDecl),
+    /// Form declaration (behavioral contract, like trait)
+    Form(FormDecl),
+    /// Takes declaration (form adoption by a type)
+    Takes(TakesDecl),
 }
 
 /// Export declaration that makes an item publicly available.
@@ -190,6 +194,114 @@ pub struct FieldDecl {
     pub name: String,
     /// Field type
     pub ty: Type,
+}
+
+/// Form declaration: a behavioral contract (similar to trait).
+///
+/// # Example
+///
+/// ```restrict
+/// form Container<T> {
+///     type Mapped<U>
+///     fold<U>: (self, init: U, f: |U, T| -> U) -> U
+///     empty<U>: () -> Mapped<U>
+///     append: (self, elem: T) -> Self
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormDecl {
+    /// Form name (e.g., "Container")
+    pub name: String,
+    /// Type parameters (e.g., <T>)
+    pub type_params: Vec<TypeParam>,
+    /// Associated type declarations
+    pub associated_types: Vec<AssociatedTypeDef>,
+    /// Method signatures
+    pub methods: Vec<FormMethodDecl>,
+    /// Source location
+    pub span: Option<Span>,
+}
+
+/// Associated type definition within a form.
+///
+/// # Example
+/// ```restrict
+/// type Mapped<U>
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssociatedTypeDef {
+    /// Type name (e.g., "Mapped")
+    pub name: String,
+    /// Type parameters (e.g., <U>)
+    pub type_params: Vec<TypeParam>,
+}
+
+/// Method signature within a form (no body, just signature).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormMethodDecl {
+    /// Method name (e.g., "fold")
+    pub name: String,
+    /// Method-level type parameters (e.g., <U>)
+    pub type_params: Vec<TypeParam>,
+    /// Parameter types (including self)
+    pub params: Vec<(String, Type)>,
+    /// Return type
+    pub return_type: Option<Type>,
+}
+
+/// Takes declaration: a type adopts a form by providing implementations.
+///
+/// # Example
+///
+/// ```restrict
+/// List<T> takes Container<T> {
+///     type Mapped<U> = List<U>
+///     fold = |self, init, f| { ... }
+///     empty = || { [] }
+///     append = |self, elem| { ... }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct TakesDecl {
+    /// Type that is adopting the form (e.g., "List")
+    pub type_name: String,
+    /// Type parameters of the adopting type (e.g., <T>)
+    pub type_params: Vec<TypeParam>,
+    /// Form being adopted (e.g., "Container")
+    pub form_name: String,
+    /// Type arguments for the form (e.g., <T>)
+    pub form_type_args: Vec<Type>,
+    /// Associated type implementations
+    pub associated_type_impls: Vec<AssociatedTypeImpl>,
+    /// Method implementations
+    pub method_impls: Vec<FormMethodImpl>,
+    /// Source location
+    pub span: Option<Span>,
+}
+
+/// Associated type implementation within a takes declaration.
+///
+/// # Example
+/// ```restrict
+/// type Mapped<U> = List<U>
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssociatedTypeImpl {
+    /// Type name (e.g., "Mapped")
+    pub name: String,
+    /// Type parameters (e.g., <U>)
+    pub type_params: Vec<TypeParam>,
+    /// The concrete type (e.g., List<U>)
+    pub resolved_type: Type,
+}
+
+/// Method implementation within a takes declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormMethodImpl {
+    /// Method name (e.g., "fold")
+    pub name: String,
+    /// Implementation body (typically a lambda expression)
+    pub body: Expr,
 }
 
 /// Implementation block that adds methods to a type.
@@ -306,6 +418,8 @@ pub struct TypeParam {
     pub bounds: Vec<TypeBound>,
     /// Derivation bound (e.g., `T from ParentType`)
     pub derivation_bound: Option<String>,
+    /// Form constraints (e.g., `T of Container`)
+    pub of_forms: Vec<String>,
     /// Whether this is a temporal type parameter (starts with ~)
     pub is_temporal: bool,
 }

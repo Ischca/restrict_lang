@@ -1169,6 +1169,7 @@ impl TypeChecker {
         self.register_std_prelude();
         self.register_std_string();
         self.register_std_contexts();
+        self.register_std_forms();
         
         // Arena introspection functions
         self.functions.insert("arena_bytes_used".to_string(), FunctionDef {
@@ -2100,6 +2101,149 @@ impl TypeChecker {
         self.records.insert("HttpClient".to_string(), RecordDef {
             fields: http_fields,
             type_params: vec![],
+            temporal_constraints: vec![],
+        });
+    }
+
+    fn register_std_forms(&mut self) {
+        use crate::ast::TypeParam;
+
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: false,
+        };
+        let u_param = TypeParam {
+            name: "U".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: false,
+        };
+
+        // ============================================================
+        // Container form: the standard behavioral contract for collections
+        // ============================================================
+        let mut container_methods = HashMap::new();
+        container_methods.insert("fold".to_string(), FormMethodSig {
+            type_params: vec![u_param.clone()],
+            params: vec![
+                ("self".to_string(), TypedType::TypeParam("Self".to_string())),
+                ("init".to_string(), TypedType::TypeParam("U".to_string())),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("U".to_string()), TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::TypeParam("U".to_string()),
+        });
+        container_methods.insert("empty".to_string(), FormMethodSig {
+            type_params: vec![u_param.clone()],
+            params: vec![],
+            return_type: TypedType::TypeParam("Mapped".to_string()),
+        });
+        container_methods.insert("append".to_string(), FormMethodSig {
+            type_params: vec![],
+            params: vec![
+                ("self".to_string(), TypedType::TypeParam("Self".to_string())),
+                ("elem".to_string(), TypedType::TypeParam("T".to_string())),
+            ],
+            return_type: TypedType::TypeParam("Self".to_string()),
+        });
+        self.forms.insert("Container".to_string(), FormDef {
+            type_params: vec![t_param.clone()],
+            associated_types: vec![("Mapped".to_string(), vec![u_param.clone()])],
+            methods: container_methods,
+        });
+
+        // Register List<T> takes Container<T>
+        self.form_adoptions
+            .entry("List".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        // Register Option<T> takes Container<T>
+        self.form_adoptions
+            .entry("Option".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        // ============================================================
+        // Generic map, filter, forEach (no type prefix, import-free)
+        // These work on any type that takes Container
+        // ============================================================
+
+        // map<T, U>(container, f: |T| -> U) -> container.Mapped<U>
+        // For List<T>: returns List<U>
+        // For Option<T>: returns Option<U>
+        self.functions.insert("map".to_string(), FunctionDef {
+            params: vec![
+                ("container".to_string(), TypedType::TypeParam("C".to_string())),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::TypeParam("C".to_string()), // simplified: should be C.Mapped<U>
+            type_params: vec![
+                TypeParam {
+                    name: "C".to_string(),
+                    bounds: vec![],
+                    derivation_bound: None,
+                    of_forms: vec!["Container".to_string()],
+                    is_temporal: false,
+                },
+                t_param.clone(),
+                u_param.clone(),
+            ],
+            temporal_constraints: vec![],
+        });
+
+        // filter<T>(container, pred: |T| -> Bool) -> container
+        self.functions.insert("filter".to_string(), FunctionDef {
+            params: vec![
+                ("container".to_string(), TypedType::TypeParam("C".to_string())),
+                ("pred".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Boolean),
+                }),
+            ],
+            return_type: TypedType::TypeParam("C".to_string()),
+            type_params: vec![
+                TypeParam {
+                    name: "C".to_string(),
+                    bounds: vec![],
+                    derivation_bound: None,
+                    of_forms: vec!["Container".to_string()],
+                    is_temporal: false,
+                },
+                t_param.clone(),
+            ],
+            temporal_constraints: vec![],
+        });
+
+        // forEach<T>(container, f: |T| -> Unit) -> Unit
+        self.functions.insert("forEach".to_string(), FunctionDef {
+            params: vec![
+                ("container".to_string(), TypedType::TypeParam("C".to_string())),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Unit),
+                }),
+            ],
+            return_type: TypedType::Unit,
+            type_params: vec![
+                TypeParam {
+                    name: "C".to_string(),
+                    bounds: vec![],
+                    derivation_bound: None,
+                    of_forms: vec!["Container".to_string()],
+                    is_temporal: false,
+                },
+                t_param.clone(),
+            ],
             temporal_constraints: vec![],
         });
     }

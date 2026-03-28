@@ -295,6 +295,9 @@ impl WasmCodeGen {
             }
         }
         
+        // Register built-in form/takes (Container for List/Option)
+        self.register_builtin_forms();
+
         // Generate built-in functions
         self.generate_builtin_functions()?;
 
@@ -3522,6 +3525,58 @@ impl WasmCodeGen {
         }
     }
     
+    /// Register built-in form definitions and adoptions.
+    /// Container form is available without import for List and Option.
+    fn register_builtin_forms(&mut self) {
+        // Container form: fold, empty, append
+        self.form_defs.insert("Container".to_string(), vec![
+            "fold".to_string(),
+            "empty".to_string(),
+            "append".to_string(),
+        ]);
+
+        // List takes Container
+        self.form_adoptions
+            .entry("List".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        // Map List's Container methods to existing WASM builtins
+        // These point to the existing list_forEach, list_filter, list_map WASM functions
+        // For now, register the method mappings so form method resolution works
+        self.takes_methods.insert(
+            ("List".to_string(), "fold".to_string()),
+            "list_fold".to_string(),
+        );
+        self.takes_methods.insert(
+            ("List".to_string(), "empty".to_string()),
+            "list_empty".to_string(),
+        );
+        self.takes_methods.insert(
+            ("List".to_string(), "append".to_string()),
+            "list_append_elem".to_string(),
+        );
+
+        // Option takes Container
+        self.form_adoptions
+            .entry("Option".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        self.takes_methods.insert(
+            ("Option".to_string(), "fold".to_string()),
+            "option_fold".to_string(),
+        );
+        self.takes_methods.insert(
+            ("Option".to_string(), "empty".to_string()),
+            "option_empty".to_string(),
+        );
+        self.takes_methods.insert(
+            ("Option".to_string(), "append".to_string()),
+            "option_append".to_string(),
+        );
+    }
+
     /// Register a form definition, storing its method names.
     fn register_form_definition(&mut self, form: &FormDecl) {
         let method_names: Vec<String> = form.methods.iter()

@@ -270,7 +270,7 @@ fn test_typecheck_form_declaration_registers() {
 #[test]
 fn test_typecheck_form_with_associated_types_registers() {
     let input = r#"
-        form Container<T> {
+        form MyContainer<T> {
             type Mapped<U>
             fold<U>: (x: T, init: U) -> U
             append: (x: T, elem: T) -> T

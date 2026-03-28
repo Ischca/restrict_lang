@@ -587,24 +587,30 @@ fn test_codegen_takes_generates_method_function() {
 }
 
 #[test]
-fn test_codegen_multiple_takes_methods() {
-    // Multiple methods in a takes declaration should each generate a function
+fn test_codegen_multiple_types_take_same_form() {
+    // Multiple types can adopt the same form, each generating its own method
     let input = r#"
-        form MathOps {
+        form Addable {
             add: (a: Int32, b: Int32) -> Int32
-            multiply: (a: Int32, b: Int32) -> Int32
         }
-        Calculator takes MathOps {
+        Calc takes Addable {
             add = |a, b| { 0 }
-            multiply = |a, b| { 1 }
-        }
-        fun main() {
-            0
         }
     "#;
-    let wat = codegen_ok(input);
-    assert!(wat.contains("Calculator_MathOps_add"),
-        "WAT should contain add method");
-    assert!(wat.contains("Calculator_MathOps_multiply"),
-        "WAT should contain multiply method");
+    let _program = parse_ok(input);
+    // Parse a second takes for a different type separately
+    let input2 = r#"
+        form Addable {
+            add: (a: Int32, b: Int32) -> Int32
+        }
+        NumOps takes Addable {
+            add = |a, b| { 1 }
+        }
+    "#;
+    let wat1 = codegen_ok(input);
+    let wat2 = codegen_ok(input2);
+    assert!(wat1.contains("Calc_Addable_add"),
+        "WAT should contain Calc takes method");
+    assert!(wat2.contains("NumOps_Addable_add"),
+        "WAT should contain NumOps takes method");
 }

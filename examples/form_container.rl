@@ -225,7 +225,7 @@ Option<T> takes Container<T> {
 // Note the return type `container.Mapped<U>` -- this is an associated type
 // projection. For List<T> it resolves to List<U>; for Option<T>, Option<U>.
 // 戻り値型 `container.Mapped<U>` は関連型射影である。
-fun map(container of Container<T>, f: |T| -> U) -> container.Mapped<U> = {
+fun map<C of Container, T, U>: (container: C, f: |T| -> U) -> C.Mapped<U> = {
     (container, container.empty<U>(), |acc, elem| {
         (acc, (elem) f) append
     }) fold
@@ -237,7 +237,7 @@ fun map(container of Container<T>, f: |T| -> U) -> container.Mapped<U> = {
 // The return type is the same container type (not Mapped), since element
 // type does not change.
 // 要素型は変わらないため、戻り値は同じコンテナ型。
-fun filter(container of Container<T>, pred: |T| -> Bool) -> container = {
+fun filter<C of Container, T>: (container: C, pred: |T| -> Bool) -> C = {
     (container, container.empty<T>(), |acc, elem| {
         (elem) pred then { (acc, elem) append } else { acc }
     }) fold
@@ -245,19 +245,19 @@ fun filter(container of Container<T>, pred: |T| -> Bool) -> container = {
 
 // forEach: execute a side-effecting function on every element.
 // forEach: 各要素に副作用のある関数を実行する。
-fun forEach(container of Container<T>, f: |T| -> Unit) -> Unit = {
+fun forEach<C of Container, T>: (container: C, f: |T| -> Unit) -> Unit = {
     (container, (), |_, elem| { (elem) f }) fold
 }
 
 // sum: add all elements in a numeric container.
 // sum: 数値コンテナの全要素を合計する。
-fun sum(container of Container<Int32>) -> Int32 = {
+fun sum<C of Container>: (container: C) -> Int32 = {
     (container, 0, |acc, x| { acc + x }) fold
 }
 
 // count: how many elements are in the container.
 // count: コンテナ内の要素数を返す。
-fun count(container of Container<T>) -> Int32 = {
+fun count<C of Container, T>: (container: C) -> Int32 = {
     (container, 0, |acc, _| { acc + 1 }) fold
 }
 
@@ -411,7 +411,7 @@ fun max(a of Comparable, b of Comparable) -> a = {
 
 // process: works with any container whose elements are printable.
 // process: 要素がprintableな任意のコンテナで動作する。
-fun process(data of Container<T> + Printable) = {
+fun process<C of Container + Printable, T>: (data: C) = {
     // We can use Container methods (fold, empty, append)
     // AND Printable methods (to_string) on data.
     // dataに対してContainerメソッド(fold, empty, append)と
@@ -427,7 +427,7 @@ fun process(data of Container<T> + Printable) = {
 // display_sorted: requires Container + Printable for the container,
 // and Comparable for the elements.
 // display_sorted: コンテナにはContainer + Printable、要素にはComparableを要求する。
-fun display_sorted(data of Container<T> + Printable, _unused: T of Comparable) = {
+fun display_sorted<C of Container + Printable, T of Comparable>: (data: C) = {
     // Sort (if the container is also Sortable), then print
     // ソート(コンテナがSortableでもある場合)して表示
     val sorted_data = (data) sort;

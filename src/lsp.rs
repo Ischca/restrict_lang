@@ -675,9 +675,9 @@ impl LanguageServer for RestrictLanguageServer {
             CompletionItem::new_simple("list_map".to_string(), "list_map<T, U>(list: List<T>, f: (T) -> U) -> List<U>".to_string()),
 
             // Generic container operations (work on List, Option, any type taking Container)
-            CompletionItem::new_simple("map".to_string(), "map<C of Container, T, U>(container: C, f: (T) -> U) -> C".to_string()),
-            CompletionItem::new_simple("filter".to_string(), "filter<C of Container, T>(container: C, pred: (T) -> Bool) -> C".to_string()),
-            CompletionItem::new_simple("forEach".to_string(), "forEach<C of Container, T>(container: C, f: (T) -> Unit) -> Unit".to_string()),
+            CompletionItem::new_simple("map".to_string(), "map<C of Container, T, U>: (container: C, f: |T| -> U) -> C".to_string()),
+            CompletionItem::new_simple("filter".to_string(), "filter<C of Container, T>: (container: C, pred: |T| -> Bool) -> C".to_string()),
+            CompletionItem::new_simple("forEach".to_string(), "forEach<C of Container, T>: (container: C, f: |T| -> Unit) -> Unit".to_string()),
             
             // Option functions
             CompletionItem::new_simple("option_is_some".to_string(), "option_is_some<T>(opt: Option<T>) -> Bool".to_string()),

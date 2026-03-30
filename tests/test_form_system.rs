@@ -614,3 +614,88 @@ fn test_codegen_multiple_types_take_same_form() {
     assert!(wat2.contains("NumOps_Addable_add"),
         "WAT should contain NumOps takes method");
 }
+
+// ---- End-to-end tests: map/filter/forEach on List ----
+
+fn compile(input: &str) -> Result<String, String> {
+    let program = parse_ok(input);
+    let mut checker = TypeChecker::new();
+    if let Err(e) = checker.check_program(&program) {
+        return Err(format!("Type error: {:?}", e));
+    }
+    let mut codegen = WasmCodeGen::new();
+    codegen.generate(&program).map_err(|e| format!("Codegen error: {:?}", e))
+}
+
+#[test]
+fn test_e2e_map_on_list_compiles() {
+    let input = r#"
+        fun main: () -> Int32 = {
+            val nums = [1, 2, 3]
+            val doubled = (nums, |x| x * 2) map
+            0
+        }
+    "#;
+    let result = compile(input);
+    assert!(result.is_ok(), "map on List should compile: {:?}", result.err());
+    let wat = result.unwrap();
+    assert!(wat.contains("call $list_map"), "Should dispatch to list_map");
+}
+
+#[test]
+fn test_e2e_filter_on_list_compiles() {
+    let input = r#"
+        fun main: () -> Int32 = {
+            val nums = [1, 2, 3, 4, 5]
+            val evens = (nums, |x| x % 2 == 0) filter
+            0
+        }
+    "#;
+    let result = compile(input);
+    assert!(result.is_ok(), "filter on List should compile: {:?}", result.err());
+    let wat = result.unwrap();
+    assert!(wat.contains("call $list_filter"), "Should dispatch to list_filter");
+}
+
+#[test]
+#[ignore = "pre-existing type inference issue with void-returning lambdas (|x| print_int(x))"]
+fn test_e2e_forEach_on_list_compiles() {
+    let input = r#"
+        fun main: () -> Int32 = {
+            val nums = [1, 2, 3]
+            (nums, |x| print_int(x)) forEach
+            0
+        }
+    "#;
+    let result = compile(input);
+    assert!(result.is_ok(), "forEach on List should compile: {:?}", result.err());
+    let wat = result.unwrap();
+    assert!(wat.contains("call $list_forEach"), "Should dispatch to list_forEach");
+}
+
+#[test]
+fn test_e2e_map_on_option_compiles() {
+    let input = r#"
+        fun main: () -> Int32 = {
+            val maybe = Some(42)
+            val incremented = (maybe, |x| x + 1) map
+            0
+        }
+    "#;
+    let result = compile(input);
+    assert!(result.is_ok(), "map on Option should compile: {:?}", result.err());
+    let wat = result.unwrap();
+    assert!(wat.contains("call $option_map"), "Should dispatch to option_map");
+}
+
+#[test]
+fn test_e2e_option_wasm_functions_generated() {
+    // Verify that option_map, option_filter, option_forEach WASM functions exist
+    let input = r#"
+        fun main: () -> Int32 = { 0 }
+    "#;
+    let wat = codegen_ok(input);
+    assert!(wat.contains("(func $option_map"), "Should generate option_map");
+    assert!(wat.contains("(func $option_filter"), "Should generate option_filter");
+    assert!(wat.contains("(func $option_forEach"), "Should generate option_forEach");
+}

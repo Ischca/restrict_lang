@@ -3602,9 +3602,30 @@ impl TypeChecker {
                 if let Some(required_parent) = &type_param.derivation_bound {
                     self.check_derivation_bound(concrete_type, required_parent)?;
                 }
+
+                // Check form constraints (C of Container)
+                for required_form in &type_param.of_forms {
+                    let base_type_name = match concrete_type {
+                        TypedType::List(_) => "List",
+                        TypedType::Option(_) => "Option",
+                        TypedType::Record { name, .. } => name.as_str(),
+                        _ => "",
+                    };
+                    let has_form = self.form_adoptions
+                        .get(base_type_name)
+                        .map_or(false, |forms| forms.contains(required_form));
+                    if !has_form {
+                        return Err(TypeError::UnsupportedFeature(
+                            format!(
+                                "Type {:?} does not take form '{}'",
+                                concrete_type, required_form
+                            )
+                        ));
+                    }
+                }
             }
         }
-        
+
         // Apply substitution to return type
         let instantiated_return_type = substitution.apply(&func_info.return_type);
         Ok(instantiated_return_type)

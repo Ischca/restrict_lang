@@ -309,6 +309,9 @@ impl WasmCodeGen {
         
         // Generate list operation functions
         self.generate_list_functions()?;
+
+        // Generate option operation functions
+        self.generate_option_functions()?;
         
         // Generate array operation functions
         self.generate_array_functions()?;
@@ -2806,6 +2809,135 @@ impl WasmCodeGen {
         Ok(())
     }
     
+    fn generate_option_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; Option operation functions (for Container form)\n");
+
+        // option_map: (opt: i32, func_idx: i32) -> i32
+        self.output.push_str("  (func $option_map (param $opt i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    ;; Check tag\n");
+        self.output.push_str("    local.get $opt\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; None: return new None\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.tee $ptr\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Some: apply function to value\n");
+        self.output.push_str("        local.get $opt\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        local.set $result\n");
+        self.output.push_str("        ;; Wrap result in Some\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.tee $ptr\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $result\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("option_map".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // option_filter: (opt: i32, func_idx: i32) -> i32
+        self.output.push_str("  (func $option_filter (param $opt i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    ;; Check tag\n");
+        self.output.push_str("    local.get $opt\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; None: return new None\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.tee $ptr\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Some: call predicate on value\n");
+        self.output.push_str("        local.get $opt\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        ;; If true, return original opt; else return None\n");
+        self.output.push_str("        (if (result i32)\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            local.get $opt\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("          (else\n");
+        self.output.push_str("            i32.const 8\n");
+        self.output.push_str("            call $allocate\n");
+        self.output.push_str("            local.tee $ptr\n");
+        self.output.push_str("            i32.const 0\n");
+        self.output.push_str("            i32.store\n");
+        self.output.push_str("            local.get $ptr\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("option_filter".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // option_forEach: (opt: i32, func_idx: i32) -> void
+        self.output.push_str("  (func $option_forEach (param $opt i32) (param $func_idx i32)\n");
+        self.output.push_str("    ;; Check tag\n");
+        self.output.push_str("    local.get $opt\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; None: do nothing\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Some: call function on value\n");
+        self.output.push_str("        local.get $opt\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32)))\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("option_forEach".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: None,
+        });
+
+        Ok(())
+    }
+
     fn generate_array_functions(&mut self) -> Result<(), CodeGenError> {
         self.output.push_str("\n  ;; Array operation functions\n");
         
@@ -3575,6 +3707,13 @@ impl WasmCodeGen {
             ("Option".to_string(), "append".to_string()),
             "option_append".to_string(),
         );
+
+        // Register return types for generic container functions
+        // These are resolved dynamically based on argument type, but codegen
+        // needs to know the return type family for variable type tracking
+        self.function_return_types.insert("map".to_string(), "List".to_string());
+        self.function_return_types.insert("filter".to_string(), "List".to_string());
+        self.function_return_types.insert("forEach".to_string(), "Unit".to_string());
     }
 
     /// Register a form definition, storing its method names.
@@ -3611,6 +3750,38 @@ impl WasmCodeGen {
 
         // Store the takes declaration for later code generation
         self.takes_decls.push(takes.clone());
+    }
+
+    /// Resolve the container type of an expression (List or Option).
+    /// Used to dispatch map/filter/forEach to the correct WASM function.
+    fn resolve_container_type(&self, expr: &Expr) -> Result<String, CodeGenError> {
+        // Check var_types for identifiers
+        if let Expr::Ident(var_name) = expr {
+            if let Some(type_name) = self.var_types.get(var_name) {
+                if type_name.starts_with("List") { return Ok("List".to_string()); }
+                if type_name.starts_with("Option") { return Ok("Option".to_string()); }
+            }
+        }
+        // List literals are always Lists
+        if let Expr::ListLit(_) = expr {
+            return Ok("List".to_string());
+        }
+        // Some/None are always Options
+        if matches!(expr, Expr::Some(_) | Expr::None | Expr::NoneTyped(_)) {
+            return Ok("Option".to_string());
+        }
+        // Check function return types for call expressions
+        if let Expr::Call(call) = expr {
+            if let Expr::Ident(func_name) = call.function.as_ref() {
+                if let Some(ret_type) = self.function_return_types.get(func_name.as_str()) {
+                    if ret_type.starts_with("List") { return Ok("List".to_string()); }
+                    if ret_type.starts_with("Option") { return Ok("Option".to_string()); }
+                }
+            }
+        }
+        Err(CodeGenError::CannotInferType(
+            "cannot determine container type for map/filter/forEach".to_string()
+        ))
     }
 
     /// Generate WASM functions for each method implementation in a takes declaration.
@@ -5172,6 +5343,28 @@ impl WasmCodeGen {
                 let resolved_name = self.resolve_generic_function_call(func_name, &call.args[0])?;
                 self.output.push_str(&format!("    call ${}\n", resolved_name));
                 return Ok(());
+            }
+
+            // Handle generic container functions (map, filter, forEach)
+            // Dispatches to concrete WASM functions based on first argument type
+            if (func_name == "map" || func_name == "filter" || func_name == "forEach")
+                && !call.args.is_empty()
+            {
+                if let Ok(container_type) = self.resolve_container_type(&call.args[0]) {
+                    let wasm_func = match (container_type.as_str(), func_name.as_str()) {
+                        ("List", "map") => "list_map",
+                        ("List", "filter") => "list_filter",
+                        ("List", "forEach") => "list_forEach",
+                        ("Option", "map") => "option_map",
+                        ("Option", "filter") => "option_filter",
+                        ("Option", "forEach") => "option_forEach",
+                        _ => return Err(CodeGenError::UnsupportedType(
+                            format!("'{}' not supported for type '{}'", func_name, container_type)
+                        )),
+                    };
+                    self.output.push_str(&format!("    call ${}\n", wasm_func));
+                    return Ok(());
+                }
             }
 
             if self.functions.contains_key(func_name) {

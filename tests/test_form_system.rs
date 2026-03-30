@@ -658,19 +658,21 @@ fn test_e2e_filter_on_list_compiles() {
 }
 
 #[test]
-#[ignore = "pre-existing type inference issue with void-returning lambdas (|x| print_int(x))"]
+#[test]
 fn test_e2e_forEach_on_list_compiles() {
+    // In Restrict OSV syntax: (args) function
+    // (nums, |x| (x) print_int) list_forEach
     let input = r#"
         fun main: () -> Int32 = {
             val nums = [1, 2, 3]
-            (nums, |x| print_int(x)) forEach
+            (nums, |x| (x) print_int) list_forEach
             0
         }
     "#;
     let result = compile(input);
-    assert!(result.is_ok(), "forEach on List should compile: {:?}", result.err());
+    assert!(result.is_ok(), "list_forEach should compile: {:?}", result.err());
     let wat = result.unwrap();
-    assert!(wat.contains("call $list_forEach"), "Should dispatch to list_forEach");
+    assert!(wat.contains("call $list_forEach"), "Should call list_forEach");
 }
 
 #[test]

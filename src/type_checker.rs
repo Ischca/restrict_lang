@@ -2605,6 +2605,7 @@ impl TypeChecker {
                 "String" => Ok(TypedType::String),
                 "Char" => Ok(TypedType::Char),
                 "Unit" => Ok(TypedType::Unit),
+                "Self" | "self" => Ok(TypedType::TypeParam("Self".to_string())),
                 _ => {
                     // Check if it's a type parameter
                     if self.is_type_param(name) {
@@ -2868,12 +2869,23 @@ impl TypeChecker {
 
             let mut params = Vec::new();
             for (name, ty) in &method.params {
-                let typed_ty = self.convert_type(ty)?;
+                // "self" in form methods resolves to the adopting type (Self type param)
+                let typed_ty = if name == "self" {
+                    TypedType::TypeParam("Self".to_string())
+                } else {
+                    self.convert_type(ty)?
+                };
                 params.push((name.clone(), typed_ty));
             }
 
             let return_type = if let Some(ref rt) = method.return_type {
-                self.convert_type(rt)?
+                // "Self" in return type also resolves to the adopting type
+                match rt {
+                    crate::ast::Type::Named(n) if n == "Self" || n == "self" => {
+                        TypedType::TypeParam("Self".to_string())
+                    }
+                    _ => self.convert_type(rt)?
+                }
             } else {
                 TypedType::Unit
             };
@@ -3627,7 +3639,24 @@ impl TypeChecker {
         }
 
         // Apply substitution to return type
-        let instantiated_return_type = substitution.apply(&func_info.return_type);
+        let mut instantiated_return_type = substitution.apply(&func_info.return_type);
+
+        // Handle associated type projection for container functions.
+        // For map: return type should be Container<U> (element type replaced with U)
+        // For filter/forEach: return type is Container<T> (same element type)
+        let called_func_name = if let Expr::Ident(name) = &*call.function {
+            name.as_str()
+        } else { "" };
+        if called_func_name == "map" {
+            if let Some(u_type) = substitution.substitutions.get("U") {
+                instantiated_return_type = match &instantiated_return_type {
+                    TypedType::List(_) => TypedType::List(Box::new(u_type.clone())),
+                    TypedType::Option(_) => TypedType::Option(Box::new(u_type.clone())),
+                    other => other.clone(),
+                };
+            }
+        }
+
         Ok(instantiated_return_type)
     }
     

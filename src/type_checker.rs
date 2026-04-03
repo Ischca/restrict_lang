@@ -2297,6 +2297,28 @@ impl TypeChecker {
         }
         false
     }
+
+    /// Check if a TypedType contains any unresolved type parameters.
+    fn contains_type_param(ty: &TypedType) -> bool {
+        match ty {
+            TypedType::TypeParam(_) => true,
+            TypedType::List(inner) | TypedType::Option(inner) | TypedType::Array(inner, _) => {
+                Self::contains_type_param(inner)
+            }
+            TypedType::Function { params, return_type } => {
+                params.iter().any(Self::contains_type_param)
+                    || Self::contains_type_param(return_type)
+            }
+            TypedType::Result { ok, err } => {
+                Self::contains_type_param(ok) || Self::contains_type_param(err)
+            }
+            TypedType::Tuple(types) => types.iter().any(Self::contains_type_param),
+            TypedType::Range(inner) => Self::contains_type_param(inner),
+            TypedType::Temporal { base_type, .. } => Self::contains_type_param(base_type),
+            TypedType::Record { type_args, .. } => type_args.iter().any(Self::contains_type_param),
+            _ => false, // Int32, Float64, Boolean, String, Char, Unit
+        }
+    }
     
     fn get_type_bounds(&self, type_param: &str) -> Vec<String> {
         for scope in self.type_bounds_env.iter().rev() {
@@ -3588,12 +3610,27 @@ impl TypeChecker {
         
         // For generic functions, perform type inference
         let mut substitution = TypeSubstitution::new();
-        
-        // Infer types from arguments
+
+        // Infer types from arguments, progressively resolving type parameters.
+        // Earlier arguments may resolve type params that help check later arguments.
         for (i, arg) in call.args.iter().enumerate() {
             let param_type = &func_info.params[i].1;
-            let actual_ty = self.check_expr(arg)?;
-            
+
+            // Apply current substitution to get a partially-resolved expected type.
+            // e.g., after resolving T=Int32 from the first arg, the second arg's
+            // expected type Function { params: [TypeParam("T")], return_type: Unit }
+            // becomes Function { params: [Int32], return_type: Unit }.
+            let partially_resolved = substitution.apply(param_type);
+
+            // Only pass expected type if it contains no unresolved type params,
+            // since lambdas can't meaningfully use unresolved params as context.
+            let has_unresolved = Self::contains_type_param(&partially_resolved);
+            let actual_ty = if has_unresolved {
+                self.check_expr(arg)?
+            } else {
+                self.check_expr_with_expected(arg, Some(&partially_resolved))?
+            };
+
             // Unify parameter type with actual argument type
             self.unify(param_type, &actual_ty, &mut substitution)?;
         }

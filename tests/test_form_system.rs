@@ -658,21 +658,20 @@ fn test_e2e_filter_on_list_compiles() {
 }
 
 #[test]
-#[test]
 fn test_e2e_forEach_on_list_compiles() {
-    // In Restrict OSV syntax: (args) function
-    // (nums, |x| (x) print_int) list_forEach
+    // Uses generic forEach (dispatches to list_forEach)
+    // Note: OSV syntax - (x) print_int, not print_int(x)
     let input = r#"
         fun main: () -> Int32 = {
             val nums = [1, 2, 3]
-            (nums, |x| (x) print_int) list_forEach
+            (nums, |x| (x) print_int) forEach
             0
         }
     "#;
     let result = compile(input);
-    assert!(result.is_ok(), "list_forEach should compile: {:?}", result.err());
+    assert!(result.is_ok(), "forEach on List should compile: {:?}", result.err());
     let wat = result.unwrap();
-    assert!(wat.contains("call $list_forEach"), "Should call list_forEach");
+    assert!(wat.contains("call $list_forEach"), "Should dispatch to list_forEach");
 }
 
 #[test]

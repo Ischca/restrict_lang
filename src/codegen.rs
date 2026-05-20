@@ -114,6 +114,14 @@ pub struct WasmCodeGen {
     instantiations: HashMap<String, Vec<(Vec<String>, String)>>,
     /// Function return types: function_name -> type_name (e.g., "String", "Int32")
     function_return_types: HashMap<String, String>,
+    /// Form definitions: form_name -> method names
+    form_defs: HashMap<String, Vec<String>>,
+    /// Form adoptions: type_name -> list of form names adopted
+    form_adoptions: HashMap<String, Vec<String>>,
+    /// Takes method implementations: (type_name, method_name) -> wasm_func_name
+    takes_methods: HashMap<(String, String), String>,
+    /// Takes declarations stored for code generation
+    takes_decls: Vec<TakesDecl>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +167,10 @@ impl WasmCodeGen {
             generic_functions: HashMap::new(),
             instantiations: HashMap::new(),
             function_return_types: HashMap::new(),
+            form_defs: HashMap::new(),
+            form_adoptions: HashMap::new(),
+            takes_methods: HashMap::new(),
+            takes_decls: Vec::new(),
         }
     }
     
@@ -283,6 +295,9 @@ impl WasmCodeGen {
             }
         }
         
+        // Register built-in form/takes (Container for List/Option)
+        self.register_builtin_forms();
+
         // Generate built-in functions
         self.generate_builtin_functions()?;
 
@@ -294,6 +309,9 @@ impl WasmCodeGen {
         
         // Generate list operation functions
         self.generate_list_functions()?;
+
+        // Generate option operation functions
+        self.generate_option_functions()?;
         
         // Generate array operation functions
         self.generate_array_functions()?;
@@ -336,12 +354,18 @@ impl WasmCodeGen {
                         _ => {}
                     }
                 }
+                TopDecl::Form(form) => {
+                    self.register_form_definition(form);
+                }
+                TopDecl::Takes(takes) => {
+                    self.register_takes_declaration(takes);
+                }
                 TopDecl::Impl(_) | TopDecl::Context(_) => {
                     // Not yet implemented
                 }
             }
         }
-        
+
         // Generate imported functions first
         if !self.imported_functions.is_empty() {
             self.output.push_str("\n  ;; Imported functions (inlined)\n");
@@ -375,7 +399,10 @@ impl WasmCodeGen {
                         _ => {}
                     }
                 }
-                TopDecl::Impl(_) | TopDecl::Context(_) => {
+                TopDecl::Takes(takes) => {
+                    self.generate_takes_methods(takes)?;
+                }
+                TopDecl::Impl(_) | TopDecl::Context(_) | TopDecl::Form(_) => {
                     // Not yet implemented
                 }
             }
@@ -2557,10 +2584,360 @@ impl WasmCodeGen {
             _params: vec![WasmType::I32],
             result: Some(WasmType::I32),
         });
-        
+
+        // list_forEach: (list: i32, func_idx: i32) -> void
+        // Iterates over list elements, calling func for each element
+        self.output.push_str("  (func $list_forEach (param $list i32) (param $func_idx i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $length i32)\n");
+        self.output.push_str("    ;; Load list length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $length\n");
+        self.output.push_str("    ;; Initialize index to 0\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    ;; Loop over elements\n");
+        self.output.push_str("    (block $break\n");
+        self.output.push_str("      (loop $continue\n");
+        self.output.push_str("        ;; Check i < length\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $length\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $break\n");
+        self.output.push_str("        ;; Load element: list + 8 + (i * 4)\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        ;; Call function with element\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32)))\n");
+        self.output.push_str("        ;; Increment i\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $continue\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("list_forEach".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: None,
+        });
+
+        // list_filter: (list: i32, func_idx: i32) -> i32 (new list)
+        // Returns a new list containing only elements where predicate returns true (non-zero)
+        self.output.push_str("  (func $list_filter (param $list i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $length i32)\n");
+        self.output.push_str("    (local $new_list i32)\n");
+        self.output.push_str("    (local $new_len i32)\n");
+        self.output.push_str("    (local $elem i32)\n");
+        self.output.push_str("    ;; Load source list length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $length\n");
+        self.output.push_str("    ;; Allocate new list with max possible size (same as original)\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_list\n");
+        self.output.push_str("    ;; Set initial length to 0\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Set capacity\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Initialize counters\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $new_len\n");
+        self.output.push_str("    ;; Loop over elements\n");
+        self.output.push_str("    (block $break\n");
+        self.output.push_str("      (loop $continue\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $length\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $break\n");
+        self.output.push_str("        ;; Load element\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.set $elem\n");
+        self.output.push_str("        ;; Call predicate\n");
+        self.output.push_str("        local.get $elem\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        ;; If result is true (non-zero), add to new list\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            ;; Store element in new list\n");
+        self.output.push_str("            local.get $new_list\n");
+        self.output.push_str("            i32.const 8\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $new_len\n");
+        self.output.push_str("            i32.const 4\n");
+        self.output.push_str("            i32.mul\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.get $elem\n");
+        self.output.push_str("            i32.store\n");
+        self.output.push_str("            ;; Increment new_len\n");
+        self.output.push_str("            local.get $new_len\n");
+        self.output.push_str("            i32.const 1\n");
+        self.output.push_str("            i32.add\n");
+        self.output.push_str("            local.set $new_len\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("        ;; Increment i\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $continue\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    ;; Update final length\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    local.get $new_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Return new list\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("list_filter".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // list_map: (list: i32, func_idx: i32) -> i32 (new list)
+        // Returns a new list with func applied to each element
+        self.output.push_str("  (func $list_map (param $list i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $i i32)\n");
+        self.output.push_str("    (local $length i32)\n");
+        self.output.push_str("    (local $new_list i32)\n");
+        self.output.push_str("    ;; Load source list length\n");
+        self.output.push_str("    local.get $list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $length\n");
+        self.output.push_str("    ;; Allocate new list: 8 bytes header + (length * 4) bytes data\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $new_list\n");
+        self.output.push_str("    ;; Set length\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Set capacity = length\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $length\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    ;; Initialize index\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $i\n");
+        self.output.push_str("    ;; Loop over elements\n");
+        self.output.push_str("    (block $break\n");
+        self.output.push_str("      (loop $continue\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        local.get $length\n");
+        self.output.push_str("        i32.ge_u\n");
+        self.output.push_str("        br_if $break\n");
+        self.output.push_str("        ;; Calculate destination address\n");
+        self.output.push_str("        local.get $new_list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        ;; Load source element\n");
+        self.output.push_str("        local.get $list\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.mul\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        ;; Call map function\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        ;; Store result in new list\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        ;; Increment i\n");
+        self.output.push_str("        local.get $i\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.set $i\n");
+        self.output.push_str("        br $continue\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    ;; Return new list\n");
+        self.output.push_str("    local.get $new_list\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("list_map".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
         Ok(())
     }
     
+    fn generate_option_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; Option operation functions (for Container form)\n");
+
+        // option_map: (opt: i32, func_idx: i32) -> i32
+        self.output.push_str("  (func $option_map (param $opt i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $result i32)\n");
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    ;; Check tag\n");
+        self.output.push_str("    local.get $opt\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; None: return new None\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.tee $ptr\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Some: apply function to value\n");
+        self.output.push_str("        local.get $opt\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        local.set $result\n");
+        self.output.push_str("        ;; Wrap result in Some\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.tee $ptr\n");
+        self.output.push_str("        i32.const 1\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        local.get $result\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("option_map".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // option_filter: (opt: i32, func_idx: i32) -> i32
+        self.output.push_str("  (func $option_filter (param $opt i32) (param $func_idx i32) (result i32)\n");
+        self.output.push_str("    (local $ptr i32)\n");
+        self.output.push_str("    ;; Check tag\n");
+        self.output.push_str("    local.get $opt\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if (result i32)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; None: return new None\n");
+        self.output.push_str("        i32.const 8\n");
+        self.output.push_str("        call $allocate\n");
+        self.output.push_str("        local.tee $ptr\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("        local.get $ptr\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Some: call predicate on value\n");
+        self.output.push_str("        local.get $opt\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32) (result i32)))\n");
+        self.output.push_str("        ;; If true, return original opt; else return None\n");
+        self.output.push_str("        (if (result i32)\n");
+        self.output.push_str("          (then\n");
+        self.output.push_str("            local.get $opt\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("          (else\n");
+        self.output.push_str("            i32.const 8\n");
+        self.output.push_str("            call $allocate\n");
+        self.output.push_str("            local.tee $ptr\n");
+        self.output.push_str("            i32.const 0\n");
+        self.output.push_str("            i32.store\n");
+        self.output.push_str("            local.get $ptr\n");
+        self.output.push_str("          )\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("option_filter".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: Some(WasmType::I32),
+        });
+
+        // option_forEach: (opt: i32, func_idx: i32) -> void
+        self.output.push_str("  (func $option_forEach (param $opt i32) (param $func_idx i32)\n");
+        self.output.push_str("    ;; Check tag\n");
+        self.output.push_str("    local.get $opt\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        ;; None: do nothing\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        ;; Some: call function on value\n");
+        self.output.push_str("        local.get $opt\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output.push_str("        local.get $func_idx\n");
+        self.output.push_str("        call_indirect (type (func (param i32)))\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert("option_forEach".to_string(), FunctionSig {
+            _params: vec![WasmType::I32, WasmType::I32],
+            result: None,
+        });
+
+        Ok(())
+    }
+
     fn generate_array_functions(&mut self) -> Result<(), CodeGenError> {
         self.output.push_str("\n  ;; Array operation functions\n");
         
@@ -2623,14 +3000,19 @@ impl WasmCodeGen {
                         _ => {}
                     }
                 }
-                TopDecl::Impl(_) | TopDecl::Context(_) => {
-                    // Not yet implemented
+                TopDecl::Takes(takes) => {
+                    for method_impl in &takes.method_impls {
+                        self.collect_strings_from_expr(&method_impl.body)?;
+                    }
+                }
+                TopDecl::Impl(_) | TopDecl::Context(_) | TopDecl::Form(_) => {
+                    // Forms have no bodies to collect strings from
                 }
             }
         }
         Ok(())
     }
-    
+
     fn collect_strings_from_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
         for stmt in &block.statements {
             match stmt {
@@ -2692,6 +3074,10 @@ impl WasmCodeGen {
             }
             Expr::FieldAccess(expr, _) => {
                 self.collect_strings_from_expr(expr)?;
+            }
+            Expr::RangeLit(range) => {
+                self.collect_strings_from_expr(&range.start)?;
+                self.collect_strings_from_expr(&range.end)?;
             }
             Expr::ListLit(items) => {
                 for item in items {
@@ -3065,6 +3451,7 @@ impl WasmCodeGen {
                     Ok("Unit".to_string())
                 }
             }
+            Expr::RangeLit(_) => Ok("Range".to_string()),
             Expr::ListLit(_) => Ok("List".to_string()),
             Expr::ArrayLit(_) => Ok("Array".to_string()),
             Expr::Pipe(pipe) => {
@@ -3186,7 +3573,7 @@ impl WasmCodeGen {
         // Records don't have methods in the current AST
         Ok(())
     }
-    
+
     fn convert_type(&self, ty: &Type) -> Result<WasmType, CodeGenError> {
         match ty {
             Type::Named(name) => {
@@ -3270,6 +3657,213 @@ impl WasmCodeGen {
         }
     }
     
+    /// Register built-in form definitions and adoptions.
+    /// Container form is available without import for List and Option.
+    fn register_builtin_forms(&mut self) {
+        // Container form: fold, empty, append
+        self.form_defs.insert("Container".to_string(), vec![
+            "fold".to_string(),
+            "empty".to_string(),
+            "append".to_string(),
+        ]);
+
+        // List takes Container
+        self.form_adoptions
+            .entry("List".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        // Map List's Container methods to existing WASM builtins
+        // These point to the existing list_forEach, list_filter, list_map WASM functions
+        // For now, register the method mappings so form method resolution works
+        self.takes_methods.insert(
+            ("List".to_string(), "fold".to_string()),
+            "list_fold".to_string(),
+        );
+        self.takes_methods.insert(
+            ("List".to_string(), "empty".to_string()),
+            "list_empty".to_string(),
+        );
+        self.takes_methods.insert(
+            ("List".to_string(), "append".to_string()),
+            "list_append_elem".to_string(),
+        );
+
+        // Option takes Container
+        self.form_adoptions
+            .entry("Option".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        self.takes_methods.insert(
+            ("Option".to_string(), "fold".to_string()),
+            "option_fold".to_string(),
+        );
+        self.takes_methods.insert(
+            ("Option".to_string(), "empty".to_string()),
+            "option_empty".to_string(),
+        );
+        self.takes_methods.insert(
+            ("Option".to_string(), "append".to_string()),
+            "option_append".to_string(),
+        );
+
+        // Register return types for generic container functions
+        // These are resolved dynamically based on argument type, but codegen
+        // needs to know the return type family for variable type tracking
+        self.function_return_types.insert("map".to_string(), "List".to_string());
+        self.function_return_types.insert("filter".to_string(), "List".to_string());
+        self.function_return_types.insert("forEach".to_string(), "Unit".to_string());
+    }
+
+    /// Register a form definition, storing its method names.
+    fn register_form_definition(&mut self, form: &FormDecl) {
+        let method_names: Vec<String> = form.methods.iter()
+            .map(|m| m.name.clone())
+            .collect();
+        self.form_defs.insert(form.name.clone(), method_names);
+    }
+
+    /// Register a takes declaration, recording which type adopts which form
+    /// and mapping method names to mangled WASM function names.
+    fn register_takes_declaration(&mut self, takes: &TakesDecl) {
+        // Record that this type adopts this form
+        self.form_adoptions
+            .entry(takes.type_name.clone())
+            .or_insert_with(Vec::new)
+            .push(takes.form_name.clone());
+
+        // Register each method implementation with a mangled name
+        for method_impl in &takes.method_impls {
+            let mangled_name = format!("{}_{}_{}", takes.type_name, takes.form_name, method_impl.name);
+            self.takes_methods.insert(
+                (takes.type_name.clone(), method_impl.name.clone()),
+                mangled_name.clone(),
+            );
+            // Also register the function signature so it's known to the codegen
+            // For now, all form methods use i32 params/results (pointer-based)
+            self.functions.insert(mangled_name, FunctionSig {
+                _params: vec![WasmType::I32],
+                result: Some(WasmType::I32),
+            });
+        }
+
+        // Store the takes declaration for later code generation
+        self.takes_decls.push(takes.clone());
+    }
+
+    /// Resolve the container type of an expression (List or Option).
+    /// Used to dispatch map/filter/forEach to the correct WASM function.
+    fn resolve_container_type(&self, expr: &Expr) -> Result<String, CodeGenError> {
+        // Check var_types for identifiers
+        if let Expr::Ident(var_name) = expr {
+            if let Some(type_name) = self.var_types.get(var_name) {
+                if type_name.starts_with("List") { return Ok("List".to_string()); }
+                if type_name.starts_with("Option") { return Ok("Option".to_string()); }
+            }
+        }
+        // List literals are always Lists
+        if let Expr::ListLit(_) = expr {
+            return Ok("List".to_string());
+        }
+        // Some/None are always Options
+        if matches!(expr, Expr::Some(_) | Expr::None | Expr::NoneTyped(_)) {
+            return Ok("Option".to_string());
+        }
+        // Check function return types for call expressions
+        if let Expr::Call(call) = expr {
+            if let Expr::Ident(func_name) = call.function.as_ref() {
+                if let Some(ret_type) = self.function_return_types.get(func_name.as_str()) {
+                    if ret_type.starts_with("List") { return Ok("List".to_string()); }
+                    if ret_type.starts_with("Option") { return Ok("Option".to_string()); }
+                }
+            }
+        }
+        Err(CodeGenError::CannotInferType(
+            "cannot determine container type for map/filter/forEach".to_string()
+        ))
+    }
+
+    /// Generate WASM functions for each method implementation in a takes declaration.
+    fn generate_takes_methods(&mut self, takes: &TakesDecl) -> Result<(), CodeGenError> {
+        for method_impl in &takes.method_impls {
+            let mangled_name = format!("{}_{}_{}", takes.type_name, takes.form_name, method_impl.name);
+
+            self.output.push_str(&format!("\n  ;; {} takes {} - method {}\n",
+                takes.type_name, takes.form_name, method_impl.name));
+
+            // The body is typically a lambda expression. Generate it as a named function.
+            match &method_impl.body {
+                Expr::Lambda(lambda) => {
+                    self.current_function = Some(mangled_name.clone());
+                    self.push_scope();
+
+                    // Function header
+                    self.output.push_str(&format!("  (func ${}", mangled_name));
+
+                    // Parameters from the lambda (params are strings, all default to i32)
+                    let mut next_idx = 0u32;
+                    for param in &lambda.params {
+                        let wasm_type = WasmType::I32;
+                        self.output.push_str(&format!(" (param ${} {})",
+                            param, self.wasm_type_str(wasm_type)));
+                        self.add_local(param, next_idx);
+                        next_idx += 1;
+                    }
+
+                    // Result type - default to i32
+                    self.output.push_str(" (result i32)");
+                    self.output.push_str("\n");
+
+                    // Generate the lambda body
+                    self.generate_expr(&lambda.body)?;
+
+                    self.output.push_str("  )\n\n");
+                    self.pop_scope();
+                    self.current_function = None;
+                }
+                _ => {
+                    // Non-lambda body: wrap as a simple function that evaluates the expression
+                    self.current_function = Some(mangled_name.clone());
+                    self.push_scope();
+
+                    self.output.push_str(&format!("  (func ${} (result i32)\n", mangled_name));
+                    self.generate_expr(&method_impl.body)?;
+                    self.output.push_str("  )\n\n");
+
+                    self.pop_scope();
+                    self.current_function = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve a form method call to the concrete implementation for a given type.
+    /// Returns Some(mangled_name) if the method is a form method on a known type,
+    /// None otherwise.
+    fn resolve_form_method(&self, type_name: &str, method_name: &str) -> Option<String> {
+        // Direct lookup: (type_name, method_name) -> wasm_func_name
+        if let Some(wasm_name) = self.takes_methods.get(&(type_name.to_string(), method_name.to_string())) {
+            return Some(wasm_name.clone());
+        }
+
+        // Strip generic parameters for lookup (e.g., "List<Int>" -> "List")
+        let base_type = if let Some(idx) = type_name.find('<') {
+            &type_name[..idx]
+        } else {
+            type_name
+        };
+
+        if base_type != type_name {
+            if let Some(wasm_name) = self.takes_methods.get(&(base_type.to_string(), method_name.to_string())) {
+                return Some(wasm_name.clone());
+            }
+        }
+
+        None
+    }
+
     // Generate specialized versions of generic functions
     fn generate_generic_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
         // Store all generic functions for later monomorphization
@@ -4157,6 +4751,9 @@ impl WasmCodeGen {
             Expr::Pipe(pipe) => {
                 self.generate_pipe_expr(pipe)?;
             }
+            Expr::RangeLit(range) => {
+                self.generate_range_literal(range)?;
+            }
             Expr::ListLit(items) => {
                 self.generate_list_literal(items)?;
             }
@@ -4748,6 +5345,28 @@ impl WasmCodeGen {
                 return Ok(());
             }
 
+            // Handle generic container functions (map, filter, forEach)
+            // Dispatches to concrete WASM functions based on first argument type
+            if (func_name == "map" || func_name == "filter" || func_name == "forEach")
+                && !call.args.is_empty()
+            {
+                if let Ok(container_type) = self.resolve_container_type(&call.args[0]) {
+                    let wasm_func = match (container_type.as_str(), func_name.as_str()) {
+                        ("List", "map") => "list_map",
+                        ("List", "filter") => "list_filter",
+                        ("List", "forEach") => "list_forEach",
+                        ("Option", "map") => "option_map",
+                        ("Option", "filter") => "option_filter",
+                        ("Option", "forEach") => "option_forEach",
+                        _ => return Err(CodeGenError::UnsupportedType(
+                            format!("'{}' not supported for type '{}'", func_name, container_type)
+                        )),
+                    };
+                    self.output.push_str(&format!("    call ${}\n", wasm_func));
+                    return Ok(());
+                }
+            }
+
             if self.functions.contains_key(func_name) {
                 self.output.push_str(&format!("    call ${}\n", func_name));
             } else if self.generic_functions.contains_key(func_name) {
@@ -4756,51 +5375,85 @@ impl WasmCodeGen {
                 let mangled_name = self.record_instantiation(func_name, type_args);
                 self.output.push_str(&format!("    call ${}\n", mangled_name));
             } else {
-                // Check if it's a method call
+                // Check if it's a form method call on a known type
+                let mut resolved_form_method = false;
                 if let Some(obj_expr) = call.args.first() {
-                    // Try to determine the record type from the expression
-                    if let Some(record_type) = self.get_expr_type(obj_expr) {
-                        if let Some(methods) = self.methods.get(&record_type) {
-                            if methods.contains_key(func_name) {
-                                let mangled_name = format!("{}_{}", record_type, func_name);
-                                self.output.push_str(&format!("    call ${}\n", mangled_name));
-                                return Ok(());
+                    // Try to resolve via get_expr_type
+                    if let Some(obj_type) = self.get_expr_type(obj_expr) {
+                        if let Some(wasm_name) = self.resolve_form_method(&obj_type, func_name) {
+                            self.output.push_str(&format!("    call ${}\n", wasm_name));
+                            resolved_form_method = true;
+                        }
+                    }
+                    // Also try var_types for identifier arguments
+                    if !resolved_form_method {
+                        if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                            if let Some(var_type) = self.var_types.get(var_name).cloned() {
+                                if let Some(wasm_name) = self.resolve_form_method(&var_type, func_name) {
+                                    self.output.push_str(&format!("    call ${}\n", wasm_name));
+                                    resolved_form_method = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Check if it's a form method name found uniquely across all takes
+                if !resolved_form_method {
+                    let form_method_match: Option<String> = self.takes_methods.iter()
+                        .find(|((_, method), _)| method == func_name)
+                        .map(|(_, wasm_name)| wasm_name.clone());
+
+                    if let Some(wasm_name) = form_method_match {
+                        self.output.push_str(&format!("    call ${}\n", wasm_name));
+                        resolved_form_method = true;
+                    }
+                }
+
+                if !resolved_form_method {
+                    // Fall back to method call on a record type
+                    if let Some(obj_expr) = call.args.first() {
+                        if let Some(record_type) = self.get_expr_type(obj_expr) {
+                            if let Some(methods) = self.methods.get(&record_type) {
+                                if methods.contains_key(func_name) {
+                                    let mangled_name = format!("{}_{}", record_type, func_name);
+                                    self.output.push_str(&format!("    call ${}\n", mangled_name));
+                                    return Ok(());
+                                } else {
+                                    return Err(CodeGenError::UndefinedFunction(
+                                        format!("Method '{}' not found in record '{}'", func_name, record_type)
+                                    ));
+                                }
                             } else {
                                 return Err(CodeGenError::UndefinedFunction(
-                                    format!("Method '{}' not found in record '{}'", func_name, record_type)
+                                    format!("No methods defined for record '{}'", record_type)
                                 ));
                             }
                         } else {
-                            return Err(CodeGenError::UndefinedFunction(
-                                format!("No methods defined for record '{}'", record_type)
-                            ));
-                        }
-                    } else {
-                        // No type information - fall back to checking uniqueness
-                        let mut found_records = Vec::new();
-                        for (record_name, method_map) in &self.methods {
-                            if method_map.contains_key(func_name) {
-                                found_records.push(record_name.clone());
+                            // No type information - fall back to checking uniqueness
+                            let mut found_records = Vec::new();
+                            for (record_name, method_map) in &self.methods {
+                                if method_map.contains_key(func_name) {
+                                    found_records.push(record_name.clone());
+                                }
+                            }
+
+                            if found_records.is_empty() {
+                                return Err(CodeGenError::UndefinedFunction(func_name.clone()));
+                            } else if found_records.len() > 1 {
+                                return Err(CodeGenError::NotImplemented(
+                                    format!("Ambiguous method '{}' found in records: {:?}. Type-directed method resolution not yet implemented",
+                                        func_name, found_records)
+                                ));
+                            } else {
+                                let record_name = &found_records[0];
+                                let mangled_name = format!("{}_{}", record_name, func_name);
+                                self.output.push_str(&format!("    call ${}\n", mangled_name));
                             }
                         }
-                        
-                        if found_records.is_empty() {
-                            return Err(CodeGenError::UndefinedFunction(func_name.clone()));
-                        } else if found_records.len() > 1 {
-                            // Method exists in multiple records - ambiguous without type info
-                            return Err(CodeGenError::NotImplemented(
-                                format!("Ambiguous method '{}' found in records: {:?}. Type-directed method resolution not yet implemented", 
-                                    func_name, found_records)
-                            ));
-                        } else {
-                            // Unique method - safe to call
-                            let record_name = &found_records[0];
-                            let mangled_name = format!("{}_{}", record_name, func_name);
-                            self.output.push_str(&format!("    call ${}\n", mangled_name));
-                        }
+                    } else {
+                        return Err(CodeGenError::UndefinedFunction(func_name.clone()));
                     }
-                } else {
-                    return Err(CodeGenError::UndefinedFunction(func_name.clone()));
                 }
             }
         } else {
@@ -4984,6 +5637,8 @@ impl WasmCodeGen {
             // Scope operations
             Expr::ScopeCompose(_) => Ok(WasmType::I32),
             Expr::ScopeConcat(_) => Ok(WasmType::I32),
+            // Range (pointer to memory)
+            Expr::RangeLit(_) => Ok(WasmType::I32),
             _ => Err(CodeGenError::CannotInferType(
                 format!("cannot infer WASM type of expression: {:?}", std::mem::discriminant(expr))
             ))
@@ -5362,6 +6017,46 @@ impl WasmCodeGen {
         }
     }
     
+    fn generate_range_literal(&mut self, range: &RangeLit) -> Result<(), CodeGenError> {
+        // Range is represented as a struct in memory: { start: i32, end: i32, inclusive: i32 }
+        // Total size: 12 bytes
+        let range_size = 12;
+
+        self.output.push_str("    ;; Range literal\n");
+
+        // Allocate memory for range struct
+        self.output.push_str(&format!("    i32.const {} ;; range size\n", range_size));
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $list_tmp\n");
+
+        // Store start value
+        self.output.push_str("    local.get $list_tmp\n");
+        self.generate_expr(&range.start)?;
+        self.output.push_str("    i32.store\n");
+
+        // Store end value
+        self.output.push_str("    local.get $list_tmp\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.generate_expr(&range.end)?;
+        self.output.push_str("    i32.store\n");
+
+        // Store inclusive flag (1 = inclusive, 0 = exclusive)
+        self.output.push_str("    local.get $list_tmp\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str(&format!("    i32.const {} ;; {}\n",
+            if range.inclusive { 1 } else { 0 },
+            if range.inclusive { "inclusive" } else { "exclusive" }
+        ));
+        self.output.push_str("    i32.store\n");
+
+        // Return the range pointer
+        self.output.push_str("    local.get $list_tmp\n");
+
+        Ok(())
+    }
+
     fn generate_list_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
         let list_size = 8 + (items.len() * 4); // Header (length + capacity) + elements
 

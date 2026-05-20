@@ -521,7 +521,8 @@ fn get_semantic_tokens_internal(source: &str) -> Vec<SemanticToken> {
                 Token::With | Token::Clone | Token::Freeze | Token::Import |
                 Token::From | Token::Context | Token::Impl | Token::Async |
                 Token::Await | Token::Return | Token::Sealed | Token::Export |
-                Token::Where | Token::Spawn => "keyword",
+                Token::Where | Token::Spawn | Token::Form | Token::Takes |
+                Token::Of => "keyword",
 
                 // Literals
                 Token::IntLit(_) | Token::FloatLit(_) => "number",
@@ -546,7 +547,8 @@ fn get_semantic_tokens_internal(source: &str) -> Vec<SemanticToken> {
                 Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
                 Token::Assign | Token::Eq | Token::Ne | Token::Lt | Token::Gt |
                 Token::Le | Token::Ge | Token::Tilde |
-                Token::Dot | Token::Colon | Token::Comma | Token::Semicolon => "operator",
+                Token::Dot | Token::DotDot | Token::DotDotLt |
+                Token::Colon | Token::Comma | Token::Semicolon => "operator",
 
                 // Option and Result types
                 Token::Some | Token::None | Token::Ok | Token::Err => "keyword",

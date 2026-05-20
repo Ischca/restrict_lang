@@ -526,11 +526,12 @@ fn type_param(input: &str) -> ParseResult<TypeParam> {
     
     // Temporal parameters don't have trait bounds or derivation bounds
     if is_temporal {
-        return Ok((input, TypeParam { 
-            name, 
-            bounds: vec![], 
-            derivation_bound: None, 
-            is_temporal: true 
+        return Ok((input, TypeParam {
+            name,
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: true
         }));
     }
     
@@ -540,7 +541,7 @@ fn type_param(input: &str) -> ParseResult<TypeParam> {
         let (input, parent_name) = ident(input)?;
         Ok((input, parent_name))
     })(input)?;
-    
+
     // Parse optional trait bounds: : Display + Clone + Debug
     let (input, bounds) = opt(|input| {
         let (input, _) = expect_token(Token::Colon)(input)?;
@@ -552,9 +553,20 @@ fn type_param(input: &str) -> ParseResult<TypeParam> {
             }
         )(input)
     })(input)?;
-    
+
     let bounds = bounds.unwrap_or_default();
-    Ok((input, TypeParam { name, bounds, derivation_bound, is_temporal: false }))
+
+    // Parse optional form constraints: of Container + Printable
+    let (input, of_forms) = opt(|input| {
+        let (input, _) = expect_token(Token::Of)(input)?;
+        separated_list1(
+            expect_token(Token::Plus),
+            ident
+        )(input)
+    })(input)?;
+    let of_forms = of_forms.unwrap_or_default();
+
+    Ok((input, TypeParam { name, bounds, derivation_bound, of_forms, is_temporal: false }))
 }
 
 #[allow(dead_code)]
@@ -703,7 +715,7 @@ fn atom_expr(input: &str) -> ParseResult<Expr> {
         ok_expr,    // Try Ok before ident
         err_expr,   // Try Err before ident
         array_lit,  // Try array literal before list
-        list_lit,  // Try list literal before record
+        range_or_list_lit,  // Try range or list literal before record
         map(record_lit, Expr::RecordLit),  // Try record_lit before ident
         value(Expr::It, expect_token(Token::It)),  // 'it' keyword
         map(ident, Expr::Ident),
@@ -752,8 +764,35 @@ fn err_expr(input: &str) -> ParseResult<Expr> {
     Ok((input, Expr::Err(Box::new(expr))))
 }
 
-fn list_lit(input: &str) -> ParseResult<Expr> {
+fn range_or_list_lit(input: &str) -> ParseResult<Expr> {
     let (input, _) = expect_token(Token::LBracket)(input)?;
+
+    // Try to parse the first expression
+    if let Ok((after_first, first_expr)) = expression(input) {
+        // Check for range operator `..` or `..<`
+        if let Ok((after_op, _)) = expect_token::<'_>(Token::DotDotLt)(after_first) {
+            // Exclusive range: [start..<end]
+            let (input, end_expr) = expression(after_op)?;
+            let (input, _) = expect_token(Token::RBracket)(input)?;
+            return Ok((input, Expr::RangeLit(RangeLit {
+                start: Box::new(first_expr),
+                end: Box::new(end_expr),
+                inclusive: false,
+            })));
+        }
+        if let Ok((after_op, _)) = expect_token::<'_>(Token::DotDot)(after_first) {
+            // Inclusive range: [start..end]
+            let (input, end_expr) = expression(after_op)?;
+            let (input, _) = expect_token(Token::RBracket)(input)?;
+            return Ok((input, Expr::RangeLit(RangeLit {
+                start: Box::new(first_expr),
+                end: Box::new(end_expr),
+                inclusive: true,
+            })));
+        }
+    }
+
+    // Fall back to list literal parsing
     let (input, elements) = separated_list0(
         expect_token(Token::Comma),
         map(expression, Box::new)
@@ -858,6 +897,29 @@ fn with_lifetime_expr(input: &str) -> ParseResult<Expr> {
     })))
 }
 
+fn tuple_pattern(input: &str) -> ParseResult<Pattern> {
+    let (input, _) = expect_token(Token::LParen)(input)?;
+
+    // Parse first pattern
+    let (input, first) = pattern(input)?;
+
+    // Require a comma to distinguish from grouping
+    let (input, _) = expect_token(Token::Comma)(input)?;
+    let mut elements = vec![Box::new(first)];
+
+    // Parse remaining patterns
+    let (input, rest) = separated_list0(
+        expect_token(Token::Comma),
+        pattern
+    )(input)?;
+    for elem in rest {
+        elements.push(Box::new(elem));
+    }
+
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    Ok((input, Pattern::Tuple(elements)))
+}
+
 fn pattern(input: &str) -> ParseResult<Pattern> {
     alt((
         // Check for wildcard pattern
@@ -872,6 +934,7 @@ fn pattern(input: &str) -> ParseResult<Pattern> {
         none_pattern,
         ok_pattern,    // Result Ok pattern
         err_pattern,   // Result Err pattern
+        tuple_pattern, // Tuple patterns before record/literal
         record_pattern,  // Try record patterns before identifiers
         list_pattern,  // Try list patterns before literals
         map(literal, |expr| match expr {
@@ -1394,6 +1457,254 @@ fn import_decl(input: &str) -> ParseResult<ImportDecl> {
     Ok((input, ImportDecl { module_path, items, span: None }))
 }
 
+/// Parse an associated type definition inside a form: `type Mapped<U>`
+fn form_associated_type(input: &str) -> ParseResult<AssociatedTypeDef> {
+    // Expect identifier "type"
+    let (input, kw) = ident(input)?;
+    if kw != "type" {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+    }
+    let (input, name) = ident(input)?;
+    // Parse optional type parameters: <U>
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            type_param
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
+    Ok((input, AssociatedTypeDef { name, type_params }))
+}
+
+/// Parse a method signature inside a form: `fold<U>: (self, init: U, f: |U, T| -> U) -> U`
+fn form_method_decl(input: &str) -> ParseResult<FormMethodDecl> {
+    let (input, name) = ident(input)?;
+    // "type" keyword starts an associated type, not a method
+    if name == "type" {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+    }
+    // Parse optional type parameters: <U>
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            type_param
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
+
+    // Parse colon and parameter list: (self, init: U, f: |U, T| -> U)
+    let (input, _) = expect_token(Token::Colon)(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, params) = separated_list0(
+        expect_token(Token::Comma),
+        |input| {
+            let (input, param_name) = ident(input)?;
+            // Check for optional type annotation
+            if let Ok((input, _)) = expect_token::<'_>(Token::Colon)(input) {
+                let (input, ty) = parse_type(input)?;
+                Ok((input, (param_name, ty)))
+            } else {
+                // Bare parameter (e.g., "self") gets a Named type of its own name
+                Ok((input, (param_name.clone(), Type::Named(param_name))))
+            }
+        }
+    )(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+
+    // Parse optional return type: -> U
+    let (input, return_type) = opt(|input| {
+        let (input, _) = expect_token(Token::ThinArrow)(input)?;
+        parse_type(input)
+    })(input)?;
+
+    Ok((input, FormMethodDecl { name, type_params, params, return_type }))
+}
+
+/// Parse a form declaration:
+/// ```text
+/// form Container<T> {
+///     type Mapped<U>
+///     fold<U>: (self, init: U, f: |U, T| -> U) -> U
+///     empty<U>: () -> Mapped<U>
+///     append: (self, elem: T) -> Self
+/// }
+/// ```
+fn form_decl(input: &str) -> ParseResult<FormDecl> {
+    let (input, _) = expect_token(Token::Form)(input)?;
+    let (input, name) = ident(input)?;
+
+    // Parse optional type parameters: <T>
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            type_param
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
+
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+
+    // Parse items inside the form: associated types and method signatures
+    let mut associated_types = Vec::new();
+    let mut methods = Vec::new();
+    let mut remaining = input;
+
+    loop {
+        let (rest, _) = skip(remaining)?;
+        remaining = rest;
+
+        // Check for closing brace
+        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
+            remaining = after_brace;
+            break;
+        }
+
+        // Try associated type first
+        if let Ok((rest, assoc_type)) = form_associated_type(remaining) {
+            associated_types.push(assoc_type);
+            remaining = rest;
+            continue;
+        }
+
+        // Try method signature
+        let (rest, method) = form_method_decl(remaining)?;
+        methods.push(method);
+        remaining = rest;
+    }
+
+    Ok((remaining, FormDecl {
+        name,
+        type_params,
+        associated_types,
+        methods,
+        span: None,
+    }))
+}
+
+/// Parse an associated type implementation inside a takes block: `type Mapped<U> = List<U>`
+fn takes_associated_type(input: &str) -> ParseResult<AssociatedTypeImpl> {
+    let (input, kw) = ident(input)?;
+    if kw != "type" {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+    }
+    let (input, name) = ident(input)?;
+    // Parse optional type parameters: <U>
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            type_param
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
+    let (input, _) = expect_token(Token::Assign)(input)?;
+    let (input, resolved_type) = parse_type(input)?;
+    Ok((input, AssociatedTypeImpl { name, type_params, resolved_type }))
+}
+
+/// Parse a method implementation inside a takes block: `fold = |self, init, f| { ... }`
+fn takes_method_impl(input: &str) -> ParseResult<FormMethodImpl> {
+    let (input, name) = ident(input)?;
+    // "type" keyword starts an associated type impl, not a method
+    if name == "type" {
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
+    }
+    let (input, _) = expect_token(Token::Assign)(input)?;
+    let (input, body) = expression(input)?;
+    Ok((input, FormMethodImpl { name, body }))
+}
+
+/// Parse a takes declaration:
+/// ```text
+/// List<T> takes Container<T> {
+///     type Mapped<U> = List<U>
+///     fold = |self, init, f| { ... }
+///     empty = || { [] }
+///     append = |self, elem| { ... }
+/// }
+/// ```
+fn takes_decl(input: &str) -> ParseResult<TakesDecl> {
+    let (input, type_name) = ident(input)?;
+
+    // Parse optional type parameters: <T>
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(
+            expect_token(Token::Comma),
+            type_param
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
+
+    let (input, _) = expect_token(Token::Takes)(input)?;
+    let (input, form_name) = ident(input)?;
+
+    // Parse optional form type arguments: <T>
+    let (input, form_type_args) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, args) = separated_list1(
+            expect_token(Token::Comma),
+            parse_type
+        )(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, args))
+    })(input)?;
+    let form_type_args = form_type_args.unwrap_or_default();
+
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+
+    // Parse items inside the takes block
+    let mut associated_type_impls = Vec::new();
+    let mut method_impls = Vec::new();
+    let mut remaining = input;
+
+    loop {
+        let (rest, _) = skip(remaining)?;
+        remaining = rest;
+
+        // Check for closing brace
+        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
+            remaining = after_brace;
+            break;
+        }
+
+        // Try associated type impl first
+        if let Ok((rest, assoc_type_impl)) = takes_associated_type(remaining) {
+            associated_type_impls.push(assoc_type_impl);
+            remaining = rest;
+            continue;
+        }
+
+        // Try method impl
+        let (rest, method_impl) = takes_method_impl(remaining)?;
+        method_impls.push(method_impl);
+        remaining = rest;
+    }
+
+    Ok((remaining, TakesDecl {
+        type_name,
+        type_params,
+        form_name,
+        form_type_args,
+        associated_type_impls,
+        method_impls,
+        span: None,
+    }))
+}
+
 fn export_decl(input: &str) -> ParseResult<TopDecl> {
     let (input, _) = expect_token(Token::Export)(input)?;
     let (input, item) = top_decl_inner(input)?;
@@ -1408,7 +1719,9 @@ fn top_decl_inner(input: &str) -> ParseResult<TopDecl> {
         map(record_decl, TopDecl::Record),
         map(impl_block, TopDecl::Impl),
         map(context_decl, TopDecl::Context),
-        map(bind_decl, TopDecl::Binding)
+        map(form_decl, TopDecl::Form),
+        map(takes_decl, TopDecl::Takes),
+        map(bind_decl, TopDecl::Binding),
     ))(input)
 }
 
@@ -1728,6 +2041,7 @@ fn expr_uses_it(expr: &Expr) -> bool {
         Expr::ScopeConcat(sc) => expr_uses_it(&sc.left) || expr_uses_it(&sc.right),
         Expr::WithLifetime(wl) => block_uses_it(&wl.body.statements, &wl.body.expr),
         Expr::Await(inner) | Expr::Spawn(inner) => expr_uses_it(inner),
+        Expr::RangeLit(range) => expr_uses_it(&range.start) || expr_uses_it(&range.end),
         // Literals and identifiers don't use 'it'
         Expr::IntLit(_) | Expr::FloatLit(_) | Expr::StringLit(_) |
         Expr::CharLit(_) | Expr::BoolLit(_) | Expr::Unit |
@@ -1980,5 +2294,66 @@ mod tests {
         let input = "fun main: () -> Unit = { 42 double println }";
         let result = parse_program(input);
         assert!(result.is_ok(), "Failed to parse OSV chain on same line: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_range_inclusive() {
+        let input = "fun main = { [1..5] }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse inclusive range: {:?}", result.err());
+        let (_, prog) = result.unwrap();
+        if let TopDecl::Function(fun) = &prog.declarations[0] {
+            if let Some(expr) = &fun.body.expr {
+                match expr.as_ref() {
+                    Expr::RangeLit(range) => {
+                        assert!(range.inclusive, "Expected inclusive range");
+                        assert_eq!(*range.start, Expr::IntLit(1));
+                        assert_eq!(*range.end, Expr::IntLit(5));
+                    }
+                    _ => panic!("Expected RangeLit, got {:?}", expr),
+                }
+            } else {
+                panic!("Expected expression in function body");
+            }
+        }
+    }
+
+    #[test]
+    fn test_range_exclusive() {
+        let input = "fun main = { [1..<5] }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse exclusive range: {:?}", result.err());
+        let (_, prog) = result.unwrap();
+        if let TopDecl::Function(fun) = &prog.declarations[0] {
+            if let Some(expr) = &fun.body.expr {
+                match expr.as_ref() {
+                    Expr::RangeLit(range) => {
+                        assert!(!range.inclusive, "Expected exclusive range");
+                        assert_eq!(*range.start, Expr::IntLit(1));
+                        assert_eq!(*range.end, Expr::IntLit(5));
+                    }
+                    _ => panic!("Expected RangeLit, got {:?}", expr),
+                }
+            } else {
+                panic!("Expected expression in function body");
+            }
+        }
+    }
+
+    #[test]
+    fn test_list_still_works() {
+        // Ensure list literals still parse correctly
+        let input = "fun main = { [1, 2, 3] }";
+        let result = parse_program(input);
+        assert!(result.is_ok(), "Failed to parse list literal: {:?}", result.err());
+        let (_, prog) = result.unwrap();
+        if let TopDecl::Function(fun) = &prog.declarations[0] {
+            if let Some(expr) = &fun.body.expr {
+                match expr.as_ref() {
+                    Expr::ListLit(items) => assert_eq!(items.len(), 3),
+                    _ => panic!("Expected ListLit, got {:?}", expr),
+                }
+            }
+        }
     }
 }

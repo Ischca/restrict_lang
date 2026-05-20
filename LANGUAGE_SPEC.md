@@ -487,13 +487,15 @@ val s4 = format "{} {}" 1 "2"
 ## 11. 追加仕様決定事項
 
 ### 11.1 Range型とリテラル
-- **Range型**: `Range<T, ~t>` - 時相統合された範囲型
-- **構文**: `[start..end]` はRange型を生成（Arrayではない）
+- **Range型**: `Range<T>` - 範囲型
+- **inclusive構文**: `[start..end]` — 両端含む（Kotlin風）
+- **exclusive構文**: `[start..<end]` — 終端を含まない（Swift風）
 - **使用例**:
 ```rust
-val range = [0..10]  // Range<Int32, ~local>
+val range = [1..5]     // Range<Int32>: 1, 2, 3, 4, 5 (inclusive)
+val range2 = [1..<5]   // Range<Int32>: 1, 2, 3, 4 (exclusive)
 val list = range |> toList  // List<Int32>への変換
-val array = range |> toArray<10>  // Array<Int32, 10>への変換
+val array = range |> toArray<5>  // Array<Int32, 5>への変換
 ```
 
 ### 11.2 オーバーフロー処理

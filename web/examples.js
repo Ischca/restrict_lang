@@ -138,6 +138,30 @@ fun main = {
     }
 }`,
 
+    'match': `// Pattern Matching — FizzBuzz
+//
+// The same FizzBuzz logic rewritten with tuple pattern matching.
+// Match the tuple (n % 3, n % 5) to avoid nested if-else.
+//
+// Compare with the if-else version in "Mutable & Loops".
+
+fun fizzbuzz: (n: Int) -> String = {
+    (n % 3, n % 5) match {
+        (0, 0) => { "FizzBuzz" }
+        (0, _) => { "Fizz" }
+        (_, 0) => { "Buzz" }
+        _      => { n int_to_string }
+    }
+}
+
+fun main = {
+    mut val i = 1
+    i <= 20 while {
+        i fizzbuzz |> println
+        i = i + 1
+    }
+}`,
+
     'compose': `// Scope Composition — Multiple Contexts
 //
 // Functions can require multiple contexts.

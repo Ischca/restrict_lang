@@ -114,6 +114,22 @@ pub enum TypeError {
     /// Invalid temporal constraint
     #[error("Invalid temporal constraint: {0} within {1}")]
     InvalidTemporalConstraint(String, String),
+
+    /// Duplicate form declaration
+    #[error("Duplicate form: {0}")]
+    DuplicateForm(String),
+
+    /// Form not found
+    #[error("Undefined form: {0}")]
+    UndefinedForm(String),
+
+    /// Missing method in takes declaration
+    #[error("Missing form method `{method}` required by form `{form}`")]
+    MissingFormMethod { form: String, method: String },
+
+    /// Missing associated type in takes declaration
+    #[error("Missing associated type `{assoc_type}` required by form `{form}`")]
+    MissingAssociatedType { form: String, assoc_type: String },
 }
 
 /// A type error with optional source location information.
@@ -294,6 +310,30 @@ impl SpannedTypeError {
                 vec![format!("`{}` cannot be used within `{}`", outer, inner)],
                 vec![],
             ),
+            TypeError::DuplicateForm(name) => (
+                "E0020",
+                format!("duplicate form `{}`", name),
+                vec!["a form with this name is already defined".to_string()],
+                vec![],
+            ),
+            TypeError::UndefinedForm(name) => (
+                "E0021",
+                format!("cannot find form `{}` in this scope", name),
+                vec![],
+                vec!["check spelling or define the form".to_string()],
+            ),
+            TypeError::MissingFormMethod { form, method } => (
+                "E0022",
+                format!("missing method `{}` required by form `{}`", method, form),
+                vec![],
+                vec![format!("add an implementation for `{}`", method)],
+            ),
+            TypeError::MissingAssociatedType { form, assoc_type } => (
+                "E0023",
+                format!("missing associated type `{}` required by form `{}`", assoc_type, form),
+                vec![],
+                vec![format!("add a type implementation for `{}`", assoc_type)],
+            ),
         };
 
         // Add "did you mean" suggestions if available
@@ -342,6 +382,7 @@ pub enum TypedType {
     TypeParam(String), // Generic type parameter
     Temporal { base_type: Box<TypedType>, temporals: Vec<String> }, // Type with temporal parameters
     Tuple(Vec<TypedType>), // Tuple type (e.g., (Int, String))
+    Range(Box<TypedType>), // Range type (e.g., Range<Int>)
 }
 
 /// Formats a TypedType for display in LSP hints
@@ -383,6 +424,7 @@ pub fn format_typed_type(ty: &TypedType) -> String {
                 .join(", ");
             format!("({})", types_str)
         }
+        TypedType::Range(inner) => format!("Range<{}>", format_typed_type(inner)),
     }
 }
 
@@ -411,6 +453,7 @@ pub fn is_copy_type(ty: &TypedType) -> bool {
         TypedType::TypeParam(_) => false,  // Unknown, assume not Copy
         TypedType::Temporal { base_type, .. } => is_copy_type(base_type),
         TypedType::Tuple(types) => types.iter().all(is_copy_type),
+        TypedType::Range(inner) => is_copy_type(inner),  // Range<Copy> is Copy
     }
 }
 
@@ -592,6 +635,20 @@ struct RecordDef {
     temporal_constraints: Vec<TemporalConstraint>,
 }
 
+#[derive(Debug)]
+struct FormMethodSig {
+    type_params: Vec<TypeParam>,
+    params: Vec<(String, TypedType)>,
+    return_type: TypedType,
+}
+
+#[derive(Debug)]
+struct FormDef {
+    type_params: Vec<TypeParam>,
+    associated_types: Vec<(String, Vec<TypeParam>)>,
+    methods: HashMap<String, FormMethodSig>,
+}
+
 #[derive(Debug, Clone)]
 struct FunctionDef {
     params: Vec<(String, TypedType)>,
@@ -631,6 +688,10 @@ pub struct TypeChecker {
     // Expression types mapped by pointer address (for codegen)
     // Safe because AST is not mutated between type checking and code generation
     expr_types: HashMap<usize, TypedType>,
+    // Form definitions (trait-like interfaces)
+    forms: HashMap<String, FormDef>,
+    // Track which types have taken which forms: type_name -> [form_names]
+    form_adoptions: HashMap<String, Vec<String>>,
 }
 
 // ============================================================
@@ -712,6 +773,8 @@ impl TypeChecker {
             collected_errors: Vec::new(),
             symbol_table: Vec::new(),
             expr_types: HashMap::new(),
+            forms: HashMap::new(),
+            form_adoptions: HashMap::new(),
         };
 
         // Register built-in functions and traits
@@ -892,6 +955,16 @@ impl TypeChecker {
                         }
                     }
                 }
+                TopDecl::Form(form) => {
+                    if let Err(e) = self.check_form_decl(form) {
+                        self.add_error_smart(e, form.span);
+                    }
+                }
+                TopDecl::Takes(takes) => {
+                    if let Err(e) = self.check_takes_decl(takes) {
+                        self.add_error_smart(e, takes.span);
+                    }
+                }
             }
         }
 
@@ -981,6 +1054,7 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             }],
             temporal_constraints: vec![],
@@ -1002,6 +1076,7 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             }],
             temporal_constraints: vec![],
@@ -1020,6 +1095,7 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             }],
             temporal_constraints: vec![],
@@ -1093,6 +1169,7 @@ impl TypeChecker {
         self.register_std_prelude();
         self.register_std_string();
         self.register_std_contexts();
+        self.register_std_forms();
         
         // Arena introspection functions
         self.functions.insert("arena_bytes_used".to_string(), FunctionDef {
@@ -1198,6 +1275,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         
@@ -1273,6 +1351,56 @@ impl TypeChecker {
             type_params: vec![t_param.clone()],
             temporal_constraints: vec![],
         });
+
+        let u_param = TypeParam {
+            name: "U".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: false,
+        };
+
+        // list_forEach<T>
+        self.functions.insert("list_forEach".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Unit),
+                }),
+            ],
+            return_type: TypedType::Unit,
+            type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // list_filter<T>
+        self.functions.insert("list_filter".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("predicate".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Boolean),
+                }),
+            ],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("T".to_string()))),
+            type_params: vec![t_param.clone()],
+            temporal_constraints: vec![],
+        });
+
+        // list_map<T, U>
+        self.functions.insert("list_map".to_string(), FunctionDef {
+            params: vec![
+                ("list".to_string(), TypedType::List(Box::new(TypedType::TypeParam("T".to_string())))),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::List(Box::new(TypedType::TypeParam("U".to_string()))),
+            type_params: vec![t_param.clone(), u_param.clone()],
+            temporal_constraints: vec![],
+        });
     }
     
     fn register_std_option(&mut self) {
@@ -1282,6 +1410,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         
@@ -1316,6 +1445,7 @@ impl TypeChecker {
             name: "U".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
 
@@ -1371,6 +1501,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![TypeBound { trait_name: "Display".to_string() }],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         self.functions.insert("print".to_string(), FunctionDef {
@@ -1856,12 +1987,14 @@ impl TypeChecker {
                         name: "T".to_string(),
                         bounds: vec![],
                         derivation_bound: None,
+                        of_forms: vec![],
                         is_temporal: false,
                     },
                     TypeParam {
                         name: "U".to_string(),
                         bounds: vec![],
                         derivation_bound: None,
+                        of_forms: vec![],
                         is_temporal: false,
                     },
                 ],
@@ -1876,12 +2009,14 @@ impl TypeChecker {
                 name: "T".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             };
             let u_param = TypeParam {
                 name: "U".to_string(),
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: false,
             };
             self.functions.insert("list_zip".to_string(), FunctionDef {
@@ -1970,6 +2105,149 @@ impl TypeChecker {
         });
     }
 
+    fn register_std_forms(&mut self) {
+        use crate::ast::TypeParam;
+
+        let t_param = TypeParam {
+            name: "T".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: false,
+        };
+        let u_param = TypeParam {
+            name: "U".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: false,
+        };
+
+        // ============================================================
+        // Container form: the standard behavioral contract for collections
+        // ============================================================
+        let mut container_methods = HashMap::new();
+        container_methods.insert("fold".to_string(), FormMethodSig {
+            type_params: vec![u_param.clone()],
+            params: vec![
+                ("self".to_string(), TypedType::TypeParam("Self".to_string())),
+                ("init".to_string(), TypedType::TypeParam("U".to_string())),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("U".to_string()), TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::TypeParam("U".to_string()),
+        });
+        container_methods.insert("empty".to_string(), FormMethodSig {
+            type_params: vec![u_param.clone()],
+            params: vec![],
+            return_type: TypedType::TypeParam("Mapped".to_string()),
+        });
+        container_methods.insert("append".to_string(), FormMethodSig {
+            type_params: vec![],
+            params: vec![
+                ("self".to_string(), TypedType::TypeParam("Self".to_string())),
+                ("elem".to_string(), TypedType::TypeParam("T".to_string())),
+            ],
+            return_type: TypedType::TypeParam("Self".to_string()),
+        });
+        self.forms.insert("Container".to_string(), FormDef {
+            type_params: vec![t_param.clone()],
+            associated_types: vec![("Mapped".to_string(), vec![u_param.clone()])],
+            methods: container_methods,
+        });
+
+        // Register List<T> takes Container<T>
+        self.form_adoptions
+            .entry("List".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        // Register Option<T> takes Container<T>
+        self.form_adoptions
+            .entry("Option".to_string())
+            .or_insert_with(Vec::new)
+            .push("Container".to_string());
+
+        // ============================================================
+        // Generic map, filter, forEach (no type prefix, import-free)
+        // These work on any type that takes Container
+        // ============================================================
+
+        // map<T, U>(container, f: |T| -> U) -> container.Mapped<U>
+        // For List<T>: returns List<U>
+        // For Option<T>: returns Option<U>
+        self.functions.insert("map".to_string(), FunctionDef {
+            params: vec![
+                ("container".to_string(), TypedType::TypeParam("C".to_string())),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                }),
+            ],
+            return_type: TypedType::TypeParam("C".to_string()), // simplified: should be C.Mapped<U>
+            type_params: vec![
+                TypeParam {
+                    name: "C".to_string(),
+                    bounds: vec![],
+                    derivation_bound: None,
+                    of_forms: vec!["Container".to_string()],
+                    is_temporal: false,
+                },
+                t_param.clone(),
+                u_param.clone(),
+            ],
+            temporal_constraints: vec![],
+        });
+
+        // filter<T>(container, pred: |T| -> Bool) -> container
+        self.functions.insert("filter".to_string(), FunctionDef {
+            params: vec![
+                ("container".to_string(), TypedType::TypeParam("C".to_string())),
+                ("pred".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Boolean),
+                }),
+            ],
+            return_type: TypedType::TypeParam("C".to_string()),
+            type_params: vec![
+                TypeParam {
+                    name: "C".to_string(),
+                    bounds: vec![],
+                    derivation_bound: None,
+                    of_forms: vec!["Container".to_string()],
+                    is_temporal: false,
+                },
+                t_param.clone(),
+            ],
+            temporal_constraints: vec![],
+        });
+
+        // forEach<T>(container, f: |T| -> Unit) -> Unit
+        self.functions.insert("forEach".to_string(), FunctionDef {
+            params: vec![
+                ("container".to_string(), TypedType::TypeParam("C".to_string())),
+                ("f".to_string(), TypedType::Function {
+                    params: vec![TypedType::TypeParam("T".to_string())],
+                    return_type: Box::new(TypedType::Unit),
+                }),
+            ],
+            return_type: TypedType::Unit,
+            type_params: vec![
+                TypeParam {
+                    name: "C".to_string(),
+                    bounds: vec![],
+                    derivation_bound: None,
+                    of_forms: vec!["Container".to_string()],
+                    is_temporal: false,
+                },
+                t_param.clone(),
+            ],
+            temporal_constraints: vec![],
+        });
+    }
+
     fn push_scope(&mut self) {
         self.var_env.push(HashMap::new());
     }
@@ -2018,6 +2296,28 @@ impl TypeChecker {
             }
         }
         false
+    }
+
+    /// Check if a TypedType contains any unresolved type parameters.
+    fn contains_type_param(ty: &TypedType) -> bool {
+        match ty {
+            TypedType::TypeParam(_) => true,
+            TypedType::List(inner) | TypedType::Option(inner) | TypedType::Array(inner, _) => {
+                Self::contains_type_param(inner)
+            }
+            TypedType::Function { params, return_type } => {
+                params.iter().any(Self::contains_type_param)
+                    || Self::contains_type_param(return_type)
+            }
+            TypedType::Result { ok, err } => {
+                Self::contains_type_param(ok) || Self::contains_type_param(err)
+            }
+            TypedType::Tuple(types) => types.iter().any(Self::contains_type_param),
+            TypedType::Range(inner) => Self::contains_type_param(inner),
+            TypedType::Temporal { base_type, .. } => Self::contains_type_param(base_type),
+            TypedType::Record { type_args, .. } => type_args.iter().any(Self::contains_type_param),
+            _ => false, // Int32, Float64, Boolean, String, Char, Unit
+        }
     }
     
     fn get_type_bounds(&self, type_param: &str) -> Vec<String> {
@@ -2327,6 +2627,7 @@ impl TypeChecker {
                 "String" => Ok(TypedType::String),
                 "Char" => Ok(TypedType::Char),
                 "Unit" => Ok(TypedType::Unit),
+                "Self" | "self" => Ok(TypedType::TypeParam("Self".to_string())),
                 _ => {
                     // Check if it's a type parameter
                     if self.is_type_param(name) {
@@ -2542,6 +2843,9 @@ impl TypeChecker {
             crate::ast::TopDecl::Export(_) => {
                 // Export wrapper - should not happen as we unwrap exports
             }
+            crate::ast::TopDecl::Form(_) | crate::ast::TopDecl::Takes(_) => {
+                // TODO: Handle form/takes imports
+            }
         }
         Ok(())
     }
@@ -2559,9 +2863,127 @@ impl TypeChecker {
             TopDecl::Impl(impl_block) => self.check_impl_block(impl_block),
             TopDecl::Context(context) => self.check_context_decl(context),
             TopDecl::Export(export_decl) => self.check_top_decl(&export_decl.item),
+            TopDecl::Form(form) => self.check_form_decl(form),
+            TopDecl::Takes(takes) => self.check_takes_decl(takes),
         }
     }
-    
+
+    fn check_form_decl(&mut self, form: &FormDecl) -> Result<(), TypeError> {
+        // Check for duplicate form names
+        if self.forms.contains_key(&form.name) {
+            return Err(TypeError::DuplicateForm(form.name.clone()));
+        }
+
+        // Push type parameter scope for the form's own type params
+        self.push_type_param_scope(&form.type_params);
+
+        // Convert associated types
+        let associated_types: Vec<(String, Vec<TypeParam>)> = form.associated_types
+            .iter()
+            .map(|at| (at.name.clone(), at.type_params.clone()))
+            .collect();
+
+        // Convert method signatures
+        let mut methods = HashMap::new();
+        for method in &form.methods {
+            // Push method-level type params
+            self.push_type_param_scope(&method.type_params);
+
+            let mut params = Vec::new();
+            for (name, ty) in &method.params {
+                // "self" in form methods resolves to the adopting type (Self type param)
+                let typed_ty = if name == "self" {
+                    TypedType::TypeParam("Self".to_string())
+                } else {
+                    self.convert_type(ty)?
+                };
+                params.push((name.clone(), typed_ty));
+            }
+
+            let return_type = if let Some(ref rt) = method.return_type {
+                // "Self" in return type also resolves to the adopting type
+                match rt {
+                    crate::ast::Type::Named(n) if n == "Self" || n == "self" => {
+                        TypedType::TypeParam("Self".to_string())
+                    }
+                    _ => self.convert_type(rt)?
+                }
+            } else {
+                TypedType::Unit
+            };
+
+            methods.insert(method.name.clone(), FormMethodSig {
+                type_params: method.type_params.clone(),
+                params,
+                return_type,
+            });
+
+            self.pop_type_param_scope();
+        }
+
+        self.pop_type_param_scope();
+
+        // Register the form
+        self.forms.insert(form.name.clone(), FormDef {
+            type_params: form.type_params.clone(),
+            associated_types,
+            methods,
+        });
+
+        Ok(())
+    }
+
+    fn check_takes_decl(&mut self, takes: &TakesDecl) -> Result<(), TypeError> {
+        // Verify the referenced form exists
+        let form_def = match self.forms.get(&takes.form_name) {
+            Some(def) => def,
+            None => return Err(TypeError::UndefinedForm(takes.form_name.clone())),
+        };
+
+        // Collect required method names and associated type names
+        let required_methods: Vec<String> = form_def.methods.keys().cloned().collect();
+        let required_assoc_types: Vec<String> = form_def.associated_types
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        // Verify all required associated types are implemented
+        let provided_assoc_types: HashSet<String> = takes.associated_type_impls
+            .iter()
+            .map(|at| at.name.clone())
+            .collect();
+        for required in &required_assoc_types {
+            if !provided_assoc_types.contains(required) {
+                return Err(TypeError::MissingAssociatedType {
+                    form: takes.form_name.clone(),
+                    assoc_type: required.clone(),
+                });
+            }
+        }
+
+        // Verify all required methods are implemented
+        let provided_methods: HashSet<String> = takes.method_impls
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
+        for required in &required_methods {
+            if !provided_methods.contains(required) {
+                return Err(TypeError::MissingFormMethod {
+                    form: takes.form_name.clone(),
+                    method: required.clone(),
+                });
+            }
+        }
+
+        // Record the adoption
+        self.form_adoptions
+            .entry(takes.type_name.clone())
+            .or_insert_with(Vec::new)
+            .push(takes.form_name.clone());
+
+        Ok(())
+    }
+
     fn check_record_decl(&mut self, record: &RecordDecl) -> Result<(), TypeError> {
         // Register type parameters (both regular and temporal)
         let mut type_param_names: HashSet<String> = HashSet::new();
@@ -2891,6 +3313,7 @@ impl TypeChecker {
             Expr::Match(match_expr) => self.check_match_expr(match_expr),
             Expr::ListLit(elements) => self.check_list_lit(elements, expected),
             Expr::ArrayLit(elements) => self.check_array_lit(elements, expected),
+            Expr::RangeLit(range) => self.check_range_lit(range),
             Expr::TupleLit(elements) => {
                 let mut element_types = Vec::new();
                 for elem in elements {
@@ -3187,12 +3610,27 @@ impl TypeChecker {
         
         // For generic functions, perform type inference
         let mut substitution = TypeSubstitution::new();
-        
-        // Infer types from arguments
+
+        // Infer types from arguments, progressively resolving type parameters.
+        // Earlier arguments may resolve type params that help check later arguments.
         for (i, arg) in call.args.iter().enumerate() {
             let param_type = &func_info.params[i].1;
-            let actual_ty = self.check_expr(arg)?;
-            
+
+            // Apply current substitution to get a partially-resolved expected type.
+            // e.g., after resolving T=Int32 from the first arg, the second arg's
+            // expected type Function { params: [TypeParam("T")], return_type: Unit }
+            // becomes Function { params: [Int32], return_type: Unit }.
+            let partially_resolved = substitution.apply(param_type);
+
+            // Only pass expected type if it contains no unresolved type params,
+            // since lambdas can't meaningfully use unresolved params as context.
+            let has_unresolved = Self::contains_type_param(&partially_resolved);
+            let actual_ty = if has_unresolved {
+                self.check_expr(arg)?
+            } else {
+                self.check_expr_with_expected(arg, Some(&partially_resolved))?
+            };
+
             // Unify parameter type with actual argument type
             self.unify(param_type, &actual_ty, &mut substitution)?;
         }
@@ -3213,11 +3651,49 @@ impl TypeChecker {
                 if let Some(required_parent) = &type_param.derivation_bound {
                     self.check_derivation_bound(concrete_type, required_parent)?;
                 }
+
+                // Check form constraints (C of Container)
+                for required_form in &type_param.of_forms {
+                    let base_type_name = match concrete_type {
+                        TypedType::List(_) => "List",
+                        TypedType::Option(_) => "Option",
+                        TypedType::Record { name, .. } => name.as_str(),
+                        _ => "",
+                    };
+                    let has_form = self.form_adoptions
+                        .get(base_type_name)
+                        .map_or(false, |forms| forms.contains(required_form));
+                    if !has_form {
+                        return Err(TypeError::UnsupportedFeature(
+                            format!(
+                                "Type {:?} does not take form '{}'",
+                                concrete_type, required_form
+                            )
+                        ));
+                    }
+                }
             }
         }
-        
+
         // Apply substitution to return type
-        let instantiated_return_type = substitution.apply(&func_info.return_type);
+        let mut instantiated_return_type = substitution.apply(&func_info.return_type);
+
+        // Handle associated type projection for container functions.
+        // For map: return type should be Container<U> (element type replaced with U)
+        // For filter/forEach: return type is Container<T> (same element type)
+        let called_func_name = if let Expr::Ident(name) = &*call.function {
+            name.as_str()
+        } else { "" };
+        if called_func_name == "map" {
+            if let Some(u_type) = substitution.substitutions.get("U") {
+                instantiated_return_type = match &instantiated_return_type {
+                    TypedType::List(_) => TypedType::List(Box::new(u_type.clone())),
+                    TypedType::Option(_) => TypedType::Option(Box::new(u_type.clone())),
+                    other => other.clone(),
+                };
+            }
+        }
+
         Ok(instantiated_return_type)
     }
     
@@ -4453,6 +4929,32 @@ impl TypeChecker {
         }
     }
     
+    fn check_range_lit(&mut self, range: &RangeLit) -> Result<TypedType, TypeError> {
+        let start_type = self.check_expr(&range.start)?;
+        let end_type = self.check_expr(&range.end)?;
+
+        // Start and end must have the same numeric type
+        if start_type != end_type {
+            return Err(TypeError::TypeMismatch {
+                expected: format!("{:?}", start_type),
+                found: format!("{:?}", end_type),
+            });
+        }
+
+        // Range only supports numeric types
+        match &start_type {
+            TypedType::Int32 | TypedType::Float64 => {}
+            _ => {
+                return Err(TypeError::TypeMismatch {
+                    expected: "numeric type (Int or Float)".to_string(),
+                    found: format!("{:?}", start_type),
+                });
+            }
+        }
+
+        Ok(TypedType::Range(Box::new(start_type)))
+    }
+
     fn check_list_lit(&mut self, elements: &[Box<Expr>], expected: Option<&TypedType>) -> Result<TypedType, TypeError> {
         if elements.is_empty() {
             // Empty list - infer from expected type if available
@@ -5390,6 +5892,10 @@ impl TypeChecker {
                 for field in &proto_clone.updates.fields {
                     free_vars.extend(self.collect_free_variables(&field.value, bound_vars));
                 }
+            }
+            Expr::RangeLit(range) => {
+                free_vars.extend(self.collect_free_variables(&range.start, bound_vars));
+                free_vars.extend(self.collect_free_variables(&range.end, bound_vars));
             }
             Expr::ListLit(elements) => {
                 for elem in elements {

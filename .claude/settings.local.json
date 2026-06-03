@@ -42,17 +42,7 @@
       "Bash(./test_arena_output)",
       "Bash(/opt/homebrew/bin/cargo build)",
       "Bash(./compile_clean.sh:*)",
-      "Bash(/usr/bin/env cargo build)",
-      "Bash(/Users/shota.watanabe_r0102/.cargo/bin/cargo run --bin restrict_lang test_factorial.rl)",
-      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")",
-      "Bash(/opt/homebrew/bin/cargo test test_recursive_functions --lib)",
-      "Bash(mise exec -- cargo test test_recursive_functions --lib)",
-      "Bash(mise trust:*)",
-      "Bash(mise install:*)",
-      "Bash(mise exec:*)",
-      "Bash(/Users/shota.watanabe_r0102/.cargo/bin/cargo build)",
-      "Bash(export PATH=$HOME/.cargo/bin:$PATH)",
-      "Bash(./debug_wat)"
+      "Bash(/usr/bin/env cargo build)"
     ],
     "deny": []
   }

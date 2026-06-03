@@ -153,7 +153,7 @@ List<T> takes Container<T> {
     //   (t, (init, h) f, f) fold  -->  t.fold(f(init, h), f)
     //
     // リスト構造の再帰的パターンマッチによる畳み込み。
-    fold = |self, init, f| {
+    fold: |self, init, f| {
         self match {
             // Non-empty list: fold the head into the accumulator, recurse on tail
             // 非空リスト: headをアキュムレータに畳み込み、tailで再帰
@@ -167,12 +167,12 @@ List<T> takes Container<T> {
 
     // An empty List<U>.
     // 空のList<U>。
-    empty = || { [] }
+    empty: || { [] }
 
     // Append by consing to front and reversing.
     // In a real implementation this could use a more efficient structure.
     // 先頭にconsして反転することで追加する。
-    append = |self, elem| { [elem | self] reverse }
+    append: |self, elem| { [elem | self] reverse }
 }
 
 
@@ -191,7 +191,7 @@ Option<T> takes Container<T> {
 
     // Fold: apply f if Some, otherwise return init.
     // 畳み込み: Someならfを適用、そうでなければinitを返す。
-    fold = |self, init, f| {
+    fold: |self, init, f| {
         self match {
             Some(v) => (init, v) f
             None => init
@@ -200,11 +200,11 @@ Option<T> takes Container<T> {
 
     // Empty Option is always None.
     // 空のOptionは常にNone。
-    empty = || { None }
+    empty: || { None }
 
     // Appending to an Option replaces its content.
     // Optionへの追加はその内容を置き換える。
-    append = |self, elem| { Some(elem) }
+    append: |self, elem| { Some(elem) }
 }
 
 
@@ -345,7 +345,7 @@ form Printable {
 
 // Int32 takes Printable
 Int32 takes Printable {
-    to_string = |self| { (self) int_to_string }
+    to_string: |self| { (self) int_to_string }
 }
 
 // List<T> takes Printable when T itself is Printable.
@@ -353,7 +353,7 @@ Int32 takes Printable {
 // T自体がPrintableの場合にのみList<T>がPrintableを採用する。
 // これは条件付き採用であり、制約が成り立つ場合にのみ適用される。
 List<T> takes Printable where T of Printable {
-    to_string = |self| {
+    to_string: |self| {
         val inner = (self, "", |acc, elem| {
             acc == "" then { (elem) to_string }
                       else { acc ++ ", " ++ (elem) to_string }
@@ -371,7 +371,7 @@ form Comparable {
 }
 
 Int32 takes Comparable {
-    compare = |self, other| {
+    compare: |self, other| {
         self < other then { -1 }
         else {
             self == other then { 0 } else { 1 }

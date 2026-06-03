@@ -1,18 +1,17 @@
-use restrict_lang::{parse_program, TypeChecker, generate};
+use restrict_lang::{generate, parse_program, TypeChecker};
 
 fn compile(source: &str) -> Result<String, String> {
     // Parse
-    let (_, ast) = parse_program(source)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
-    
+    let (_, ast) = parse_program(source).map_err(|e| format!("Parse error: {:?}", e))?;
+
     // Type check
     let mut type_checker = TypeChecker::new();
-    type_checker.check_program(&ast)
+    type_checker
+        .check_program(&ast)
         .map_err(|e| format!("Type error: {}", e))?;
-    
+
     // Generate code
-    generate(&ast)
-        .map_err(|e| format!("Codegen error: {}", e))
+    generate(&ast).map_err(|e| format!("Codegen error: {}", e))
 }
 
 #[test]
@@ -24,13 +23,16 @@ fn test_simple_mutable_binding() {
 
 #[test]
 fn test_mutable_reassignment() {
-    let input = "fun test = { mut val x = 5; x = 10; x }";
+    let input = r#"fun test = {
+        mut val x = 5
+        x = 10
+        x
+    }"#;
     let wat = compile(input).unwrap();
     assert!(wat.contains("local.set"));
 }
 
 #[test]
-#[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_immutable_reassignment_error() {
     let input = r#"fun test = {
     val x = 5;
@@ -43,19 +45,25 @@ fn test_immutable_reassignment_error() {
     }
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.contains("ImmutableReassignment") || err.contains("Cannot reassign to immutable"), 
-            "Expected immutable reassignment error but got: {}", err);
+    assert!(
+        err.contains("ImmutableReassignment") || err.contains("Cannot reassign to immutable"),
+        "Expected immutable reassignment error but got: {}",
+        err
+    );
 }
 
 #[test]
 fn test_mutable_with_arithmetic() {
-    let input = "fun test = { mut val x = 5; x = x + 1; x }";
+    let input = r#"fun test = {
+        mut val x = 5
+        x = x + 1
+        x
+    }"#;
     let wat = compile(input).unwrap();
     assert!(wat.contains("i32.add"));
 }
 
 #[test]
-#[ignore = "While loop code generation not implemented"]
 fn test_while_with_mutable() {
     let input = r#"fun test = {
     mut val x = 0
@@ -68,13 +76,16 @@ fn test_while_with_mutable() {
 }"#;
     let wat = compile(input).unwrap();
     // Check for loop structure (might have different label format)
-    assert!(wat.contains("loop") || wat.contains("(loop"), 
-            "Expected loop in WAT but got:\n{}", wat);
+    assert!(
+        wat.contains("loop") || wat.contains("(loop"),
+        "Expected loop in WAT but got:\n{}",
+        wat
+    );
 }
 
 #[test]
 fn test_mutable_parameter_reassignment() {
-    let input = r#"fun add_one = x:Int {
+    let input = r#"fun add_one = x: Int32 {
         mut val y = x
         y = y + 1
         y
@@ -85,15 +96,26 @@ fn test_mutable_parameter_reassignment() {
 
 #[test]
 fn test_multiple_reassignments() {
-    let input = "fun test = { mut val x = 1; x = 2; x = 3; x = 4; x }";
+    let input = r#"fun test = {
+        mut val x = 1
+        x = 2
+        x = 3
+        x = 4
+        x
+    }"#;
     let wat = compile(input).unwrap();
     assert!(wat.contains("local.set"));
 }
 
 #[test]
 fn test_affine_with_mutable() {
-    let input = "fun test = { val y = 5; mut val x = y; x = x + 1; x }";
-    let wat = compile(input).unwrap();
+    let input = r#"fun test = {
+        val y = 5
+        mut val x = y
+        x = x + 1
+        x
+    }"#;
+    let _wat = compile(input).unwrap();
     // Should compile successfully
 }
 
@@ -101,15 +123,15 @@ fn test_affine_with_mutable() {
 fn test_mutable_record_field() {
     let input = r#"
     record Point { x: Int32, y: Int32 }
-
-    fun test: () -> Int = {
+    
+    fun test = {
         with Arena {
-            val p = Point { x = 10, y = 20 };
-            mut val x = p.x;
-            x = x + 1;
+            val p = Point { x: 10, y: 20 }
+            mut val x = p.x
+            x = x + 1
             x
         }
     }"#;
-    let wat = compile(input).unwrap();
+    let _wat = compile(input).unwrap();
     // Should compile successfully
 }

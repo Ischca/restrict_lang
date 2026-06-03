@@ -9,14 +9,14 @@ fn test_two_simple_records() {
 record B {
     y: Int32
 }"#;
-    
+
     eprintln!("Input:\n{}", input);
-    
+
     match parse_program(input) {
         Ok((remaining, program)) => {
             eprintln!("\nParsed {} declarations", program.declarations.len());
             eprintln!("Remaining: {} chars", remaining.len());
-            
+
             for (i, decl) in program.declarations.iter().enumerate() {
                 match decl {
                     restrict_lang::TopDecl::Record(r) => {
@@ -27,7 +27,7 @@ record B {
                     }
                 }
             }
-            
+
             assert_eq!(program.declarations.len(), 2, "Should parse both records");
             assert!(remaining.trim().is_empty(), "Should parse all input");
         }

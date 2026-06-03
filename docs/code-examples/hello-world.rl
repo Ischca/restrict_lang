@@ -1,4 +1,4 @@
 // Basic Hello World example
-fun main = {
+fun main: () -> () = {
     "Hello, World!" |> println
 }

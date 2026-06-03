@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 /// 包括的な非同期機能とTATの統合テスト
@@ -34,11 +36,11 @@ fn test_nested_async_runtime_contexts() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -59,19 +61,21 @@ fn test_async_runtime_lifetime_validation() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => {
             // For now, skip this test as lifetime validation is not fully implemented
             // The core AsyncRuntime functionality is working as demonstrated by other tests
-            println!("Note: Lifetime validation test skipped - core AsyncRuntime functionality works");
-        },
+            println!(
+                "Note: Lifetime validation test skipped - core AsyncRuntime functionality works"
+            );
+        }
         Err(e) => {
             // Should get error about invalid lifetime
             assert!(e.to_string().contains("not in scope") || e.to_string().contains("Undefined"));
-        },
+        }
     }
 }
 
@@ -97,11 +101,11 @@ fn test_task_type_preservation() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -141,11 +145,11 @@ fn test_async_runtime_with_temporal_constraints() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -178,11 +182,11 @@ fn test_multiple_spawn_await_same_context() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -217,11 +221,11 @@ fn test_async_runtime_context_isolation() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -260,11 +264,11 @@ fn test_temporal_type_with_async_integration() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }

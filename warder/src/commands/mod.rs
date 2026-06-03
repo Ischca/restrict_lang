@@ -1,39 +1,39 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use colored::*;
 use std::path::PathBuf;
 
-mod new;
-mod init;
 mod add;
 mod build;
+mod doctor;
+mod init;
+mod new;
+mod publish;
 mod run;
 mod test;
-mod publish;
 mod wrap;
-mod doctor;
 
-pub use new::new_project;
-pub use init::init_project;
 pub use add::{add_dependency, remove_dependency};
 pub use build::build_project;
+pub use doctor::doctor_check;
+pub use init::init_project;
+pub use new::new_project;
+pub use publish::publish_package;
 pub use run::run_project;
 pub use test::test_project;
-pub use publish::publish_package;
-pub use wrap::{wrap_wasm, unwrap_cage};
-pub use doctor::doctor_check;
+pub use wrap::{unwrap_cage, wrap_wasm};
 
 use crate::manifest::Manifest;
 
 pub fn find_project_root() -> Result<PathBuf> {
     let current = std::env::current_dir()?;
     let mut path = current.as_path();
-    
+
     loop {
         let manifest_path = path.join("package.rl.toml");
         if manifest_path.exists() {
             return Ok(path.to_path_buf());
         }
-        
+
         match path.parent() {
             Some(parent) => path = parent,
             None => bail!("Not in a Restrict Language project (no package.rl.toml found)"),

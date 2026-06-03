@@ -1,5 +1,7 @@
 # Option型の仕様
 
+> 注: この文書は実装設計ノートです。構文例は現行の言語仕様に合わせています。
+
 ## 概要
 Option型は値が存在するかしないかを表現する型で、null安全性を提供します。
 
@@ -23,7 +25,7 @@ val z = None          // Option<T> (型は文脈から推論)
 
 ### パターンマッチング
 ```restrict
-fun unwrap_or = opt: Option<Int> default: Int {
+fun unwrap_or: (opt: Option<Int32>, default: Int32) -> Int32 = {
     opt match {
         Some(n) => { n }
         None => { default }
@@ -34,7 +36,7 @@ fun unwrap_or = opt: Option<Int> default: Int {
 ### 推奨される使用方法
 ```restrict
 // 失敗する可能性のある関数
-fun safe_divide = a: Int b: Int -> Option<Int> {
+fun safe_divide: (a: Int32, b: Int32) -> Option<Int32> = {
     b == 0 then {
         None
     } else {
@@ -43,11 +45,11 @@ fun safe_divide = a: Int b: Int -> Option<Int> {
 }
 
 // 使用例
-fun main = {
-    val result = (10, 0) safe_divide;
+fun main: () = {
+    val result = (10, 0) safe_divide
     result match {
-        Some(n) => { n println }
-        None => { "Division by zero!" println }
+        Some(n) => { n |> print_int }
+        None => { "Division by zero!" |> println }
     }
 }
 ```

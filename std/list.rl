@@ -1,149 +1,36 @@
-// Restrict Language Standard Library: List Operations
-// 標準ライブラリ: リスト操作
-
-// ============================================================
-// Basic Predicates
-// ============================================================
-
-// Check if list is empty
-export fun is_empty: <T> (list: List<T>) -> Bool = {
-    list match {
-        [] => { true }
-        _ => { false }
-    }
-}
-
-// ============================================================
-// Element Access
-// ============================================================
-
-// Get first element (None if empty)
-export fun head: <T> (list: List<T>) -> Option<T> = {
-    list match {
-        [h | _] => { Some(h) }
-        _ => { None }
-    }
-}
-
-// Get list without first element (None if empty)
-export fun tail: <T> (list: List<T>) -> Option<List<T>> = {
-    list match {
-        [_ | t] => { Some(t) }
-        _ => { None }
-    }
-}
-
-// ============================================================
-// Length
-// ============================================================
-
-// Get length of list
-export fun length: <T> (list: List<T>) -> Int = {
-    (list, 0) length_helper
-}
-
-// Helper for length calculation (tail recursive)
-fun length_helper: <T> (list: List<T>, acc: Int) -> Int = {
-    list match {
-        [_ | t] => { (t, acc + 1) length_helper }
-        _ => { acc }
-    }
-}
-
-// ============================================================
-// List Construction
-// ============================================================
-
-// Add element to front of list
-export fun prepend: <T> (item: T, list: List<T>) -> List<T> = {
-    [item | list]
-}
-
-// ============================================================
-// List Operations
-// ============================================================
-
-// Reverse a list
-export fun reverse: <T> (list: List<T>) -> List<T> = {
-    (list, []) reverse_helper
-}
-
-// Helper for reverse (tail recursive)
-fun reverse_helper: <T> (list: List<T>, acc: List<T>) -> List<T> = {
-    list match {
-        [h | t] => { (t, [h | acc]) reverse_helper }
-        _ => { acc }
-    }
-}
-
-// Concatenate two lists
-export fun concat: <T> (a: List<T>, b: List<T>) -> List<T> = {
-    a match {
-        [h | t] => { [h | (t, b) concat] }
-        _ => { b }
-    }
-}
-
-// ============================================================
-// Higher-Order Functions
-// ============================================================
-
-// Apply function to each element
-export fun map: <T, U> (list: List<T>, f: |T| -> U) -> List<U> = {
-    list match {
-        [h | t] => { [(h) f | (t, f) map] }
-        _ => { [] }
-    }
-}
-
-// Filter list by predicate
-export fun filter: <T> (list: List<T>, pred: |T| -> Bool) -> List<T> = {
-    list match {
-        [h | t] => {
-            (h) pred then {
-                [h | (t, pred) filter]
-            } else {
-                (t, pred) filter
-            }
-        }
-        _ => { [] }
-    }
-}
-
-// Fold list from left
-export fun fold: <T, U> (list: List<T>, acc: U, f: |U, T| -> U) -> U = {
-    list match {
-        [h | t] => { (t, (acc, h) f, f) fold }
-        _ => { acc }
-    }
-}
-
-// ============================================================
-// Zip
-// ============================================================
-
-// Combine two lists element-wise into a list of Pairs
-// Stops at the shorter list's length
-export fun zip: <T, U> (a: List<T>, b: List<U>) -> List<Pair<T, U>> = {
-    a match {
-        [ha | ta] => {
-            b match {
-                [hb | tb] => { [Pair { first = ha, second = hb } | (ta, tb) zip] }
-                _ => { [] }
-            }
-        }
-        _ => { [] }
-    }
-}
-
-// ============================================================
-// Option-returning Operations
-// ============================================================
-
-// Flatten nested Option
-export fun flatten: <T> (opt: Option<Option<T>>) -> Option<T> = {
-    opt match {
-        Some(inner) => { inner }
-        _ => { None }
-    }
-}
+// Standard Library: List reference surface
+//
+// This file is not the runtime implementation. The current compiler registers
+// list symbols directly in the Rust type checker and WebAssembly codegen.
+// Keep this file as a canonical v0.0.1, source-adjacent index for readers and
+// tests.
+//
+// Current compiler-registered surface:
+// - list_is_empty: <T>(List<T>) -> Boolean
+// - list_head: <T>(List<T>) -> Option<T>
+// - list_tail: <T>(List<T>) -> Option<List<T>>
+// - list_reverse: <T>(List<T>) -> List<T>
+// - list_prepend: <T>(T, List<T>) -> List<T>
+// - list_append: <T>(List<T>, T) -> List<T>
+// - list_concat: <T>(List<T>, List<T>) -> List<T>
+// - list_count: <T>(List<T>) -> Int32
+//
+// Compiler list builtins that are also source-callable:
+// - list_length: <T>(List<T>) -> Int32
+// - list_get: <T>(List<T>, Int32) -> T
+//
+// Canonical call shapes:
+// - values |> list_is_empty
+// - values |> list_head
+// - values |> list_tail
+// - values |> list_reverse
+// - (item, values) list_prepend
+// - (values, item) list_append
+// - (left, right) list_concat
+// - values |> list_count
+// - values |> list_length
+// - (values, index) list_get
+//
+// Higher-order helpers such as list_map, list_filter, and list_fold_left are
+// intentionally absent. The current compiler-registered v0.0.1 surface exposes
+// generic container map, filter, and fold through the prelude instead.

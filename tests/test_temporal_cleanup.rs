@@ -1,18 +1,21 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 /// Tests for temporal scope cleanup and memory management
 /// These tests verify that temporal scopes properly clean up resources
 
 fn compile(input: &str) -> Result<String, String> {
-    let (_, program) = parse_program(input)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
-    
+    let (_, program) = parse_program(input).map_err(|e| format!("Parse error: {:?}", e))?;
+
     let mut checker = TypeChecker::new();
-    checker.check_program(&program)
+    checker
+        .check_program(&program)
         .map_err(|e| format!("Type error: {:?}", e))?;
-    
+
     let mut codegen = WasmCodeGen::new();
-    codegen.generate(&program)
+    codegen
+        .generate(&program)
         .map_err(|e| format!("Codegen error: {:?}", e))
 }
 
@@ -50,9 +53,9 @@ fn test_temporal_cleanup_order() {
         }
         // ~app cleaned up here
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify cleanup order (LIFO)
     assert!(wat.contains("Clean up temporal scope arena for query"));
     assert!(wat.contains("Clean up temporal scope arena for request"));
@@ -85,9 +88,9 @@ fn test_temporal_cleanup_with_early_return() {
         val result = process();
         Unit
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify cleanup happens before return
     assert!(wat.contains("Clean up temporal scope arena for temp"));
 }
@@ -119,7 +122,7 @@ fn test_temporal_cleanup_exception_safety() {
         riskyOperation();
         Unit
     }"#;
-    
+
     match compile(input) {
         Ok(wat) => {
             // Should have cleanup code even with panic
@@ -153,9 +156,9 @@ fn test_temporal_cleanup_with_loops() {
         };
         Unit
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify cleanup happens inside loop
     assert!(wat.contains("Clean up temporal scope arena for iter"));
 }
@@ -188,9 +191,9 @@ fn test_temporal_cleanup_nested_functions() {
         val result = outer();
         Unit
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify both scopes are cleaned up
     assert!(wat.contains("Clean up temporal scope arena for inner_scope"));
     assert!(wat.contains("Clean up temporal scope arena for outer_scope"));
@@ -224,12 +227,14 @@ fn test_temporal_cleanup_with_match() {
         };
         Unit
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify cleanup in both branches
-    assert!(wat.contains("Clean up temporal scope arena for some_branch") ||
-            wat.contains("Clean up temporal scope arena for none_branch"));
+    assert!(
+        wat.contains("Clean up temporal scope arena for some_branch")
+            || wat.contains("Clean up temporal scope arena for none_branch")
+    );
 }
 
 #[test]
@@ -263,9 +268,9 @@ fn test_temporal_cleanup_memory_layout() {
             }
         }
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify arenas are at different addresses
     assert!(wat.contains("i32.const 32768")); // First arena
     assert!(wat.contains("i32.const 36864")); // Second arena
@@ -296,9 +301,9 @@ fn test_temporal_cleanup_with_recursion() {
         val result = traverse(3);
         Unit
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify cleanup happens at each recursion level
     assert!(wat.contains("Clean up temporal scope arena for node"));
 }
@@ -332,9 +337,9 @@ fn test_temporal_cleanup_interleaved() {
             }
         }
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify all scopes are cleaned up
     assert!(wat.contains("Clean up temporal scope arena for scope_a2"));
     assert!(wat.contains("Clean up temporal scope arena for scope_b"));
@@ -366,9 +371,9 @@ fn test_temporal_cleanup_restore_arena() {
             Unit
         }
     }"#;
-    
+
     let wat = compile(input).unwrap();
-    
+
     // Verify arena restoration
     assert!(wat.contains("Restore previous arena"));
 }

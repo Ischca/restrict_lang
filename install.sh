@@ -195,12 +195,20 @@ fi
 echo -e "\n${YELLOW}Verifying installation...${NC}"
 export PATH="$BIN_DIR:$PATH"
 
-if "$BIN_DIR/restrict_lang" --version &> /dev/null; then
+VERIFY_DIR=$(mktemp -d)
+cat > "$VERIFY_DIR/main.rl" << 'EOF'
+fun main: () -> () = {
+    val message = "Installation verified!"
+    message |> println
+}
+EOF
+
+if "$BIN_DIR/restrict_lang" "$VERIFY_DIR/main.rl" "$VERIFY_DIR/main.wat" &> /dev/null && [ -s "$VERIFY_DIR/main.wat" ]; then
     echo -e "${GREEN}✓ Restrict Language compiler installed${NC}"
-    "$BIN_DIR/restrict_lang" --version
 else
     echo -e "${RED}✗ Restrict Language compiler installation failed${NC}"
 fi
+rm -rf "$VERIFY_DIR"
 
 if "$BIN_DIR/warder" --version &> /dev/null; then
     echo -e "${GREEN}✓ Warder package manager installed${NC}"
@@ -224,8 +232,9 @@ echo -e "   ${BLUE}warder new my-project${NC}"
 echo -e "   ${BLUE}cd my-project${NC}"
 echo ""
 echo "3. Write your first program in src/main.rl:"
-echo -e "   ${BLUE}fn main() {${NC}"
-echo -e "   ${BLUE}    \"Hello, World!\" |> println${NC}"
+echo -e "   ${BLUE}fun main: () -> () = {${NC}"
+echo -e "   ${BLUE}    val message = \"Hello, World!\"${NC}"
+echo -e "   ${BLUE}    message |> println${NC}"
 echo -e "   ${BLUE}}${NC}"
 echo ""
 echo "4. Run your program:"

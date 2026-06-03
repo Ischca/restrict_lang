@@ -21,10 +21,11 @@ ident_start     = letter | "_" ;
 ident_continue  = ident_start | digit ;
 identifier      = ident_start { ident_continue } ;
 
-keyword         = "fun" | "val" | "mut" | "record" | "context" | "enum"
+keyword         = "fun" | "val" | "mut" | "record" | "context" | "enum" | "impl"
                 | "match" | "then" | "else" | "temporal" | "where" | "within"
                 | "spawn" | "await" | "clone" | "freeze" | "pub" | "import"
-                | "as" | "fatal" ;
+                | "export" | "as" | "fatal" | "true" | "false" | "Some" | "None"
+                | "with" | "lifetime" ;
                 (* reserved for future: "macro", "effect", "trait", "type" *)
 
 (* Numeric Literals *)
@@ -127,7 +128,7 @@ literal             = int_literal | float_literal | string_literal
                     | list_literal | range_literal ;
 
 list_literal        = "[" [ expression { "," expression } ] "]" ;
-range_literal       = "[" expression ".." expression "]" ;  (* closed interval Range<T> *)
+range_literal       = "[" expression ".." expression "]" ;  (* closed interval Range<Int32> *)
 
 (* Lambda Expression *)
 lambda_expr         = "|" [ param_list ] "|" ( expression | block_expr ) ;
@@ -161,7 +162,7 @@ list_pattern        = "[" [ pattern { "," pattern } ] "]"
 
 (* Record Literal *)
 record_literal      = identifier "{" [ field_init { "," field_init } ] "}" ;
-field_init          = identifier "=" expression ;
+field_init          = identifier ":" expression ;
 
 (* Scope Expression *)
 scope_expr          = scope_value block_expr ;
@@ -184,7 +185,7 @@ statement           = val_decl
                     | expression [ ";" ] ;  (* semicolon optional *)
                                            (* type checker enforces purity *)
 
-val_decl            = "val" [ "mut" ] identifier [ ":" type ] "=" expression ;
+val_decl            = [ "mut" ] "val" identifier [ ":" type ] "=" expression ;
                       (* affine: each binding used at most once *)
 
 assignment          = identifier "=" expression ;
@@ -203,9 +204,9 @@ program             = { top_decl } ;
 top_decl            = function_decl 
                     | record_decl 
                     | context_decl
-                    | enum_decl 
+                    | impl_decl
                     | import_decl ;
-                    (* reserved: macro_decl, trait_decl, type_decl *)
+                    (* reserved: enum_decl, macro_decl, trait_decl, type_decl *)
 
 (* Function Declaration *)
 function_decl       = { context_ann } [ "pub" ] "fun" identifier ":" 
@@ -232,7 +233,12 @@ field_decl          = identifier ":" type [ "," | "\n" ] ;
 context_decl        = "context" identifier [ type_params ] "{" 
                       field_decl { field_decl } "}" ;
 
-(* Enum Declaration *)
+(* Implementation Block *)
+impl_decl           = "impl" identifier "{" method_decl { method_decl } "}" ;
+method_decl         = "fun" identifier ":" function_signature "=" block_expr ;
+                      (* first parameter must be self: Target; calls remain OSV *)
+
+(* Reserved Enum Declaration: post-v0.0.1, not reachable from top_decl *)
 enum_decl           = "enum" identifier [ type_params ] "{" 
                       variant { variant } "}" ;
 
@@ -241,7 +247,11 @@ variant_data        = "(" type { "," type } ")"
                     | "{" field_decl { field_decl } "}" ;
 
 (* Import Declaration *)
-import_decl         = "import" string_literal "as" identifier ;
+dotted_path         = identifier { "." identifier } ;
+import_items        = identifier
+                    | "*"
+                    | "{" identifier { "," identifier } "}" ;
+import_decl         = "import" dotted_path [ "." import_items ] ;
 ```
 
 ## 6. Complete Grammar Entry Point

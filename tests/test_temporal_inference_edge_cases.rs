@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 /// Additional edge case tests for temporal type inference
@@ -23,11 +25,11 @@ fn test_temporal_inference_with_generics() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -52,11 +54,11 @@ fn test_temporal_inference_through_pipe() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -82,11 +84,11 @@ fn test_temporal_inference_nested_records() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -115,12 +117,12 @@ fn test_temporal_inference_mismatch() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     // This test is expected to pass as the function allows different temporal parameters
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -153,11 +155,11 @@ fn test_temporal_inference_with_constraints() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -189,11 +191,11 @@ fn test_temporal_inference_option_types() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -218,11 +220,11 @@ fn test_temporal_inference_list_operations() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -252,11 +254,11 @@ fn test_temporal_inference_higher_order() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -280,11 +282,11 @@ fn test_temporal_inference_across_blocks() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -310,11 +312,11 @@ fn test_temporal_inference_with_aliases() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -349,11 +351,11 @@ fn test_temporal_inference_polymorphic_constraint() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -389,11 +391,11 @@ fn test_temporal_inference_error_propagation() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }

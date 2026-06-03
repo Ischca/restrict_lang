@@ -1,53 +1,68 @@
 # パターンマッチング
 
-パターンマッチングは、複雑なデータ構造を分解し、マッチングを行うRestrict Languageの強力な機能です。この言語はmatch式でOSV（目的語-主語-動詞）構文に従います。
+パターンマッチングは、値の形に応じて分岐しながら中身を取り出すための機能です。Restrict Languageでは、`value match { ... }`というOSVに沿った形で書きます。
 
 ## 基本構文
 
-Restrict Languageのmatch式はOSV構文を使用します：
-
-```rust
-expression match {
-    pattern1 => { result1 }
-    pattern2 => { result2 }
-    _ => { default }
+```restrict
+value match {
+    pattern => { result }
+    _ => { default_value }
 }
 ```
 
+各アームの本体は`{ }`で囲みます。`match`式全体が値を返すため、各アームの結果型はそろえる必要があります。
+
 ## リテラルパターン
 
-リテラル値に対してマッチング：
+数値、文字列、真偽値などのリテラルに一致できます。
 
-```rust
-val number = 42
-number match {
-    0 => { "ゼロ" }
-    1 => { "一" }
-    42 => { "答え" }
-    _ => { "その他" }
+```restrict
+fun describe_number: (number: Int32) -> String = {
+    number match {
+        0 => { "ゼロ" }
+        1 => { "一" }
+        42 => { "答え" }
+        _ => { "その他" }
+    }
 }
 ```
 
 ## 変数束縛
 
-マッチした値を変数に束縛：
+パターンに識別子を書くと、マッチした値をその名前に束縛します。
 
-```rust
-val value = 10
-value match {
-    x => { x * 2 }  // 値をxに束縛
+```restrict
+fun double: (value: Int32) -> Int32 = {
+    value match {
+        number => { number * 2 }
+    }
 }
 ```
 
 ## Optionパターン
 
-Option型に対するマッチング：
+`Option<T>`は`Some(value)`と`None`で分岐します。
 
-```rust
-val maybe: Option<Int> = 42 some
-maybe match {
-    Some(value) => { value * 2 }
-    None => { 0 }
+```restrict
+fun value_or_zero: (maybe: Option<Int32>) -> Int32 = {
+    maybe match {
+        Some(value) => { value }
+        None => { 0 }
+    }
+}
+```
+
+## Resultパターン
+
+`Result<T, E>`は`Ok(value)`と`Err(error)`で分岐します。
+
+```restrict
+fun result_or_zero: (result: Result<Int32, String>) -> Int32 = {
+    result match {
+        Ok(value) => { value }
+        Err(message) => { 0 }
+    }
 }
 ```
 
@@ -83,112 +98,136 @@ result match {
 
 ## リストパターン
 
-様々なパターンでリストを分解：
+リストは空、正確な長さ、先頭と残りに分ける形でマッチできます。
 
-```rust
-val numbers = [1, 2, 3, 4]
-
-// 空リストパターン
-[] match {
-    [] => { "空" }
-    _ => { "空ではない" }
+```restrict
+fun first_or_zero: (numbers: List<Int32>) -> Int32 = {
+    numbers match {
+        [] => { 0 }
+        [head | tail] => { head }
+    }
 }
+```
 
-// ヘッドとテールのパターン
-numbers match {
-    [] => { "空" }
-    [head | tail] => { head }  // 1を返す
-}
-
-// 正確な長さのパターン
-val pair = [1, 2]
-pair match {
-    [a, b] => { a + b }  // 3を返す
-    _ => { 0 }
+```restrict
+fun sum_pair: (numbers: List<Int32>) -> Int32 = {
+    numbers match {
+        [left, right] => { left + right }
+        _ => { 0 }
+    }
 }
 ```
 
 ## レコードパターン
 
-レコードを分解してフィールドを抽出：
+レコードパターンでは、フィールドを取り出したり、特定の値に一致させたりできます。
 
-```rust
-record Point { x: Int y: Int }
-
-val origin = Point { x: 0 y: 0 }
-val point = Point { x: 10 y: 20 }
-
-// 特定のフィールド値にマッチ
-origin match {
-    Point { x: 0 y: 0 } => { "原点" }
-    Point { x y } => { x + y }
-    _ => { "不明" }
+```restrict
+record Point {
+    x: Int32
+    y: Int32
 }
 
-// 短縮構文でのフィールド束縛
-point match {
-    Point { x y } => { x * y }  // xとyの両方が束縛される
+fun describe_point: (point: Point) -> String = {
+    point match {
+        Point { x: 0, y: 0 } => { "原点" }
+        Point { x: 0, y } => { "y軸上" }
+        Point { x, y: 0 } => { "x軸上" }
+        Point { x, y } => { "その他" }
+    }
+}
+```
+
+短縮構文では、フィールド名と同じ名前で束縛します。
+
+```restrict
+fun multiply_point: (point: Point) -> Int32 = {
+    point match {
+        Point { x, y } => { x * y }
+    }
+}
+```
+
+別名で束縛する場合は`:`を使います。
+
+```restrict
+fun add_point: (point: Point) -> Int32 = {
+    point match {
+        Point { x: px, y: py } => { px + py }
+    }
+}
+```
+
+## スプレッドパターン
+
+レコードの一部だけを取り出し、残りを無視する場合は`..._`を使えます。
+
+```restrict
+record User {
+    name: String
+    role: String
+    department: String
 }
 
-// 明示的なフィールドパターン
-point match {
-    Point { x: px y: py } => { px + py }  // 異なる名前に束縛
+fun describe_user: (user: User) -> String = {
+    user match {
+        User { role: "admin", name, ..._ } => { "管理者: " + name }
+        User { department: "support", name, ..._ } => { "サポート: " + name }
+        User { name, ..._ } => { "ユーザー: " + name }
+    }
+}
+```
+
+残りのフィールドを値として束縛する`...rest`もレコードパターンの最後に置きます。
+
+```restrict
+fun split_profile: (user: User) -> String = {
+    user match {
+        User { name, ...profile } => { name }
+    }
 }
 ```
 
 ## ネストしたパターン
 
-複雑なマッチングのためのパターンの組み合わせ：
+レコードとリストのパターンは組み合わせられます。
 
-```rust
-record Person { name: String age: Int }
-record Company { name: String employees: List<Person> }
-
-val company = Company {
-    name: "Tech Corp"
-    employees: [
-        Person { name: "Alice" age: 30 }
-        Person { name: "Bob" age: 25 }
-    ]
+```restrict
+record Person {
+    name: String
+    age: Int32
 }
 
-company match {
-    Company { name employees: [] } => { "従業員なし" }
-    Company { name employees: [first | rest] } => { first.name }
-    _ => { "不明" }
+record Company {
+    name: String
+    employees: List<Person>
+}
+
+fun first_employee_name: (company: Company) -> String = {
+    company match {
+        Company { employees: [], ..._ } => { "従業員なし" }
+        Company { employees: [first | rest], ..._ } => { first.name }
+    }
 }
 ```
 
 ## 網羅性
 
-型チェッカーはmatch式が網羅的であることを保証します。以下のいずれかが必要です：
-- すべての可能なケースをカバーする
-- ワイルドカードパターン（`_`）を含める
+`match`式はすべての可能性を扱う必要があります。すべてのケースを列挙するか、`_`で残りを受けます。
 
-```rust
-// これは型チェックに失敗します - 網羅的ではない
-val opt: Option<Int> = None<Int>
-opt match {
-    Some(x) => { x }
-    // Noneケースが欠落！
-}
-
-// これは正しい - 網羅的
-opt match {
-    Some(x) => { x }
-    None => { 0 }
+```restrict
+fun safe_value: (value: Option<Int32>) -> Int32 = {
+    value match {
+        Some(number) => { number }
+        None => { 0 }
+    }
 }
 ```
 
 ## 重要な注意事項
 
-- すべてのパターン本体は中括弧 `{ }` で囲む必要があります
-- match式はOSV構文に従います：`expression match { ... }`
-- アフィン型システムにより、各束縛は最大1回しか使用できません
-- パターンはコンパイル時に網羅性がチェックされます
-
-## 将来の機能
-
-- `then`条件を使用したパターンガード
-- タプルパターン（タプルが実装された際）
-- rest構文を使用した高度なリストパターン `[x, y, ...rest]`
+- `match`は`value match { ... }`の形で書きます。
+- 各アームの本体は`{ }`で囲みます。
+- フィールドパターンとフィールド初期化は`:`を使います。
+- アフィン型システムにより、束縛した値も最大1回の使用に従います。
+- パターンガードやタプルパターンの詳細は、v0.0.1の公開範囲外です。

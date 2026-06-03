@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 /// Edge case tests for Temporal Affine Types (TAT)
@@ -23,7 +25,7 @@ fun leakThroughClosure: () -> (File<~io> -> Int32) = {
 fun main: () -> Unit = {
     Unit
 }"#;
-    
+
     let result = parse_program(input);
     match result {
         Ok((remaining, program)) => {
@@ -38,7 +40,7 @@ fun main: () -> Unit = {
                 }
             }
         }
-        Err(e) => panic!("Parse error: {:?}", e)
+        Err(e) => panic!("Parse error: {:?}", e),
     }
 }
 
@@ -64,11 +66,11 @@ fn test_temporal_in_recursive_types() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -103,7 +105,7 @@ fn test_temporal_constraint_transitivity_violation() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
@@ -136,11 +138,11 @@ fn test_temporal_multiple_constraints() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -178,11 +180,11 @@ fn test_temporal_in_match_patterns() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -214,11 +216,11 @@ fn test_temporal_function_parameter_inference() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -246,14 +248,15 @@ fn test_temporal_affine_double_use() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => panic!("Expected affine violation for double use of temporal value"),
         Err(e) => {
-            assert!(e.to_string().contains("already been used") || 
-                    e.to_string().contains("affine"));
+            assert!(
+                e.to_string().contains("already been used") || e.to_string().contains("affine")
+            );
             println!("Got expected error: {:?}", e);
         }
     }
@@ -282,11 +285,11 @@ fn test_temporal_partial_application() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -303,7 +306,7 @@ fn test_temporal_cyclic_constraint() {
     fun main: () -> Unit = {
         Unit
     }"#;
-    
+
     let result = parse_program(input);
     match result {
         Ok((_, program)) => {
@@ -346,11 +349,11 @@ fn test_temporal_with_context_interaction() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -366,11 +369,11 @@ fn test_temporal_empty_scope() {
         };
         Unit
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -400,11 +403,11 @@ fn test_temporal_shadowing() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }

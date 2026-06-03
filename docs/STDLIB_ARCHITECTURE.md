@@ -138,7 +138,7 @@ export context JsonDeserializable {
 
 ### 6. HTTP Server Example API
 
-```restrict
+```text
 // Example usage of future HTTP server API
 
 import std.http.{Server, Request, Response, Router}

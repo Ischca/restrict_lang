@@ -103,7 +103,7 @@ warder test
 
 ```bash
 # フルパスで実行
-~/workspace/ischca/restrict_lang/target/release/warder new test-project
+~/workspace/ischca/restrict_lang/warder/target/release/warder new test-project
 
 # または alias を設定
 alias warder="$HOME/workspace/ischca/restrict_lang/warder/target/release/warder"

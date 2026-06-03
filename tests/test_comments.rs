@@ -13,7 +13,7 @@ fn test_single_line_comments() {
         y
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -35,7 +35,7 @@ fn test_multi_line_comments() {
         y
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -56,7 +56,7 @@ fn test_mixed_comments() {
         y  /* trailing */
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -68,14 +68,14 @@ fn test_lambda_with_comments() {
     // Lambda with comments
     fun test = {
         // Create a lambda
-        val add_one = |x| /* param x */ x + 1;  // adds one
+        val add_one: Int32 -> Int32 = |x| /* param x */ x + 1;  // adds one
         
         /* Apply the lambda */
         val result = (41) add_one;
         result
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -89,7 +89,7 @@ fn test_comments_between_tokens() {
         x /* return */
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());

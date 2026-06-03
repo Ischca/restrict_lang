@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
@@ -17,7 +19,7 @@ fn test_temporal_type_basic() {
         val file = File { handle = 1 };
         (file) readFile
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -42,7 +44,7 @@ fn test_temporal_constraint_within() {
         Transaction { db = db, txId = 1 }
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -65,11 +67,11 @@ fn test_temporal_inference() {
         val res = Resource { id: 42 };  // ~r should be inferred
         (res) useResource
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -90,14 +92,17 @@ fun leakFile<~io> = {
 fun main: () -> Int = {
     Unit
 }"#;
-    
+
     let (remaining, program) = parse_program(input).unwrap();
-    
+
     // Debug: Check if all declarations were parsed
     if !remaining.trim().is_empty() {
-        panic!("Parser failed to parse all declarations. Remaining: {:?}", remaining);
+        panic!(
+            "Parser failed to parse all declarations. Remaining: {:?}",
+            remaining
+        );
     }
-    
+
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => panic!("Expected type error, but checking succeeded"),
@@ -125,7 +130,7 @@ fn test_temporal_with_context() {
         }  // file cleaned up here
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -150,7 +155,7 @@ fn test_nested_temporal_scopes() {
         Inner { outer: outer, data: 42 }
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());

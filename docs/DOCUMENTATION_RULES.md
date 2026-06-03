@@ -1,112 +1,80 @@
 # Documentation Maintenance Rules
 
-This document establishes rules for maintaining documentation consistency across languages.
+Documentation has two audiences and two locations:
 
-## 🌐 Multi-language Documentation Policy
+- public language documentation: `docs/public/`
+- internal design and implementation documentation: `docs/`
 
-### Primary Language
-- **English (en)** is the primary documentation language
-- All new features MUST be documented in English first
-- English documentation serves as the source of truth
+Do not mix these. Internal design notes are not automatically public release
+behavior.
 
-### Translation Requirements
-- **Japanese (ja)** documentation MUST be updated when English documentation changes
-- Translation updates should happen in the same PR as the English changes when possible
-- If immediate translation is not possible, create a follow-up issue
+## Public Documentation Policy
 
-## 📝 Documentation Update Checklist
+Public docs are the files published through mdBook and GitHub Pages:
 
-When making changes to the codebase that affect user-facing features:
-
-1. **Update English documentation first**
-   - [ ] Update relevant files in `docs/en/`
-   - [ ] Update examples if needed
-   - [ ] Update API references if applicable
-
-2. **Update Japanese documentation**
-   - [ ] Update corresponding files in `docs/ja/`
-   - [ ] Ensure technical terms are consistently translated
-   - [ ] Preserve code examples as-is (do not translate code)
-
-3. **Update root documentation**
-   - [ ] Update `README.md` if feature is significant
-   - [ ] Update `CHANGELOG.md` with the change
-
-## 🔍 Documentation Structure
-
-Both `docs/en/` and `docs/ja/` should maintain parallel structure:
-
-```
-docs/
-├── en/
-│   ├── guide/
-│   │   ├── patterns.md
-│   │   ├── records.md
-│   │   └── ...
-│   └── reference/
-│       └── ...
-└── ja/
-    ├── guide/
-    │   ├── patterns.md    # Same filename as en/
-    │   ├── records.md     # Same filename as en/
-    │   └── ...
-    └── reference/
-        └── ...
+```text
+docs/public/SUMMARY.md
+docs/public/en/
+docs/public/ja/
+docs/public/theme/
 ```
 
-## 🚨 Critical Documentation Areas
+English is the primary public documentation language. Update English first, then
+update Japanese when the public-facing behavior changes.
 
-These areas MUST be kept in sync across all languages:
+When changing user-facing language behavior:
 
-1. **Syntax changes** - Any change to language syntax
-2. **Breaking changes** - Any change that breaks existing code
-3. **New features** - Any new language feature or capability
-4. **Security updates** - Any security-related changes
+1. Update `docs/public/en/`.
+2. Update `docs/public/SUMMARY.md` if navigation changes.
+3. Update `docs/public/ja/` when the Japanese page exists.
+4. Update `README.md` if the feature is important for first-time users.
+5. Run docs hygiene tests.
 
-## 📋 Translation Guidelines
+Public examples must stay on the v0.0.1 release surface:
 
-### DO:
-- ✅ Keep technical terms consistent across documents
-- ✅ Preserve all code examples exactly as they appear
-- ✅ Maintain the same document structure and headings
-- ✅ Update cross-references and links to point to correct language versions
-- ✅ Keep formatting (bold, italic, code blocks) consistent
+- `val`, not `let`
+- `mut val`, not `val mut`
+- OSV calls, not function-first calls
+- `:` field initializers
+- scalar host exports only
+- TAT, user ADTs, `form`/`takes`, and composite host ABI marked as future work
 
-### DON'T:
-- ❌ Translate variable names or code syntax
-- ❌ Change the meaning or skip sections
-- ❌ Add language-specific content without updating other languages
-- ❌ Use machine translation without review
+## Internal Documentation Policy
 
-## 🔄 Review Process
+Internal docs stay outside `docs/public/`:
 
-1. **Code Review** - Reviewers should check that documentation is updated
-2. **Translation Review** - Native speakers should review translations when possible
-3. **Consistency Check** - Ensure parallel structure between language versions
+```text
+docs/TYPE_INFERENCE_DESIGN.md
+docs/*_DESIGN.md
+docs/*_IMPLEMENTATION.md
+docs/*_ROADMAP.md
+docs/*_STATUS.md
+```
 
-## 📊 Documentation Status Tracking
+Use internal docs for design options, implementation plans, experiments, and
+status tracking. If internal material should become public, rewrite it into a
+public guide/reference page instead of linking the internal file directly.
 
-Use these markers in commit messages and PRs:
+## Translation Requirements
 
-- `[docs:en]` - English documentation updated
-- `[docs:ja]` - Japanese documentation updated  
-- `[docs:sync]` - Documentation synchronized across languages
-- `[docs:todo-ja]` - Japanese translation needed (create issue)
+Japanese public docs should preserve the same code examples as English docs.
+Translate prose, not Restrict source code.
 
-## 🚀 Future Automation
+If immediate Japanese updates are not possible, keep the English page correct
+and create a follow-up item rather than blocking implementation.
 
-Goals for CI/CD integration:
-- Automated detection of documentation drift between languages
-- Translation status badges
-- Automated translation suggestions (with human review)
-- Documentation coverage reports
+## Validation
 
-## 📌 Quick Reference
+Run:
 
-**When you change code that affects users:**
-1. Document in English (`docs/en/`)
-2. Document in Japanese (`docs/ja/`)
-3. Update README if needed
-4. Ensure examples work
+```bash
+mise exec -- cargo test --test test_docs_hygiene
+mise exec -- cargo test --test test_web_hygiene
+mdbook build docs
+```
 
-**Remember:** Documentation is part of the feature. A feature is not complete until it's documented in all supported languages.
+For the complete Pages artifact:
+
+```bash
+mise run docs-pages
+```

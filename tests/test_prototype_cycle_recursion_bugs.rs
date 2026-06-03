@@ -1,9 +1,26 @@
 use restrict_lang::{parse_program, TypeChecker};
 
-/// 🌀 Test Alchemist's Infinite Loops: Prototype Cycles and Recursion Bugs
-/// 
-/// These tests expose infinite recursion and cycle-related bugs in prototype chains.
-/// Each test is a vortex designed to trap the type system in endless loops.
+/// Prototype cycle and recursion edge-case probes.
+///
+/// These examples preserve older proposal syntax and features that are not in
+/// the current language specification. The release gate should ensure they are
+/// rejected before code generation.
+fn assert_rejected_before_codegen(name: &str, input: &str) {
+    let (remaining, program) = match parse_program(input) {
+        Ok(parsed) => parsed,
+        Err(_) => return,
+    };
+
+    if !remaining.trim().is_empty() {
+        return;
+    }
+
+    let mut checker = TypeChecker::new();
+    assert!(
+        checker.check_program(&program).is_err(),
+        "{name} should be rejected by parser or type checker before codegen"
+    );
+}
 
 #[test]
 fn test_simple_prototype_cycle() {
@@ -41,14 +58,11 @@ fn test_simple_prototype_cycle() {
         val cycle = create_ouroboros();
         walk_parents(cycle, 0)
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    // This should either detect the cycle or hit recursion limit
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("simple prototype cycle probe", input);
 }
 
-#[test] 
+#[test]
 fn test_mutual_prototype_cycle() {
     // Cycle Bug 2: Mutual recursion between prototypes
     let input = r#"
@@ -90,10 +104,8 @@ fn test_mutual_prototype_cycle() {
         val cycle = create_cycle();
         trace_cycle(cycle, 0)
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("mutual prototype cycle probe", input);
 }
 
 #[test]
@@ -145,10 +157,8 @@ fn test_clone_cycle_amplification() {
         val list = create_circular_list();
         count_nodes(list, 1000)
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("clone cycle amplification probe", input);
 }
 
 #[test]
@@ -183,13 +193,8 @@ fn test_type_level_recursion() {
     fun main = {
         42  // Can't even call impossible()
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    match checker.check_program(&program) {
-        Ok(_) => panic!("Infinite recursive types should be rejected!"),
-        Err(_) => {},  // Good, caught the issue
-    }
+
+    assert_rejected_before_codegen("type-level recursion probe", input);
 }
 
 #[test]
@@ -242,10 +247,8 @@ fn test_prototype_method_recursion() {
     fun main = {
         create_dispatch_loop()
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("prototype method recursion probe", input);
 }
 
 #[test]
@@ -289,10 +292,8 @@ fn test_lazy_evaluation_cycle() {
         val infinite = create_infinite_stream();
         take_n(infinite, 10)
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("lazy evaluation cycle probe", input);
 }
 
 #[test]
@@ -334,11 +335,8 @@ fn test_constraint_solver_cycle() {
         
         conversion_loop(c)
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    // This might cause the constraint solver to loop
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("constraint solver cycle probe", input);
 }
 
 #[test]
@@ -372,7 +370,7 @@ fn test_clone_freeze_cycle() {
         grandchild
     }
     
-    fun detect_frozen_cycle(obj: Freezable, visited: Set<String>) -> Bool {
+    fun detect_frozen_cycle(obj: Freezable, visited: Set<String>) -> Boolean {
         if visited.contains(obj.name) {
             true  // Cycle detected
         } else {
@@ -390,10 +388,8 @@ fn test_clone_freeze_cycle() {
         val cyclic = freeze_cycle();
         detect_frozen_cycle(cyclic, Set::new())
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("clone-freeze cycle probe", input);
 }
 
 #[test]
@@ -430,11 +426,8 @@ fn test_generic_instantiation_loop() {
     fun main = {
         instantiate_monster()
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    // This creates exponentially growing type instantiations
-    let _ = checker.check_program(&program);
+
+    assert_rejected_before_codegen("generic instantiation loop probe", input);
 }
 
 #[test]
@@ -481,11 +474,6 @@ fn test_affine_cycle_paradox() {
         val cycle = create_affine_cycle();
         consume_cycle(cycle)
     }"#;
-    
-    let (_, program) = parse_program(input).unwrap();
-    let mut checker = TypeChecker::new();
-    match checker.check_program(&program) {
-        Ok(_) => panic!("Affine cycle paradox should be caught!"),
-        Err(_) => {},  // Good, the paradox was detected
-    }
+
+    assert_rejected_before_codegen("affine cycle paradox probe", input);
 }

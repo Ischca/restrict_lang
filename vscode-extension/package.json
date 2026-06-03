@@ -87,16 +87,6 @@
                 "category": "Restrict"
             },
             {
-                "command": "restrict.renameSymbol",
-                "title": "Rename Symbol",
-                "category": "Restrict"
-            },
-            {
-                "command": "restrict.formatDocument",
-                "title": "Format Document",
-                "category": "Restrict"
-            },
-            {
                 "command": "restrict.showHover",
                 "title": "Show Hover Info",
                 "category": "Restrict"
@@ -104,21 +94,6 @@
             {
                 "command": "restrict.showDocumentSymbols",
                 "title": "Show Document Symbols",
-                "category": "Restrict"
-            },
-            {
-                "command": "restrict.showWorkspaceSymbols",
-                "title": "Show Workspace Symbols",
-                "category": "Restrict"
-            },
-            {
-                "command": "restrict.showCodeActions",
-                "title": "Show Code Actions",
-                "category": "Restrict"
-            },
-            {
-                "command": "restrict.showSignatureHelp",
-                "title": "Show Signature Help",
                 "category": "Restrict"
             }
         ],
@@ -141,16 +116,6 @@
             {
                 "command": "restrict.findReferences",
                 "key": "shift+f12",
-                "when": "editorLangId == restrict"
-            },
-            {
-                "command": "restrict.renameSymbol",
-                "key": "f2",
-                "when": "editorLangId == restrict"
-            },
-            {
-                "command": "restrict.formatDocument",
-                "key": "shift+alt+f",
                 "when": "editorLangId == restrict"
             }
         ],

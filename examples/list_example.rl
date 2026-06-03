@@ -1,11 +1,11 @@
 // Example demonstrating list functionality in Restrict Language
 
-fun main = {
+fun main: () -> List<Int32> = {
     // Create a simple list
     val numbers = [1, 2, 3, 4, 5];
     
     // Create an empty list
-    val empty = [];
+    val empty: List<Int32> = [];
     
     // List with expressions
     mut val x = 10;

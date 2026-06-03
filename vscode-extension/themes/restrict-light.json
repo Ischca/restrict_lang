@@ -101,7 +101,7 @@
             "scope": [
                 "storage.type.user.restrict",
                 "entity.name.type.record.restrict",
-                "entity.name.type.impl.restrict",
+                "entity.name.type.context.restrict",
                 "entity.name.type.restrict"
             ],
             "settings": {

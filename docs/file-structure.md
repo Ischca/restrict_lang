@@ -1,5 +1,7 @@
 # Restrict Language 推奨ファイル構造
 
+> 注: この文書は package/warder 構成の設計ノートです。コード例は現行の言語仕様に合わせていますが、公開ドキュメントの正本ではありません。
+
 ## 基本構造
 
 ```
@@ -31,16 +33,16 @@ my-project/
 **src/lib/Math.rl**
 ```restrict
 // 関数をエクスポート
-export fun add = x:Int32 -> y:Int32 -> Int32 {
+pub fun add: (x: Int32, y: Int32) -> Int32 = {
     x + y
 }
 
-export fun multiply = x:Int32 -> y:Int32 -> Int32 {
+pub fun multiply: (x: Int32, y: Int32) -> Int32 = {
     x * y
 }
 
 // プライベート関数（エクスポートなし）
-fun helper = x:Int32 -> Int32 {
+fun helper: (x: Int32) -> Int32 = {
     x * 2
 }
 ```
@@ -58,9 +60,9 @@ import lib.String.*
 // エイリアス付きインポート (将来実装予定)
 // import lib.IO as io
 
-fun main = {
-    val result = add(10, 20);
-    result |> println
+fun main: () = {
+    val result = (10, 20) add
+    result |> print_int
 }
 ```
 
@@ -127,19 +129,19 @@ large-app/
 ```restrict
 // ❌ 悪い例: 1つのファイルに複数の責務
 // src/lib/Utils.rl
-export fun add = ...
-export fun parse_json = ...
-export fun connect_db = ...
+pub fun add: (x: Int32, y: Int32) -> Int32 = { ... }
+pub fun parse_json: (input: String) -> Json = { ... }
+pub fun connect_db: () -> DbConnection = { ... }
 
 // ✅ 良い例: 責務ごとにファイルを分ける
 // src/lib/Math.rl
-export fun add = ...
+pub fun add: (x: Int32, y: Int32) -> Int32 = { ... }
 
 // src/lib/Json.rl
-export fun parse = ...
+pub fun parse: (input: String) -> Json = { ... }
 
 // src/lib/Db.rl
-export fun connect = ...
+pub fun connect: () -> DbConnection = { ... }
 ```
 
 ### 2. 循環依存の回避
@@ -166,18 +168,19 @@ import lib.Common.{shared}
 ```restrict
 // src/lib/User.rl
 
-// 公開API（export付き）
-export record User {
-    id: Int32,
-    name: String,
+// 公開API（pub付き）
+pub record User {
+    id: Int32
+    name: String
 }
 
-export fun create_user = name:String -> User {
-    User { id: generate_id(), name: name }
+pub fun create_user: (name: String) -> User = {
+    val id = () generate_id
+    User { id: id, name: name }
 }
 
 // 内部実装（exportなし）
-fun generate_id = Unit -> Int32 {
+fun generate_id: () -> Int32 = {
     // 実装詳細は非公開
     42
 }

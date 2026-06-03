@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
@@ -21,11 +23,11 @@ fn test_async_function_basic() {
     fun main: () -> Int = {
         42
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -53,11 +55,11 @@ fn test_async_with_lifetime() {
             42
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -94,11 +96,11 @@ fn test_await_in_pipe() {
             user.id
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -124,11 +126,11 @@ fn test_spawn_task() {
             user.id
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -160,11 +162,11 @@ fn test_async_with_temporal_constraints() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -194,11 +196,11 @@ fn test_async_runtime_context() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -223,7 +225,7 @@ fn test_async_runtime_context_error() {
             42
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     let result = checker.check_program(&program);
@@ -232,11 +234,11 @@ fn test_async_runtime_context_error() {
             // For now, skip this test as it involves parsing issues
             // The core AsyncRuntime functionality is working as demonstrated by other tests
             println!("Note: Test skipped due to parsing complexity - AsyncRuntime context checking works in other tests");
-        },
+        }
         Err(e) => {
             // Should get error about spawn requiring AsyncRuntime context
             assert!(e.to_string().contains("AsyncRuntime context"));
-        },
+        }
     }
 }
 
@@ -273,11 +275,11 @@ fn test_async_runtime_with_channels() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }

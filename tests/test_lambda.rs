@@ -1,10 +1,23 @@
-use restrict_lang::{parse_program, ast::*};
+use restrict_lang::{ast::*, parse_program};
+
+fn assert_lambda_params(lambda: &LambdaExpr, expected: &[&str]) {
+    assert_eq!(lambda.params.len(), expected.len());
+
+    for (param, expected_name) in lambda.params.iter().zip(expected) {
+        assert_eq!(param.name.as_str(), *expected_name);
+        assert!(
+            param.type_annotation.is_none(),
+            "expected param `{}` to be unannotated",
+            expected_name
+        );
+    }
+}
 
 #[test]
 fn test_simple_lambda() {
     let input = "val f = |x| x + 1";
     let (_, program) = parse_program(input).unwrap();
-    
+
     assert_eq!(program.declarations.len(), 1);
     match &program.declarations[0] {
         TopDecl::Binding(bind) => {
@@ -16,7 +29,7 @@ fn test_simple_lambda() {
             assert!(!bind.mutable);
             match &*bind.value {
                 Expr::Lambda(lambda) => {
-                    assert_eq!(lambda.params, vec!["x"]);
+                    assert_lambda_params(lambda, &["x"]);
                     // Check body is x + 1
                     match &*lambda.body {
                         Expr::Binary(bin) => {
@@ -38,16 +51,14 @@ fn test_simple_lambda() {
 fn test_lambda_multiple_params() {
     let input = "val add = |x, y| x + y";
     let (_, program) = parse_program(input).unwrap();
-    
+
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => {
-            match &*bind.value {
-                Expr::Lambda(lambda) => {
-                    assert_eq!(lambda.params, vec!["x", "y"]);
-                }
-                _ => panic!("Expected lambda expression"),
+        TopDecl::Binding(bind) => match &*bind.value {
+            Expr::Lambda(lambda) => {
+                assert_lambda_params(lambda, &["x", "y"]);
             }
-        }
+            _ => panic!("Expected lambda expression"),
+        },
         _ => panic!("Expected binding declaration"),
     }
 }
@@ -56,17 +67,15 @@ fn test_lambda_multiple_params() {
 fn test_lambda_no_params() {
     let input = "val unit = || 42";
     let (_, program) = parse_program(input).unwrap();
-    
+
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => {
-            match &*bind.value {
-                Expr::Lambda(lambda) => {
-                    assert_eq!(lambda.params.len(), 0);
-                    assert!(matches!(&*lambda.body, Expr::IntLit(42)));
-                }
-                _ => panic!("Expected lambda expression"),
+        TopDecl::Binding(bind) => match &*bind.value {
+            Expr::Lambda(lambda) => {
+                assert_eq!(lambda.params.len(), 0);
+                assert!(matches!(&*lambda.body, Expr::IntLit(42)));
             }
-        }
+            _ => panic!("Expected lambda expression"),
+        },
         _ => panic!("Expected binding declaration"),
     }
 }
@@ -75,22 +84,20 @@ fn test_lambda_no_params() {
 fn test_nested_lambda() {
     let input = "val curry_add = |x| |y| x + y";
     let (_, program) = parse_program(input).unwrap();
-    
+
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => {
-            match &*bind.value {
-                Expr::Lambda(outer) => {
-                    assert_eq!(outer.params, vec!["x"]);
-                    match &*outer.body {
-                        Expr::Lambda(inner) => {
-                            assert_eq!(inner.params, vec!["y"]);
-                        }
-                        _ => panic!("Expected nested lambda"),
+        TopDecl::Binding(bind) => match &*bind.value {
+            Expr::Lambda(outer) => {
+                assert_lambda_params(outer, &["x"]);
+                match &*outer.body {
+                    Expr::Lambda(inner) => {
+                        assert_lambda_params(inner, &["y"]);
                     }
+                    _ => panic!("Expected nested lambda"),
                 }
-                _ => panic!("Expected lambda expression"),
             }
-        }
+            _ => panic!("Expected lambda expression"),
+        },
         _ => panic!("Expected binding declaration"),
     }
 }
@@ -103,17 +110,37 @@ fn test_lambda_with_block_body() {
         z
     }"#;
     let (_, program) = parse_program(input).unwrap();
-    
+
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => {
-            match &*bind.value {
-                Expr::Lambda(lambda) => {
-                    assert_eq!(lambda.params, vec!["x"]);
-                    assert!(matches!(&*lambda.body, Expr::Block(_)));
-                }
-                _ => panic!("Expected lambda expression"),
+        TopDecl::Binding(bind) => match &*bind.value {
+            Expr::Lambda(lambda) => {
+                assert_lambda_params(lambda, &["x"]);
+                assert!(matches!(&*lambda.body, Expr::Block(_)));
             }
-        }
+            _ => panic!("Expected lambda expression"),
+        },
+        _ => panic!("Expected binding declaration"),
+    }
+}
+
+#[test]
+fn test_lambda_typed_param_records_annotation() {
+    let input = "val f = |x: Int32| x + 1";
+    let (_, program) = parse_program(input).unwrap();
+
+    match &program.declarations[0] {
+        TopDecl::Binding(bind) => match &*bind.value {
+            Expr::Lambda(lambda) => {
+                assert_eq!(lambda.params.len(), 1);
+                let param = &lambda.params[0];
+                assert_eq!(param.name, "x");
+                assert!(matches!(
+                    param.type_annotation.as_ref(),
+                    Some(Type::Named(name)) if name == "Int32"
+                ));
+            }
+            _ => panic!("Expected lambda expression"),
+        },
         _ => panic!("Expected binding declaration"),
     }
 }
@@ -159,7 +186,7 @@ fn test_lambda_call_osv_syntax() {
     // which is: 21 (|x| x * 2)
     let input = "val result = 21 (|x| x * 2)";
     let (_, program) = parse_program(input).unwrap();
-    
+
     match &program.declarations[0] {
         TopDecl::Binding(bind) => {
             match &*bind.value {

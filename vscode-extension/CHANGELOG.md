@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Record definitions and instances
   - Pattern matching
   - Control flow constructs
-  - Arena allocation blocks
+  - Context binding blocks
 
 - **Themes**: Custom color themes optimized for Restrict Language
   - Restrict Dark: Dark theme with syntax-aware colors

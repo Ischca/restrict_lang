@@ -1,8 +1,5 @@
-// Example test file
+// Example type-check smoke test
 
-import std.test.{assert, assert_eq}
-
-fun test_example = {
-    val result = 1 + 1;
-    assert_eq(result, 2)
+fun test_example: () -> Boolean = {
+    1 + 1 == 2
 }

@@ -1,15 +1,17 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use url::Url;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Registry {
     url: Url,
     client: reqwest::Client,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PackageMetadata {
     pub name: String,
     pub version: String,
@@ -23,88 +25,103 @@ pub struct PackageMetadata {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SearchResult {
     pub packages: Vec<PackageMetadata>,
     pub total: usize,
 }
 
 impl Registry {
+    #[allow(dead_code)]
     pub fn new(url: &str) -> Result<Self> {
-        let url = Url::parse(url)
-            .with_context(|| format!("Invalid registry URL: {}", url))?;
-        
+        let url = Url::parse(url).with_context(|| format!("Invalid registry URL: {}", url))?;
+
         Ok(Self {
             url,
             client: reqwest::Client::new(),
         })
     }
-    
+
+    #[allow(dead_code)]
     pub async fn search(&self, query: &str) -> Result<SearchResult> {
         let search_url = self.url.join("/api/v1/search")?;
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(search_url)
             .query(&[("q", query)])
             .send()
             .await
             .context("Failed to search registry")?;
-        
+
         if !response.status().is_success() {
             anyhow::bail!("Registry search failed: {}", response.status());
         }
-        
-        response.json()
+
+        response
+            .json()
             .await
             .context("Failed to parse search results")
     }
-    
+
+    #[allow(dead_code)]
     pub async fn get_package(&self, name: &str, version: &str) -> Result<PackageMetadata> {
-        let package_url = self.url.join(&format!("/api/v1/packages/{}/{}", name, version))?;
-        
-        let response = self.client
+        let package_url = self
+            .url
+            .join(&format!("/api/v1/packages/{}/{}", name, version))?;
+
+        let response = self
+            .client
             .get(package_url)
             .send()
             .await
             .context("Failed to fetch package metadata")?;
-        
+
         if !response.status().is_success() {
             anyhow::bail!("Package not found: {} v{}", name, version);
         }
-        
-        response.json()
+
+        response
+            .json()
             .await
             .context("Failed to parse package metadata")
     }
-    
+
+    #[allow(dead_code)]
     pub async fn download_cage(&self, metadata: &PackageMetadata) -> Result<Vec<u8>> {
-        let response = self.client
+        let response = self
+            .client
             .get(&metadata.cage_url)
             .send()
             .await
             .context("Failed to download cage")?;
-        
+
         if !response.status().is_success() {
             anyhow::bail!("Failed to download cage: {}", response.status());
         }
-        
-        let bytes = response.bytes()
-            .await
-            .context("Failed to read cage data")?;
-        
+
+        let bytes = response.bytes().await.context("Failed to read cage data")?;
+
         // Verify SHA256
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let hash = hex::encode(hasher.finalize());
-        
+
         if hash != metadata.sha256 {
             anyhow::bail!("Cage integrity check failed: SHA256 mismatch");
         }
-        
+
         Ok(bytes.to_vec())
     }
-    
-    pub async fn publish(&self, _cage_data: &[u8], _metadata: &PackageMetadata, _token: &str) -> Result<()> {
+
+    #[allow(dead_code)]
+    pub async fn publish(
+        &self,
+        _cage_data: &[u8],
+        _metadata: &PackageMetadata,
+        _token: &str,
+    ) -> Result<()> {
         // TODO: Implement publishing
         anyhow::bail!("Publishing not implemented yet")
     }

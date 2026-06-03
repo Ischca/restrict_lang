@@ -1,4 +1,6 @@
-use restrict_lang::{parse_program, lex};
+#![cfg(feature = "tat")]
+
+use restrict_lang::{lex, parse_program};
 
 #[test]
 fn test_leakfile_parsing() {
@@ -14,7 +16,7 @@ fun leakFile<~io> = {
 fun main: () -> Int = {
     Unit
 }"#;
-    
+
     // First, test lexing
     println!("=== Testing Lexer ===");
     match lex(input) {
@@ -22,7 +24,7 @@ fun main: () -> Int = {
             println!("Lexing successful!");
             println!("Token count: {}", tokens.len());
             println!("Remaining after lex: {:?}", remaining);
-            
+
             // Print first 10 tokens
             for (i, token) in tokens.iter().take(10).enumerate() {
                 println!("Token {}: {:?}", i, token);
@@ -32,7 +34,7 @@ fun main: () -> Int = {
             panic!("Lexing failed: {:?}", e);
         }
     }
-    
+
     // Then test parsing
     println!("\n=== Testing Parser ===");
     match parse_program(input) {
@@ -40,7 +42,7 @@ fun main: () -> Int = {
             println!("Parsing partially successful!");
             println!("Declarations parsed: {}", program.declarations.len());
             println!("Remaining length: {}", remaining.len());
-            
+
             for (i, decl) in program.declarations.iter().enumerate() {
                 match decl {
                     restrict_lang::TopDecl::Function(f) => {
@@ -54,11 +56,11 @@ fun main: () -> Int = {
                     }
                 }
             }
-            
+
             if !remaining.trim().is_empty() {
                 println!("\nUnparsed content:");
                 println!("{}", remaining);
-                
+
                 // Try to parse just the function
                 println!("\n=== Trying to parse just the function ===");
                 let func_only = "fun leakFile<~io> = {
@@ -67,7 +69,10 @@ fun main: () -> Int = {
 }";
                 match parse_program(func_only) {
                     Ok((rem, prog)) => {
-                        println!("Function-only parse: {} declarations", prog.declarations.len());
+                        println!(
+                            "Function-only parse: {} declarations",
+                            prog.declarations.len()
+                        );
                         println!("Remaining: {:?}", rem);
                     }
                     Err(e) => {

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-mod commands;
 mod cage;
+mod commands;
 mod manifest;
-mod vault;
 mod registry;
+mod vault;
 
 use commands::*;
 
@@ -25,10 +25,10 @@ enum Commands {
         /// Project name
         name: String,
     },
-    
+
     /// Initialize a Restrict Language project in current directory
     Init,
-    
+
     /// Add a dependency to the project
     Add {
         /// Dependency specification (name@version, path, or URL)
@@ -46,13 +46,13 @@ enum Commands {
         #[arg(long)]
         wit: Option<String>,
     },
-    
+
     /// Remove a dependency from the project
     Remove {
         /// Dependency name
         name: String,
     },
-    
+
     /// Build the project
     Build {
         /// Build in release mode with optimizations
@@ -68,29 +68,29 @@ enum Commands {
         #[arg(long)]
         verify: bool,
         /// Reproducible build
-        #[arg(long)]
+        #[arg(long, alias = "deterministic")]
         repro: bool,
     },
-    
+
     /// Build and run the project
     Run {
         /// Arguments to pass to the program
         args: Vec<String>,
     },
-    
+
     /// Run tests
     Test {
         /// Test filter
         filter: Option<String>,
     },
-    
+
     /// Publish a package to WardHub
     Publish {
         /// Registry URL
         #[arg(long)]
         registry: Option<String>,
     },
-    
+
     /// Wrap external WASM into a Cage
     Wrap {
         /// Path to WASM module
@@ -108,7 +108,7 @@ enum Commands {
         #[arg(short, long)]
         output: Option<String>,
     },
-    
+
     /// Unwrap a Cage to extract WASM and WIT
     Unwrap {
         /// Path to Cage file
@@ -120,7 +120,7 @@ enum Commands {
         #[arg(short, long)]
         output: Option<String>,
     },
-    
+
     /// Check project for issues
     Doctor,
 }
@@ -128,7 +128,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     match cli.command {
         Commands::New { name } => {
             new_project(&name)?;
@@ -136,13 +136,25 @@ async fn main() -> Result<()> {
         Commands::Init => {
             init_project()?;
         }
-        Commands::Add { dep, path, git, wasm, wit } => {
+        Commands::Add {
+            dep,
+            path,
+            git,
+            wasm,
+            wit,
+        } => {
             add_dependency(&dep, path, git, wasm, wit).await?;
         }
         Commands::Remove { name } => {
             remove_dependency(&name)?;
         }
-        Commands::Build { release, watch, component, verify, repro } => {
+        Commands::Build {
+            release,
+            watch,
+            component,
+            verify,
+            repro,
+        } => {
             build_project(release, watch, component, verify, repro).await?;
         }
         Commands::Run { args } => {
@@ -154,16 +166,26 @@ async fn main() -> Result<()> {
         Commands::Publish { registry } => {
             publish_package(registry).await?;
         }
-        Commands::Wrap { wasm, name, version, wit, output } => {
+        Commands::Wrap {
+            wasm,
+            name,
+            version,
+            wit,
+            output,
+        } => {
             wrap_wasm(&wasm, &name, &version, wit, output)?;
         }
-        Commands::Unwrap { cage, component, output } => {
+        Commands::Unwrap {
+            cage,
+            component,
+            output,
+        } => {
             unwrap_cage(&cage, component, output)?;
         }
         Commands::Doctor => {
             doctor_check().await?;
         }
     }
-    
+
     Ok(())
 }

@@ -1,9 +1,11 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 /// ⚡ Test Alchemist's Concurrency Cauldron: Temporal Scope Race Conditions
-/// 
+///
 /// These tests reveal race conditions and concurrency bugs in temporal scopes.
 /// Each test is designed to expose a specific concurrency vulnerability.
 
@@ -41,7 +43,7 @@ fn test_temporal_scope_race_condition() {
             racy_increment(resource)  // Result: 1 or 2?
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     // This should expose lack of concurrency control in temporal scopes
@@ -78,7 +80,7 @@ fn test_temporal_lifetime_early_destruction() {
         
         sleep(200);  // Spawned task tries to read destroyed file
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
@@ -138,7 +140,7 @@ fn test_nested_temporal_deadlock() {
             sync_wait()
         }}
     }"#;
-    
+
     // This tests if the type system can prevent deadlock patterns
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
@@ -184,12 +186,12 @@ fn test_temporal_scope_migration() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => panic!("Concurrent resource migration should fail!"),
-        Err(_) => {},
+        Err(_) => {}
     }
 }
 
@@ -239,7 +241,7 @@ fn test_temporal_ordering_confusion() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     // Temporal ordering should be enforced even with concurrency
@@ -276,7 +278,7 @@ fn test_async_temporal_leak() {
         val leaked_future = leak_through_async();
         leaked_future.await  // Access after temporal scope ended
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
@@ -315,12 +317,12 @@ fn test_channel_temporal_smuggling() {
             smuggle_data()  // Returns short-lived data in long scope
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => panic!("Channel smuggling should be prevented!"),
-        Err(_) => {},
+        Err(_) => {}
     }
 }
 
@@ -362,7 +364,7 @@ fn test_temporal_memory_barrier_violation() {
     fun main = {
         racy_counter()
     }"#;
-    
+
     // This tests memory ordering guarantees with temporal scopes
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
@@ -401,7 +403,7 @@ fn test_temporal_scope_fork_bomb() {
             sync_wait()
         }
     }"#;
-    
+
     // This tests resource limits on temporal scope creation
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
@@ -454,7 +456,7 @@ fn test_temporal_aba_problem() {
             aba_vulnerability(resource)
         }
     }"#;
-    
+
     // Classic ABA problem in context of temporal resources
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();

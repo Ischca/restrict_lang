@@ -4,10 +4,11 @@ A web-based compiler for the Restrict Language that runs entirely in the browser
 
 ## Features
 
-- **Full Compilation Pipeline**: Lexing, parsing, type checking, and WASM code generation
-- **Interactive Interface**: Real-time compilation with syntax highlighting
+- **Browser Compiler Flow**: Lexing, parsing, type checking, and WASM-oriented output through the bundled WebAssembly module
+- **Interactive Interface**: Compile, lex, and parse actions from a browser editor
+- **Restrict Syntax Highlighting**: The source editor highlights keywords, types, literals, comments, strings, numbers, and OSV operators
 - **Step-by-Step Analysis**: View tokens, AST, and compilation errors separately
-- **Example Programs**: Built-in examples to get started quickly
+- **Example Programs**: Built-in examples using current v0.0.1 public syntax
 - **No Server Required**: Runs entirely in the browser
 
 ## Building
@@ -57,21 +58,22 @@ npx serve .
 The web compiler consists of:
 
 - **Rust Backend**: The core compiler compiled to WebAssembly
-- **JavaScript Frontend**: Web interface that calls the WASM module
+- **JavaScript Frontend**: Web interface that calls the WASM module and keeps the source editor highlight layer in sync
 - **HTML/CSS**: User interface and styling
 
-## Supported Features
+## Supported v0.0.1 Syntax Surface
 
-All features of the Restrict Language are supported:
+The web demo examples use the current public syntax surface. Some planned or
+experimental language features may be reserved by the parser or documented in
+the language specification, but they are not guaranteed to compile through the
+browser demo.
 
-- Function definitions with parameters and return types
-- Variable declarations (val/mut)
-- Pipe operations (|> and |>>)
-- Record types with clone/freeze operations
-- Context binding with `with` blocks
-- Control flow (if/else, while loops)
-- Type checking and affine type system
-- WASM code generation
+- Function declarations with `fun name: (...) -> Type =`
+- Basic types such as `Int32`, `Float64`, and `Boolean`
+- Variable declarations with `val` and `mut val`
+- OSV calls such as `value |> function` and `(left, right) add`
+- Record declarations and literals with colon-delimited fields
+- `then`/`else` expressions, pattern matching, type checking, and WASM-oriented output where implemented
 
 ## Browser Compatibility
 
@@ -116,8 +118,9 @@ To modify the web compiler:
 
 1. Edit Rust code in `src/web.rs` for WASM bindings
 2. Edit JavaScript code in `web/app.js` for the frontend
-3. Edit HTML/CSS in `web/index.html` for the interface
-4. Rebuild with `./build.sh`
+3. Edit `web/restrict-highlight.js` for shared source highlighting rules
+4. Edit HTML/CSS in `web/index.html` for the interface
+5. Rebuild with `./build.sh`
 
 ## Troubleshooting
 

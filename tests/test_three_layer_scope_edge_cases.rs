@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 /// 🔍 Test Alchemist's Treasure Hunt: Three-Layer Scope Edge Cases

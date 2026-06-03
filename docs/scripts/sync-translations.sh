@@ -45,14 +45,14 @@ echo "================================"
 
 # Define file mappings
 declare -A file_map=(
-    ["en/introduction.md"]="ja/introduction.md"
-    ["en/getting-started/installation.md"]="ja/getting-started/installation.md"
-    ["en/getting-started/hello-world.md"]="ja/getting-started/hello-world.md"
-    ["en/guide/syntax.md"]="ja/guide/syntax.md"
-    ["en/guide/types.md"]="ja/guide/types.md"
-    ["en/guide/osv-order.md"]="ja/guide/osv-order.md"
-    ["en/guide/warder.md"]="ja/guide/warder.md"
-    ["en/reference/stdlib.md"]="ja/reference/stdlib.md"
+    ["public/en/introduction.md"]="public/ja/introduction.md"
+    ["public/en/getting-started/installation.md"]="public/ja/getting-started/installation.md"
+    ["public/en/getting-started/hello-world.md"]="public/ja/getting-started/hello-world.md"
+    ["public/en/guide/syntax.md"]="public/ja/guide/syntax.md"
+    ["public/en/guide/types.md"]="public/ja/guide/types.md"
+    ["public/en/guide/osv-order.md"]="public/ja/guide/osv-order.md"
+    ["public/en/guide/warder.md"]="public/ja/guide/warder.md"
+    ["public/en/reference/stdlib.md"]="public/ja/reference/stdlib.md"
 )
 
 missing_count=0

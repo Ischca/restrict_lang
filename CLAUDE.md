@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## CRITICAL: Always Reference Language Specification
+
+**IMPORTANT**: Before making ANY changes to the codebase, ALWAYS consult the official language specification at `/LANGUAGE_SPECIFICATION.md`. This document is the single source of truth for:
+- Syntax rules (val not let, OSV word order, etc.)
+- Type system (affine types, temporal types)
+- Operators and keywords
+- Language philosophy and design decisions
+
+When working with agents, ALWAYS include in your prompt:
+"Please review the language specification at /LANGUAGE_SPECIFICATION.md and follow the instructions in /.claude/agent-instructions.md before making changes."
+
+## Agent Instructions
+
+All agents MUST follow the instructions in `/.claude/agent-instructions.md` which includes:
+- Language specification requirements
+- Syntax rules (val not let, OSV word order, etc.)
+- Commit message rules
+- Project command usage
+
 ## Commands
 
 **IMPORTANT**: This project uses `mise` for environment management. All cargo commands should be prefixed with `mise exec --` to ensure proper environment setup.
@@ -55,7 +74,7 @@ The Restrict Language compiler is structured as follows:
 - **Affine types**: Each binding can be referenced 0-1 times
 - **Prototype-based records**: Use `clone` and `freeze` for inheritance
 - **Context binding**: Resource management with `with` blocks
-- **Pipe operators**: `|>` for immutable binding, `|>>` for mutable
+- **Pipe operator**: `|>` for OSV function composition
 
 ## Compiler Development Principles
 

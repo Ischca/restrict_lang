@@ -4,6 +4,9 @@
 //
 // Temporal Types Example: File I/O with automatic cleanup
 //
+// Experimental design sketch: TAT is outside the default v0.0.1 release gate,
+// so this file is not a runnable v0.0.1 release example.
+//
 // This example demonstrates how temporal type variables ensure
 // that resources are properly managed and cleaned up.
 

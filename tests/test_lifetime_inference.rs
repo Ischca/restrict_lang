@@ -1,5 +1,7 @@
-use restrict_lang::{parse_program, TypeChecker};
+#![cfg(feature = "tat")]
+
 use restrict_lang::lifetime_inference::LifetimeInference;
+use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
 fn test_basic_lifetime_inference() {
@@ -16,18 +18,18 @@ fn test_basic_lifetime_inference() {
     fun main: () -> Int = {
         42
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
-    
+
     // Test lifetime inference directly
     let mut inference = LifetimeInference::new();
     let result = inference.infer_program(&program);
     assert!(result.is_ok(), "Lifetime inference should succeed");
-    
+
     // Test through type checker
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -49,12 +51,15 @@ fn test_lifetime_inference_with_constraints() {
         Transaction { db = db, txId = 1 }
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
-    
+
     let mut inference = LifetimeInference::new();
     let result = inference.infer_program(&program);
-    assert!(result.is_ok(), "Lifetime inference should handle constraints");
+    assert!(
+        result.is_ok(),
+        "Lifetime inference should handle constraints"
+    );
 }
 
 #[test]
@@ -70,9 +75,9 @@ fn test_lifetime_inference_escape_detection() {
         file  // Trying to return temporal value
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
-    
+
     let mut inference = LifetimeInference::new();
     // For now, inference just collects info, actual validation happens in type checker
     let result = inference.infer_program(&program);

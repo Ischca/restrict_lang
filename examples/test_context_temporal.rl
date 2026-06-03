@@ -1,6 +1,6 @@
-// ⚠ NOT YET COMPILABLE — requires: context declarations
-// Planned for: v0.2.0+ (Temporal Affine Types)
-//
+// Experimental design sketch: TAT is outside the default v0.0.1 release gate,
+// so this file is not a runnable v0.0.1 release example.
+
 context FileSystem<~fs> {
     open: (String, (File<~fs>) -> Unit) -> Unit
 }

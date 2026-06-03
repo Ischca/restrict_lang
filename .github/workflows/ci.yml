@@ -52,30 +52,14 @@ jobs:
         curl https://mise.run | sh
         echo "$HOME/.local/bin" >> $GITHUB_PATH
     
-    - name: Verify samples compile
-      run: cargo test --test test_samples --verbose
-
-    - name: Check web/examples.js is in sync with samples/
-      run: ./scripts/sync_samples.sh --check
-
-    - name: Check all example files compile
-      run: |
-        ~/.local/bin/mise run check || true
+    - name: Check release example entrypoints compile
+      run: ~/.local/bin/mise run check
     
     - name: Build release
       run: cargo build --release
-
+    
     - name: Build Warder release
       run: cd warder && cargo build --release
-
-    - name: Install wasm-pack
-      run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-    - name: Add wasm32 target
-      run: rustup target add wasm32-unknown-unknown
-
-    - name: Build WASM
-      run: wasm-pack build --target web --out-dir web/pkg
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

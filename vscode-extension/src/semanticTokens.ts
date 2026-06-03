@@ -30,7 +30,7 @@ export const tokenTypes = [
     'lambda',
     'pattern',
     'pipe',
-    'arena'
+    'context'
 ];
 
 export const tokenModifiers = [
@@ -128,6 +128,26 @@ export class RestrictSemanticTokensProvider implements vscode.DocumentSemanticTo
                 this.getTokenModifiers(['declaration'])
             );
         }
+
+        // Context definitions
+        const contextMatch = /\b(context)\s+(\w+)/g;
+        while ((match = contextMatch.exec(line)) !== null) {
+            tokensBuilder.push(
+                lineIndex,
+                match.index,
+                match[1].length,
+                this.getTokenType('keyword'),
+                this.getTokenModifiers(['declaration'])
+            );
+
+            tokensBuilder.push(
+                lineIndex,
+                match.index + match[1].length + 1,
+                match[2].length,
+                this.getTokenType('context'),
+                this.getTokenModifiers(['declaration'])
+            );
+        }
         
         // Lambda expressions
         const lambdaMatch = /\|([^|]*)\|/g;
@@ -168,37 +188,39 @@ export class RestrictSemanticTokensProvider implements vscode.DocumentSemanticTo
         }
         
         // Variable bindings
-        const valMatch = /\b(val)\s+(mut\s+)?(\w+)/g;
+        const valMatch = /\b(mut\s+)?(val)\s+(\w+)/g;
         while ((match = valMatch.exec(line)) !== null) {
-            // 'val' keyword
-            tokensBuilder.push(
-                lineIndex,
-                match.index,
-                match[1].length,
-                this.getTokenType('keyword'),
-                this.getTokenModifiers(['declaration'])
-            );
-            
+            const isMutable = Boolean(match[1]);
+            const valIndex = match.index + (match[1] ? match[1].length : 0);
+
             // 'mut' keyword if present
-            if (match[2]) {
-                const mutIndex = match.index + match[1].length + 1;
+            if (isMutable) {
                 tokensBuilder.push(
                     lineIndex,
-                    mutIndex,
+                    match.index,
                     3, // 'mut'.length
                     this.getTokenType('keyword'),
                     this.getTokenModifiers(['modification'])
                 );
             }
-            
+
+            // 'val' keyword
+            tokensBuilder.push(
+                lineIndex,
+                valIndex,
+                match[2].length,
+                this.getTokenType('keyword'),
+                this.getTokenModifiers(['declaration'])
+            );
+
             // Variable name
-            const varNameIndex = match.index + match[1].length + (match[2] ? match[2].length : 0) + 1;
+            const varNameIndex = valIndex + match[2].length + 1;
             tokensBuilder.push(
                 lineIndex,
                 varNameIndex,
                 match[3].length,
                 this.getTokenType('variable'),
-                this.getTokenModifiers(match[2] ? ['declaration', 'mutable'] : ['declaration'])
+                this.getTokenModifiers(isMutable ? ['declaration', 'mutable'] : ['declaration'])
             );
         }
         
@@ -229,7 +251,7 @@ export class RestrictSemanticTokensProvider implements vscode.DocumentSemanticTo
         }
         
         // Pipe operators
-        const pipeMatch = /(\|>>?)/g;
+        const pipeMatch = /(\|>)/g;
         while ((match = pipeMatch.exec(line)) !== null) {
             tokensBuilder.push(
                 lineIndex,

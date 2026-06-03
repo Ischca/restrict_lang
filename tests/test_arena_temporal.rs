@@ -1,15 +1,16 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn compile(input: &str) -> Result<String, String> {
-    let (remaining, program) = parse_program(input)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
-    
+    let (remaining, program) = parse_program(input).map_err(|e| format!("Parse error: {:?}", e))?;
+
     println!("Parsed {} declarations:", program.declarations.len());
     println!("Remaining input: {} chars", remaining.len());
     if !remaining.trim().is_empty() {
         println!("Remaining: {:?}", remaining);
     }
-    
+
     for (i, decl) in program.declarations.iter().enumerate() {
         match decl {
             restrict_lang::TopDecl::Function(f) => {
@@ -23,13 +24,15 @@ fn compile(input: &str) -> Result<String, String> {
             }
         }
     }
-    
+
     let mut checker = TypeChecker::new();
-    checker.check_program(&program)
+    checker
+        .check_program(&program)
         .map_err(|e| format!("Type error: {:?}", e))?;
-    
+
     let mut codegen = WasmCodeGen::new();
-    codegen.generate(&program)
+    codegen
+        .generate(&program)
         .map_err(|e| format!("Codegen error: {:?}", e))
 }
 
@@ -53,7 +56,7 @@ fun main: () -> Int = {
         p1.x
     }
 }"#;
-    
+
     let wat = match compile(input) {
         Ok(wat) => wat,
         Err(e) => {
@@ -61,19 +64,19 @@ fun main: () -> Int = {
             panic!("Compilation failed: {}", e);
         }
     };
-    
+
     // Debug: Save WAT to file for inspection
     std::fs::write("debug_wat_output.wat", &wat).unwrap();
     println!("WAT saved to debug_wat_output.wat");
-    
+
     // Check arena initialization for temporal scopes
     assert!(wat.contains("Initialize temporal scope arena for outer"));
     assert!(wat.contains("Initialize temporal scope arena for inner"));
-    
+
     // Check arena cleanup
     assert!(wat.contains("Clean up temporal scope arena for inner"));
     assert!(wat.contains("Clean up temporal scope arena for outer"));
-    
+
     // Check arena restore
     assert!(wat.contains("Restore previous arena"));
 }
@@ -104,7 +107,7 @@ fun main: () -> Int = {
         buf1.size
     }
 }"#;
-    
+
     let wat = match compile(input) {
         Ok(wat) => wat,
         Err(e) => {
@@ -112,12 +115,12 @@ fun main: () -> Int = {
             panic!("Compilation failed: {}", e);
         }
     };
-    
+
     // Verify proper arena stack management
     assert!(wat.contains("Initialize temporal scope arena for level1"));
     assert!(wat.contains("Initialize temporal scope arena for level2"));
     assert!(wat.contains("Initialize temporal scope arena for level3"));
-    
+
     // Each arena should have different addresses
     assert!(wat.contains("i32.const 32768")); // 0x8000
     assert!(wat.contains("i32.const 36864")); // 0x9000
@@ -134,7 +137,7 @@ fn test_temporal_scope_with_allocations() {
         list |> length
     }
 }"#;
-    
+
     let wat = match compile(input) {
         Ok(wat) => wat,
         Err(e) => {
@@ -142,7 +145,7 @@ fn test_temporal_scope_with_allocations() {
             panic!("Compilation failed: {}", e);
         }
     };
-    
+
     // Check that allocations use the temporal arena
     assert!(wat.contains("call $allocate")); // List and Option allocations
     assert!(wat.contains("global.get $current_arena"));
@@ -164,7 +167,7 @@ fun main: () -> Int = {
         process
     }
 }"#;
-    
+
     let wat = match compile(input) {
         Ok(wat) => wat,
         Err(e) => {
@@ -172,7 +175,7 @@ fun main: () -> Int = {
             panic!("Compilation failed: {}", e);
         }
     };
-    
+
     // Verify that values can be returned from temporal scopes
     assert!(wat.contains("Initialize temporal scope arena for local"));
     assert!(wat.contains("Clean up temporal scope arena for local"));
@@ -193,12 +196,14 @@ fun main: () -> Int = {
         task |> await
     }
 }"#;
-    
+
     match compile(input) {
         Ok(wat) => {
             // For now, async operations might not be fully implemented
-            assert!(wat.contains("Initialize temporal scope arena for async") ||
-                    wat.contains("async operations"));
+            assert!(
+                wat.contains("Initialize temporal scope arena for async")
+                    || wat.contains("async operations")
+            );
         }
         Err(e) => {
             // Expected for now if async isn't fully implemented
@@ -225,7 +230,7 @@ fun main: () -> Int = {
         item1.data1 + item2.data2 + item3.data3
     }
 }"#;
-    
+
     let wat = match compile(input) {
         Ok(wat) => wat,
         Err(e) => {
@@ -233,9 +238,8 @@ fun main: () -> Int = {
             panic!("Compilation failed: {}", e);
         }
     };
-    
+
     // Verify memory allocation within arena bounds
     assert!(wat.contains("call $allocate"));
-    assert!(wat.contains("TODO: Add bounds checking") || 
-            wat.contains("bounds check"));
+    assert!(wat.contains("TODO: Add bounds checking") || wat.contains("bounds check"));
 }

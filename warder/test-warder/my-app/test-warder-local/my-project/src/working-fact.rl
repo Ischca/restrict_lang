@@ -1,9 +1,9 @@
-fun fact3 = {
+fun fact3: () -> Int32 = {
     3 * 2 * 1
 }
 
-fun main = {
-    val result = fact3
-    "3! = " |> println
+fun main: () -> () = {
+    val result = () fact3;
+    "3! = " |> println;
     result |> print_int
 }

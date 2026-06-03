@@ -1,5 +1,8 @@
 // Temporal Affine Types (TAT) Cleanup Demo
 //
+// Experimental design sketch: TAT is outside the default v0.0.1 release gate,
+// so this file is not a runnable v0.0.1 release example.
+//
 // This example demonstrates the enhanced TAT implementation with automatic
 // resource cleanup at temporal scope boundaries.
 

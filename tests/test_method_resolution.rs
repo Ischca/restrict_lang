@@ -1,291 +1,471 @@
 use restrict_lang::{parse_program, TypeChecker};
 
+fn type_check(input: &str) -> Result<(), String> {
+    let (remaining, program) = parse_program(input).map_err(|e| format!("Parse error: {:?}", e))?;
+    if !remaining.trim().is_empty() {
+        return Err(format!("Unparsed input remaining: {:?}", remaining));
+    }
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|e| format!("Type error: {}", e))
+}
+
 #[test]
-fn test_basic_method_call() {
+fn osv_function_call_replaces_method_call() {
     let input = r#"
 record Point {
     x: Int32,
     y: Int32
 }
 
-impl Point {
-    fn distance(self, other: Point) -> Float64 {
-        let dx = self.x - other.x;
-        let dy = self.y - other.y;
-        (dx * dx + dy * dy) |> sqrt
-    }
+fun manhattan: (point: Point) -> Int32 = {
+    point.x + point.y
 }
 
-fn main() {
-    let p1 = Point { x: 0, y: 0 };
-    let p2 = Point { x: 3, y: 4 };
-    let dist = p1.distance(p2);
-    dist
+fun main: () -> Int32 = {
+    val point = Point { x: 3, y: 4 };
+    point |> manhattan
 }
 "#;
 
-    match parse_program(input) {
-        Ok((remaining, program)) => {
-            assert!(remaining.trim().is_empty(), "Should parse all input");
-            
-            let mut type_checker = TypeChecker::new();
-            match type_checker.check_program(&program) {
-                Ok(_) => {
-                    // Test passed - method resolution should work
-                    println!("Method resolution test passed");
-                }
-                Err(e) => {
-                    panic!("Type checking failed: {:?}", e);
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Parse error: {:?}", e);
-        }
-    }
+    type_check(input).expect("OSV function call should be the method-like form");
 }
 
 #[test]
-fn test_method_with_no_args() {
-    let input = r#"
-record Counter {
-    count: Int32
-}
-
-impl Counter {
-    fn get(self) -> Int32 {
-        self.count
-    }
-    
-    fn increment(self) -> Counter {
-        Counter { count: self.count + 1 }
-    }
-}
-
-fn main() {
-    let counter = Counter { count: 5 };
-    let value = counter.get();
-    let next = counter.increment();
-    value
-}
-"#;
-
-    match parse_program(input) {
-        Ok((remaining, program)) => {
-            assert!(remaining.trim().is_empty(), "Should parse all input");
-            
-            let mut type_checker = TypeChecker::new();
-            match type_checker.check_program(&program) {
-                Ok(_) => {
-                    println!("No-arg method test passed");
-                }
-                Err(e) => {
-                    panic!("Type checking failed: {:?}", e);
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Parse error: {:?}", e);
-        }
-    }
-}
-
-#[test]
-fn test_method_call_type_mismatch() {
-    let input = r#"
-record Calculator {
-    value: Int32
-}
-
-impl Calculator {
-    fn add(self, other: Int32) -> Int32 {
-        self.value + other
-    }
-}
-
-fn main() {
-    let calc = Calculator { value: 10 };
-    let result = calc.add("not a number");  // Should fail - wrong argument type
-    result
-}
-"#;
-
-    match parse_program(input) {
-        Ok((_, program)) => {
-            let mut type_checker = TypeChecker::new();
-            match type_checker.check_program(&program) {
-                Ok(_) => {
-                    panic!("Type checking should have failed due to argument type mismatch");
-                }
-                Err(e) => {
-                    println!("Expected type error: {:?}", e);
-                    // Should get a type mismatch error
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Parse error: {:?}", e);
-        }
-    }
-}
-
-#[test]
-fn test_method_call_arity_mismatch() {
-    let input = r#"
-record Adder {
-    base: Int32
-}
-
-impl Adder {
-    fn add(self, a: Int32, b: Int32) -> Int32 {
-        self.base + a + b
-    }
-}
-
-fn main() {
-    let adder = Adder { base: 1 };
-    let result = adder.add(2);  // Should fail - missing second argument
-    result
-}
-"#;
-
-    match parse_program(input) {
-        Ok((_, program)) => {
-            let mut type_checker = TypeChecker::new();
-            match type_checker.check_program(&program) {
-                Ok(_) => {
-                    panic!("Type checking should have failed due to arity mismatch");
-                }
-                Err(e) => {
-                    println!("Expected arity error: {:?}", e);
-                    // Should get an arity mismatch error
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Parse error: {:?}", e);
-        }
-    }
-}
-
-#[test]
-fn test_undefined_method() {
-    let input = r#"
-record Empty {
-    value: Int32
-}
-
-fn main() {
-    let obj = Empty { value: 42 };
-    let result = obj.nonexistent();  // Should fail - method doesn't exist
-    result
-}
-"#;
-
-    match parse_program(input) {
-        Ok((_, program)) => {
-            let mut type_checker = TypeChecker::new();
-            match type_checker.check_program(&program) {
-                Ok(_) => {
-                    panic!("Type checking should have failed due to undefined method");
-                }
-                Err(e) => {
-                    println!("Expected undefined method error: {:?}", e);
-                    // Should get an undefined method error
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Parse error: {:?}", e);
-        }
-    }
-}
-
-#[test]
-fn test_field_access_vs_method_call() {
+fn field_access_and_osv_function_composition_coexist() {
     let input = r#"
 record Data {
     value: Int32
 }
 
-impl Data {
-    fn getValue(self) -> Int32 {
-        self.value
-    }
+fun double_value: (data: Data) -> Int32 = {
+    data.value * 2
 }
 
-fn main() {
-    let data = Data { value: 42 };
-    let field_access = data.value;    // Field access
-    let method_call = data.getValue(); // Method call
-    field_access + method_call
+fun main: () -> Int32 = {
+    val data = Data { value: 21 };
+    val field_access = data.value;
+    val transformed = data |> double_value;
+    field_access + transformed
 }
 "#;
 
-    match parse_program(input) {
-        Ok((remaining, program)) => {
-            assert!(remaining.trim().is_empty(), "Should parse all input");
-            
-            let mut type_checker = TypeChecker::new();
-            match type_checker.check_program(&program) {
-                Ok(_) => {
-                    println!("Field access vs method call test passed");
-                }
-                Err(e) => {
-                    panic!("Type checking failed: {:?}", e);
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Parse error: {:?}", e);
-        }
-    }
+    type_check(input).expect("field access and OSV calls should type check");
 }
 
 #[test]
-fn test_chained_method_calls() {
+fn impl_method_resolves_from_receiver_type_without_double_consuming_receiver() {
     let input = r#"
-record Builder {
+record Score {
     value: Int32
 }
 
-impl Builder {
-    fn add(self, n: Int32) -> Builder {
-        Builder { value: self.value + n }
-    }
-    
-    fn multiply(self, n: Int32) -> Builder {
-        Builder { value: self.value * n }
-    }
-    
-    fn build(self) -> Int32 {
+impl Score {
+    fun total: (self: Score) -> Int32 = {
         self.value
     }
 }
 
-fn main() {
-    let builder = Builder { value: 1 };
-    let result = builder.add(5).multiply(2).build();  // Should work: 1+5=6, 6*2=12
-    result
+fun main: () -> Int32 = {
+    val score = Score { value: 42 };
+    (score) total
 }
 "#;
 
-    match parse_program(input) {
-        Ok((remaining, program)) => {
-            assert!(remaining.trim().is_empty(), "Should parse all input");
-            
-            let mut type_checker = TypeChecker::new();
-            match type_checker.check_program(&program) {
-                Ok(_) => {
-                    println!("Chained method calls test passed");
-                }
-                Err(e) => {
-                    panic!("Type checking failed: {:?}", e);
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Parse error: {:?}", e);
-        }
+    type_check(input).expect("method dispatch should consume the affine receiver exactly once");
+}
+
+#[test]
+fn impl_method_pipe_dispatch_is_not_current_release_surface() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun total: (self: Score) -> Int32 = {
+        self.value
     }
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 42 };
+    score |> total
+}
+"#;
+
+    let err = type_check(input).expect_err("impl methods should use grouped OSV dispatch");
+    assert!(
+        err.contains("Type error") && err.contains("Score"),
+        "error should reject pipe dispatch for impl methods in v0.0.1, got: {}",
+        err
+    );
+}
+
+#[test]
+fn impl_method_receiver_must_be_self_with_target_record_type() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun total: (score: Score) -> Int32 = {
+        score.value
+    }
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 42 };
+    (score) total
+}
+"#;
+
+    let err = type_check(input).expect_err("impl receiver should be self: Target");
+    assert!(
+        err.contains("must declare first parameter as self: Score"),
+        "error should explain the impl receiver contract, got: {}",
+        err
+    );
+}
+
+#[test]
+fn impl_method_dispatch_on_record_returning_expression() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun total: (self: Score) -> Int32 = {
+        self.value
+    }
+}
+
+fun make_score: () -> Score = {
+    Score { value: 41 }
+}
+
+fun main: () -> Int32 = {
+    (() make_score) total
+}
+"#;
+
+    type_check(input).expect("method dispatch should resolve record-returning expressions");
+}
+
+#[test]
+fn function_typed_record_field_can_be_called_as_pipe_target() {
+    let input = r#"
+record Strategy {
+    mapper: Int32 -> Int32
+}
+
+fun main: () -> Int32 = {
+    val strategy = Strategy {
+        mapper: |score| score + 1
+    };
+    41 |> (strategy.mapper)
+}
+"#;
+
+    type_check(input).expect("function-typed record fields should be callable pipe targets");
+}
+
+#[test]
+fn generic_impl_method_instantiates_from_osv_arguments() {
+    let input = r#"
+record Box {
+    value: Int32
+}
+
+impl Box {
+    fun keep: <T>(self: Box, value: T) -> T = {
+        value
+    }
+}
+
+fun main: () -> String = {
+    val box = Box { value: 1 };
+    (box, "ok") keep
+}
+"#;
+
+    type_check(input).expect("generic method calls should infer type params from OSV arguments");
+}
+
+#[test]
+fn impl_method_calls_are_declaration_order_independent() {
+    let input = r#"
+fun read_score: (score: Score) -> Int32 = {
+    (score) total
+}
+
+impl Score {
+    fun total: (self: Score) -> Int32 = {
+        self.value
+    }
+}
+
+record Score {
+    value: Int32
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 42 };
+    score |> read_score
+}
+"#;
+
+    type_check(input).expect("method signatures should be available before body checking");
+}
+
+#[test]
+fn unannotated_impl_method_return_is_inferred_before_function_bodies() {
+    let input = r#"
+fun read_risk: (score: Score) -> Float64 = {
+    (score) risk
+}
+
+impl Score {
+    fun risk: (self: Score) = {
+        self.value + 0.5
+    }
+}
+
+record Score {
+    value: Float64
+}
+
+fun main: () -> Float64 = {
+    val score = Score { value: 41.5 };
+    score |> read_risk
+}
+"#;
+
+    type_check(input).expect("unannotated method return should be inferred before function bodies");
+}
+
+#[test]
+fn annotated_impl_method_can_call_later_annotated_method() {
+    let input = r#"
+record Score {
+    value: Float64
+}
+
+impl Score {
+    fun adjusted: (self: Score) -> Float64 = {
+        (self) risk
+    }
+
+    fun risk: (self: Score) -> Float64 = {
+        self.value + 0.5
+    }
+}
+
+fun main: () -> Float64 = {
+    val score = Score { value: 41.5 };
+    (score) adjusted
+}
+"#;
+
+    type_check(input).expect("annotated methods should support method-to-method forward calls");
+}
+
+#[test]
+fn unannotated_impl_method_forward_call_requires_return_annotation() {
+    let input = r#"
+record Score {
+    value: Float64
+}
+
+impl Score {
+    fun adjusted: (self: Score) = {
+        (self) risk
+    }
+
+    fun risk: (self: Score) = {
+        self.value + 0.5
+    }
+}
+
+fun main: () -> Float64 = {
+    val score = Score { value: 41.5 };
+    (score) adjusted
+}
+"#;
+
+    let err = type_check(input).expect_err("unannotated forward method calls should be explicit");
+    assert!(
+        err.contains(
+            "method 'risk' for record 'Score' is used before its return type has been inferred"
+        ),
+        "error should explain the required return annotation, got: {}",
+        err
+    );
+}
+
+#[test]
+fn same_method_name_resolves_by_receiver_record() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+record Penalty {
+    value: Int32
+}
+
+impl Score {
+    fun amount: (self: Score) -> Int32 = {
+        self.value
+    }
+}
+
+impl Penalty {
+    fun amount: (self: Penalty) -> Int32 = {
+        0 - self.value
+    }
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 7 };
+    (score) amount
+}
+"#;
+
+    type_check(input).expect("receiver type should disambiguate shared method names");
+}
+
+#[test]
+fn duplicate_methods_on_same_record_are_rejected() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun amount: (self: Score) -> Int32 = {
+        self.value
+    }
+}
+
+impl Score {
+    fun amount: (self: Score) -> Int32 = {
+        0
+    }
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 7 };
+    (score) amount
+}
+"#;
+
+    let err = type_check(input).expect_err("duplicate methods should be rejected");
+    assert!(
+        err.contains("Duplicate method 'amount' for record 'Score'"),
+        "error should explain the duplicate method, got: {}",
+        err
+    );
+}
+
+#[test]
+fn traditional_dot_method_call_is_rejected() {
+    let input = r#"
+record Data {
+    value: Int32
+}
+
+fun main: () -> Int32 = {
+    val data = Data { value: 42 };
+    data.getValue()
+}
+"#;
+
+    let err = type_check(input).expect_err("traditional method syntax should be rejected");
+    assert!(
+        err.contains("Parse error") || err.contains("Unparsed input"),
+        "error should come from syntax rejection, got: {}",
+        err
+    );
+}
+
+#[test]
+fn traditional_dot_impl_method_call_is_rejected() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun amount: (self: Score) -> Int32 = {
+        self.value
+    }
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 42 };
+    score.amount()
+}
+"#;
+
+    let err = type_check(input).expect_err("traditional impl method syntax should be rejected");
+    assert!(
+        err.contains("Parse error") || err.contains("Unparsed input"),
+        "error should come from syntax rejection, got: {}",
+        err
+    );
+}
+
+#[test]
+fn wrong_osv_argument_type_is_rejected() {
+    let input = r#"
+record Calculator {
+    value: Int32
+}
+
+fun add_value: (calc: Calculator, amount: Int32) -> Int32 = {
+    calc.value + amount
+}
+
+fun main: () -> Int32 = {
+    val calc = Calculator { value: 10 };
+    (calc, "not a number") add_value
+}
+"#;
+
+    let err = type_check(input).expect_err("wrong OSV argument type should fail");
+    assert!(
+        err.contains("Type error"),
+        "error should explain type failure, got: {}",
+        err
+    );
+}
+
+#[test]
+fn wrong_osv_arity_is_rejected() {
+    let input = r#"
+record Adder {
+    base: Int32
+}
+
+fun add: (adder: Adder, a: Int32, b: Int32) -> Int32 = {
+    adder.base + a + b
+}
+
+fun main: () -> Int32 = {
+    val adder = Adder { base: 1 };
+    (adder, 2) add
+}
+"#;
+
+    let err = type_check(input).expect_err("wrong OSV arity should fail");
+    assert!(
+        err.contains("Type error"),
+        "error should explain type failure, got: {}",
+        err
+    );
 }

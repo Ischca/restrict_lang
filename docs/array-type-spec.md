@@ -7,17 +7,22 @@ Restrict Languageにおける固定長配列は、コンパイル時に長さが
 ## 構文
 
 ### 配列型宣言
-```
-Array[Int, 10]     // 10要素のInt配列
-Array[String, 5]   // 5要素のString配列
+```restrict
+Array<Int32, 10>   // 10要素のInt32配列
+Array<String, 5>   // 5要素のString配列
 ```
 
 ### 配列リテラル
-```
-[|1, 2, 3, 4, 5|]  // 5要素の配列
+```restrict
+val list: List<Int32> = [1, 2, 3]
+val arr: Array<Int32, 5> = [1, 2, 3, 4, 5]
 ```
 
-注: 通常のリスト `[1, 2, 3]` とは異なる構文を使用
+`[1, 2, 3]` はデフォルトでは `List<T>` として扱われます。
+期待型が `Array<T, N>` の文脈では、同じリテラルが固定長配列として扱われ、
+要素数が `N` と一致する必要があります。
+
+注: 旧式の bracket-bar 配列リテラルはサポートされていません。
 
 ## メモリレイアウト
 
@@ -33,30 +38,30 @@ Array[String, 5]   // 5要素のString配列
 
 ## 型システム
 
-- `Array[T, N]` は `List[T]` とは異なる型
+- `Array<T, N>` は `List<T>` とは異なる型
 - 配列の長さは型の一部
-- `Array[Int, 5]` と `Array[Int, 10]` は異なる型
+- `Array<Int32, 5>` と `Array<Int32, 10>` は異なる型
 
 ## 操作
 
 ### インデックスアクセス
-```
-val arr = [|10, 20, 30, 40, 50|];
-val second = arr array_get 1;  // 20
+```restrict
+val arr: Array<Int32, 5> = [10, 20, 30, 40, 50]
+val second = (arr, 1) array_get  // 20
 ```
 
 ### 長さ取得
 配列の長さは型情報から静的に決まるため、実行時の長さ取得は不要ですが、
 便宜上提供されます：
 
-```
-val len = arr array_length;  // 5
+```restrict
+val len = arr array_length  // 5
 ```
 
 ### 更新（mutable配列の場合）
-```
-mut val arr = [|10, 20, 30, 40, 50|];
-arr array_set 2 35;  // arr[2] = 35
+```restrict
+mut val arr: Array<Int32, 5> = [10, 20, 30, 40, 50]
+(arr, 2, 35) array_set  // arr[2] = 35
 ```
 
 ## 実装上の利点

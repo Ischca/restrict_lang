@@ -258,12 +258,21 @@ main() {
     export PATH="$INSTALL_DIR/bin:$PATH"
     
     echo ""
-    if "$INSTALL_DIR/bin/restrict_lang" --version >/dev/null 2>&1; then
+    local verify_dir
+    verify_dir=$(mktemp -d)
+    cat > "$verify_dir/main.rl" << 'EOF'
+fun main: () -> () = {
+    val message = "Installation verified!"
+    message |> println
+}
+EOF
+
+    if "$INSTALL_DIR/bin/restrict_lang" "$verify_dir/main.rl" "$verify_dir/main.wat" >/dev/null 2>&1 && [ -s "$verify_dir/main.wat" ]; then
         success "Restrict Language compiler installed!"
-        "$INSTALL_DIR/bin/restrict_lang" --version
     else
         error "Restrict Language compiler installation verification failed"
     fi
+    rm -rf "$verify_dir"
 
     if "$INSTALL_DIR/bin/warder" --version >/dev/null 2>&1; then
         success "Warder package manager installed!"

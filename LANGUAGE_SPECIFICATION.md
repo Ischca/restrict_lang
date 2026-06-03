@@ -8,7 +8,7 @@ This document is the **single authoritative specification** for Restrict Languag
 
 - **OSV (Object-Subject-Verb)**: Natural function composition: `value |> function`
 - **Affine Types**: Each variable can be used at most once (unless marked mutable)
-- **Temporal Affine Types (TAT)**: Automatic resource cleanup with temporal scopes
+- **Temporal Affine Types (TAT)**: Planned/experimental automatic resource cleanup with temporal scopes; outside the default v0.0.1 gate
 - **No Side Effects**: Expression statements must be pure
 - **Arena Memory**: Deterministic memory management without garbage collection
 
@@ -18,8 +18,21 @@ This document is the **single authoritative specification** for Restrict Languag
 ```
 fun val mut record context enum match then else while
 temporal within where clone freeze pub import export
-as fatal true false Some None with lifetime await spawn
+impl as fatal true false Some None with lifetime await spawn
 ```
+
+Some reserved words are for planned or experimental features. A word being
+reserved does not imply that every related syntax form is part of the current
+v0.0.1 implementation.
+
+Source-level declarations spelled `form` / `takes` are reserved design-space
+terminology for later type-system work and are outside the default v0.0.1
+gate. User-defined `enum`/ADT declarations are also outside default v0.0.1;
+only compiler-provided `Option<T>` and `Result<T, E>` sum types are current.
+Host-visible WebAssembly exports that would require an exported
+generic/composite host ABI, including exported generic functions or direct
+exported record values, remain outside default v0.0.1 until that ABI is
+designed.
 
 ### 1.2 Operators
 ```
@@ -108,7 +121,7 @@ fun map: <T, U>(list: List<T>, f: T -> U) -> List<U> = {
 }
 ```
 
-### 3.3 Temporal Functions
+### 3.3 Temporal Functions (Experimental / Outside v0.0.1 Default Gate)
 ```rust
 fun process: <~t>(data: Data<~t>) -> Result<Data<~t>, Error> = {
     data |> validate |> transform
@@ -122,16 +135,23 @@ fun process: <~t>(data: Data<~t>) -> Result<Data<~t>, Error> = {
 - `String`, `Char`, `Boolean`
 - `()` (Unit type)
 
-### 4.2 Generic Types
+### 4.2 Generic and Built-in Collection Types
 ```rust
 List<T>           // Dynamic list
 Array<T, N>       // Fixed-size array  
 Option<T>         // Maybe value
 Result<T, E>      // Success or error
-Range<T>          // Range of values
+Range<Int32>      // v0.0.1 range values with Int32 endpoints
 ```
 
-### 4.3 Temporal Types
+`Array<T, N>` is a fixed-length public type. The compiler may use an internal
+wildcard length for built-in array operations, but that internal representation
+is not a source-level `Array<T, 0>` contract.
+
+Range literals are intentionally concrete in v0.0.1. Ranges over non-Int32
+endpoint types are outside the current public support surface.
+
+### 4.3 Temporal Types (Experimental / Outside v0.0.1 Default Gate)
 ```rust
 File<~f>          // File with temporal scope ~f
 Connection<~db>   // Database connection with scope ~db
@@ -140,7 +160,7 @@ Connection<~db>   // Database connection with scope ~db
 ### 4.4 Function Types
 ```rust
 Int32 -> String         // Function type
-(Int32, String) -> Bool // Multi-parameter function
+(Int32, String) -> Boolean // Multi-parameter function
 ```
 
 ## 5. Expressions
@@ -179,11 +199,11 @@ function calls `function(args)` will cause compilation errors.
 **OSV Pattern Examples:**
 ```rust
 // Data flows left-to-right naturally
-"hello world" |> to_uppercase |> reverse |> println
+("hello, " + "Restrict") |> println
 
 // Multiple arguments use tuple syntax
-(10, 20) add                    // Instead of add(10, 20)
-(1, 2, 3, 4) sum_all           // Instead of sum_all(1, 2, 3, 4)
+(10, 20) add                    // Invalid traditional form: add(10, 20)
+(1, 2, 3, 4) sum_all           // Invalid traditional form: sum_all(1, 2, 3, 4)
 
 // Complex expressions maintain clarity
 val result = user_data
@@ -193,8 +213,8 @@ val result = user_data
     |> generate_response
 
 // Method-like calls still use OSV
-user.profile get_name          // Instead of user.profile.get_name()
-database.connection close      // Instead of database.connection.close()
+user.profile get_name          // Invalid traditional form: user.profile.get_name()
+database.connection close      // Invalid traditional form: database.connection.close()
 ```
 
 ### 5.3 Binary Operations
@@ -252,8 +272,8 @@ x match {
 
 ### 5.7 Record Literals
 ```rust
-Person { name = "Alice", age = 30 }
-Point { x = 0, y = 0 }
+Person { name: "Alice", age: 30 }
+Point { x: 0, y: 0 }
 ```
 
 ### 5.8 Lambda Expressions
@@ -291,8 +311,8 @@ None            // Match None
 ### 6.4 Record Patterns  
 ```rust
 Person { name, age }                    // Extract all fields
-Person { name = "Alice", age }          // Partial match with literal
-Point { x = 0, y = 0 }                  // Exact match
+Person { name: "Alice", age }          // Partial match with literal
+Point { x: 0, y: 0 }                   // Exact match
 ```
 
 ### 6.5 Spread Destructuring Patterns
@@ -310,21 +330,22 @@ User { id: userId, name, ...userMeta }  // Extract id as userId, name as name, r
 value match {
     User { role: "admin", ..._ } => { "Administrator access" }
     User { department: "IT", name, ..._ } => { "IT user: " + name }
-    User { name, ...profile } => { process_user(name, profile) }
+    User { name, ...profile } => { (name, profile) process_user }
 }
 
-// Nested spread patterns (if supported)
+// Future/planned: nested spread patterns in backend codegen
+// Shown as a planned match-arm shape, not a current v0.0.1 guarantee.
 Company { 
     name: companyName,
     contact: Contact { email, ...contactInfo },
     ...companyDetails 
 } => {
     // Extract company name, contact email, and group remaining fields
-    process_company(companyName, email, contactInfo, companyDetails)
+    (companyName, email, contactInfo, companyDetails) process_company
 }
 
 // Wildcard spread (ignore remaining fields)
-Point { x, y, ..._ } => { calculate_distance(x, y) }
+Point { x, y, ..._ } => { (x, y) calculate_distance }
 ```
 
 **Spread Pattern Rules:**
@@ -349,7 +370,7 @@ counter = counter + 1   // Only for mutable variables
 ### 7.3 Expression Statements
 ```rust
 42                      // Expression as statement
-println("hello")        // Function call
+"hello" |> println      // Function call
 x + y                   // Must be pure (no side effects)
 ```
 
@@ -381,6 +402,42 @@ record Connection<~db> where ~tx within ~db {
 }
 ```
 
+### 8.3 Implementation Blocks
+
+Implementation blocks attach type-directed functions to a record name without
+introducing object-style call syntax.
+
+```rust
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun bump: (self: Score, amount: Int32) -> Int32 = {
+        self.value + amount
+    }
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 40 }
+    (score, 2) bump
+}
+```
+
+Rules:
+
+- The `impl` target must be a known record declaration name.
+- An impl function is still a function. Calls remain grouped OSV:
+  `(receiver) method` or `(receiver, args...) method`.
+- Traditional object calls such as `score.bump(2)` are invalid.
+- The first parameter of an impl method must be `self: Target`, where `Target`
+  is the impl block's record name.
+- Impl methods may be generic, and unannotated method returns may be inferred
+  when the body supplies a concrete type.
+- Impl blocks do not introduce class inheritance or open-ended OOP dispatch.
+  They are a scoped, type-directed function namespace that preserves Restrict's
+  value-flow-first OSV model.
+
 ## 9. Context Declarations
 
 ### 9.1 Basic Context
@@ -391,16 +448,21 @@ context Database {
 }
 ```
 
-### 9.2 Context-Bound Functions
+### 9.2 Context-Bound Functions (Future / Planned)
+
+Context declarations and `with Context { ... } { ... }` expressions are current
+syntax. Function-level context annotations are planned and are shown here only
+as future syntax.
+
 ```rust
 @Database
 fun query: (sql: String) -> Result<Data, Error> = {
     // Can access connection and timeout implicitly
-    connection |> execute sql
+    (connection, sql) execute
 }
 ```
 
-## 10. Temporal Resource Management
+## 10. Temporal Resource Management (Experimental / Outside v0.0.1 Default Gate)
 
 ### 10.1 Temporal Scopes
 ```rust
@@ -412,12 +474,12 @@ temporal ~t {
 
 ### 10.2 With Expressions
 ```rust
-with Database { connection = conn } {
+with Database { connection: conn } {
     "SELECT * FROM users" |> query
 }
 
 with lifetime<~f> {
-    val file = File<~f> { path = "/tmp/data" }
+    val file = File<~f> { path: "/tmp/data" }
     file |> read
 }
 ```
@@ -431,32 +493,48 @@ where ~inner within ~outer     // inner lifetime contained in outer
 
 ### 11.1 Clone
 ```rust
-val newObj = obj.clone { field = newValue }
+val newObj = obj.clone { field: newValue }
 ```
 
 ### 11.2 Freeze
 ```rust
 val frozen = obj freeze         // Make immutable
-val cloneAndFreeze = obj.clone { field = value } freeze
+val cloneAndFreeze = obj.clone { field: value } freeze
 ```
 
 ## 12. Import/Export
 
 ### 12.1 Imports
 ```rust
-import "std/io" as io
-import "std/collections" as collections
+import release.policy.{score}
+import release.policy.*
+import release.policy
 ```
+
+Imports are source-level declarations. The current v0.0.1 implementation
+supports dotted module paths with named imports, wildcard imports, or whole
+module imports. String paths, import aliases, re-exports, and package-level
+standard-library aggregators are reserved for a later module-design pass.
 
 ### 12.2 Exports
 ```rust
 pub fun publicFunction: () = { ... }
 pub record PublicType { ... }
+pub val release_bias: Int32 = 3
 ```
+
+For the v0.0.1 implementation, exported records are source-level module
+metadata. They can be imported and used by other Restrict source modules, but
+they do not emit direct host-visible WebAssembly exports. Exported generic
+functions also remain outside the current concrete WebAssembly ABI surface.
+Host-visible exported top-level bindings are limited to scalar literal
+constants with `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()` ABI.
+Composite constants such as `String`, records, lists, `Option`, and `Result`
+remain source-level values unless a concrete host ABI is designed.
 
 ## 13. Operator Precedence (Highest to Lowest)
 
-1. Field access: `.field`, `.clone`, `freeze`
+1. Field access and grouped direct OSV calls: `.field`, `.clone`, `freeze`, `(value) f`, `() f`
 2. Unary: `!`, `-`
 3. Multiplicative: `*`, `/`, `%`
 4. Additive: `+`, `-`
@@ -465,14 +543,18 @@ pub record PublicType { ... }
 7. Logical AND: `&&`
 8. Logical OR: `||`
 9. Pipe: `|>` (left associative)
-10. OSV function calls (right associative)
+
+Single-argument calls should use pipe form: `value |> f`. Direct OSV calls are
+for grouped unit, tuple, or parenthesized objects such as `() now`, `(left,
+right) max`, and `(1 + 2) double`. Pipe starts from a complete expression, so
+`1 + 2 |> double` is parsed as `(1 + 2) |> double`.
 
 ## 14. Standard Library Types
 
 ### 14.1 Collections
 - `List<T>` - Dynamic list
 - `Array<T, N>` - Fixed-size array
-- `Range<T>` - Range type (from `[start..end]`)
+- `Range<Int32>` - Range type from `[start..end]` with Int32 endpoints
 
 ### 14.2 Error Handling
 - `Option<T>` - May contain value (`Some(T)`) or `None`
@@ -481,9 +563,15 @@ pub record PublicType { ... }
 ### 14.3 Basic Functions
 ```rust
 println: (String) -> ()
+print: (String) -> ()
 print_int: (Int32) -> ()
-toString: (T) -> String
+print_float: (Float64) -> ()
+eprint: (String) -> ()
+eprintln: (String) -> ()
 ```
+
+Generic string conversion such as `toString: (T) -> String` is outside the
+current v0.0.1 compiler-registered standard-library surface.
 
 ## 15. DEPRECATED AND REMOVED SYNTAX
 
@@ -529,7 +617,7 @@ fun main: () = {
 ```rust
 fun describe: (x: Option<Int32>) -> String = {
     x match {
-        Some(n) => { "Got number: " + n.toString() }
+        Some(n) => { "Got number" }
         None => { "No number" }
     }
 }
@@ -548,12 +636,12 @@ fun process_maybe: (data: Option<User>) -> String = {
 }
 
 // List pattern matching with spread
-fun analyze_list: (numbers: List<Int32>) -> String = {
+fun analyze_list: (numbers: List<Int32>) -> Int32 = {
     numbers match {
-        [] => { "Empty list" }
-        [single] => { "One item: " + single.toString() }
-        [first, second] => { "Two items: " + first.toString() + ", " + second.toString() }
-        [head | tail] => { "Head: " + head.toString() + ", tail has " + tail.length.toString() + " items" }
+        [] => { 0 }
+        [single] => { single }
+        [first, second] => { first + second }
+        [head | tail] => { head + (tail |> list_length) }
     }
 }
 
@@ -569,7 +657,7 @@ fun categorize_person: (person: Person) -> String = {
             address: Address { city: "Tokyo", ..._ },
             tags,
             ..._ 
-        } when age >= 65 => { "Senior citizen in Tokyo" }
+        } => { "Tokyo resident" }
         
         // Pattern with list matching
         Person { name, tags: ["VIP" | _], ..._ } => { "VIP member: " + name }
@@ -577,7 +665,7 @@ fun categorize_person: (person: Person) -> String = {
         
         // Catch-all with spread
         Person { name, age, ...profile } => { 
-            "Regular user: " + name + " (" + age.toString() + ")" 
+            "Regular user: " + name
         }
     }
 }
@@ -590,10 +678,18 @@ record Point {
     y: Int32
 }
 
-fun distance: (self: Point, other: Point) -> Float64 = {
-    val dx = self.x - other.x
-    val dy = self.y - other.y
-    ((dx * dx + dy * dy) as Float64).sqrt()
+impl Point {
+    fun distance: (self: Point, other: Point) -> Float64 = {
+        val dx = self.x - other.x
+        val dy = self.y - other.y
+        ((dx * dx + dy * dy) as Float64) |> sqrt
+    }
+}
+
+fun main: () -> Float64 = {
+    val start = Point { x: 0, y: 0 }
+    val end = Point { x: 3, y: 4 }
+    (start, end) distance
 }
 ```
 
@@ -601,7 +697,7 @@ fun distance: (self: Point, other: Point) -> Float64 = {
 ```rust
 fun processFile: (path: String) -> Result<String, Error> = {
     temporal ~file {
-        val file = File<~file> { path = path }
+        val file = File<~file> { path: path }
         file |> read
         // file automatically closed when ~file scope ends
     }
@@ -656,7 +752,10 @@ condition then { ... } else { ... }
 
 This specification defines Restrict Language v1.0. All implementations, documentation, tutorials, and examples MUST conform to this specification. 
 
-**Parser Implementation**: The official parser in `src/parser.rs` implements this specification exactly.
+**Parser Implementation**: The official parser in `src/parser.rs` is the
+authority for the current implementation. Sections marked future, planned, or
+experimental are intentionally outside the default v0.0.1 gate unless tests
+explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 

@@ -44,22 +44,20 @@ WASM MVPの制約の中で、実用的な文字列サポートを実装する。
 ### 文字列リテラルのコード生成
 ```wasm
 (module
-  ;; データセクション
   (data (i32.const 1024) "Hello, World!")
   
-  ;; 文字列を返す関数
   (func $get_hello (result i32 i32)
-    i32.const 1024  ;; pointer
-    i32.const 13    ;; length
+    i32.const 1024
+    i32.const 13
   )
 )
 ```
 
 ### Restrict Languageでの使用例
 ```restrict
-fun main = {
-    val message = "Hello, World!";
-    message println
+fun main: () = {
+    val message = "Hello, World!"
+    message |> println
 }
 ```
 

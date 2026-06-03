@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://restrict-lang.github.io/restrict_lang/</loc>
+  </url>
+  <url>
+    <loc>https://restrict-lang.github.io/restrict_lang/docs/</loc>
+  </url>
+  <url>
+    <loc>https://restrict-lang.github.io/restrict_lang/compiler/</loc>
+  </url>
+  <url>
+    <loc>https://restrict-lang.github.io/restrict_lang/blog/</loc>
+  </url>
+  <url>
+    <loc>https://restrict-lang.github.io/restrict_lang/blog/type-inference-v001.html</loc>
+  </url>
+  <url>
+    <loc>https://restrict-lang.github.io/restrict_lang/blog/runtime-dogfood.html</loc>
+  </url>
+</urlset>

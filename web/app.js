@@ -1,79 +1,13 @@
-import init, {
-    compile_restrict_lang,
-    compile_with_diagnostics,
-    get_inlay_hints,
-    get_semantic_tokens,
-    get_symbols,
-    lex_only,
-    parse_only
-} from './pkg/restrict_lang.js';
-import { examples } from './examples.js';
+import init, { compile_restrict_lang, lex_only, parse_only } from './pkg/restrict_lang.js';
 
 let wasmModule = null;
-let wabtModule = null;
-let editor = null;  // CodeMirror instance
-
-// Initialize CodeMirror editor
-function initEditor() {
-    const textarea = document.getElementById('sourceCode');
-    if (!textarea) return;
-
-    editor = CodeMirror.fromTextArea(textarea, {
-        mode: 'restrict',
-        theme: 'restrict-dark',
-        lineNumbers: true,
-        matchBrackets: true,
-        autoCloseBrackets: true,
-        styleActiveLine: true,
-        indentUnit: 4,
-        tabSize: 4,
-        indentWithTabs: false,
-        lineWrapping: false,
-        extraKeys: {
-            'Ctrl-Enter': function() { compile(); },
-            'Cmd-Enter': function() { compile(); },
-            'Tab': function(cm) {
-                if (cm.somethingSelected()) {
-                    cm.indentSelection('add');
-                } else {
-                    cm.replaceSelection('    ', 'end');
-                }
-            }
-        }
-    });
-
-    // Refresh editor layout after initialization
-    setTimeout(() => editor.refresh(), 100);
-}
-
-// Get source code from editor
-function getSourceCode() {
-    return editor ? editor.getValue() : document.getElementById('sourceCode')?.value || '';
-}
-
-// Set source code in editor
-function setSourceCode(code) {
-    if (editor) {
-        editor.setValue(code);
-    } else {
-        const textarea = document.getElementById('sourceCode');
-        if (textarea) textarea.value = code;
-    }
-}
 
 // Initialize the WASM module
 async function initWasm() {
     try {
         wasmModule = await init();
-        console.log('Restrict Language WASM module initialized');
-
-        // Initialize wabt for WAT->WASM conversion
-        if (window.WabtModule) {
-            wabtModule = await window.WabtModule();
-            console.log('wabt module initialized');
-        }
-
-        updateStatus('Ready to compile! (Ctrl+Enter to run)', 'success');
+        console.log('WASM module initialized successfully');
+        updateStatus('Ready to compile!', 'success');
     } catch (error) {
         console.error('Failed to initialize WASM module:', error);
         updateStatus('Failed to initialize compiler: ' + error.message, 'error');
@@ -82,32 +16,24 @@ async function initWasm() {
 
 // Update status display
 function updateStatus(message, type = 'info') {
-    const statusEl = document.getElementById('statusMessage');
-    if (statusEl) {
-        statusEl.className = 'status-' + type;
-        statusEl.textContent = message;
-    }
     const wasmOutput = document.getElementById('wasmOutput');
-    if (type === 'error' && wasmOutput) {
+    if (type === 'error') {
         wasmOutput.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
+    } else if (type === 'success') {
+        wasmOutput.innerHTML = `<div class="success">${escapeHtml(message)}</div>`;
+    } else {
+        wasmOutput.textContent = message;
     }
 }
 
-// Escape HTML
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// Compile the source code with rich diagnostics
+// Compile the source code
 async function compile() {
     if (!wasmModule) {
         updateStatus('Compiler not initialized yet. Please wait...', 'error');
         return;
     }
 
-    const sourceCode = getSourceCode();
+    const sourceCode = document.getElementById('sourceCode').value;
     if (!sourceCode.trim()) {
         updateStatus('Please enter some source code to compile.', 'error');
         return;
@@ -116,246 +42,68 @@ async function compile() {
     try {
         setButtonsDisabled(true);
         updateStatus('Compiling...', 'info');
-
-        // Use the new rich diagnostics API
-        const result = compile_with_diagnostics(sourceCode);
-
+        
+        const result = compile_restrict_lang(sourceCode);
+        
         if (result.success) {
             // Display WASM output
-            document.getElementById('wasmOutput').innerHTML =
+            document.getElementById('wasmOutput').innerHTML = 
                 `<div class="success">Compilation successful!</div><pre>${escapeHtml(result.output || 'No output generated')}</pre>`;
-
+            
+            // Display tokens if available
+            if (result.tokens) {
+                document.getElementById('tokensOutput').innerHTML = 
+                    `<pre>${escapeHtml(result.tokens)}</pre>`;
+            }
+            
             // Display AST if available
             if (result.ast) {
-                document.getElementById('astOutput').innerHTML =
+                document.getElementById('astOutput').innerHTML = 
                     `<pre>${escapeHtml(result.ast)}</pre>`;
             }
-
+            
             // Clear errors
-            document.getElementById('errorOutput').innerHTML =
-                `<div class="success">No errors!</div>`;
-
-            // Execute the WASM
-            if (wabtModule && result.output) {
-                await executeWasm(result.output);
-            }
-
-            updateStatus('Compilation successful!', 'success');
+            document.getElementById('errorOutput').innerHTML = 
+                `<pre>No errors!</pre>`;
+                
         } else {
-            // Display rich errors
-            displayRichErrors(result.errors, sourceCode);
-
+            // Display error
+            document.getElementById('errorOutput').innerHTML = 
+                `<pre class="error">${escapeHtml(result.error || 'Unknown error occurred')}</pre>`;
+            
             // Display partial results if available
+            if (result.tokens) {
+                document.getElementById('tokensOutput').innerHTML = 
+                    `<pre>${escapeHtml(result.tokens)}</pre>`;
+            }
+            
             if (result.ast) {
-                document.getElementById('astOutput').innerHTML =
+                document.getElementById('astOutput').innerHTML = 
                     `<pre>${escapeHtml(result.ast)}</pre>`;
             }
-
-            document.getElementById('wasmOutput').innerHTML =
-                `<div class="error">Compilation failed with ${result.errors.length} error(s)</div>`;
-
+            
             // Show error tab
             showTab('error');
-            updateStatus(`${result.errors.length} error(s)`, 'error');
         }
-
-        // Update inlay hints
-        updateInlayHints(sourceCode);
-
     } catch (error) {
         console.error('Compilation error:', error);
         updateStatus('Compilation failed: ' + error.message, 'error');
-        document.getElementById('errorOutput').innerHTML =
-            `<div class="error">JavaScript error: ${escapeHtml(error.message)}</div>`;
+        document.getElementById('errorOutput').innerHTML = 
+            `<pre class="error">JavaScript error: ${escapeHtml(error.message)}</pre>`;
         showTab('error');
     } finally {
         setButtonsDisabled(false);
     }
 }
 
-// Display rich errors with line numbers and help
-function displayRichErrors(errors, sourceCode) {
-    const lines = sourceCode.split('\n');
-    let html = '';
-
-    for (const err of errors) {
-        const lineNum = err.line + 1;
-        const colNum = err.column + 1;
-        const sourceLine = lines[err.line] || '';
-
-        html += `<div class="error-item">
-            <div class="error-header">
-                <span class="error-code">${err.code ? `[${err.code}]` : ''}</span>
-                <span class="error-severity ${err.severity}">${err.severity}</span>
-            </div>
-            <div class="error-location">Line ${lineNum}, Column ${colNum}</div>
-            <div class="error-message">${escapeHtml(err.message)}</div>
-            <div class="error-source">
-                <span class="line-num">${lineNum}</span><span class="source-line">${escapeHtml(sourceLine)}</span>
-                <span class="line-num"></span><span class="error-pointer">${' '.repeat(err.column)}${'~'.repeat(Math.max(1, err.end_column - err.column))}</span>
-            </div>
-            ${err.notes.map(n => `<div class="error-note">note: ${escapeHtml(n)}</div>`).join('')}
-            ${err.help.map(h => `<div class="error-help">help: ${escapeHtml(h)}</div>`).join('')}
-        </div>`;
-    }
-
-    document.getElementById('errorOutput').innerHTML = html || '<div class="success">No errors!</div>';
-}
-
-// Execute WAT code
-async function executeWasm(watCode) {
-    if (!wabtModule) {
-        document.getElementById('resultOutput').innerHTML =
-            '<div class="warning">wabt not loaded - cannot execute</div>';
-        return;
-    }
-
-    try {
-        const wasmModule = wabtModule.parseWat('program.wat', watCode);
-        const binary = wasmModule.toBinary({});
-
-        const module = await WebAssembly.compile(binary.buffer);
-
-        // Collect console output
-        let consoleOutput = [];
-        let instance = null;  // Will be set after instantiation
-
-        // WASI shim for browser execution
-        const wasiShim = {
-            // fd_write(fd, iovs, iovs_len, nwritten) - write to file descriptor
-            fd_write: (fd, iovs, iovs_len, nwritten) => {
-                // fd 1 = stdout, fd 2 = stderr
-                const memory = instance.exports.memory;
-                if (!memory) return 0;
-
-                const view = new DataView(memory.buffer);
-                let written = 0;
-                const decoder = new TextDecoder();
-
-                for (let i = 0; i < iovs_len; i++) {
-                    const ptr = view.getUint32(iovs + i * 8, true);
-                    const len = view.getUint32(iovs + i * 8 + 4, true);
-                    const bytes = new Uint8Array(memory.buffer, ptr, len);
-                    const text = decoder.decode(bytes);
-                    consoleOutput.push(text);
-                    written += len;
-                }
-
-                if (nwritten) {
-                    view.setUint32(nwritten, written, true);
-                }
-                return 0; // Success
-            },
-            // Other WASI functions (stubs)
-            fd_seek: () => 0,
-            fd_close: () => 0,
-            fd_read: () => 0,
-            path_open: () => 8, // EBADF - file operations not supported in browser
-            fd_prestat_get: () => 8, // EBADF
-            fd_prestat_dir_name: () => 8,
-            environ_sizes_get: (count_ptr, buf_size_ptr) => {
-                const memory = instance.exports.memory;
-                if (memory) {
-                    const view = new DataView(memory.buffer);
-                    view.setUint32(count_ptr, 0, true);
-                    view.setUint32(buf_size_ptr, 0, true);
-                }
-                return 0;
-            },
-            environ_get: () => 0,
-            args_sizes_get: (argc_ptr, argv_buf_size_ptr) => {
-                const memory = instance.exports.memory;
-                if (memory) {
-                    const view = new DataView(memory.buffer);
-                    view.setUint32(argc_ptr, 0, true);
-                    view.setUint32(argv_buf_size_ptr, 0, true);
-                }
-                return 0;
-            },
-            args_get: () => 0,
-            proc_exit: (code) => { throw new Error(`Process exited with code ${code}`); },
-            clock_time_get: () => 0,
-            random_get: (buf, len) => {
-                const memory = instance.exports.memory;
-                if (memory) {
-                    const bytes = new Uint8Array(memory.buffer, buf, len);
-                    crypto.getRandomValues(bytes);
-                }
-                return 0;
-            },
-        };
-
-        const importObject = {
-            wasi_snapshot_preview1: wasiShim,
-            env: {},
-        };
-
-        instance = await WebAssembly.instantiate(module, importObject);
-
-        // Try to call main function or _start
-        let result;
-        if (instance.exports._start) {
-            instance.exports._start();
-            result = 'completed';
-        } else if (instance.exports.main) {
-            result = instance.exports.main();
-        } else {
-            // List exported functions
-            const exports = Object.keys(instance.exports).filter(k => typeof instance.exports[k] === 'function');
-            document.getElementById('resultOutput').innerHTML =
-                `<div class="info">No main/_start function. Exported functions: ${exports.join(', ') || 'none'}</div>`;
-            return;
-        }
-
-        // Display result
-        let output = '';
-        if (consoleOutput.length > 0) {
-            output += `<div class="console-output"><strong>Output:</strong><pre>${escapeHtml(consoleOutput.join(''))}</pre></div>`;
-        }
-        output += `<div class="success">Return value: <strong>${result}</strong></div>`;
-        document.getElementById('resultOutput').innerHTML = output;
-
-    } catch (error) {
-        document.getElementById('resultOutput').innerHTML =
-            `<div class="error">Execution error: ${escapeHtml(error.message)}</div>`;
-    }
-}
-
-// Update inlay hints display
-function updateInlayHints(sourceCode) {
-    try {
-        const hints = get_inlay_hints(sourceCode);
-        let html = '';
-
-        if (hints && hints.length > 0) {
-            for (const hint of hints) {
-                html += `<div class="hint-item">
-                    <span class="hint-location">Line ${hint.line + 1}, Col ${hint.column + 1}</span>
-                    <span class="hint-label hint-${hint.kind}">${escapeHtml(hint.label)}</span>
-                    ${hint.tooltip ? `<span class="hint-tooltip">${escapeHtml(hint.tooltip)}</span>` : ''}
-                </div>`;
-            }
-        } else {
-            html = '<div class="info">No type hints available</div>';
-        }
-
-        const hintsOutput = document.getElementById('hintsOutput');
-        if (hintsOutput) {
-            hintsOutput.innerHTML = html;
-        }
-    } catch (e) {
-        console.error('Failed to get inlay hints:', e);
-    }
-}
-
-// Lex only (outputs to AST tab)
+// Lex only
 async function lexOnly() {
     if (!wasmModule) {
         updateStatus('Compiler not initialized yet. Please wait...', 'error');
         return;
     }
 
-    const sourceCode = getSourceCode();
+    const sourceCode = document.getElementById('sourceCode').value;
     if (!sourceCode.trim()) {
         updateStatus('Please enter some source code to tokenize.', 'error');
         return;
@@ -364,16 +112,16 @@ async function lexOnly() {
     try {
         setButtonsDisabled(true);
         updateStatus('Tokenizing...', 'info');
-
+        
         const result = lex_only(sourceCode);
-
+        
         if (result.success) {
-            document.getElementById('astOutput').innerHTML =
-                `<h4>Tokens:</h4><pre>${escapeHtml(result.tokens || 'No tokens generated')}</pre>`;
-            showTab('ast');
+            document.getElementById('tokensOutput').innerHTML = 
+                `<pre>${escapeHtml(result.tokens || 'No tokens generated')}</pre>`;
+            showTab('tokens');
             updateStatus('Tokenization successful!', 'success');
         } else {
-            document.getElementById('errorOutput').innerHTML =
+            document.getElementById('errorOutput').innerHTML = 
                 `<pre class="error">${escapeHtml(result.error || 'Unknown error occurred')}</pre>`;
             showTab('error');
             updateStatus('Tokenization failed', 'error');
@@ -393,7 +141,7 @@ async function parseOnly() {
         return;
     }
 
-    const sourceCode = getSourceCode();
+    const sourceCode = document.getElementById('sourceCode').value;
     if (!sourceCode.trim()) {
         updateStatus('Please enter some source code to parse.', 'error');
         return;
@@ -402,16 +150,16 @@ async function parseOnly() {
     try {
         setButtonsDisabled(true);
         updateStatus('Parsing...', 'info');
-
+        
         const result = parse_only(sourceCode);
-
+        
         if (result.success) {
-            document.getElementById('astOutput').innerHTML =
+            document.getElementById('astOutput').innerHTML = 
                 `<pre>${escapeHtml(result.ast || 'No AST generated')}</pre>`;
             showTab('ast');
             updateStatus('Parsing successful!', 'success');
         } else {
-            document.getElementById('errorOutput').innerHTML =
+            document.getElementById('errorOutput').innerHTML = 
                 `<pre class="error">${escapeHtml(result.error || 'Unknown error occurred')}</pre>`;
             showTab('error');
             updateStatus('Parsing failed', 'error');
@@ -427,11 +175,10 @@ async function parseOnly() {
 // Clear output
 function clearOutput() {
     document.getElementById('wasmOutput').innerHTML = 'Ready to compile...';
+    document.getElementById('tokensOutput').innerHTML = 'No tokens yet...';
     document.getElementById('astOutput').innerHTML = 'No AST yet...';
     document.getElementById('errorOutput').innerHTML = 'No errors...';
-    document.getElementById('hintsOutput').innerHTML = 'No type hints yet...';
-    document.getElementById('resultOutput').innerHTML = '<div class="info">Click "Run" to execute...</div>';
-    showTab('result');
+    showTab('wasm');
 }
 
 // Show tab
@@ -439,34 +186,109 @@ function showTab(tabName) {
     // Hide all tabs
     const tabs = document.querySelectorAll('.output-content');
     tabs.forEach(tab => tab.style.display = 'none');
-
+    
     // Remove active class from all tab buttons
     const tabButtons = document.querySelectorAll('.tab');
     tabButtons.forEach(button => button.classList.remove('active'));
-
+    
     // Show selected tab
     document.getElementById(tabName).style.display = 'block';
-
-    // Add active class to the corresponding tab button
-    const tabMap = { 'result': 0, 'wasm': 1, 'error': 2, 'ast': 3, 'hints': 4 };
-    if (tabMap[tabName] !== undefined && tabButtons[tabMap[tabName]]) {
-        tabButtons[tabMap[tabName]].classList.add('active');
+    
+    // Add active class to selected tab button
+    const activeButton = document.querySelector(`.tab[data-tab="${tabName}"]`);
+    if (activeButton) {
+        activeButton.classList.add('active');
     }
 }
 
 // Set buttons disabled state
 function setButtonsDisabled(disabled) {
-    const compileBtn = document.getElementById('compileBtn');
-    if (compileBtn) compileBtn.disabled = disabled;
+    document.getElementById('compileBtn').disabled = disabled;
+    document.getElementById('lexBtn').disabled = disabled;
+    document.getElementById('parseBtn').disabled = disabled;
 }
 
-// Load example (samples are imported from examples.js, generated from samples/)
+// Load example
 function loadExample(exampleName) {
+    const examples = {
+        'hello': `// Hello World example
+fun main: () -> Int32 = {
+    42
+}`,
+        
+        'function': `// Function definition example
+fun add: (left: Int32, right: Int32) -> Int32 = {
+    left + right
+}
+
+fun main: () -> Int32 = {
+    val result = (2, 3) add
+    result
+}`,
+        
+        'pipe': `// Pipe operations example
+fun increment: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: () -> Int32 = {
+    42 |> increment
+}`,
+        
+        'record': `// Record type example
+record Point {
+    x: Int32
+    y: Int32
+}
+
+fun make_origin: () -> Point = {
+    Point { x: 0, y: 0 }
+}`
+    };
+    
     const example = examples[exampleName];
     if (example) {
-        setSourceCode(example);
+        document.getElementById('sourceCode').value = example;
+        syncSourceHighlight();
         clearOutput();
     }
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function syncSourceHighlight() {
+    const source = document.getElementById('sourceCode');
+    const highlight = document.getElementById('sourceHighlight');
+    if (!source || !highlight) {
+        return;
+    }
+
+    const code = highlight.querySelector('code');
+    const highlighter = window.RestrictHighlight;
+    code.innerHTML = highlighter
+        ? highlighter.highlightRestrict(source.value)
+        : escapeHtml(source.value);
+
+    highlight.scrollTop = source.scrollTop;
+    highlight.scrollLeft = source.scrollLeft;
+}
+
+function initializeSourceHighlighting() {
+    const source = document.getElementById('sourceCode');
+    if (!source) {
+        return;
+    }
+
+    source.addEventListener('input', syncSourceHighlight);
+    source.addEventListener('scroll', syncSourceHighlight);
+    syncSourceHighlight();
 }
 
 // Make functions available globally
@@ -477,8 +299,19 @@ window.clearOutput = clearOutput;
 window.showTab = showTab;
 window.loadExample = loadExample;
 
+function loadInitialCodeFromQuery() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code !== null) {
+        document.getElementById('sourceCode').value = code;
+        syncSourceHighlight();
+        clearOutput();
+    }
+}
+
 // Initialize when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-    initEditor();
+    initializeSourceHighlighting();
+    loadInitialCodeFromQuery();
     initWasm();
 });

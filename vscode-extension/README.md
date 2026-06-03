@@ -19,7 +19,7 @@ This extension provides rich language support for Restrict Language (.rl files) 
 - **Bracket matching** and auto-closing pairs
 - **Comment toggling** (Ctrl+/ for line, Shift+Alt+A for block)
 - **Code folding** support
-- **Indentation rules** for proper formatting
+- **Indentation rules** for editor layout
 
 ### 🚀 Compiler Integration
 - **Compile command** (Ctrl+Shift+B) to generate WebAssembly
@@ -32,9 +32,11 @@ Quick insertion of common Restrict Language patterns:
 - `fun` - Function definition
 - `lambda` - Lambda expression
 - `val` - Variable binding
+- `import` - Named dotted import
 - `record` - Record definition
 - `match` - Pattern matching
-- `if` - Conditional expression
+- `then` - Conditional expression
+- `call` - OSV multi-argument function call
 - And many more!
 
 ## Installation
@@ -103,37 +105,46 @@ The extension can be configured through VS Code settings:
 2. Use Command Palette → "Restrict: Show AST"
 3. A new document will open showing the parsed syntax tree
 
+### Import Syntax
+Current v0.0.1 imports use dotted module paths:
+
+```restrict
+import release.policy.{score}
+import release.policy.*
+import release.policy
+```
+
+String import paths and import aliases are not supported in v0.0.1.
+
 ## Example Code
 
 ```restrict
-// Function with lambda and pattern matching
-fun process_numbers = numbers:List<Int> -> Int {
-    numbers
-        |> filter(|x| x > 0)        // Keep positive numbers
-        |> map(|x| x * x)           // Square each number
-        |> fold(0, |acc, x| acc + x) // Sum them up
+fun add: (x: Int32, y: Int32) -> Int32 = {
+    x + y
 }
 
-// Record with methods
+fun clamp_positive: (value: Int32) -> Int32 = {
+    value < 0 then { 0 } else { value }
+}
+
+// Record with OSV helper functions
 record User {
-    name: String,
-    age: Int,
+    name: String
+    age: Int32
 }
 
-impl User {
-    fun is_adult = self:User -> Boolean {
-        self.age >= 18
-    }
+fun age_bonus: (self: User) -> Int32 = {
+    self.age >= 18 then { 10 } else { 0 }
 }
 
-fun main = {
-    val numbers = [1, -2, 3, -4, 5];
-    val result = process_numbers(numbers);
-    
-    val user = User { name: "Alice", age: 25 };
-    val adult = user.is_adult();
-    
-    result
+fun main: () -> Int32 = {
+    val raw_score = (12, 30) add
+    val score = raw_score |> clamp_positive
+
+    val user = User { name: "Alice", age: 25 }
+    val bonus = user |> age_bonus
+
+    score + bonus
 }
 ```
 
@@ -163,7 +174,7 @@ The extension provides comprehensive syntax highlighting for:
 
 - **Keywords**: `fun`, `val`, `record`, `match`, etc.
 - **Types**: `Int32`, `String`, `Boolean`, `Option`, `List`
-- **Operators**: `|>`, `=>`, `==`, `!=`, arithmetic operators
+- **Operators**: `|>`, `=>`, `->`, `&&`, `||`, `!`, `..`, `...`, comparison and arithmetic operators
 - **Lambda expressions**: Special highlighting for `|param|`
 - **Comments**: Both single-line `//` and multi-line `/* */`
 - **Literals**: Numbers, strings, booleans

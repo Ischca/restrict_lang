@@ -2,24 +2,24 @@ use restrict_lang::{parse_program, TypeChecker};
 
 fn type_check(source: &str) -> Result<(), String> {
     // Parse
-    let (_, ast) = parse_program(source)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
-    
+    let (_, ast) = parse_program(source).map_err(|e| format!("Parse error: {:?}", e))?;
+
     // Type check
     let mut type_checker = TypeChecker::new();
-    type_checker.check_program(&ast)
+    type_checker
+        .check_program(&ast)
         .map_err(|e| format!("Type error: {}", e))
 }
 
 #[test]
 fn test_empty_list() {
     let source = r#"
-        fun main: () -> Int = {
-            val empty = [];
+        fun main = {
+            val empty: List<Int32> = [];
             empty
         }
     "#;
-    
+
     let result = type_check(source);
     assert!(result.is_ok());
 }
@@ -27,12 +27,12 @@ fn test_empty_list() {
 #[test]
 fn test_int_list() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val nums = [1, 2, 3, 4, 5];
             nums
         }
     "#;
-    
+
     let result = type_check(source);
     assert!(result.is_ok());
 }
@@ -40,12 +40,12 @@ fn test_int_list() {
 #[test]
 fn test_string_list() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val words = ["hello", "world"];
             words
         }
     "#;
-    
+
     let result = type_check(source);
     assert!(result.is_ok());
 }
@@ -53,12 +53,12 @@ fn test_string_list() {
 #[test]
 fn test_mixed_type_list_error() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val mixed = [1, "hello", 3];
             mixed
         }
     "#;
-    
+
     let result = type_check(source);
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Type"));
@@ -67,12 +67,12 @@ fn test_mixed_type_list_error() {
 #[test]
 fn test_nested_list() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val matrix = [[1, 2], [3, 4], [5, 6]];
             matrix
         }
     "#;
-    
+
     let result = type_check(source);
     assert!(result.is_ok());
 }
@@ -85,13 +85,13 @@ fn test_list_in_function() {
             // We'll implement list operations later
             42
         }
-        
-        fun main: () -> Int = {
+
+        fun main = {
             val numbers = [1, 2, 3];
             numbers sum_list
         }
     "#;
-    
+
     let result = type_check(source);
     // This will fail for now because we don't have List type parameter parsing
     // but the list literal itself should parse correctly
@@ -102,7 +102,7 @@ fn test_list_in_function() {
 fn test_list_pattern_in_match() {
     // This is future work - list patterns in match expressions
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val nums = [1, 2, 3];
             nums match {
                 [] => { 0 }
@@ -110,7 +110,7 @@ fn test_list_pattern_in_match() {
             }
         }
     "#;
-    
+
     let result = type_check(source);
     // For now, this won't work as we don't have list patterns
     assert!(result.is_ok() || result.is_err());

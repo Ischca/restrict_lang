@@ -1,8 +1,23 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import * as path from 'path';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, ErrorAction, CloseAction, ErrorHandlerResult, CloseHandlerResult, Message } from 'vscode-languageclient/node';
 
 let client: LanguageClient;
+
+function getServerCommand(config: vscode.WorkspaceConfiguration): string {
+    const languageServerPath = config.get<string>('languageServerPath', '').trim();
+    if (languageServerPath) {
+        return languageServerPath;
+    }
+
+    const compilerPath = config.get<string>('compilerPath', '').trim();
+    return compilerPath || 'restrict_lang';
+}
+
+function shouldCheckLocalPath(command: string): boolean {
+    return path.isAbsolute(command) || command.includes('/') || command.includes('\\');
+}
 
 export function activateLanguageServer(context: vscode.ExtensionContext) {
     // Check if LSP is enabled in configuration
@@ -14,35 +29,18 @@ export function activateLanguageServer(context: vscode.ExtensionContext) {
         return;
     }
 
-    // The server is implemented in Rust and should be built as a separate binary
-    let serverPath = config.get('languageServerPath') as string;
-    
-    if (!serverPath) {
-        // For now, we'll use the compiler with LSP mode
-        const defaultCompilerPath = path.resolve(__dirname, '..', '..', 'target', 'release', 'restrict_lang');
-        serverPath = config.get('compilerPath') as string;
-        
-        // If no config value or it's the default relative path, use our resolved absolute path
-        if (!serverPath || serverPath === '../target/release/restrict_lang') {
-            serverPath = defaultCompilerPath;
-        }
-    }
-    
-    // If the path is relative, resolve it from the workspace root (not the extension directory)
-    if (!path.isAbsolute(serverPath)) {
-        serverPath = path.resolve(__dirname, '..', '..', serverPath);
-    }
+    const serverCommand = getServerCommand(config);
 
-    // Check if the server binary exists
-    if (!require('fs').existsSync(serverPath)) {
-        console.warn(`Language server binary not found at: ${serverPath}`);
-        vscode.window.showWarningMessage(`Restrict Language Server not found at ${serverPath}. LSP features will be unavailable.`);
+    // Check configured filesystem paths, but allow bare commands to resolve from PATH.
+    if (shouldCheckLocalPath(serverCommand) && !fs.existsSync(serverCommand)) {
+        console.warn(`Language server binary not found at: ${serverCommand}`);
+        vscode.window.showWarningMessage(`Restrict Language Server not found at ${serverCommand}. LSP features will be unavailable.`);
         return;
     }
 
     // Server options - how to start the language server
     const serverOptions: ServerOptions = {
-        command: serverPath,
+        command: serverCommand,
         args: ['--lsp'],
         options: {
             env: {
@@ -168,26 +166,6 @@ function registerLSPCommands(context: vscode.ExtensionContext) {
         );
     });
 
-    // Rename symbol
-    const renameSymbol = vscode.commands.registerCommand('restrict.renameSymbol', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        await vscode.commands.executeCommand('editor.action.rename');
-    });
-
-    // Document formatting
-    const formatDocument = vscode.commands.registerCommand('restrict.formatDocument', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        await vscode.commands.executeCommand('editor.action.formatDocument');
-    });
-
     // Hover information
     const showHover = vscode.commands.registerCommand('restrict.showHover', async () => {
         const editor = vscode.window.activeTextEditor;
@@ -225,61 +203,10 @@ function registerLSPCommands(context: vscode.ExtensionContext) {
         await vscode.commands.executeCommand('workbench.action.gotoSymbol');
     });
 
-    // Workspace symbols
-    const showWorkspaceSymbols = vscode.commands.registerCommand('restrict.showWorkspaceSymbols', async () => {
-        await vscode.commands.executeCommand('workbench.action.showAllSymbols');
-    });
-
-    // Code actions (quick fixes)
-    const showCodeActions = vscode.commands.registerCommand('restrict.showCodeActions', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        await vscode.commands.executeCommand('editor.action.quickFix');
-    });
-
-    // Signature help
-    const showSignatureHelp = vscode.commands.registerCommand('restrict.showSignatureHelp', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        await vscode.commands.executeCommand('editor.action.triggerParameterHints');
-    });
-
     context.subscriptions.push(
         gotoDefinition,
         findReferences,
-        renameSymbol,
-        formatDocument,
         showHover,
-        showDocumentSymbols,
-        showWorkspaceSymbols,
-        showCodeActions,
-        showSignatureHelp
+        showDocumentSymbols
     );
-}
-
-// Custom LSP request handlers
-export function registerCustomRequests(client: LanguageClient) {
-    // Custom request for getting semantic tokens
-    client.onRequest('restrict/semanticTokens', async (params: any) => {
-        // Handle semantic tokens request
-        return null;
-    });
-
-    // Custom request for getting inlay hints (type annotations)
-    client.onRequest('restrict/inlayHints', async (params: any) => {
-        // Handle inlay hints request
-        return [];
-    });
-
-    // Custom request for getting type information
-    client.onRequest('restrict/typeInfo', async (params: any) => {
-        // Handle type information request
-        return null;
-    });
 }

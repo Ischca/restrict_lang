@@ -1,17 +1,23 @@
-// Standard IO functions for Restrict Language
-
-// Print integer to stdout
-export fun println = value:Int32 -> Unit {
-    // This will be implemented as a built-in function
-    @builtin("println_i32", value)
-}
-
-// Print string to stdout  
-export fun print_string = value:String -> Unit {
-    @builtin("print_string", value)
-}
-
-// Read line from stdin
-export fun read_line = Unit -> String {
-    @builtin("read_line")
-}
+// Standard Library: legacy IO reference surface
+//
+// This file is not the runtime implementation. The current compiler registers
+// IO symbols directly in the Rust type checker and WebAssembly codegen.
+// Keep this path as a compatibility reference index for readers and tests.
+//
+// Current compiler-registered surface:
+// - println: (String) -> ()
+// - print: (String) -> ()
+// - print_int: (Int32) -> ()
+// - print_float: (Float64) -> ()
+// - eprint: (String) -> ()
+// - eprintln: (String) -> ()
+//
+// Canonical OSV call shapes:
+// - "hello" |> println
+// - "hello" |> print
+// - 42 |> print_int
+// - 3.14 |> print_float
+// - "error" |> eprintln
+//
+// Source modules under this directory are reference notes only. They must stay
+// comment-only until the compiler exposes a parseable source stdlib format.

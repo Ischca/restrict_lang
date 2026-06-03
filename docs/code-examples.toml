@@ -2,7 +2,7 @@
 
 [hello-world]
 code = '''
-fn main() {
+fun main: () = {
     "Hello, World!" |> println
 }
 '''
@@ -11,36 +11,41 @@ language = "restrict"
 [osv-basic]
 code = '''
 // Data flows naturally from left to right
-"hello, world"
-    |> split(", ")
-    |> map(|word| word |> capitalize)
-    |> join(" ")
-    |> println  // "Hello World"
+fun greet: (name: String) -> String = {
+    "Hello, " + name
+}
+
+fun announce: (message: String) -> () = {
+    message |> println
+}
+
+fun main: () = {
+    "Restrict" |> greet |> announce
+}
 '''
 language = "restrict"
 
 [affine-example]
 code = '''
 // Affine types prevent use-after-move
-let message = "Hello"
-message |> println     // OK: first use
-// message |> println  // ERROR: already consumed
+fun consume_message: (message: String) -> () = {
+    message |> println
+}
 
-// Use clone when multiple uses needed
-let original = "Hello"
-let copy = clone original
-original |> println    // OK
-copy |> println       // OK
+fun main: () = {
+    val message = "Hello"
+    message |> consume_message  // OK: first use
+    // message |> consume_message  // ERROR: already consumed
+}
 '''
 language = "restrict"
 
 [pattern-matching]
 code = '''
-match result {
-    Ok(value) => value |> process,
-    Err(error) => {
-        error |> logError
-        defaultValue()
+fun describe: (value: Option<Int32>) -> String = {
+    value match {
+        Some(number) => { "has value" }
+        None => { "missing" }
     }
 }
 '''
@@ -64,24 +69,30 @@ language = "bash"
 
 [generic-function]
 code = '''
-// Generic function with type bounds
-fn map<T: Clone, U>(list: Vec<T>, f: fn(T) -> U) -> Vec<U> {
-    list
-        |> iter()
-        |> map(|item| f(clone item))
-        |> collect()
+// Generic functions use Restrict type parameters
+fun identity: <T>(value: T) -> T = {
+    value
+}
+
+fun main: () = {
+    val answer = 42 |> identity
+    answer |> print_int
 }
 '''
 language = "restrict"
 
 [with-block]
 code = '''
-// Automatic resource management
-with file = openFile("data.txt") {
-    file
-        |> readContents
-        |> processData
-        |> saveResults
-}  // file automatically closed
+// Context values are introduced with current with-block syntax
+context RequestLog {
+    prefix: String
+}
+
+fun main: () = {
+    val label = "request"
+    with RequestLog { prefix: label } {
+        "ready" |> println
+    }
+}
 '''
 language = "restrict"

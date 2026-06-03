@@ -3,526 +3,381 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Restrict Language Playground</title>
-
-    <!-- CodeMirror -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
-
+    <title>Restrict Language Web Compiler</title>
+    <meta name="theme-color" content="#ff6b35">
     <style>
         :root {
-            --bg-dark: #1e1e1e;
-            --bg-medium: #252526;
-            --bg-light: #2d2d30;
-            --text: #d4d4d4;
-            --text-dim: #808080;
-            --accent: #569cd6;
-            --error: #f14c4c;
-            --warning: #cca700;
-            --success: #4ec9b0;
-            --border: #3c3c3c;
+            --logo-primary: #ff6b35;
+            --logo-amber: #f7931e;
+            --logo-deep: #c1440e;
+            --logo-glow: #ffaa55;
+            --logo-line: #ff8855;
+            --logo-cream: #fff8f3;
+            --ink: #241812;
+            --muted: #6d5d55;
+            --line: #ead8ce;
+            --paper: #fffdfb;
+            --surface: var(--logo-cream);
+            --accent: var(--logo-primary);
+            --syntax-primary: var(--logo-deep);
+            --syntax-secondary: var(--logo-primary);
+            --syntax-soft: #8a3411;
+            --syntax-line: #b84a17;
+            --syntax-muted: #7b655b;
+            --syntax-strong: #4a2415;
         }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: var(--bg-dark);
-            color: var(--text);
-            min-height: 100vh;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: var(--surface);
+            color: var(--ink);
         }
-
-        .header {
-            background: var(--bg-medium);
-            padding: 15px 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .header h1 {
-            font-size: 1.3rem;
-            font-weight: 600;
-        }
-
-        .header h1 span { color: var(--accent); }
-
-        .status-bar {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-
-        #statusMessage {
-            font-size: 0.85rem;
-            padding: 4px 10px;
-            border-radius: 3px;
-        }
-
-        .status-success { color: var(--success); }
-        .status-error { color: var(--error); }
-        .status-info { color: var(--text-dim); }
 
         .container {
-            display: flex;
-            height: calc(100vh - 60px);
+            background: var(--paper);
+            border-radius: 10px;
+            box-shadow: 0 18px 45px rgba(193, 68, 14, 0.12);
+            padding: 30px;
         }
 
-        .editor-panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            border-right: 1px solid var(--border);
+        h1 {
+            color: var(--ink);
+            text-align: center;
+            margin-bottom: 30px;
         }
 
-        .output-panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
+        .editor-section {
+            margin-bottom: 30px;
         }
 
-        .panel-header {
-            background: var(--bg-medium);
-            padding: 10px 15px;
-            font-size: 0.9rem;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .editor-section h3 {
+            color: var(--muted);
+            margin-bottom: 10px;
         }
 
-        .button-group {
-            display: flex;
-            gap: 8px;
+        .source-editor {
+            position: relative;
+            height: 260px;
+        }
+
+        textarea,
+        .source-highlight {
+            width: 100%;
+            height: 100%;
+            border: 2px solid var(--line);
+            border-radius: 5px;
+            padding: 12px;
+            box-sizing: border-box;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            tab-size: 4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow: auto;
+        }
+
+        textarea {
+            position: relative;
+            z-index: 2;
+            background: transparent;
+            color: transparent;
+            caret-color: var(--logo-deep);
+            resize: none;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--logo-primary);
+        }
+
+        textarea::placeholder {
+            color: #777;
+        }
+
+        textarea::selection {
+            background-color: rgba(255, 107, 53, 0.22);
+            color: transparent;
+        }
+
+        .source-highlight {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            margin: 0;
+            background: #fffdfb;
+            color: var(--ink);
+            pointer-events: none;
+        }
+
+        .source-highlight code {
+            font: inherit;
+            white-space: pre-wrap;
+        }
+
+        .hljs-keyword {
+            color: var(--syntax-primary);
+            font-weight: 700;
+        }
+
+        .hljs-title {
+            color: var(--syntax-strong);
+            font-weight: 700;
+        }
+
+        .hljs-type {
+            color: var(--syntax-secondary);
+            font-weight: 650;
+        }
+
+        .hljs-literal {
+            color: var(--syntax-line);
+            font-weight: 650;
+        }
+
+        .hljs-string {
+            color: var(--syntax-soft);
+        }
+
+        .hljs-number {
+            color: var(--syntax-soft);
+        }
+
+        .hljs-comment {
+            color: var(--syntax-muted);
+            font-style: italic;
+        }
+
+        .hljs-operator {
+            color: var(--syntax-primary);
+            font-weight: 700;
+        }
+
+        .button-container {
+            text-align: center;
+            margin: 30px 0;
         }
 
         button {
-            background: var(--accent);
+            background-color: var(--logo-primary);
             color: white;
             border: none;
-            padding: 6px 14px;
-            font-size: 0.85rem;
-            border-radius: 3px;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
             cursor: pointer;
-            transition: opacity 0.2s;
+            margin: 0 10px;
+            transition: background-color 0.3s;
         }
 
-        button:hover { opacity: 0.85; }
-        button:disabled { opacity: 0.4; cursor: not-allowed; }
-        button.secondary { background: var(--bg-light); border: 1px solid var(--border); }
-
-        /* CodeMirror Container */
-        .editor-wrapper {
-            flex: 1;
-            overflow: hidden;
+        button:hover {
+            background-color: var(--logo-deep);
         }
 
-        .CodeMirror {
-            height: 100%;
-            font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
-            font-size: 14px;
-            line-height: 1.6;
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
         }
 
-        /* Restrict Lang Dark Theme for CodeMirror */
-        .cm-s-restrict-dark.CodeMirror { background: var(--bg-dark); color: var(--text); }
-        .cm-s-restrict-dark .CodeMirror-gutters { background: var(--bg-medium); border-right: 1px solid var(--border); }
-        .cm-s-restrict-dark .CodeMirror-linenumber { color: var(--text-dim); }
-        .cm-s-restrict-dark .CodeMirror-cursor { border-left: 2px solid var(--text); }
-        .cm-s-restrict-dark .CodeMirror-selected { background: rgba(86, 156, 214, 0.2); }
-        .cm-s-restrict-dark .CodeMirror-activeline-background { background: rgba(255, 255, 255, 0.05); }
-        .cm-s-restrict-dark .CodeMirror-matchingbracket { color: #fff !important; background: rgba(86, 156, 214, 0.3); }
+        .output-section {
+            margin-top: 30px;
+        }
 
-        /* Syntax highlighting colors */
-        .cm-s-restrict-dark .cm-keyword { color: #c586c0; }
-        .cm-s-restrict-dark .cm-keyword-control { color: #c586c0; }
-        .cm-s-restrict-dark .cm-keyword-affine { color: #4ec9b0; font-weight: 500; }
-        .cm-s-restrict-dark .cm-keyword-context { color: #dcdcaa; }
-        .cm-s-restrict-dark .cm-operator { color: #d4d4d4; }
-        .cm-s-restrict-dark .cm-operator-pipe { color: #c586c0; font-weight: 500; }
-        .cm-s-restrict-dark .cm-number { color: #b5cea8; }
-        .cm-s-restrict-dark .cm-string { color: #ce9178; }
-        .cm-s-restrict-dark .cm-string-2 { color: #ce9178; }
-        .cm-s-restrict-dark .cm-comment { color: #6a9955; font-style: italic; }
-        .cm-s-restrict-dark .cm-variable { color: #9cdcfe; }
-        .cm-s-restrict-dark .cm-variable-2 { color: #9cdcfe; }
-        .cm-s-restrict-dark .cm-def { color: #dcdcaa; }
-        .cm-s-restrict-dark .cm-property { color: #9cdcfe; }
-        .cm-s-restrict-dark .cm-type { color: #4ec9b0; }
-        .cm-s-restrict-dark .cm-builtin { color: #dcdcaa; }
-        .cm-s-restrict-dark .cm-atom { color: #569cd6; }
-        .cm-s-restrict-dark .cm-meta { color: #569cd6; }
-        .cm-s-restrict-dark .cm-attribute { color: #9cdcfe; }
-        .cm-s-restrict-dark .cm-error { color: #f14c4c; }
-
-        .tabs {
-            display: flex;
-            background: var(--bg-light);
-            border-bottom: 1px solid var(--border);
+        .output-tabs {
+            border-bottom: 2px solid var(--line);
+            margin-bottom: 20px;
         }
 
         .tab {
+            display: inline-block;
             padding: 10px 20px;
-            cursor: pointer;
+            background-color: var(--surface);
             border: none;
-            background: transparent;
-            color: var(--text-dim);
-            font-size: 0.85rem;
-            border-bottom: 2px solid transparent;
-            border-radius: 0;
-            margin: 0;
+            border-radius: 5px 5px 0 0;
+            cursor: pointer;
+            margin-right: 5px;
+            transition: background-color 0.3s;
         }
 
-        .tab:hover { color: var(--text); background: transparent; }
-        .tab.active { color: var(--text); border-bottom-color: var(--accent); background: transparent; }
+        .tab.active {
+            background-color: var(--logo-primary);
+            color: white;
+        }
+
+        .tab:hover {
+            background-color: #ffe8d9;
+        }
+
+        .tab.active:hover {
+            background-color: var(--logo-deep);
+        }
 
         .output-content {
-            flex: 1;
-            overflow: auto;
+            background-color: #fffdfb;
+            border: 1px solid var(--line);
+            border-radius: 5px;
             padding: 15px;
-            font-family: 'Fira Code', 'Consolas', monospace;
-            font-size: 13px;
-            display: none;
+            max-height: 400px;
+            overflow-y: auto;
         }
 
-        .output-content.active { display: block; }
-
-        pre {
+        .output-content pre {
             margin: 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
             white-space: pre-wrap;
-            word-break: break-all;
+            word-wrap: break-word;
         }
 
-        .error { color: var(--error); background: rgba(241,76,76,0.1); padding: 10px; border-radius: 4px; }
-        .success { color: var(--success); background: rgba(78,201,176,0.1); padding: 10px; border-radius: 4px; }
-        .warning { color: var(--warning); background: rgba(204,167,0,0.1); padding: 10px; border-radius: 4px; }
-        .info { color: var(--text-dim); }
-
-        .console-output {
-            background: var(--bg-medium);
+        .error {
+            color: #d32f2f;
+            background-color: #ffebee;
+            border: 1px solid #ffcdd2;
             padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 10px;
-            border-left: 3px solid var(--accent);
+            border-radius: 5px;
+            margin: 10px 0;
         }
 
-        .console-output pre {
-            color: var(--text);
-        }
-
-        .error-item {
-            background: rgba(241,76,76,0.05);
-            border-left: 3px solid var(--error);
-            padding: 12px;
-            margin-bottom: 15px;
-            border-radius: 0 4px 4px 0;
-        }
-
-        .error-header { margin-bottom: 8px; }
-        .error-code { color: var(--accent); font-weight: 600; margin-right: 8px; }
-        .error-severity { text-transform: uppercase; font-size: 0.8em; }
-        .error-severity.error { color: var(--error); }
-        .error-severity.warning { color: var(--warning); }
-        .error-location { color: var(--text-dim); font-size: 0.85em; margin-bottom: 6px; }
-        .error-message { color: var(--error); margin-bottom: 10px; }
-
-        .error-source {
-            background: var(--bg-dark);
+        .success {
+            color: #388e3c;
+            background-color: #e8f5e8;
+            border: 1px solid #c8e6c9;
             padding: 10px;
-            border-radius: 3px;
-            margin-bottom: 8px;
+            border-radius: 5px;
+            margin: 10px 0;
         }
 
-        .line-num {
-            color: var(--text-dim);
-            margin-right: 15px;
-            min-width: 30px;
-            display: inline-block;
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
         }
-
-        .source-line { color: var(--text); }
-        .error-pointer { color: var(--error); }
-        .error-note { color: var(--accent); margin-top: 6px; font-size: 0.9em; }
-        .error-help { color: var(--success); margin-top: 4px; font-size: 0.9em; }
-
-        .hint-item {
-            padding: 8px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .hint-location { color: var(--text-dim); margin-right: 10px; }
-        .hint-label { margin-right: 10px; }
-        .hint-type { color: var(--accent); }
-        .hint-parameter { color: var(--warning); }
-        .hint-affine { color: var(--success); }
-        .hint-tooltip { color: var(--text-dim); font-size: 0.85em; }
 
         .examples {
-            padding: 15px;
-            background: var(--bg-medium);
-            border-top: 1px solid var(--border);
+            margin-top: 30px;
+            padding: 20px;
+            background-color: var(--surface);
+            border-radius: 5px;
         }
 
-        .examples h4 { color: var(--text-dim); margin-bottom: 10px; font-size: 0.85rem; }
-
-        .example-grid {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+        .examples h3 {
+            color: var(--ink);
+            margin-bottom: 15px;
         }
 
-        .example-btn {
-            background: var(--bg-light);
-            border: 1px solid var(--border);
-            padding: 8px 12px;
-            font-size: 0.8rem;
+        .example {
+            background-color: var(--paper);
+            border: 1px solid var(--line);
+            border-radius: 3px;
+            padding: 10px;
+            margin: 10px 0;
+            cursor: pointer;
+            transition: background-color 0.3s;
         }
 
-        @media (max-width: 900px) {
-            .container { flex-direction: column; }
-            .editor-panel, .output-panel { border: none; border-bottom: 1px solid var(--border); }
-            .editor-wrapper { height: 250px; }
+        .example:hover {
+            background-color: #ffe8d9;
+        }
+
+        .example-title {
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 5px;
+        }
+
+        .example-code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            color: #666;
+            background-color: #f8f8f8;
+            padding: 5px;
+            border-radius: 3px;
+            white-space: pre-wrap;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1><span>Restrict</span> Language Playground</h1>
-        <div class="status-bar">
-            <span id="statusMessage" class="status-info">Loading...</span>
-        </div>
-    </div>
-
     <div class="container">
-        <div class="editor-panel">
-            <div class="panel-header">
-                <span>Source Code</span>
-                <div class="button-group">
-                    <button onclick="compile()" id="compileBtn">▶ Run (Ctrl+Enter)</button>
-                    <button onclick="clearOutput()" id="clearBtn" class="secondary">Clear</button>
-                </div>
-            </div>
-            <div class="editor-wrapper">
-                <textarea id="sourceCode">// Restrict Language Playground
-// Press Ctrl+Enter to compile and run!
+        <h1>🌐 Restrict Language Web Compiler</h1>
 
-fun main: () -> Int = {
-    val x = 42;
-    val y = 10;
-    x
+        <div class="editor-section">
+            <h3>📝 Source Code</h3>
+            <div class="source-editor">
+                <pre id="sourceHighlight" class="source-highlight" aria-hidden="true"><code></code></pre>
+                <textarea id="sourceCode" spellcheck="false" placeholder="Enter your Restrict Language code here...">// Basic arithmetic example
+fun add: (left: Int32, right: Int32) -> Int32 = {
+    left + right
+}
+
+// Main function
+fun main: () -> Int32 = {
+    val result = (2, 3) add
+    result
 }</textarea>
             </div>
-            <div class="examples">
-                <h4>Examples:</h4>
-                <div class="example-grid">
-                    <button class="example-btn" onclick="loadExample('hello')">Hello World</button>
-                    <button class="example-btn" onclick="loadExample('pipe')">Pipe & OSV</button>
-                    <button class="example-btn" onclick="loadExample('affine')">Affine Types</button>
-                    <button class="example-btn" onclick="loadExample('mutable')">Mutable & Loops</button>
-                    <button class="example-btn" onclick="loadExample('match')">Pattern Match</button>
-                    <button class="example-btn" onclick="loadExample('record')">Records & Arena</button>
-                    <button class="example-btn" onclick="loadExample('context')">Context</button>
-                    <button class="example-btn" onclick="loadExample('compose')">Composition</button>
-                </div>
-            </div>
         </div>
 
-        <div class="output-panel">
-            <div class="tabs">
-                <button class="tab active" onclick="showTab('result')">Result</button>
-                <button class="tab" onclick="showTab('wasm')">WAT Output</button>
-                <button class="tab" onclick="showTab('error')">Errors</button>
-                <button class="tab" onclick="showTab('ast')">AST</button>
-                <button class="tab" onclick="showTab('hints')">Type Hints</button>
-            </div>
+        <div class="button-container">
+            <button onclick="compile()" id="compileBtn">🔧 Compile</button>
+            <button onclick="lexOnly()" id="lexBtn">📝 Lex Only</button>
+            <button onclick="parseOnly()" id="parseBtn">🔍 Parse Only</button>
+            <button onclick="clearOutput()" id="clearBtn">🗑️ Clear</button>
+        </div>
 
-            <div id="result" class="output-content active">
-                <div id="resultOutput" class="info">Click "Run" to execute...</div>
+        <div class="output-section">
+            <div class="output-tabs">
+                <button class="tab active" data-tab="wasm" onclick="showTab('wasm')">📦 WASM Output</button>
+                <button class="tab" data-tab="tokens" onclick="showTab('tokens')">🎯 Tokens</button>
+                <button class="tab" data-tab="ast" onclick="showTab('ast')">🌳 AST</button>
+                <button class="tab" data-tab="error" onclick="showTab('error')">⚠️ Errors</button>
             </div>
 
             <div id="wasm" class="output-content">
-                <pre id="wasmOutput">Click "Run" to compile...</pre>
+                <pre id="wasmOutput">Ready to compile...</pre>
             </div>
 
-            <div id="error" class="output-content">
-                <div id="errorOutput" class="success">No errors</div>
+            <div id="tokens" class="output-content" style="display: none;">
+                <pre id="tokensOutput">No tokens yet...</pre>
             </div>
 
-            <div id="ast" class="output-content">
-                <pre id="astOutput">Click "Run" to see AST...</pre>
+            <div id="ast" class="output-content" style="display: none;">
+                <pre id="astOutput">No AST yet...</pre>
             </div>
 
-            <div id="hints" class="output-content">
-                <div id="hintsOutput" class="info">Click "Run" to see type hints...</div>
+            <div id="error" class="output-content" style="display: none;">
+                <pre id="errorOutput">No errors...</pre>
+            </div>
+        </div>
+
+        <div class="examples">
+            <h3>📚 Example Programs</h3>
+
+            <div class="example" onclick="loadExample('hello')">
+                <div class="example-title">Hello World</div>
+                <div class="example-code">fun main: () -> Int32 = { 42 }</div>
+            </div>
+
+            <div class="example" onclick="loadExample('function')">
+                <div class="example-title">Function Definition</div>
+                <div class="example-code">fun add: (left: Int32, right: Int32) -> Int32 = { left + right }</div>
+            </div>
+
+            <div class="example" onclick="loadExample('pipe')">
+                <div class="example-title">Pipe Operations</div>
+                <div class="example-code">42 |> increment</div>
+            </div>
+
+            <div class="example" onclick="loadExample('record')">
+                <div class="example-title">Record Types</div>
+                <div class="example-code">record Point { x: Int32, y: Int32 }</div>
             </div>
         </div>
     </div>
 
-    <!-- Restrict Lang mode for CodeMirror -->
-    <script>
-        // Define Restrict Language mode for CodeMirror
-        CodeMirror.defineMode("restrict", function() {
-            const keywords = /^(fun|val|mut|if|else|while|match|with|context|record|impl|for|return|break|continue|import|export|type|trait|where|async|await|spawn|select|in)\b/;
-            const affineKeywords = /^(val|mut|clone|freeze|move)\b/;
-            const contextKeywords = /^(with|context)\b/;
-            const builtinTypes = /^(Int|Int32|Int64|Float|Float32|Float64|String|Bool|Unit|Option|List|Array|Result|Future|Channel)\b/;
-            const builtins = /^(println|print|print_int|print_float|eprintln|eprint|Some|None|Ok|Err|true|false)\b/;
-            const operators = /^(->|=>|\|>|\|>>|::|&&|\|\||==|!=|<=|>=|<|>|\+|-|\*|\/|%|=|!|\||&)/;
-
-            return {
-                startState: function() {
-                    return { inString: false, inComment: false, commentDepth: 0 };
-                },
-                token: function(stream, state) {
-                    // Multi-line comment
-                    if (state.commentDepth > 0) {
-                        while (!stream.eol()) {
-                            if (stream.match("*/")) {
-                                state.commentDepth--;
-                                if (state.commentDepth === 0) break;
-                            } else if (stream.match("/*")) {
-                                state.commentDepth++;
-                            } else {
-                                stream.next();
-                            }
-                        }
-                        return "comment";
-                    }
-
-                    // Skip whitespace
-                    if (stream.eatSpace()) return null;
-
-                    // Single-line comment
-                    if (stream.match("//")) {
-                        stream.skipToEnd();
-                        return "comment";
-                    }
-
-                    // Multi-line comment start
-                    if (stream.match("/*")) {
-                        state.commentDepth = 1;
-                        while (!stream.eol()) {
-                            if (stream.match("*/")) {
-                                state.commentDepth--;
-                                if (state.commentDepth === 0) break;
-                            } else if (stream.match("/*")) {
-                                state.commentDepth++;
-                            } else {
-                                stream.next();
-                            }
-                        }
-                        return "comment";
-                    }
-
-                    // Strings
-                    if (stream.match('"')) {
-                        while (!stream.eol()) {
-                            const ch = stream.next();
-                            if (ch === '"') break;
-                            if (ch === '\\') stream.next();
-                        }
-                        return "string";
-                    }
-
-                    // Character literals
-                    if (stream.match("'")) {
-                        stream.next();
-                        if (stream.peek() === '\\') stream.next();
-                        stream.next();
-                        if (stream.peek() === "'") stream.next();
-                        return "string-2";
-                    }
-
-                    // Numbers
-                    if (stream.match(/^0x[0-9a-fA-F]+/) || stream.match(/^0b[01]+/) ||
-                        stream.match(/^\d+\.?\d*(?:[eE][+-]?\d+)?/)) {
-                        return "number";
-                    }
-
-                    // Pipe operators (special highlight)
-                    if (stream.match("|>") || stream.match("|>>")) {
-                        return "operator-pipe";
-                    }
-
-                    // Arrow operators
-                    if (stream.match("->") || stream.match("=>")) {
-                        return "operator";
-                    }
-
-                    // Other operators
-                    if (stream.match(operators)) {
-                        return "operator";
-                    }
-
-                    // Identifiers and keywords
-                    if (stream.match(/^[a-zA-Z_][a-zA-Z0-9_]*/)) {
-                        const word = stream.current();
-
-                        // Affine keywords (val, mut, clone, freeze)
-                        if (affineKeywords.test(word)) {
-                            return "keyword-affine";
-                        }
-
-                        // Context keywords (with, context)
-                        if (contextKeywords.test(word)) {
-                            return "keyword-context";
-                        }
-
-                        // Regular keywords
-                        if (keywords.test(word)) {
-                            return "keyword";
-                        }
-
-                        // Built-in types
-                        if (builtinTypes.test(word)) {
-                            return "type";
-                        }
-
-                        // Built-in functions
-                        if (builtins.test(word)) {
-                            return "builtin";
-                        }
-
-                        // Check if it's a type (starts with uppercase)
-                        if (/^[A-Z]/.test(word)) {
-                            return "type";
-                        }
-
-                        return "variable";
-                    }
-
-                    // Brackets
-                    if (stream.match(/^[{}\[\]()]/)) {
-                        return "bracket";
-                    }
-
-                    // Semicolon, colon, comma
-                    if (stream.match(/^[;:,]/)) {
-                        return "punctuation";
-                    }
-
-                    // Lifetime
-                    if (stream.match(/^'[a-z]+/)) {
-                        return "attribute";
-                    }
-
-                    stream.next();
-                    return null;
-                }
-            };
-        });
-
-        // Define MIME type
-        CodeMirror.defineMIME("text/x-restrict", "restrict");
-    </script>
-
-    <!-- wabt.js for WAT to WASM conversion -->
-    <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.32/index.js"></script>
-
+    <script src="./restrict-highlight.js"></script>
     <script type="module" src="./app.js"></script>
 </body>
 </html>

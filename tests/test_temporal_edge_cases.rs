@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 /// Edge case tests for Temporal Affine Types (TAT)
@@ -23,7 +25,7 @@ fun leakThroughClosure: () -> (File<~io> -> Int32) = {
 fun main: () -> Unit = {
     Unit
 }"#;
-    
+
     let result = parse_program(input);
     match result {
         Ok((remaining, program)) => {
@@ -38,7 +40,7 @@ fun main: () -> Unit = {
                 }
             }
         }
-        Err(e) => panic!("Parse error: {:?}", e)
+        Err(e) => panic!("Parse error: {:?}", e),
     }
 }
 
@@ -51,7 +53,7 @@ fn test_temporal_in_recursive_types() {
         value: T,
         next: Option<Node<T, ~n>>
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~list> {
             val node3 = Node { value: 3, next: None };
@@ -64,11 +66,11 @@ fn test_temporal_in_recursive_types() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -81,15 +83,15 @@ fn test_temporal_constraint_transitivity_violation() {
     record A<~a> {
         id: Int32
     }
-    
+
     record B<~b, ~a> where ~b within ~a {
         a: A<~a>
     }
-    
+
     record C<~c, ~b, ~a> where ~c within ~b, ~b within ~a {
         b: B<~b, ~a>
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~x> {
             with lifetime<~y> where ~y within ~x {
@@ -103,7 +105,7 @@ fn test_temporal_constraint_transitivity_violation() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
@@ -119,12 +121,12 @@ fn test_temporal_constraint_transitivity_violation() {
 fn test_temporal_multiple_constraints() {
     // Test records with multiple temporal constraints
     let input = r#"
-    record MultiConstraint<~a, ~b, ~c> 
+    record MultiConstraint<~a, ~b, ~c>
     where ~a within ~b, ~a within ~c {
         dataB: Int32,
         dataC: Int32
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~parent1> {
             with lifetime<~parent2> {
@@ -136,11 +138,11 @@ fn test_temporal_multiple_constraints() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -155,7 +157,7 @@ fn test_temporal_in_match_patterns() {
         ok: Option<T>,
         err: Option<E>
     }
-    
+
     fun processResult: <T, ~r>(result: Result<T, String, ~r>) -> T = {
         match result.variant {
             0 => match result.ok {
@@ -166,23 +168,23 @@ fn test_temporal_in_match_patterns() {
             _ => panic("Invalid variant")
         }
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~op> {
-            val result = Result { 
-                variant: 0, 
-                ok: Some(42), 
-                err: None 
+            val result = Result {
+                variant: 0,
+                ok: Some(42),
+                err: None
             };
             val value = processResult(result);
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -196,16 +198,16 @@ fn test_temporal_function_parameter_inference() {
         id: Int32,
         buffer: T
     }
-    
+
     fun send: <T, ~ch>(channel: Channel<T, ~ch>, msg: T) -> Unit = {
         // In real implementation, this would send the message
         Unit
     }
-    
+
     fun receive: <T, ~ch>(channel: Channel<T, ~ch>) -> T = {
         channel.buffer
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~comm> {
             val ch = Channel { id: 1, buffer: "Hello" };
@@ -214,11 +216,11 @@ fn test_temporal_function_parameter_inference() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -232,11 +234,11 @@ fn test_temporal_affine_double_use() {
         value: String,
         consumed: Bool
     }
-    
+
     fun consume: <~s>(secret: Secret<~s>) -> String = {
         secret.value
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~secure> {
             val secret = Secret { value: "password123", consumed: false };
@@ -246,14 +248,15 @@ fn test_temporal_affine_double_use() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => panic!("Expected affine violation for double use of temporal value"),
         Err(e) => {
-            assert!(e.to_string().contains("already been used") || 
-                    e.to_string().contains("affine"));
+            assert!(
+                e.to_string().contains("already been used") || e.to_string().contains("affine")
+            );
             println!("Got expected error: {:?}", e);
         }
     }
@@ -268,11 +271,11 @@ fn test_temporal_partial_application() {
         name: String,
         level: Int32
     }
-    
+
     fun logMessage: <~log>(logger: Logger<~log>, level: Int32, msg: String) -> Unit = {
         Unit
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~logging> {
             val logger = Logger { name: "app", level: 1 };
@@ -282,11 +285,11 @@ fn test_temporal_partial_application() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -299,11 +302,11 @@ fn test_temporal_cyclic_constraint() {
     record Cycle<~a, ~b> where ~a within ~b, ~b within ~a {
         data: Int32
     }
-    
+
     fun main: () -> Unit = {
         Unit
     }"#;
-    
+
     let result = parse_program(input);
     match result {
         Ok((_, program)) => {
@@ -330,11 +333,11 @@ fn test_temporal_with_context_interaction() {
     context Database<~db> {
         query: String -> String
     }
-    
+
     record Connection<~conn, ~db> where ~conn within ~db {
         id: Int32
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~db> {
             with Database {
@@ -346,11 +349,11 @@ fn test_temporal_with_context_interaction() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -366,11 +369,11 @@ fn test_temporal_empty_scope() {
         };
         Unit
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -383,7 +386,7 @@ fn test_temporal_shadowing() {
     record Item<~i> {
         id: Int32
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~scope> {
             val item = Item { id: 1 };
@@ -400,11 +403,11 @@ fn test_temporal_shadowing() {
             Unit
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }

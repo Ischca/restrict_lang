@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::parse_program;
 
 #[test]
@@ -16,15 +18,15 @@ fun leakFile<~io> = {
 fun main: () -> Int = {
     Unit
 }"#;
-    
+
     eprintln!("=== Testing exact leakfile content ===");
     eprintln!("Input length: {} chars", input.len());
-    
+
     match parse_program(input) {
         Ok((remaining, program)) => {
             eprintln!("Parsed {} declarations", program.declarations.len());
             eprintln!("Remaining: {} chars", remaining.len());
-            
+
             for (i, decl) in program.declarations.iter().enumerate() {
                 match decl {
                     restrict_lang::TopDecl::Function(f) => {
@@ -38,16 +40,21 @@ fun main: () -> Int = {
                     }
                 }
             }
-            
+
             if !remaining.is_empty() {
-                eprintln!("\nRemaining content starts with: {:?}", 
-                    &remaining[..40.min(remaining.len())]);
-                
+                eprintln!(
+                    "\nRemaining content starts with: {:?}",
+                    &remaining[..40.min(remaining.len())]
+                );
+
                 // Now test just the remaining part separately
                 eprintln!("\n=== Testing remaining part separately ===");
                 match parse_program(remaining) {
                     Ok((rem2, prog2)) => {
-                        eprintln!("Remaining part parsed {} declarations", prog2.declarations.len());
+                        eprintln!(
+                            "Remaining part parsed {} declarations",
+                            prog2.declarations.len()
+                        );
                         eprintln!("Still remaining: {} chars", rem2.len());
                     }
                     Err(e) => {
@@ -55,10 +62,13 @@ fun main: () -> Int = {
                     }
                 }
             }
-            
+
             // The test should parse all 3 declarations
-            assert_eq!(program.declarations.len(), 3, 
-                "Should parse 3 declarations (record, leakFile, main)");
+            assert_eq!(
+                program.declarations.len(),
+                3,
+                "Should parse 3 declarations (record, leakFile, main)"
+            );
         }
         Err(e) => {
             panic!("Parse error: {:?}", e);

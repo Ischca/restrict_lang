@@ -4,66 +4,42 @@ use restrict_lang::parse_program;
 #[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_different_function_names() {
     let names = vec![
-        ("test", true),
-        ("foo", true),
-        ("myFunc", true),
-        ("leak", true),
-        ("leakF", true),
-        ("leakFi", true),
-        ("leakFil", true),
-        ("leakFile", false),  // This is the problematic one
-        ("leakFiles", true),
-        ("fileLeaker", true),
+        "test",
+        "foo",
+        "myFunc",
+        "leak",
+        "leakF",
+        "leakFi",
+        "leakFil",
+        "leakFile",
+        "leakFiles",
+        "fileLeaker",
     ];
-    
-    for (name, should_work) in names {
-        let input = format!("fun {}<~io> = {{ Unit }}", name);
-        println!("\nTesting function name '{}': {}", name, input);
-        
-        match parse_program(&input) {
-            Ok((rem, prog)) => {
-                if rem.len() > 0 {
-                    println!("  ✗ Parsed but has remaining: {} chars", rem.len());
-                    assert!(!should_work, "Function '{}' should have failed but didn't", name);
-                } else {
-                    println!("  ✓ Success: {} declarations", prog.declarations.len());
-                    assert!(should_work, "Function '{}' should have worked but failed", name);
-                }
-            }
-            Err(e) => {
-                println!("  ✗ Failed: {:?}", e);
-                assert!(!should_work, "Function '{}' should have worked but failed", name);
-            }
-        }
+
+    for name in names {
+        let input = format!("fun {} = {{ () }}", name);
+        let (remaining, program) =
+            parse_program(&input).unwrap_or_else(|e| panic!("{} should parse: {:?}", name, e));
+
+        assert!(remaining.trim().is_empty());
+        assert_eq!(program.declarations.len(), 1);
     }
 }
 
 #[test]
 #[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_leakfile_variations() {
-    // Without temporal parameter
-    let without_temporal = "fun leakFile = { Unit }";
-    println!("Without temporal: {}", without_temporal);
-    match parse_program(without_temporal) {
-        Ok((rem, prog)) => {
-            println!("Result: {} decls, {} remaining", prog.declarations.len(), rem.len());
-            if rem.len() > 0 {
-                println!("Remaining: {:?}", rem);
-            }
-        }
-        Err(e) => println!("Failed: {:?}", e),
-    }
-    
-    // With different temporal name
-    let different_temporal = "fun leakFile<~t> = { Unit }";
-    println!("\nWith ~t instead of ~io: {}", different_temporal);
-    match parse_program(different_temporal) {
-        Ok((rem, prog)) => {
-            println!("Result: {} decls, {} remaining", prog.declarations.len(), rem.len());
-            if rem.len() > 0 {
-                println!("Remaining: {:?}", rem);
-            }
-        }
-        Err(e) => println!("Failed: {:?}", e),
+    let cases = [
+        "fun leakFile = { () }",
+        "fun leakFile: () -> () = { () }",
+        "fun leakFile: (handle: Int32) -> Int32 = { handle }",
+    ];
+
+    for input in cases {
+        let (remaining, program) =
+            parse_program(input).unwrap_or_else(|e| panic!("{} should parse: {:?}", input, e));
+
+        assert!(remaining.trim().is_empty());
+        assert_eq!(program.declarations.len(), 1);
     }
 }

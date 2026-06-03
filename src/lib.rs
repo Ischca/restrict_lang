@@ -1,9 +1,9 @@
 //! # Restrict Language Compiler
-//! 
+//!
 //! A modern programming language for WebAssembly with affine types and OSV (Object-Subject-Verb) syntax.
 //!
 //! ## Overview
-//! 
+//!
 //! Restrict Language brings together unique features:
 //! - **OSV (Object-Subject-Verb) word order** inspired by Japanese syntax
 //! - **Affine type system** ensuring each value is used at most once
@@ -14,29 +14,29 @@
 //!
 //! ## Quick Example
 //!
-//! ```rust,ignore
+//! ```text
 //! // OSV syntax with pipe operator
-//! "Hello, World!" |> println;
-//! 
+//! "Hello, World!" |> println
+//!
 //! // Affine types ensure memory safety
-//! let data = getData();
-//! data |> process;  // data is consumed
-//! // data |> process;  // Error: already used
-//! 
+//! val data = "payload" |> decode_data
+//! data |> process  // data is consumed
+//! // data |> process  // Error: already used
+//!
 //! // Pattern matching
-//! result |> match {
-//!     Ok(value) => value |> handleSuccess,
-//!     Err(error) => error |> handleError
-//! };
-//! 
+//! result match {
+//!     Ok(value) => { value |> handle_success }
+//!     Err(error) => { error |> handle_error }
+//! }
+//!
 //! // Generic functions
-//! fn identity<T>(value: T) -> T {
+//! fun identity: <T>(value: T) -> T = {
 //!     value
 //! }
 //! ```
 //!
 //! ## Architecture
-//! 
+//!
 //! The compiler follows a traditional pipeline:
 //! 1. **Lexing** ([`lexer`]) - Source code → Tokens
 //! 2. **Parsing** ([`parser`]) - Tokens → AST
@@ -53,10 +53,9 @@
 //! - [`module`] - Module system for managing imports/exports
 //! - [`lsp`] - Language Server Protocol implementation for IDE support
 
-#![cfg_attr(docsrs, doc(html_logo_url = "https://restrict-lang.org/logo.svg"))]
-#![cfg_attr(docsrs, doc(html_favicon_url = "https://restrict-lang.org/favicon.ico"))]
-#![cfg_attr(docsrs, doc(html_playground_url = "https://play.restrict-lang.org"))]
-#![allow(mismatched_lifetime_syntaxes)]
+#![doc(html_logo_url = "https://restrict-lang.org/logo.svg")]
+#![doc(html_favicon_url = "https://restrict-lang.org/favicon.ico")]
+#![doc(html_playground_url = "https://play.restrict-lang.org")]
 
 /// Lexical analysis module for tokenizing Restrict Language source code
 pub mod lexer;
@@ -69,6 +68,9 @@ pub mod parser;
 
 /// Type checking module implementing the affine type system
 pub mod type_checker;
+
+/// Constraint primitives for bidirectional type inference
+pub mod type_constraints;
 
 /// Code generation module for producing WebAssembly output
 pub mod codegen;
@@ -85,8 +87,11 @@ pub mod debug_visualizer;
 /// Module system for managing imports and exports
 pub mod module;
 
-/// Rust-style rich diagnostic system
-pub mod diagnostic;
+/// User-facing diagnostic formatting helpers
+pub mod diagnostics;
+
+/// v0.0.1 release-surface validation
+pub mod release_surface;
 
 /// Development tools for debugging and analysis (non-WASM only)
 #[cfg(not(target_arch = "wasm32"))]
@@ -100,21 +105,23 @@ pub mod lsp;
 pub mod web;
 
 // Re-exports for convenience
-pub use lexer::*;
 pub use ast::*;
+pub use codegen::{CodeGenError, WasmCodeGen};
+pub use lexer::*;
 pub use parser::*;
-pub use type_checker::{TypeError, SpannedTypeError, TypedType, format_typed_type, is_copy_type, TypeSubstitution, SymbolInfo, SymbolKind, TypeChecker, type_check};
-pub use codegen::{WasmCodeGen, CodeGenError};
-pub use module::{ModuleResolver, Module};
+pub use release_surface::{check_v001_release_surface, ReleaseSurfaceError};
+pub use type_checker::{
+    format_typed_type, type_check, TemporalConstraint as TypeCheckerTemporalConstraint,
+    TemporalContext, TypeChecker, TypeError, TypeSubstitution, TypedType,
+};
 
 /// Legacy convenience function for tests
-/// 
+///
 /// Generates WebAssembly text format from a parsed program.
-/// 
+///
 /// # Example
 /// ```rust,ignore
-/// let program = parse("fun main = { 42 }").unwrap();
-/// let wat = generate(&program).unwrap();
+/// generate(&parse("fun main: () -> Int32 = { 42 }").unwrap()).unwrap();
 /// ```
 pub fn generate(program: &Program) -> Result<String, CodeGenError> {
     let mut codegen = WasmCodeGen::new();

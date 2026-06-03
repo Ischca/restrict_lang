@@ -1,5 +1,5 @@
 // Welcome to Restrict Language!
 
-fun main = {
+fun main: () -> () = {
     "Hello, World!" |> println
 }

@@ -61,7 +61,7 @@ Keep code examples identical between versions:
 
 ```restrict
 // Same in both EN and JA
-fn main() {
+fun main: () -> () = {
     "Hello, World!" |> println
 }
 ```
@@ -72,7 +72,7 @@ Only translate comments:
 ```restrict
 // EN: Calculate the sum
 // JA: 合計を計算
-let sum = a + b
+val sum = a + b
 ```
 
 #### Technical Terms / 技術用語

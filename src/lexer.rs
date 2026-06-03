@@ -6,114 +6,34 @@
 //!
 //! ## Token Categories
 //!
-//! - **Keywords**: Language reserved words (`fn`, `let`, `clone`, `freeze`, etc.)
-//! - **Operators**: Including the distinctive pipe operators (`|>`, `|>>`)
+//! - **Keywords**: Language reserved words (`fun`, `val`, `mut`, `clone`, `freeze`, etc.)
+//! - **Operators**: Including the distinctive pipe operator (`|>`)
 //! - **Literals**: Numbers, strings, characters, booleans
 //! - **Identifiers**: Variable and function names
 //! - **Delimiters**: Parentheses, braces, brackets
 //!
 //! ## Example
 //!
-//! ```rust,ignore
-//! use restrict_lang::lexer::tokenize;
-//!
-//! let input = r#""Hello, World!" |> println;"#;
-//! let tokens = tokenize(input).unwrap();
+//! ```rust
+//! assert!(!restrict_lang::lexer::lex_tokens(r#""Hello, World!" |> println"#)
+//!     .unwrap()
+//!     .is_empty());
 //! ```
 
+use crate::diagnostics::format_lex_error;
 use nom::{
-    IResult,
     branch::alt,
-    bytes::complete::{tag, take_while1, take_while, take_until},
-    character::complete::{char, digit1, one_of},
-    combinator::{recognize, map, value},
+    bytes::complete::{tag, take_until, take_while, take_while1},
+    character::complete::char,
+    combinator::{recognize, value},
     multi::many0,
-    sequence::{pair, preceded, delimited},
+    sequence::{delimited, pair, preceded},
+    IResult,
 };
 use std::fmt;
 
-/// Represents a position in source code as a byte offset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Span {
-    /// Start byte offset (inclusive)
-    pub start: usize,
-    /// End byte offset (exclusive)
-    pub end: usize,
-}
-
-impl Span {
-    /// Creates a new span from start and end byte offsets.
-    pub fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
-    }
-
-    /// Creates a span covering a single point.
-    pub fn point(offset: usize) -> Self {
-        Self { start: offset, end: offset }
-    }
-
-    /// Creates a span that combines two spans (from start of first to end of second).
-    pub fn merge(self, other: Span) -> Self {
-        Self {
-            start: self.start.min(other.start),
-            end: self.end.max(other.end),
-        }
-    }
-
-    /// Returns the length of this span in bytes.
-    pub fn len(&self) -> usize {
-        self.end.saturating_sub(self.start)
-    }
-
-    /// Returns true if this span has zero length.
-    pub fn is_empty(&self) -> bool {
-        self.start >= self.end
-    }
-
-    /// Converts byte offset to line and column (0-indexed).
-    pub fn to_line_col(&self, source: &str) -> (usize, usize) {
-        let mut line = 0;
-        let mut col = 0;
-        for (i, ch) in source.char_indices() {
-            if i >= self.start {
-                break;
-            }
-            if ch == '\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
-            }
-        }
-        (line, col)
-    }
-
-    /// Converts span to line/column range for LSP.
-    pub fn to_line_col_range(&self, source: &str) -> ((usize, usize), (usize, usize)) {
-        let start_pos = Self { start: self.start, end: self.start }.to_line_col(source);
-        let end_pos = Self { start: self.end, end: self.end }.to_line_col(source);
-        (start_pos, end_pos)
-    }
-}
-
-/// A token with its span information.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SpannedToken {
-    /// The token value
-    pub token: Token,
-    /// The span in source code
-    pub span: Span,
-}
-
-impl SpannedToken {
-    /// Creates a new spanned token.
-    pub fn new(token: Token, span: Span) -> Self {
-        Self { token, span }
-    }
-}
-
 /// Token types in Restrict Language.
-/// 
+///
 /// Each token represents a lexical unit in the source code.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -128,11 +48,17 @@ pub enum Token {
     Impl,
     /// `context` keyword for context declarations
     Context,
+    /// `enum` keyword reserved for future enum declarations
+    Enum,
+    /// `form` keyword reserved for future source-level form declarations
+    Form,
+    /// `takes` keyword reserved for future source-level form adoptions
+    Takes,
     /// `with` keyword for resource management
     With,
-    /// `fn` keyword for function declarations
+    /// `fun` keyword for function declarations
     Fun,
-    /// `let` keyword for bindings
+    /// `val` keyword for bindings
     Val,
     /// `mut` keyword for mutable bindings
     Mut,
@@ -152,20 +78,18 @@ pub enum Token {
     True,
     /// `false` boolean literal
     False,
-    /// Unit type `()`
+    /// `()` literal token
     Unit,
     /// `Some` variant constructor
     Some,
     /// `None` variant constructor
     None,
-    /// `Ok` variant constructor for Result
-    Ok,
-    /// `Err` variant constructor for Result
-    Err,
     /// `import` keyword
     Import,
     /// `export` keyword
     Export,
+    /// `pub` keyword for public exports
+    Pub,
     /// `sealed` modifier for records
     Sealed,
     /// `from` keyword for derivation bounds
@@ -180,72 +104,63 @@ pub enum Token {
     Await,
     /// `spawn` keyword for spawning tasks
     Spawn,
-    /// `it` keyword for implicit lambda parameter
-    It,
-    /// `form` keyword for behavioral contract declaration
-    Form,
-    /// `takes` keyword for form adoption
-    Takes,
-    /// `of` keyword for form constraints in generics
-    Of,
+    /// `as` keyword for explicit casts
+    As,
 
     // Identifiers and Literals
     /// Identifier (variable/function name)
     Ident(String),
     /// Integer literal
-    IntLit(i32),
+    IntLit(i64),
     /// Floating-point literal
     FloatLit(f64),
     /// String literal
     StringLit(String),
     /// Character literal
     CharLit(char),
-    
+
     // Operators
     /// Pipe operator `|>` for OSV syntax
     Pipe,
-    /// Mutable pipe operator `|>>`
-    PipeMut,
     /// Vertical bar `|` for patterns
     Bar,
-    Assign,         // =
-    Arrow,          // =>
-    ThinArrow,      // ->
-    Plus,           // +
-    Minus,          // -
-    Star,           // *
-    Asterisk,       // * (for import *)
-    Slash,          // /
-    Percent,        // %
-    Eq,             // ==
-    Ne,             // !=
-    Lt,             // <
-    Le,             // <=
-    Gt,             // >
-    Ge,             // >=
-    
+    Assign,    // =
+    Arrow,     // =>
+    ThinArrow, // ->
+    Plus,      // +
+    Minus,     // -
+    Star,      // *
+    Asterisk,  // * (for import *)
+    Slash,     // /
+    Percent,   // %
+    Eq,        // ==
+    Ne,        // !=
+    Not,       // !
+    Lt,        // <
+    Le,        // <=
+    Gt,        // >
+    Ge,        // >=
+    And,       // &&
+    Or,        // ||
+
     // Temporal
-    Tilde,          // ~ (for temporal type variables)
-    
+    Tilde, // ~ (for temporal type variables)
+
     // Delimiters
-    LBrace,         // {
-    RBrace,         // }
-    LParen,         // (
-    RParen,         // )
-    LBracket,       // [
-    RBracket,       // ]
-    LArrayBracket,  // [|
-    RArrayBracket,  // |]
-    Comma,          // ,
-    Colon,          // :
-    DotDot,         // ..  (inclusive range)
-    DotDotLt,       // ..< (exclusive range)
-    Dot,            // .
-    Semicolon,      // ;
-    
+    LBrace,    // {
+    RBrace,    // }
+    LParen,    // (
+    RParen,    // )
+    LBracket,  // [
+    RBracket,  // ]
+    Comma,     // ,
+    Colon,     // :
+    Dot,       // .
+    DotDot,    // .. (range literal separator)
+    DotDotDot, // ... (for spread destructuring)
+    Semicolon, // ;
+
     // Special
-    /// Newline token for statement termination
-    Newline,
     Eof,
 }
 
@@ -257,6 +172,9 @@ impl fmt::Display for Token {
             Token::Freeze => write!(f, "freeze"),
             Token::Impl => write!(f, "impl"),
             Token::Context => write!(f, "context"),
+            Token::Enum => write!(f, "enum"),
+            Token::Form => write!(f, "form"),
+            Token::Takes => write!(f, "takes"),
             Token::With => write!(f, "with"),
             Token::Fun => write!(f, "fun"),
             Token::Val => write!(f, "val"),
@@ -269,31 +187,26 @@ impl fmt::Display for Token {
             Token::Return => write!(f, "return"),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
-            Token::Unit => write!(f, "Unit"),
+            Token::Unit => write!(f, "()"),
             Token::Some => write!(f, "Some"),
             Token::None => write!(f, "None"),
-            Token::Ok => write!(f, "Ok"),
-            Token::Err => write!(f, "Err"),
             Token::Import => write!(f, "import"),
             Token::Export => write!(f, "export"),
+            Token::Pub => write!(f, "pub"),
             Token::Sealed => write!(f, "sealed"),
             Token::From => write!(f, "from"),
-            Token::Form => write!(f, "form"),
-            Token::Takes => write!(f, "takes"),
-            Token::Of => write!(f, "of"),
             Token::Within => write!(f, "within"),
             Token::Where => write!(f, "where"),
             Token::Lifetime => write!(f, "lifetime"),
             Token::Await => write!(f, "await"),
             Token::Spawn => write!(f, "spawn"),
-            Token::It => write!(f, "it"),
+            Token::As => write!(f, "as"),
             Token::Ident(s) => write!(f, "{}", s),
             Token::IntLit(n) => write!(f, "{}", n),
             Token::FloatLit(n) => write!(f, "{}", n),
             Token::StringLit(s) => write!(f, "\"{}\"", s),
             Token::CharLit(c) => write!(f, "'{}'", c),
             Token::Pipe => write!(f, "|>"),
-            Token::PipeMut => write!(f, "|>>"),
             Token::Bar => write!(f, "|"),
             Token::Assign => write!(f, "="),
             Token::Arrow => write!(f, "=>"),
@@ -306,10 +219,13 @@ impl fmt::Display for Token {
             Token::Percent => write!(f, "%"),
             Token::Eq => write!(f, "=="),
             Token::Ne => write!(f, "!="),
+            Token::Not => write!(f, "!"),
             Token::Lt => write!(f, "<"),
             Token::Le => write!(f, "<="),
             Token::Gt => write!(f, ">"),
             Token::Ge => write!(f, ">="),
+            Token::And => write!(f, "&&"),
+            Token::Or => write!(f, "||"),
             Token::Tilde => write!(f, "~"),
             Token::LBrace => write!(f, "{{"),
             Token::RBrace => write!(f, "}}"),
@@ -317,15 +233,12 @@ impl fmt::Display for Token {
             Token::RParen => write!(f, ")"),
             Token::LBracket => write!(f, "["),
             Token::RBracket => write!(f, "]"),
-            Token::LArrayBracket => write!(f, "[|"),
-            Token::RArrayBracket => write!(f, "|]"),
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
-            Token::DotDot => write!(f, ".."),
-            Token::DotDotLt => write!(f, "..<"),
             Token::Dot => write!(f, "."),
+            Token::DotDot => write!(f, ".."),
+            Token::DotDotDot => write!(f, "..."),
             Token::Semicolon => write!(f, ";"),
-            Token::Newline => write!(f, "<newline>"),
             Token::Eof => write!(f, "EOF"),
         }
     }
@@ -340,12 +253,10 @@ fn is_ident_continue(c: char) -> bool {
 }
 
 fn identifier(input: &str) -> IResult<&str, &str> {
-    recognize(
-        pair(
-            take_while1(|c: char| is_ident_start(c)),
-            take_while(|c: char| is_ident_continue(c))
-        )
-    )(input)
+    recognize(pair(
+        take_while1(|c: char| is_ident_start(c)),
+        take_while(|c: char| is_ident_continue(c)),
+    ))(input)
 }
 
 fn keyword(input: &str) -> IResult<&str, Token> {
@@ -356,6 +267,9 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "freeze" => Token::Freeze,
         "impl" => Token::Impl,
         "context" => Token::Context,
+        "enum" => Token::Enum,
+        "form" => Token::Form,
+        "takes" => Token::Takes,
         "with" => Token::With,
         "fun" => Token::Fun,
         "val" => Token::Val,
@@ -371,11 +285,9 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "Unit" => Token::Unit,
         "Some" => Token::Some,
         "None" => Token::None,
-        "none" => Token::None,  // Allow lowercase for inference
-        "Ok" => Token::Ok,
-        "Err" => Token::Err,
         "import" => Token::Import,
         "export" => Token::Export,
+        "pub" => Token::Pub,
         "sealed" => Token::Sealed,
         "from" => Token::From,
         "within" => Token::Within,
@@ -383,84 +295,221 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "lifetime" => Token::Lifetime,
         "await" => Token::Await,
         "spawn" => Token::Spawn,
-        "it" => Token::It,
-        "form" => Token::Form,
-        "takes" => Token::Takes,
-        "of" => Token::Of,
+        "as" => Token::As,
         _ => return Ok((ident.0, Token::Ident(ident.1.to_string()))),
     };
     Ok((ident.0, token))
 }
 
+fn lexer_error(input: &str, kind: nom::error::ErrorKind) -> nom::Err<nom::error::Error<&str>> {
+    nom::Err::Error(nom::error::Error::new(input, kind))
+}
+
 fn integer(input: &str) -> IResult<&str, Token> {
-    map(
-        digit1,
-        |s: &str| Token::IntLit(s.parse().unwrap())
-    )(input)
+    if let Some(rest) = input
+        .strip_prefix("0x")
+        .or_else(|| input.strip_prefix("0X"))
+    {
+        let len = rest
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_ascii_hexdigit() || *ch == '_')
+            .last()
+            .map(|(idx, ch)| idx + ch.len_utf8())
+            .unwrap_or(0);
+        if len == 0 {
+            return Err(lexer_error(input, nom::error::ErrorKind::HexDigit));
+        }
+
+        let literal = &rest[..len];
+        let digits = literal.replace('_', "");
+        let value = i64::from_str_radix(&digits, 16)
+            .map_err(|_| lexer_error(input, nom::error::ErrorKind::MapRes))?;
+        return Ok((&rest[len..], Token::IntLit(value)));
+    }
+
+    let len = input
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_ascii_digit() || *ch == '_')
+        .last()
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .unwrap_or(0);
+    if len == 0 {
+        return Err(lexer_error(input, nom::error::ErrorKind::Digit));
+    }
+
+    let literal = &input[..len];
+    let digits = literal.replace('_', "");
+    let value = digits
+        .parse::<i64>()
+        .map_err(|_| lexer_error(input, nom::error::ErrorKind::MapRes))?;
+    Ok((&input[len..], Token::IntLit(value)))
+}
+
+fn scan_decimal_digits(input: &str, mut idx: usize) -> usize {
+    while let Some(ch) = input[idx..].chars().next() {
+        if ch.is_ascii_digit() || ch == '_' {
+            idx += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    idx
 }
 
 fn float(input: &str) -> IResult<&str, Token> {
-    map(
-        recognize(
-            pair(
-                digit1,
-                pair(
-                    char('.'),
-                    digit1
-                )
-            )
-        ),
-        |s: &str| Token::FloatLit(s.parse().unwrap())
-    )(input)
+    let first = input
+        .chars()
+        .next()
+        .ok_or_else(|| lexer_error(input, nom::error::ErrorKind::Digit))?;
+    if !first.is_ascii_digit() {
+        return Err(lexer_error(input, nom::error::ErrorKind::Digit));
+    }
+
+    let mut idx = scan_decimal_digits(input, 0);
+    let mut has_dot = false;
+    let mut has_exp = false;
+
+    if input[idx..].starts_with('.') {
+        let frac_start = idx + 1;
+        let frac_end = scan_decimal_digits(input, frac_start);
+        if frac_end == frac_start {
+            return Err(lexer_error(input, nom::error::ErrorKind::Float));
+        }
+        has_dot = true;
+        idx = frac_end;
+    }
+
+    if matches!(input[idx..].chars().next(), Some('e' | 'E')) {
+        let exp_marker = idx;
+        idx += 1;
+        if matches!(input[idx..].chars().next(), Some('+' | '-')) {
+            idx += 1;
+        }
+        let exp_start = idx;
+        idx = scan_decimal_digits(input, idx);
+        if idx == exp_start {
+            return Err(lexer_error(
+                &input[exp_marker..],
+                nom::error::ErrorKind::Float,
+            ));
+        }
+        has_exp = true;
+    }
+
+    if !has_dot && !has_exp {
+        return Err(lexer_error(input, nom::error::ErrorKind::Float));
+    }
+
+    let literal = input[..idx].replace('_', "");
+    let value = literal
+        .parse::<f64>()
+        .map_err(|_| lexer_error(input, nom::error::ErrorKind::MapRes))?;
+    Ok((&input[idx..], Token::FloatLit(value)))
 }
 
 fn string_lit(input: &str) -> IResult<&str, Token> {
-    map(
-        delimited(
-            char('"'),
-            take_while(|c| c != '"'),  // Simplified for now
-            char('"')
-        ),
-        |s: &str| Token::StringLit(s.to_string())
-    )(input)
+    let Some(rest) = input.strip_prefix('"') else {
+        return Err(lexer_error(input, nom::error::ErrorKind::Char));
+    };
+
+    let mut value = String::new();
+    let mut escaped = false;
+    for (idx, ch) in rest.char_indices() {
+        if escaped {
+            value.push(
+                unescape_char(ch)
+                    .ok_or_else(|| lexer_error(&rest[idx..], nom::error::ErrorKind::Escaped))?,
+            );
+            escaped = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Ok((&rest[idx + ch.len_utf8()..], Token::StringLit(value))),
+            _ => value.push(ch),
+        }
+    }
+
+    Err(lexer_error(input, nom::error::ErrorKind::TakeUntil))
 }
 
 fn char_lit(input: &str) -> IResult<&str, Token> {
-    map(
-        delimited(
-            char('\''),
-            alt((
-                preceded(char('\\'), one_of("'\\nrt")),
-                one_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?/~`")
-            )),
-            char('\'')
-        ),
-        Token::CharLit
-    )(input)
+    let Some(rest) = input.strip_prefix('\'') else {
+        return Err(lexer_error(input, nom::error::ErrorKind::Char));
+    };
+
+    let mut chars = rest.char_indices();
+    let Some((_, first)) = chars.next() else {
+        return Err(lexer_error(input, nom::error::ErrorKind::Char));
+    };
+
+    let (value, consumed) = if first == '\\' {
+        let Some((escape_idx, escape)) = chars.next() else {
+            return Err(lexer_error(input, nom::error::ErrorKind::Escaped));
+        };
+        let value = unescape_char(escape)
+            .ok_or_else(|| lexer_error(&rest[escape_idx..], nom::error::ErrorKind::Escaped))?;
+        (value, escape_idx + escape.len_utf8())
+    } else {
+        (first, first.len_utf8())
+    };
+
+    let after_value = &rest[consumed..];
+    let Some(after_quote) = after_value.strip_prefix('\'') else {
+        return Err(lexer_error(after_value, nom::error::ErrorKind::Char));
+    };
+
+    Ok((after_quote, Token::CharLit(value)))
+}
+
+fn unescape_char(ch: char) -> Option<char> {
+    match ch {
+        'n' => Some('\n'),
+        't' => Some('\t'),
+        'r' => Some('\r'),
+        '\\' => Some('\\'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        _ => None,
+    }
 }
 
 fn operator(input: &str) -> IResult<&str, Token> {
+    if input.starts_with("|>>") {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
+
     alt((
-        value(Token::PipeMut, tag("|>>")),
-        value(Token::Pipe, tag("|>")),
-        value(Token::RArrayBracket, tag("|]")),  // Check |] before |
-        value(Token::Bar, tag("|")),
-        value(Token::LArrayBracket, tag("[|")),  // Check [| 
-        value(Token::ThinArrow, tag("->")),
-        value(Token::Arrow, tag("=>")),
-        value(Token::Eq, tag("==")),
-        value(Token::Ne, tag("!=")),
-        value(Token::Le, tag("<=")),
-        value(Token::Ge, tag(">=")),
-        value(Token::Assign, tag("=")),
-        value(Token::Plus, tag("+")),
-        value(Token::Minus, tag("-")),
-        value(Token::Star, tag("*")),
-        value(Token::Slash, tag("/")),
-        value(Token::Percent, tag("%")),
-        value(Token::Lt, tag("<")),
-        value(Token::Gt, tag(">")),
-        value(Token::Tilde, tag("~")),
+        alt((
+            value(Token::Pipe, tag("|>")),
+            value(Token::Or, tag("||")),
+            value(Token::DotDotDot, tag("...")), // Check ... before .
+            value(Token::DotDot, tag("..")),
+            value(Token::ThinArrow, tag("->")),
+            value(Token::Arrow, tag("=>")),
+            value(Token::Eq, tag("==")),
+            value(Token::Ne, tag("!=")),
+            value(Token::And, tag("&&")),
+            value(Token::Le, tag("<=")),
+            value(Token::Ge, tag(">=")),
+        )),
+        alt((
+            value(Token::Bar, tag("|")),
+            value(Token::Assign, tag("=")),
+            value(Token::Plus, tag("+")),
+            value(Token::Minus, tag("-")),
+            value(Token::Star, tag("*")),
+            value(Token::Slash, tag("/")),
+            value(Token::Percent, tag("%")),
+            value(Token::Not, tag("!")),
+            value(Token::Lt, tag("<")),
+            value(Token::Gt, tag(">")),
+            value(Token::Tilde, tag("~")),
+        )),
     ))(input)
 }
 
@@ -474,8 +523,6 @@ fn delimiter(input: &str) -> IResult<&str, Token> {
         value(Token::RBracket, char(']')),
         value(Token::Comma, char(',')),
         value(Token::Colon, char(':')),
-        value(Token::DotDotLt, tag("..<")),  // Must come before DotDot and Dot
-        value(Token::DotDot, tag("..")),     // Must come before Dot
         value(Token::Dot, char('.')),
         value(Token::Semicolon, char(';')),
     ))(input)
@@ -483,13 +530,7 @@ fn delimiter(input: &str) -> IResult<&str, Token> {
 
 fn token(input: &str) -> IResult<&str, Token> {
     alt((
-        float,
-        integer,
-        keyword,
-        string_lit,
-        char_lit,
-        operator,
-        delimiter,
+        float, integer, keyword, string_lit, char_lit, operator, delimiter,
     ))(input)
 }
 
@@ -497,62 +538,19 @@ fn whitespace(input: &str) -> IResult<&str, &str> {
     take_while1(|c: char| c.is_whitespace())(input)
 }
 
-/// Parse only non-newline whitespace (spaces, tabs)
-fn non_newline_whitespace(input: &str) -> IResult<&str, &str> {
-    take_while1(|c: char| c.is_whitespace() && c != '\n' && c != '\r')(input)
-}
-
-/// Parse a newline (LF or CRLF)
-pub fn newline(input: &str) -> IResult<&str, &str> {
-    alt((
-        tag("\r\n"),
-        tag("\n"),
-    ))(input)
-}
-
 fn comment(input: &str) -> IResult<&str, &str> {
     alt((
         // Single line comment
         recognize(pair(tag("//"), take_while(|c| c != '\n'))),
         // Multi-line comment - simplified version (no nested comments)
-        recognize(
-            delimited(
-                tag("/*"),
-                take_until("*/"),
-                tag("*/")
-            )
-        ),
+        recognize(delimited(tag("/*"), take_until("*/"), tag("*/"))),
     ))(input)
 }
 
 pub fn skip(input: &str) -> IResult<&str, ()> {
     let mut input = input;
-    loop {
-        if let Ok((rest, _)) = alt((whitespace, comment))(input) {
-            input = rest;
-        } else {
-            break;
-        }
-    }
-    Ok((input, ()))
-}
-
-/// Skip whitespace and comments, but NOT newlines.
-/// Used for newline-sensitive parsing.
-pub fn skip_non_newline(input: &str) -> IResult<&str, ()> {
-    let mut input = input;
-    loop {
-        // Skip non-newline whitespace
-        if let Ok((rest, _)) = non_newline_whitespace(input) {
-            input = rest;
-            continue;
-        }
-        // Skip comments (but not the newline at the end of single-line comments)
-        if let Ok((rest, _)) = comment(input) {
-            input = rest;
-            continue;
-        }
-        break;
+    while let Ok((rest, _)) = alt((whitespace, comment))(input) {
+        input = rest;
     }
     Ok((input, ()))
 }
@@ -561,221 +559,10 @@ pub fn lex_token(input: &str) -> IResult<&str, Token> {
     preceded(skip, token)(input)
 }
 
-/// Lex a token without skipping newlines.
-/// Returns either a regular token or a Newline token.
-pub fn lex_token_newline_aware(input: &str) -> IResult<&str, Token> {
-    // First skip non-newline whitespace and comments
-    let (input, _) = skip_non_newline(input)?;
-
-    // Check if we're at a newline
-    if let Ok((rest, _)) = newline(input) {
-        return Ok((rest, Token::Newline));
-    }
-
-    // Otherwise, lex a normal token
-    token(input)
-}
-
-/// Checks if a token should suppress the following newline.
-/// These are tokens after which a newline should be ignored (continuation).
-fn suppresses_following_newline(token: &Token) -> bool {
-    matches!(token,
-        // Binary operators
-        Token::Plus | Token::Minus | Token::Star | Token::Slash | Token::Percent |
-        // Comparison operators
-        Token::Eq | Token::Ne | Token::Lt | Token::Le | Token::Gt | Token::Ge |
-        // Assignment and arrow operators
-        Token::Assign | Token::Arrow | Token::ThinArrow |
-        // Pipe operators
-        Token::Pipe | Token::PipeMut | Token::Bar |
-        // Opening delimiters
-        Token::LBrace | Token::LParen | Token::LBracket | Token::LArrayBracket |
-        // Comma and colon (continuation in lists, type annotations)
-        Token::Comma | Token::Colon |
-        // Keywords that expect something to follow
-        Token::Fun | Token::Val | Token::Mut | Token::Record | Token::Context |
-        Token::Impl | Token::Import | Token::Export | Token::With | Token::Clone |
-        Token::Match | Token::Then | Token::Else | Token::While | Token::Where |
-        Token::From | Token::Within | Token::Async | Token::Return |
-        // Range operators
-        Token::DotDot | Token::DotDotLt |
-        // Tilde (for temporal types)
-        Token::Tilde
-    )
-}
-
-/// Checks if a token should suppress the preceding newline.
-/// These are tokens before which a newline should be ignored.
-fn suppresses_preceding_newline(token: &Token) -> bool {
-    matches!(token,
-        // Closing delimiters
-        Token::RBrace | Token::RParen | Token::RBracket | Token::RArrayBracket |
-        // These can continue a previous line
-        Token::Else | Token::Match | Token::Then | Token::While |
-        // Operators that can appear at start of continuation line
-        Token::Pipe | Token::PipeMut |
-        // Dot for method chaining
-        Token::Dot
-    )
-}
-
-/// Lexes input into tokens with newline-sensitive tokenization.
-///
-/// This function implements Kotlin-style newline handling:
-/// - Newlines are emitted as tokens
-/// - Newlines after operators, open brackets, etc. are suppressed
-/// - Newlines before closing brackets, else, etc. are suppressed
-///
-/// The resulting token stream can be used by the parser to determine
-/// statement boundaries without requiring semicolons.
-pub fn lex_newline_aware(input: &str) -> Result<Vec<Token>, String> {
-    let mut remaining = input;
-    let mut tokens: Vec<Token> = Vec::new();
-
-    loop {
-        // Skip non-newline whitespace
-        if let Ok((rest, _)) = skip_non_newline(remaining) {
-            remaining = rest;
-        }
-
-        if remaining.is_empty() {
-            break;
-        }
-
-        // Try to lex a token (including newline)
-        match lex_token_newline_aware(remaining) {
-            Ok((rest, Token::Newline)) => {
-                // Check if we should suppress this newline based on previous token
-                let suppress_after_prev = tokens.last()
-                    .map(suppresses_following_newline)
-                    .unwrap_or(true); // Suppress at start of file
-
-                // Skip any additional newlines and whitespace to find the next actual token
-                // This collapses multiple consecutive newlines into one
-                let mut peek_rest = rest;
-                loop {
-                    if let Ok((r, _)) = skip_non_newline(peek_rest) {
-                        peek_rest = r;
-                    }
-                    if let Ok((r, _)) = newline(peek_rest) {
-                        peek_rest = r;
-                    } else {
-                        break;
-                    }
-                }
-
-                // Check if we should suppress this newline based on next token
-                let suppress_before_next = if !peek_rest.is_empty() {
-                    if let Ok((_, next_tok)) = token(peek_rest) {
-                        suppresses_preceding_newline(&next_tok)
-                    } else {
-                        false
-                    }
-                } else {
-                    true // Suppress at end of file
-                };
-
-                // Only emit newline if not suppressed
-                if !suppress_after_prev && !suppress_before_next {
-                    tokens.push(Token::Newline);
-                }
-
-                // Skip past all the newlines we just processed (collapse multiple into one)
-                remaining = peek_rest;
-            }
-            Ok((rest, tok)) => {
-                tokens.push(tok);
-                remaining = rest;
-            }
-            Err(_e) => {
-                return Err(format!("Lexing error at: {}", &remaining[..remaining.len().min(20)]));
-            }
-        }
-    }
-
-    Ok(tokens)
-}
-
-/// Lexes input into spanned tokens with newline awareness.
-pub fn lex_spanned_newline_aware(input: &str) -> Result<Vec<SpannedToken>, (String, Span)> {
-    let original_len = input.len();
-    let mut remaining = input;
-    let mut tokens: Vec<SpannedToken> = Vec::new();
-
-    loop {
-        // Skip non-newline whitespace
-        if let Ok((rest, _)) = skip_non_newline(remaining) {
-            remaining = rest;
-        }
-
-        if remaining.is_empty() {
-            break;
-        }
-
-        let start = original_len - remaining.len();
-
-        // Try to lex a token (including newline)
-        match lex_token_newline_aware(remaining) {
-            Ok((rest, Token::Newline)) => {
-                let end = original_len - rest.len();
-
-                // Check if we should suppress this newline based on previous token
-                let suppress_after_prev = tokens.last()
-                    .map(|st| suppresses_following_newline(&st.token))
-                    .unwrap_or(true);
-
-                // Skip any additional newlines and whitespace to find the next actual token
-                // This collapses multiple consecutive newlines into one
-                let mut peek_rest = rest;
-                loop {
-                    if let Ok((r, _)) = skip_non_newline(peek_rest) {
-                        peek_rest = r;
-                    }
-                    if let Ok((r, _)) = newline(peek_rest) {
-                        peek_rest = r;
-                    } else {
-                        break;
-                    }
-                }
-
-                let suppress_before_next = if !peek_rest.is_empty() {
-                    if let Ok((_, next_tok)) = token(peek_rest) {
-                        suppresses_preceding_newline(&next_tok)
-                    } else {
-                        false
-                    }
-                } else {
-                    true
-                };
-
-                if !suppress_after_prev && !suppress_before_next {
-                    tokens.push(SpannedToken::new(Token::Newline, Span::new(start, end)));
-                }
-
-                // Skip past all the newlines we just processed (collapse multiple into one)
-                remaining = peek_rest;
-            }
-            Ok((rest, tok)) => {
-                let end = original_len - rest.len();
-                tokens.push(SpannedToken::new(tok, Span::new(start, end)));
-                remaining = rest;
-            }
-            Err(_) => {
-                return Err((
-                    format!("Unexpected input: '{}'", remaining.chars().take(20).collect::<String>()),
-                    Span::new(start, start + remaining.len().min(20))
-                ));
-            }
-        }
-    }
-
-    Ok(tokens)
-}
-
 pub fn lex(input: &str) -> IResult<&str, Vec<Token>> {
-    let (input, _) = skip(input)?;  // Skip initial whitespace
+    let (input, _) = skip(input)?; // Skip initial whitespace
     let (input, tokens) = many0(lex_token)(input)?;
-    let (input, _) = skip(input)?;  // Skip trailing whitespace
+    let (input, _) = skip(input)?; // Skip trailing whitespace
     Ok((input, tokens))
 }
 
@@ -784,72 +571,16 @@ pub fn lex_tokens(input: &str) -> Result<Vec<Token>, String> {
     match lex(input) {
         Ok((remaining, tokens)) => {
             if !remaining.is_empty() {
-                Err(format!("Unexpected input at: {}", remaining))
+                let error = nom::Err::Error(nom::error::Error::new(
+                    remaining,
+                    nom::error::ErrorKind::Tag,
+                ));
+                Err(format_lex_error(input, error))
             } else {
                 Ok(tokens)
             }
         }
-        Err(e) => Err(format!("Lexing error: {:?}", e)),
-    }
-}
-
-/// Lexes input and returns tokens with span information.
-///
-/// This is the preferred function for LSP and error reporting as it
-/// preserves source location information.
-pub fn lex_spanned(input: &str) -> IResult<&str, Vec<SpannedToken>> {
-    let _original = input;
-    let original_len = input.len();
-
-    let mut remaining = input;
-    let mut tokens = Vec::new();
-
-    loop {
-        // Skip whitespace and comments
-        let (after_skip, _) = skip(remaining)?;
-        remaining = after_skip;
-
-        if remaining.is_empty() {
-            break;
-        }
-
-        // Calculate current position
-        let start = original_len - remaining.len();
-
-        // Try to lex a token
-        match token(remaining) {
-            Ok((rest, tok)) => {
-                let end = original_len - rest.len();
-                tokens.push(SpannedToken::new(tok, Span::new(start, end)));
-                remaining = rest;
-            }
-            Err(_) => {
-                // Return what we have so far
-                break;
-            }
-        }
-    }
-
-    Ok((remaining, tokens))
-}
-
-/// Lexes input and returns spanned tokens or an error with position.
-pub fn lex_spanned_tokens(input: &str) -> Result<Vec<SpannedToken>, (String, Span)> {
-    let original_len = input.len();
-
-    match lex_spanned(input) {
-        Ok((remaining, tokens)) => {
-            if !remaining.trim().is_empty() {
-                let pos = original_len - remaining.len();
-                Err((
-                    format!("Unexpected input: '{}'", remaining.chars().take(20).collect::<String>()),
-                    Span::new(pos, pos + remaining.len().min(20))
-                ))
-            } else {
-                Ok(tokens)
-            }
-        }
-        Err(e) => Err((format!("Lexing error: {:?}", e), Span::new(0, 0))),
+        Err(e) => Err(format_lex_error(input, e)),
     }
 }
 
@@ -860,345 +591,199 @@ mod tests {
     #[test]
     fn test_keywords() {
         assert_eq!(lex("record").unwrap().1, vec![Token::Record]);
+        assert_eq!(lex("enum").unwrap().1, vec![Token::Enum]);
+        assert_eq!(lex("form").unwrap().1, vec![Token::Form]);
+        assert_eq!(lex("takes").unwrap().1, vec![Token::Takes]);
         assert_eq!(lex("fun").unwrap().1, vec![Token::Fun]);
         assert_eq!(lex("val").unwrap().1, vec![Token::Val]);
-    }
-
-    #[test]
-    fn test_spanned_tokens() {
-        let input = "val x = 42";
-        let tokens = lex_spanned_tokens(input).unwrap();
-
-        assert_eq!(tokens.len(), 4);
-
-        // "val" at position 0-3
-        assert_eq!(tokens[0].token, Token::Val);
-        assert_eq!(tokens[0].span, Span::new(0, 3));
-
-        // "x" at position 4-5
-        assert_eq!(tokens[1].token, Token::Ident("x".to_string()));
-        assert_eq!(tokens[1].span, Span::new(4, 5));
-
-        // "=" at position 6-7
-        assert_eq!(tokens[2].token, Token::Assign);
-        assert_eq!(tokens[2].span, Span::new(6, 7));
-
-        // "42" at position 8-10
-        assert_eq!(tokens[3].token, Token::IntLit(42));
-        assert_eq!(tokens[3].span, Span::new(8, 10));
-    }
-
-    #[test]
-    fn test_span_line_col() {
-        let source = "val x = 42\nval y = 10";
-        let span1 = Span::new(0, 3);  // "val" on line 0
-        let span2 = Span::new(11, 14); // "val" on line 1
-
-        assert_eq!(span1.to_line_col(source), (0, 0));
-        assert_eq!(span2.to_line_col(source), (1, 0));
-    }
-
-    #[test]
-    fn test_span_merge() {
-        let span1 = Span::new(0, 5);
-        let span2 = Span::new(10, 15);
-        let merged = span1.merge(span2);
-        assert_eq!(merged, Span::new(0, 15));
+        assert_eq!(lex("pub").unwrap().1, vec![Token::Pub]);
+        assert_eq!(lex("as").unwrap().1, vec![Token::As]);
     }
 
     #[test]
     fn test_identifiers() {
-        assert_eq!(lex("hello").unwrap().1, vec![Token::Ident("hello".to_string())]);
-        assert_eq!(lex("_test123").unwrap().1, vec![Token::Ident("_test123".to_string())]);
+        assert_eq!(
+            lex("hello").unwrap().1,
+            vec![Token::Ident("hello".to_string())]
+        );
+        assert_eq!(
+            lex("_test123").unwrap().1,
+            vec![Token::Ident("_test123".to_string())]
+        );
     }
 
     #[test]
     fn test_operators() {
         assert_eq!(lex("|>").unwrap().1, vec![Token::Pipe]);
-        assert_eq!(lex("|>>").unwrap().1, vec![Token::PipeMut]);
+        assert!(lex("|>>").is_err());
+        assert_eq!(lex("&&").unwrap().1, vec![Token::And]);
+        assert_eq!(lex("||").unwrap().1, vec![Token::Or]);
+        assert_eq!(lex("!").unwrap().1, vec![Token::Not]);
         assert_eq!(lex("=>").unwrap().1, vec![Token::Arrow]);
     }
 
     #[test]
     fn test_complex_expression() {
         let tokens = lex("val x = 42 |> add 10").unwrap().1;
-        assert_eq!(tokens, vec![
-            Token::Val,
-            Token::Ident("x".to_string()),
-            Token::Assign,
-            Token::IntLit(42),
-            Token::Pipe,
-            Token::Ident("add".to_string()),
-            Token::IntLit(10),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Val,
+                Token::Ident("x".to_string()),
+                Token::Assign,
+                Token::IntLit(42),
+                Token::Pipe,
+                Token::Ident("add".to_string()),
+                Token::IntLit(10),
+            ]
+        );
     }
-    
+
     #[test]
-    fn test_array_brackets() {
-        let tokens = lex("[|1, 2, 3|]").unwrap().1;
-        assert_eq!(tokens, vec![
-            Token::LArrayBracket,
-            Token::IntLit(1),
-            Token::Comma,
-            Token::IntLit(2),
-            Token::Comma,
-            Token::IntLit(3),
-            Token::RArrayBracket,
-        ]);
+    fn test_spec_number_literals() {
+        let tokens = lex("0xFF 1_000_000 1.5e10 3.14E-2").unwrap().1;
+        assert_eq!(
+            tokens,
+            vec![
+                Token::IntLit(255),
+                Token::IntLit(1_000_000),
+                Token::FloatLit(1.5e10),
+                Token::FloatLit(3.14E-2),
+            ]
+        );
     }
-    
+
+    #[test]
+    fn test_spec_string_and_char_escapes() {
+        let tokens = lex(r#""a\nb\t\\\"\'" '\n' '\t' '\\' '\''"#).unwrap().1;
+        assert_eq!(
+            tokens,
+            vec![
+                Token::StringLit("a\nb\t\\\"'".to_string()),
+                Token::CharLit('\n'),
+                Token::CharLit('\t'),
+                Token::CharLit('\\'),
+                Token::CharLit('\''),
+            ]
+        );
+    }
+
     #[test]
     fn test_temporal_tilde() {
         let tokens = lex("record File<~f> { }").unwrap().1;
-        assert_eq!(tokens, vec![
-            Token::Record,
-            Token::Ident("File".to_string()),
-            Token::Lt,
-            Token::Tilde,
-            Token::Ident("f".to_string()),
-            Token::Gt,
-            Token::LBrace,
-            Token::RBrace,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Record,
+                Token::Ident("File".to_string()),
+                Token::Lt,
+                Token::Tilde,
+                Token::Ident("f".to_string()),
+                Token::Gt,
+                Token::LBrace,
+                Token::RBrace,
+            ]
+        );
     }
-    
+
     #[test]
     fn test_temporal_constraints() {
         let tokens = lex("where ~tx within ~db").unwrap().1;
-        assert_eq!(tokens, vec![
-            Token::Where,
-            Token::Tilde,
-            Token::Ident("tx".to_string()),
-            Token::Within,
-            Token::Tilde,
-            Token::Ident("db".to_string()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Where,
+                Token::Tilde,
+                Token::Ident("tx".to_string()),
+                Token::Within,
+                Token::Tilde,
+                Token::Ident("db".to_string()),
+            ]
+        );
     }
-    
+
     #[test]
     fn test_comments() {
         // Test single line comment
         let input = "val x = 42 // this is a comment\nval y = 10";
         let result = lex(input).unwrap().1;
-        assert_eq!(result, vec![
-            Token::Val,
-            Token::Ident("x".to_string()),
-            Token::Assign,
-            Token::IntLit(42),
-            Token::Val,
-            Token::Ident("y".to_string()),
-            Token::Assign,
-            Token::IntLit(10),
-        ]);
-        
+        assert_eq!(
+            result,
+            vec![
+                Token::Val,
+                Token::Ident("x".to_string()),
+                Token::Assign,
+                Token::IntLit(42),
+                Token::Val,
+                Token::Ident("y".to_string()),
+                Token::Assign,
+                Token::IntLit(10),
+            ]
+        );
+
         // Test multi-line comment
         let input = "val x = /* this is a\nmulti-line comment */ 42";
         let result = lex(input).unwrap().1;
-        assert_eq!(result, vec![
-            Token::Val,
-            Token::Ident("x".to_string()),
-            Token::Assign,
-            Token::IntLit(42),
-        ]);
-        
+        assert_eq!(
+            result,
+            vec![
+                Token::Val,
+                Token::Ident("x".to_string()),
+                Token::Assign,
+                Token::IntLit(42),
+            ]
+        );
+
         // Test multiple comments
         let input = "// start comment\nval x = 42 /* inline */ + 10 // end comment";
         let result = lex(input).unwrap().1;
-        assert_eq!(result, vec![
-            Token::Val,
-            Token::Ident("x".to_string()),
-            Token::Assign,
-            Token::IntLit(42),
-            Token::Plus,
-            Token::IntLit(10),
-        ]);
-    }
-
-    // ========== Newline-aware lexer tests ==========
-
-    #[test]
-    fn test_newline_aware_basic() {
-        // Two statements on separate lines should have a newline token between them
-        let input = "val x = 42\nval y = 10";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::Val,
-            Token::Ident("x".to_string()),
-            Token::Assign,
-            Token::IntLit(42),
-            Token::Newline,
-            Token::Val,
-            Token::Ident("y".to_string()),
-            Token::Assign,
-            Token::IntLit(10),
-        ]);
+        assert_eq!(
+            result,
+            vec![
+                Token::Val,
+                Token::Ident("x".to_string()),
+                Token::Assign,
+                Token::IntLit(42),
+                Token::Plus,
+                Token::IntLit(10),
+            ]
+        );
     }
 
     #[test]
-    fn test_newline_suppressed_after_operator() {
-        // Newline after operator should be suppressed
-        let input = "val x = 42 +\n10";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::Val,
-            Token::Ident("x".to_string()),
-            Token::Assign,
-            Token::IntLit(42),
-            Token::Plus,
-            Token::IntLit(10),
-        ]);
+    fn lex_tokens_formats_leftover_input_as_user_diagnostic() {
+        let message = lex_tokens("val x = 1\nval y = @").expect_err("unknown token should fail");
+
+        assert!(message.contains("Lexing error at line 2, column 9"));
+        assert!(message.contains("unexpected input near `@`"));
+        assert_no_raw_nom_debug(&message);
     }
 
     #[test]
-    fn test_newline_suppressed_after_pipe() {
-        // Newline after pipe operator should be suppressed
-        let input = "42 |>\nprintln";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::IntLit(42),
-            Token::Pipe,
-            Token::Ident("println".to_string()),
-        ]);
+    fn lex_tokens_formats_nom_errors_as_user_diagnostics() {
+        let message = lex_tokens("val x = |>>").expect_err("invalid pipe token should fail");
+
+        assert!(message.contains("Lexing error at line 1, column 9"));
+        assert!(message.contains("unexpected input near `|>>`"));
+        assert_no_raw_nom_debug(&message);
     }
 
-    #[test]
-    fn test_newline_suppressed_in_braces() {
-        // Newlines inside braces should be suppressed
-        let input = "{\n42\n}";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::LBrace,
-            Token::IntLit(42),
-            Token::RBrace,
-        ]);
-    }
-
-    #[test]
-    fn test_newline_suppressed_before_else() {
-        // Newline before else should be suppressed
-        let input = "x then { 1 }\nelse { 2 }";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::Ident("x".to_string()),
-            Token::Then,
-            Token::LBrace,
-            Token::IntLit(1),
-            Token::RBrace,
-            Token::Else,
-            Token::LBrace,
-            Token::IntLit(2),
-            Token::RBrace,
-        ]);
-    }
-
-    #[test]
-    fn test_newline_suppressed_after_comma() {
-        // Newline after comma should be suppressed
-        let input = "[\n1,\n2,\n3\n]";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::LBracket,
-            Token::IntLit(1),
-            Token::Comma,
-            Token::IntLit(2),
-            Token::Comma,
-            Token::IntLit(3),
-            Token::RBracket,
-        ]);
-    }
-
-    #[test]
-    fn test_newline_in_function_body() {
-        // Statements inside function body should be separated by newlines
-        let input = "fun main: () -> Int = {\n    val x = 1\n    val y = 2\n    x\n}";
-        let tokens = lex_newline_aware(input).unwrap();
-        // Newlines after `=` (after fun decl) and `{` are suppressed
-        // Newlines before `}` are suppressed
-        // But newline between statements should be preserved
-        assert!(tokens.contains(&Token::Newline), "Expected newline tokens in function body");
-
-        // Count newlines - should have 2 (after x = 1, after y = 2)
-        let newline_count = tokens.iter().filter(|t| **t == Token::Newline).count();
-        assert_eq!(newline_count, 2, "Expected 2 newlines between statements, got {}", newline_count);
-    }
-
-    #[test]
-    fn test_newline_suppressed_after_assign() {
-        // Newline after = should be suppressed (multiline values)
-        let input = "val x =\n42";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::Val,
-            Token::Ident("x".to_string()),
-            Token::Assign,
-            Token::IntLit(42),
-        ]);
-    }
-
-    #[test]
-    fn test_method_chaining_on_newline() {
-        // Dot at start of line should suppress preceding newline (method chaining)
-        let input = "obj\n.method";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::Ident("obj".to_string()),
-            Token::Dot,
-            Token::Ident("method".to_string()),
-        ]);
-    }
-
-    #[test]
-    fn test_pipe_at_start_of_line() {
-        // Pipe at start of line should suppress preceding newline
-        let input = "42\n|> println";
-        let tokens = lex_newline_aware(input).unwrap();
-        assert_eq!(tokens, vec![
-            Token::IntLit(42),
-            Token::Pipe,
-            Token::Ident("println".to_string()),
-        ]);
-    }
-
-    #[test]
-    fn test_multiple_newlines_collapsed() {
-        // Multiple newlines should be treated as one
-        let input = "val x = 42\n\n\nval y = 10";
-        let tokens = lex_newline_aware(input).unwrap();
-        let newline_count = tokens.iter().filter(|t| **t == Token::Newline).count();
-        assert_eq!(newline_count, 1, "Multiple newlines should collapse to one");
-    }
-
-    #[test]
-    fn test_range_tokens() {
-        // Inclusive range
-        let tokens = lex("[1..5]").unwrap().1;
-        assert_eq!(tokens, vec![
-            Token::LBracket,
-            Token::IntLit(1),
-            Token::DotDot,
-            Token::IntLit(5),
-            Token::RBracket,
-        ]);
-
-        // Exclusive range
-        let tokens = lex("[1..<5]").unwrap().1;
-        assert_eq!(tokens, vec![
-            Token::LBracket,
-            Token::IntLit(1),
-            Token::DotDotLt,
-            Token::IntLit(5),
-            Token::RBracket,
-        ]);
-    }
-
-    #[test]
-    fn test_dot_vs_dotdot() {
-        // Single dot should still work
-        let tokens = lex("obj.field").unwrap().1;
-        assert_eq!(tokens, vec![
-            Token::Ident("obj".to_string()),
-            Token::Dot,
-            Token::Ident("field".to_string()),
-        ]);
+    fn assert_no_raw_nom_debug(message: &str) {
+        assert!(
+            !message.contains("Error("),
+            "diagnostic should not expose raw nom error debug output: {message}"
+        );
+        assert!(
+            !message.contains("Failure("),
+            "diagnostic should not expose raw nom failure debug output: {message}"
+        );
+        assert!(
+            !message.contains("ErrorKind"),
+            "diagnostic should not expose nom error kinds: {message}"
+        );
+        assert!(
+            !message.contains("nom"),
+            "diagnostic should not name parser internals: {message}"
+        );
     }
 }

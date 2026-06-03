@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
@@ -8,16 +10,16 @@ fn test_temporal_type_basic() {
     record File<~f> {
         handle: Int32  // Simplified for now
     }
-    
+
     fun readFile: <~io>(file: File<~io>) -> Int32 = {
         42  // Dummy return
     }
-    
+
     fun main: () = {
         val file = File { handle = 1 };
         (file) readFile
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -31,18 +33,18 @@ fn test_temporal_constraint_within() {
     record Database<~db> {
         id: Int32
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         db: Database<~db>
         txId: Int32
     }
-    
+
     fun beginTx: <~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db>
     where ~tx within ~db = {
         Transaction { db = db, txId = 1 }
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -56,20 +58,20 @@ fn test_temporal_inference() {
     record Resource<~r> {
         id: Int32
     }
-    
+
     fun useResource<~r> = res: Resource<~r> {
         res.id
     }
-    
+
     fun main: () -> Int = {
         val res = Resource { id: 42 };  // ~r should be inferred
         (res) useResource
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -90,14 +92,17 @@ fun leakFile<~io> = {
 fun main: () -> Int = {
     Unit
 }"#;
-    
+
     let (remaining, program) = parse_program(input).unwrap();
-    
+
     // Debug: Check if all declarations were parsed
     if !remaining.trim().is_empty() {
-        panic!("Parser failed to parse all declarations. Remaining: {:?}", remaining);
+        panic!(
+            "Parser failed to parse all declarations. Remaining: {:?}",
+            remaining
+        );
     }
-    
+
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
         Ok(_) => panic!("Expected type error, but checking succeeded"),
@@ -113,11 +118,11 @@ fn test_temporal_with_context() {
     context FileSystem<~fs> {
         open: String -> File<~fs>
     }
-    
+
     record File<~f> {
         handle: Int32
     }
-    
+
     fun main: () -> Int = {
         with FileSystem {
             val file = "test.txt" |> open;  // file: File<~fs>
@@ -125,7 +130,7 @@ fn test_temporal_with_context() {
         }  // file cleaned up here
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());
@@ -139,18 +144,18 @@ fn test_nested_temporal_scopes() {
     record Outer<~out> {
         id: Int32
     }
-    
+
     record Inner<~in, ~out> where ~in within ~out {
         outer: Outer<~out>
         data: Int32
     }
-    
+
     fun nested<~a, ~b> = outer: Outer<~a> -> Inner<~b, ~a>
     where ~b within ~a {
         Inner { outer: outer, data: 42 }
     }
     "#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     assert!(checker.check_program(&program).is_ok());

@@ -15,6 +15,7 @@ output.txt
 
 # Documentation build artifacts
 /docs/book/
+/site/dist/
 
 # VS Code extension build artifacts
 /vscode-extension/out/

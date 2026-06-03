@@ -4,15 +4,15 @@ use restrict_lang::parse_program;
 #[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_function_with_comments() {
     // Test with inline comments
-    let with_comments = r#"record File<~f> {
+    let with_comments = r#"record File {
     handle: Int32
 }
 
-fun leakFile<~io> = {
-    val file = File { handle: 1 };  // file: File<~io>
-    file  // ERROR: Cannot return File<~io> outside ~io
+fun read_handle: (file: File) -> Int32 = {
+    val bump = 1;  // local adjustment
+    file.handle + bump  // comments should not truncate the final expression
 }"#;
-    
+
     eprintln!("=== Testing with comments ===");
     match parse_program(with_comments) {
         Ok((remaining, program)) => {
@@ -26,23 +26,27 @@ fun leakFile<~io> = {
             eprintln!("Parse error: {:?}", e);
         }
     }
-    
+
     // Test without comments
-    let without_comments = r#"record File<~f> {
+    let without_comments = r#"record File {
     handle: Int32
 }
 
-fun leakFile<~io> = {
-    val file = File { handle: 1 };
-    file
+fun read_handle: (file: File) -> Int32 = {
+    val bump = 1;
+    file.handle + bump
 }"#;
-    
+
     eprintln!("\n=== Testing without comments ===");
     match parse_program(without_comments) {
         Ok((remaining, program)) => {
             eprintln!("Parsed {} declarations", program.declarations.len());
             eprintln!("Remaining: {} chars", remaining.len());
-            assert_eq!(program.declarations.len(), 2, "Should parse both declarations");
+            assert_eq!(
+                program.declarations.len(),
+                2,
+                "Should parse both declarations"
+            );
             assert!(remaining.trim().is_empty(), "Should parse all input");
         }
         Err(e) => {

@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Restrict Highlight Theme Lab</title>
+  <meta name="description" content="A local theme lab for Restrict syntax highlighting colors.">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#ff6b35">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    :root {
+      --lab-bg: #f6f8fa;
+      --lab-panel: #ffffff;
+      --lab-line: #d9e1e7;
+      --lab-muted: #5a6772;
+    }
+
+    body {
+      background: var(--lab-bg);
+    }
+
+    .lab-shell {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+      gap: 24px;
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 40px;
+    }
+
+    .lab-panel {
+      min-width: 0;
+      border: 1px solid var(--lab-line);
+      border-radius: 8px;
+      background: var(--lab-panel);
+    }
+
+    .lab-panel header,
+    .lab-panel footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px;
+      border-color: var(--lab-line);
+    }
+
+    .lab-panel header {
+      border-bottom: 1px solid var(--lab-line);
+    }
+
+    .lab-panel footer {
+      border-top: 1px solid var(--lab-line);
+    }
+
+    .lab-panel h1,
+    .lab-panel h2 {
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    .lab-panel h1 {
+      font-size: 1.55rem;
+      line-height: 1.05;
+    }
+
+    .lab-panel h2 {
+      font-size: 1rem;
+    }
+
+    .lab-controls {
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+    }
+
+    .lab-field {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .lab-field label {
+      display: grid;
+      gap: 3px;
+      color: var(--ink);
+      font-weight: 720;
+    }
+
+    .lab-field small {
+      color: var(--lab-muted);
+      font-weight: 520;
+    }
+
+    .lab-field input[type="color"] {
+      inline-size: 44px;
+      block-size: 36px;
+      padding: 0;
+      border: 1px solid var(--lab-line);
+      border-radius: 6px;
+      background: transparent;
+    }
+
+    .lab-preset-row,
+    .lab-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .lab-preset-row button,
+    .lab-actions button {
+      min-height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--accent);
+      font: inherit;
+      font-weight: 720;
+      cursor: pointer;
+    }
+
+    .lab-preset-row button[aria-pressed="true"],
+    .lab-actions button.primary {
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .lab-preview {
+      display: grid;
+      gap: 18px;
+      padding: 18px;
+    }
+
+    .lab-code-frame {
+      overflow: hidden;
+      border: 1px solid #20313c;
+      border-radius: 8px;
+      background: var(--theme-bg);
+    }
+
+    .lab-code-frame pre {
+      margin: 0;
+      padding: 22px;
+      overflow: auto;
+      background: var(--theme-bg);
+      color: var(--theme-fg);
+      font-size: 0.93rem;
+      line-height: 1.65;
+    }
+
+    .lab-code-frame code {
+      display: block;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      white-space: pre;
+    }
+
+    .lab-code-frame .hljs-keyword {
+      color: var(--theme-keyword);
+      font-weight: 720;
+    }
+
+    .lab-code-frame .hljs-title {
+      color: var(--theme-title);
+      font-weight: 720;
+    }
+
+    .lab-code-frame .hljs-type {
+      color: var(--theme-type);
+      font-weight: 650;
+    }
+
+    .lab-code-frame .hljs-literal {
+      color: var(--theme-literal);
+      font-weight: 650;
+    }
+
+    .lab-code-frame .hljs-string {
+      color: var(--theme-string);
+    }
+
+    .lab-code-frame .hljs-number {
+      color: var(--theme-number);
+    }
+
+    .lab-code-frame .hljs-comment {
+      color: var(--theme-comment);
+      font-style: italic;
+    }
+
+    .lab-code-frame .hljs-operator {
+      color: var(--theme-operator);
+    }
+
+    .lab-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .lab-metric {
+      border: 1px solid var(--lab-line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #ffffff;
+    }
+
+    .lab-metric strong,
+    .lab-metric span {
+      display: block;
+    }
+
+    .lab-metric span {
+      margin-top: 3px;
+      color: var(--lab-muted);
+      font-size: 0.82rem;
+    }
+
+    .lab-output {
+      inline-size: 100%;
+      min-block-size: 300px;
+      padding: 16px;
+      border: 1px solid var(--lab-line);
+      border-radius: 8px;
+      resize: vertical;
+      background: #101820;
+      color: #e6edf3;
+      font: 0.86rem/1.55 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    @media (max-width: 920px) {
+      .lab-shell,
+      .lab-metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .lab-shell {
+        padding: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="../">Restrict</a>
+    <nav aria-label="Primary navigation">
+      <a href="../docs/">Docs</a>
+      <a href="../compiler/">Compiler</a>
+      <a href="../blog/">Blog</a>
+      <a href="https://github.com/restrict-lang/restrict_lang">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="lab-shell">
+    <section class="lab-panel" aria-labelledby="themeLabTitle">
+      <header>
+        <div>
+          <p class="eyebrow">Syntax colors</p>
+          <h1 id="themeLabTitle">Highlight Theme Lab</h1>
+        </div>
+      </header>
+      <div class="lab-controls">
+        <div class="lab-preset-row" id="presetRow" aria-label="Theme presets"></div>
+        <div id="colorControls"></div>
+      </div>
+    </section>
+
+    <section class="lab-panel" aria-labelledby="previewTitle">
+      <header>
+        <h2 id="previewTitle">Preview</h2>
+        <div class="lab-actions">
+          <button class="primary" type="button" id="copyCss">Copy CSS</button>
+        </div>
+      </header>
+      <div class="lab-preview">
+        <div class="lab-code-frame">
+          <pre><code class="language-restrict" id="previewCode"></code></pre>
+        </div>
+        <div class="lab-metrics" id="contrastMetrics" aria-label="Contrast ratios"></div>
+        <textarea class="lab-output" id="cssOutput" spellcheck="false" readonly></textarea>
+      </div>
+    </section>
+  </main>
+
+  <script src="../restrict-highlight.js"></script>
+  <script>
+    const sampleSource = `// Restrict v0.0.1 surface
+record Reading {
+    score: Int32,
+    label: String
+}
+
+fun adjust: (reading: Reading, bonus: Option<Int32>) -> Result<Int32, String> = {
+    bonus match {
+        Some(value) => { Ok(reading.score + value) }
+        None => { Err("missing bonus") }
+    }
+}
+
+export fun score: () -> Int32 = {
+    val reading = Reading { score: 41, label: "release" };
+    val result = (reading, Some(1)) adjust;
+    result match {
+        Ok(value) => { value }
+        Err(_) => { 0 }
+    }
+}`;
+
+    const tokens = [
+      ['fg', 'Base text', 'unclassified identifiers'],
+      ['bg', 'Code background', 'block surface'],
+      ['keyword', 'Keywords', 'fun val match export'],
+      ['title', 'Names', 'function and record titles'],
+      ['type', 'Types', 'Int32 String Option'],
+      ['literal', 'Literals', 'Some None Ok Err true false'],
+      ['string', 'Strings', 'quoted text'],
+      ['number', 'Numbers', 'integer and float literals'],
+      ['comment', 'Comments', 'line and block comments'],
+      ['operator', 'Operators', '|> -> => + :']
+    ];
+
+    const presets = {
+      current: {
+        name: 'Logo Crystal',
+        fg: '#fff8f3',
+        bg: '#1f100b',
+        keyword: '#ff6b35',
+        title: '#ffffff',
+        type: '#f7931e',
+        literal: '#ff8855',
+        string: '#ffaa55',
+        number: '#ffaa55',
+        comment: '#bc8b74',
+        operator: '#ff6b35'
+      },
+      reference: {
+        name: 'Logo Paper',
+        fg: '#241812',
+        bg: '#fff8f3',
+        keyword: '#c1440e',
+        title: '#4a2415',
+        type: '#ff6b35',
+        literal: '#b84a17',
+        string: '#8a3411',
+        number: '#8a3411',
+        comment: '#7b655b',
+        operator: '#c1440e'
+      },
+      signal: {
+        name: 'Hot Ember',
+        fg: '#fff4eb',
+        bg: '#2b1309',
+        keyword: '#ff8855',
+        title: '#ffd8bf',
+        type: '#ffb25f',
+        literal: '#ff6b35',
+        string: '#ffc680',
+        number: '#ffc680',
+        comment: '#c9987d',
+        operator: '#ffaa55'
+      },
+      paper: {
+        name: 'Soft Cream',
+        fg: '#2a1b14',
+        bg: '#fffdfb',
+        keyword: '#c1440e',
+        title: '#5a2b16',
+        type: '#d95a1f',
+        literal: '#a83a12',
+        string: '#8f3a12',
+        number: '#8f3a12',
+        comment: '#766056',
+        operator: '#ff6b35'
+      }
+    };
+
+    let current = { ...presets.current };
+
+    function setTheme(theme) {
+      current = { ...theme };
+      document.querySelectorAll('[data-token]').forEach((input) => {
+        input.value = current[input.dataset.token];
+      });
+      render();
+    }
+
+    function luminance(hex) {
+      const rgb = hex.replace('#', '').match(/.{2}/g).map((part) => {
+        const channel = parseInt(part, 16) / 255;
+        return channel <= 0.03928
+          ? channel / 12.92
+          : Math.pow((channel + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    }
+
+    function contrast(foreground, background) {
+      const high = Math.max(luminance(foreground), luminance(background));
+      const low = Math.min(luminance(foreground), luminance(background));
+      return (high + 0.05) / (low + 0.05);
+    }
+
+    function cssForTheme(theme) {
+      return `:root {
+  --code: ${theme.bg};
+  --rl-bg-code: ${theme.bg};
+  --rl-code-fg: ${theme.fg};
+  --rl-syntax-keyword: ${theme.keyword};
+  --rl-syntax-title: ${theme.title};
+  --rl-syntax-type: ${theme.type};
+  --rl-syntax-literal: ${theme.literal};
+  --rl-syntax-string: ${theme.string};
+  --rl-syntax-number: ${theme.number};
+  --rl-syntax-comment: ${theme.comment};
+  --rl-syntax-operator: ${theme.operator};
+}
+
+pre code.language-restrict {
+  color: var(--rl-code-fg);
+}
+
+.language-restrict .hljs-keyword {
+  color: var(--rl-syntax-keyword);
+  font-weight: 720;
+}
+
+.language-restrict .hljs-title {
+  color: var(--rl-syntax-title);
+  font-weight: 720;
+}
+
+.language-restrict .hljs-type {
+  color: var(--rl-syntax-type);
+  font-weight: 650;
+}
+
+.language-restrict .hljs-literal {
+  color: var(--rl-syntax-literal);
+  font-weight: 650;
+}
+
+.language-restrict .hljs-string {
+  color: var(--rl-syntax-string);
+}
+
+.language-restrict .hljs-number {
+  color: var(--rl-syntax-number);
+}
+
+.language-restrict .hljs-comment {
+  color: var(--rl-syntax-comment);
+  font-style: italic;
+}
+
+.language-restrict .hljs-operator {
+  color: var(--rl-syntax-operator);
+}`;
+    }
+
+    function render() {
+      const frame = document.querySelector('.lab-code-frame');
+      frame.style.setProperty('--theme-bg', current.bg);
+      frame.style.setProperty('--theme-fg', current.fg);
+      for (const [token] of tokens) {
+        frame.style.setProperty(`--theme-${token}`, current[token]);
+      }
+
+      document.getElementById('previewCode').innerHTML =
+        window.RestrictHighlight.highlightRestrict(sampleSource);
+
+      const metrics = document.getElementById('contrastMetrics');
+      metrics.innerHTML = '';
+      for (const [token, label] of tokens.filter(([token]) => token !== 'bg')) {
+        const ratio = contrast(current[token], current.bg);
+        const item = document.createElement('div');
+        item.className = 'lab-metric';
+        item.innerHTML = `<strong>${label}</strong><span>${ratio.toFixed(2)}:1</span>`;
+        metrics.appendChild(item);
+      }
+
+      document.getElementById('cssOutput').value = cssForTheme(current);
+    }
+
+    function buildControls() {
+      const presetRow = document.getElementById('presetRow');
+      for (const [key, preset] of Object.entries(presets)) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = preset.name;
+        button.setAttribute('aria-pressed', key === 'current' ? 'true' : 'false');
+        button.addEventListener('click', () => {
+          presetRow.querySelectorAll('button').forEach((item) => {
+            item.setAttribute('aria-pressed', 'false');
+          });
+          button.setAttribute('aria-pressed', 'true');
+          setTheme(preset);
+        });
+        presetRow.appendChild(button);
+      }
+
+      const controls = document.getElementById('colorControls');
+      for (const [token, label, hint] of tokens) {
+        const row = document.createElement('div');
+        row.className = 'lab-field';
+        row.innerHTML = `<label for="token-${token}">${label}<small>${hint}</small></label>`;
+        const input = document.createElement('input');
+        input.type = 'color';
+        input.id = `token-${token}`;
+        input.dataset.token = token;
+        input.value = current[token];
+        input.addEventListener('input', () => {
+          current[token] = input.value;
+          presetRow.querySelectorAll('button').forEach((item) => {
+            item.setAttribute('aria-pressed', 'false');
+          });
+          render();
+        });
+        row.appendChild(input);
+        controls.appendChild(row);
+      }
+    }
+
+    document.getElementById('copyCss').addEventListener('click', async () => {
+      const css = document.getElementById('cssOutput').value;
+      await navigator.clipboard.writeText(css);
+    });
+
+    buildControls();
+    render();
+  </script>
+</body>
+</html>

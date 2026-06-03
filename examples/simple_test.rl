@@ -1,99 +1,36 @@
-// ⚠ NOT YET COMPILABLE — requires: var keyword, try/catch, if/else,
-//   method dot syntax (.method()), panic(), lambda codegen
-// Planned for: v0.2.0+
-//
-// Simplified test framework for quick testing
-// Demonstrates Restrict Language's expressiveness
+// Minimal smoke test sketch in current Restrict syntax.
+// This is not the full test framework. It keeps only syntax that matches the
+// language specification.
 
-record Test {
-    name: String,
-    run: () -> Bool
+record TestResult {
+    name: String
+    passed: Int32
 }
 
-// Simple assertion
-fun assert = |condition: Bool| {
-    if condition.not {
-        panic("Assertion failed")
+fun assert_equal: (actual: Int32, expected: Int32) -> Int32 = {
+    actual == expected then {
+        1
+    } else {
+        0
     }
 }
 
-// Test runner
-fun runTests = |tests: List<Test>| {
-    var passed = 0;
-    var failed = 0;
-    
-    tests.forEach |test| {
-        ("Running: " ++ test.name).println;
-        try {
-            test.run();
-            passed = passed + 1;
-            "  ✓ Passed".println;
-        } catch e {
-            failed = failed + 1;
-            ("  ✗ Failed: " ++ e.message).println;
-        }
-    };
-    
-    "\nResults:".println;
-    ("Passed: " ++ passed.toString).println;
-    ("Failed: " ++ failed.toString).println;
+fun arithmetic_test: () -> TestResult = {
+    val passed = (1 + 1, 2) assert_equal
+    TestResult { name: "Basic arithmetic", passed: passed }
 }
 
-// Example tests
-fun main = {
-    [
-        Test { 
-            name = "Basic arithmetic",
-            run = || {
-                (1 + 1 == 2).assert;
-                (10 - 5 == 5).assert;
-                (3 * 4 == 12).assert;
-                true
-            }
-        },
-        
-        Test {
-            name = "String operations",
-            run = || {
-                ("hello" ++ " world" == "hello world").assert;
-                "test".length == 4.assert;
-                true
-            }
-        },
-        
-        Test {
-            name = "List operations",
-            run = || {
-                [1, 2, 3].length == 3.assert;
-                [1, 2] ++ [3, 4] == [1, 2, 3, 4].assert;
-                [1, 2, 3].head == Some(1).assert;
-                [].head == None.assert;
-                true
-            }
-        },
-        
-        Test {
-            name = "Pattern matching",
-            run = || {
-                val result = Some(42) match {
-                    Some(x) -> x * 2,
-                    None -> 0
-                };
-                (result == 84).assert;
-                true
-            }
-        },
-        
-        Test {
-            name = "Affine types (conceptual)",
-            run = || {
-                // Test that mutable values can be used multiple times
-                var x = 100;
-                val y = x;
-                val z = x;  // OK because x is mutable
-                (y == z).assert;
-                true
-            }
-        }
-    ].runTests
+fun option_test: () -> TestResult = {
+    val result = Some(42) match {
+        Some(x) => { x }
+        None => { 0 }
+    }
+    val passed = (result, 42) assert_equal
+    TestResult { name: "Option pattern", passed: passed }
+}
+
+fun main: () = {
+    val arithmetic = () arithmetic_test
+    val option = () option_test
+    arithmetic.passed + option.passed
 }

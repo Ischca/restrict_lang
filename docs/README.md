@@ -1,226 +1,95 @@
-# Restrict Language Documentation
+# Restrict Documentation
 
-This directory contains the documentation for Restrict Language, including both user-facing guides and API documentation.
+This directory intentionally separates internal project documentation from the
+language documentation published through GitHub Pages.
 
-## Structure
+## Public Pages Documentation
 
-```
-docs/
-├── en/                          # English documentation
-├── ja/                          # Japanese documentation
-├── includes/                    # Shared code snippets (using mdBook includes)
-├── code-examples/               # Standalone code example files
-├── theme/                       # Custom CSS and JavaScript
-├── scripts/                     # Documentation build and maintenance scripts
-├── archive/                     # Archived design documents
-│   └── temporal-design-exploration/  # TAT design history
-├── TEMPORAL_*.md                # Temporal Affine Types documentation
-├── TAT_IMPLEMENTATION_STATUS.md # TAT implementation status
-├── book.toml                    # mdBook configuration
-└── SUMMARY.md                   # Table of contents
+The public mdBook source lives under:
+
+```text
+docs/public/
+├── SUMMARY.md
+├── en/
+├── ja/
+└── theme/
 ```
 
-## Temporal Affine Types (TAT) Documentation
+`docs/book.toml` uses `src = "public"`, so `mdbook build docs` publishes only
+the public book source into `docs/book/`. The Pages assembler then copies
+`docs/book/` to `/docs/` in the site artifact.
 
-Temporal Affine Types are Restrict Language's innovative feature for automatic resource management.
+Public docs should be written for language users. They should explain the
+current v0.0.1 surface clearly and avoid internal implementation plans unless
+the page is explicitly describing a public release boundary.
 
-### Official TAT Documentation
+## Internal Documentation
 
-| Document | Purpose |
-|----------|---------|
-| **[TEMPORAL_TYPES_FINAL_DESIGN.md](TEMPORAL_TYPES_FINAL_DESIGN.md)** | Authoritative specification |
-| **[TEMPORAL_DESIGN_GUIDE.md](TEMPORAL_DESIGN_GUIDE.md)** | Comprehensive design guide |
-| **[TEMPORAL_CONSTRAINT_RULES.md](TEMPORAL_CONSTRAINT_RULES.md)** | Formal constraint rules |
-| **[TEMPORAL_ASYNC_ROADMAP.md](TEMPORAL_ASYNC_ROADMAP.md)** | Implementation roadmap |
-| **[TEMPORAL_ASYNC_THEORY.md](TEMPORAL_ASYNC_THEORY.md)** | Theoretical foundation |
-| **[TAT_IMPLEMENTATION_STATUS.md](TAT_IMPLEMENTATION_STATUS.md)** | Current implementation status |
-| **[temporal_test_coverage.md](temporal_test_coverage.md)** | Test coverage summary |
+Internal design notes, implementation plans, experiments, and status documents
+stay under `docs/` outside `docs/public/`.
 
-### TAT Syntax (Tilde `~`)
+Examples:
 
-```rust
-// ✅ CORRECT: Use tilde ~ for temporal type variables
-record File<~f> {
-    handle: FileHandle
-}
-
-record Transaction<~tx, ~db> where ~tx within ~db {
-    db: Database<~db>
-    txId: Int32
-}
-
-with lifetime<~io> {
-    val file = openFile("data.txt");
-    file.read()
-}  // Automatic cleanup
+```text
+docs/TYPE_INFERENCE_DESIGN.md
+docs/STDLIB_ARCHITECTURE.md
+docs/TEMPORAL_*.md
+docs/*_DESIGN.md
+docs/*_IMPLEMENTATION.md
 ```
 
-### Archived TAT Documents
+These files are for compiler development and design discussion. Do not link
+them from `docs/public/SUMMARY.md` as user-facing documentation. If an internal
+design needs to become public documentation, rewrite it into a user-facing page
+under `docs/public/` instead of linking the internal document directly.
 
-Design exploration documents with outdated syntax (`'t` or `` `t ``) have been moved to **[archive/temporal-design-exploration/](archive/temporal-design-exploration/)**.
+## Build Commands
 
----
-
-## Shared Code Examples
-
-To avoid duplication between English and Japanese documentation, we use several strategies:
-
-### 1. mdBook Includes (Recommended)
-
-Create shared snippets in `includes/` directory:
-
-```markdown
-<!-- In docs/includes/hello.md -->
-```restrict
-fn main() {
-    "Hello, World!" |> println
-}
-```
-```
-
-Then include in both EN and JA docs:
-
-```markdown
-<!-- In docs/en/getting-started/hello-world.md -->
-{{#include ../../includes/hello.md}}
-
-<!-- In docs/ja/getting-started/hello-world.md -->
-{{#include ../../includes/hello.md}}
-```
-
-### 2. Code Example Files
-
-For complete runnable examples, store them in `code-examples/`:
+Build the public mdBook:
 
 ```bash
-docs/code-examples/
-├── hello-world.rl
-├── osv-demo.rl
-└── warder-demo/
-    ├── package.rl.toml
-    └── src/main.rl
+mdbook build docs
 ```
 
-Reference them in documentation:
-
-```markdown
-The complete example can be found in `docs/code-examples/hello-world.rl`.
-```
-
-### 3. Test Integration
-
-Link documentation examples with actual tests:
-
-```rust
-// In tests/doc_examples.rs
-#[test]
-fn test_hello_world_example() {
-    let code = include_str!("../docs/code-examples/hello-world.rl");
-    assert_compiles(code);
-}
-```
-
-## Building Documentation
+Build the full Pages artifact:
 
 ```bash
-# Build all documentation
-mise run doc-all
-
-# Build and serve locally
-mise run doc-book
-
-# Check translations
-mise run doc-check-translations
-
-# Validate documentation
-mise run doc-validate
+mise run docs-pages
 ```
 
-## Translation Workflow
+That task builds:
 
-1. Edit English documentation first
-2. Run `mise run doc-check-translations` to see what needs updating
-3. Update Japanese translations, keeping code examples identical
-4. Commit both versions together
-
-## Style Guidelines
-
-### Code Examples
-
-- Keep examples concise and focused
-- Use meaningful variable names
-- Include comments only when necessary
-- Show both correct usage and common errors
-
-### Language
-
-- **English**: Clear, concise technical writing
-- **Japanese**: Professional technical Japanese (敬語不要)
-
-### Formatting
-
-- Use ATX-style headers (`#`, not underlines)
-- Indent code blocks with 4 spaces
-- Use backticks for inline code
-- Add language identifiers to code blocks
-
-## Adding New Documentation
-
-1. Create the English version first
-2. Add entry to `SUMMARY.md`
-3. If including code, add to `includes/` or `code-examples/`
-4. Create Japanese translation
-5. Run validation: `mise run doc-validate`
-
-## Common Patterns
-
-### Feature Introduction
-
-```markdown
-## Feature Name
-
-Brief description of what the feature does.
-
-### Why It Matters
-
-Explain the problem it solves.
-
-### Basic Usage
-
-{{#include ../includes/feature-basic.md}}
-
-### Advanced Usage
-
-{{#include ../includes/feature-advanced.md}}
-
-### Common Pitfalls
-
-- Pitfall 1: Description
-- Pitfall 2: Description
+```text
+docs/book/      public mdBook output
+web/pkg/        wasm-pack browser compiler bundle
+site/dist/      final Pages artifact
 ```
 
-### API Documentation
+## Editing Rules
 
-Generate from source code comments:
+When editing public docs:
 
-```rust
-/// Brief description.
-/// 
-/// Longer explanation with examples.
-/// 
-/// # Examples
-/// 
-/// ```restrict
-/// example code
-/// ```
-pub fn function_name() { }
+- edit `docs/public/en/` first
+- update `docs/public/SUMMARY.md` for visible navigation changes
+- keep examples on the v0.0.1 release surface
+- use `val`, `mut val`, OSV calls, and `:` record fields
+- avoid TAT, user-defined ADTs, `form`/`takes`, and composite host ABI examples
+  unless they are clearly marked as future work
+
+When editing internal docs:
+
+- keep design notes outside `docs/public/`
+- prefer explicit status labels such as supported, rejected, experimental, or
+  future
+- do not assume an internal design document is user-facing release behavior
+
+## Validation
+
+Run focused docs checks after changing public docs:
+
+```bash
+mise exec -- cargo test --test test_docs_hygiene
+mise exec -- cargo test --test test_web_hygiene
 ```
 
-## Contributing
-
-When contributing documentation:
-
-1. Follow the existing style
-2. Test all code examples
-3. Update both EN and JA versions
-4. Run `mise run doc-validate` before submitting
+Run `mdbook build docs` before assembling Pages.

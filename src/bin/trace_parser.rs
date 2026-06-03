@@ -1,10 +1,10 @@
+use restrict_lang::parser::parse_program;
 use std::env;
 use std::fs;
-use restrict_lang::parser::parse_program;
 fn main() {
     // Enable nom tracing
     nom_trace::activate_trace!();
-    
+
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: trace_parser <file.rl>");
@@ -13,7 +13,7 @@ fn main() {
 
     let filename = &args[1];
     let content = fs::read_to_string(filename)
-        .expect(&format!("Failed to read file: {}", filename));
+        .unwrap_or_else(|_| panic!("Failed to read file: {}", filename));
 
     println!("=== Source Code ===");
     println!("{}", content);

@@ -2,24 +2,28 @@ use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn compile_and_test(source: &str) -> Result<String, String> {
     // Parse
-    let (_, ast) = parse_program(source)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
+    let (remaining, ast) = parse_program(source).map_err(|e| format!("Parse error: {:?}", e))?;
+    if !remaining.trim().is_empty() {
+        return Err(format!("Unparsed input remaining: {:?}", remaining));
+    }
 
     // Type check
     let mut type_checker = TypeChecker::new();
-    type_checker.check_program(&ast)
+    type_checker
+        .check_program(&ast)
         .map_err(|e| format!("Type error: {}", e))?;
 
     // Generate WASM
     let mut codegen = WasmCodeGen::new();
-    codegen.generate(&ast)
+    codegen
+        .generate(&ast)
         .map_err(|e| format!("Codegen error: {}", e))
 }
 
 #[test]
 fn test_integer_pattern_match() {
     let source = r#"
-        fun classify: (n: Int) -> Int = {
+        fun classify: (n: Int32) -> Int32 = {
             n match {
                 0 => { 0 }
                 1 => { 1 }
@@ -28,10 +32,11 @@ fn test_integer_pattern_match() {
             }
         }
 
-        fun main: () -> Int = {
-            (0) classify |> print_int;
-            (1) classify |> print_int;
-            (5) classify |> print_int
+        fun main: () -> Int32 = {
+            val a = 0 |> classify;
+            val b = 1 |> classify;
+            val c = 5 |> classify;
+            a + b + c
         }
     "#;
 
@@ -42,17 +47,18 @@ fn test_integer_pattern_match() {
 #[test]
 fn test_match_with_variable_binding() {
     let source = r#"
-        fun test_binding: (n: Int) -> Int = {
+        fun test_binding: (n: Int32) -> Int32 = {
             n match {
                 0 => { 0 }
                 x => { 42 }
             }
         }
 
-        fun main: () -> Int = {
-            (-5) test_binding |> print_int;
-            (0) test_binding |> print_int;
-            (10) test_binding |> print_int
+        fun main: () -> Int32 = {
+            val a = -5 |> test_binding;
+            val b = 0 |> test_binding;
+            val c = 10 |> test_binding;
+            a + b + c
         }
     "#;
 
@@ -63,13 +69,13 @@ fn test_match_with_variable_binding() {
 #[test]
 fn test_match_in_expression_context() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main: () -> Int32 = {
             val result = 42 match {
                 0 => { 100 }
                 42 => { 200 }
                 _ => { 300 }
             };
-            result |> print_int
+            result
         }
     "#;
 
@@ -81,7 +87,7 @@ fn test_match_in_expression_context() {
 #[test]
 fn test_nested_match() {
     let source = r#"
-        fun nested: (x: Int) -> Int = {
+        fun nested: (x: Int32) -> Int32 = {
             x match {
                 0 => { 10 }
                 1 => { 20 }
@@ -89,10 +95,11 @@ fn test_nested_match() {
             }
         }
 
-        fun main: () -> Int = {
-            (0) nested |> print_int;
-            (1) nested |> print_int;
-            (2) nested |> print_int
+        fun main: () -> Int32 = {
+            val a = 0 |> nested;
+            val b = 1 |> nested;
+            val c = 2 |> nested;
+            a + b + c
         }
     "#;
 
@@ -103,8 +110,9 @@ fn test_nested_match() {
 #[test]
 fn test_match_with_complex_expressions() {
     let source = r#"
-        fun process: (x: Int) -> Int = {
-            (x + 10) match {
+        fun process: (x: Int32) -> Int32 = {
+            val shifted = x + 10;
+            shifted match {
                 10 => { 0 }
                 20 => { 1 }
                 30 => { 2 }
@@ -112,11 +120,12 @@ fn test_match_with_complex_expressions() {
             }
         }
 
-        fun main: () -> Int = {
-            (0) process |> print_int;
-            (10) process |> print_int;
-            (20) process |> print_int;
-            (100) process |> print_int
+        fun main: () -> Int32 = {
+            val a = 0 |> process;
+            val b = 10 |> process;
+            val c = 20 |> process;
+            val d = 100 |> process;
+            a + b + c + d
         }
     "#;
 
@@ -127,12 +136,13 @@ fn test_match_with_complex_expressions() {
 #[test]
 fn test_match_osv_syntax() {
     let source = r#"
-        fun main: () -> Int = {
-            42 match {
+        fun main: () -> Int32 = {
+            val result = 42 match {
                 0 => { 100 }
                 42 => { 200 }
                 _ => { 300 }
-            } |> print_int
+            };
+            result
         }
     "#;
 
@@ -144,7 +154,7 @@ fn test_match_osv_syntax() {
 #[test]
 fn test_match_with_block_patterns() {
     let source = r#"
-        fun complex_match: (n: Int) -> Int = {
+        fun complex_match: (n: Int32) -> Int32 = {
             n match {
                 0 => {
                     val a = 10;
@@ -161,10 +171,11 @@ fn test_match_with_block_patterns() {
             }
         }
 
-        fun main: () -> Int = {
-            (0) complex_match |> print_int;
-            (1) complex_match |> print_int;
-            (2) complex_match |> print_int
+        fun main: () -> Int32 = {
+            val a = 0 |> complex_match;
+            val b = 1 |> complex_match;
+            val c = 2 |> complex_match;
+            a + b + c
         }
     "#;
 
@@ -175,14 +186,14 @@ fn test_match_with_block_patterns() {
 #[test]
 fn test_wildcard_pattern() {
     let source = r#"
-        fun always_42: (x: Int) -> Int = {
+        fun always_42: (x: Int32) -> Int32 = {
             x match {
                 _ => { 42 }
             }
         }
 
-        fun main: () -> Int = {
-            (100) always_42 |> print_int
+        fun main: () -> Int32 = {
+            100 |> always_42
         }
     "#;
 
@@ -193,16 +204,17 @@ fn test_wildcard_pattern() {
 #[test]
 fn test_match_exhaustiveness_with_wildcard() {
     let source = r#"
-        fun safe_divide: (a: Int, b: Int) -> Int = {
+        fun safe_divide: (a: Int32, b: Int32) -> Int32 = {
             b match {
-                0 => { 0 }
+                0 => { 0 }  // Division by zero returns 0
                 divisor => { a / divisor }
             }
         }
 
-        fun main: () -> Int = {
-            (10, 2) safe_divide |> print_int;
-            (10, 0) safe_divide |> print_int
+        fun main: () -> Int32 = {
+            val a = (10, 2) safe_divide;
+            val b = (10, 0) safe_divide;
+            a + b
         }
     "#;
 

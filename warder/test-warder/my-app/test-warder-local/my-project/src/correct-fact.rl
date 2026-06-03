@@ -1,14 +1,13 @@
-fun factorial = n:Int {
-    mut val x = n
-    x <= 1 then {
+fun factorial: (n: Int32) -> Int32 = {
+    n <= 1 then {
         1
     } else {
-        x * (x - 1 |> factorial)
+        n * ((n - 1) |> factorial)
     }
 }
 
-fun main = {
-    val result = 5 |> factorial
-    "Factorial of 5 is: " |> println
+fun main: () -> () = {
+    val result = 5 |> factorial;
+    "Factorial of 5 is: " |> println;
     result |> print_int
 }

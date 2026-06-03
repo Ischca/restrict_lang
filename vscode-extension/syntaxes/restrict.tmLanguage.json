@@ -86,11 +86,19 @@
             "patterns": [
                 {
                     "name": "constant.numeric.float.restrict",
-                    "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+                    "match": "\\b\\d(?:_?\\d)*\\.\\d(?:_?\\d)*([eE][+-]?\\d(?:_?\\d)*)?\\b"
+                },
+                {
+                    "name": "constant.numeric.float.restrict",
+                    "match": "\\b\\d(?:_?\\d)*[eE][+-]?\\d(?:_?\\d)*\\b"
+                },
+                {
+                    "name": "constant.numeric.integer.hex.restrict",
+                    "match": "\\b0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b"
                 },
                 {
                     "name": "constant.numeric.integer.restrict",
-                    "match": "\\b\\d+\\b"
+                    "match": "\\b\\d(?:_?\\d)*\\b"
                 }
             ]
         },
@@ -98,15 +106,15 @@
             "patterns": [
                 {
                     "name": "keyword.control.restrict",
-                    "match": "\\b(if|then|else|while|match|with|return|async)\\b"
+                    "match": "\\b(then|else|while|match|with|lifetime|await|spawn)\\b"
                 },
                 {
                     "name": "keyword.declaration.restrict",
-                    "match": "\\b(record|impl|context|fun|val|mut)\\b"
+                    "match": "\\b(record|context|enum|fun|val|mut|pub|import|export)\\b"
                 },
                 {
                     "name": "keyword.other.restrict",
-                    "match": "\\b(clone|freeze)\\b"
+                    "match": "\\b(clone|freeze|temporal|within|where|as|fatal)\\b"
                 },
                 {
                     "name": "constant.language.boolean.restrict",
@@ -114,7 +122,7 @@
                 },
                 {
                     "name": "constant.language.unit.restrict",
-                    "match": "\\bUnit\\b"
+                    "match": "\\(\\)"
                 },
                 {
                     "name": "constant.language.option.restrict",
@@ -126,11 +134,27 @@
             "patterns": [
                 {
                     "name": "keyword.operator.pipe.restrict",
-                    "match": "\\|>>?|\\|"
+                    "match": "\\|>"
                 },
                 {
-                    "name": "keyword.operator.arrow.restrict", 
-                    "match": "=>|->|<-"
+                    "name": "keyword.operator.logical.restrict",
+                    "match": "&&|\\|\\||!"
+                },
+                {
+                    "name": "keyword.operator.temporal.restrict",
+                    "match": "~"
+                },
+                {
+                    "name": "keyword.operator.spread.restrict",
+                    "match": "\\.\\.\\."
+                },
+                {
+                    "name": "keyword.operator.range.restrict",
+                    "match": "\\.\\."
+                },
+                {
+                    "name": "keyword.operator.arrow.restrict",
+                    "match": "=>|->"
                 },
                 {
                     "name": "keyword.operator.comparison.restrict",
@@ -145,8 +169,8 @@
                     "match": "="
                 },
                 {
-                    "name": "keyword.operator.array.restrict",
-                    "match": "\\[\\||\\|\\]"
+                    "name": "punctuation.accessor.dot.restrict",
+                    "match": "\\."
                 }
             ]
         },
@@ -163,7 +187,7 @@
                 },
                 {
                     "name": "entity.name.function.call.restrict",
-                    "match": "\\w+(?=\\()"
+                    "match": "(?<=\\|>\\s)\\w+|(?<=\\)\\s)\\w+"
                 }
             ]
         },
@@ -171,11 +195,11 @@
             "patterns": [
                 {
                     "name": "storage.type.primitive.restrict",
-                    "match": "\\b(Int32|Int|Float64|Boolean|String|Char|Unit)\\b"
+                    "match": "\\b(Int32|Int64|Float64|Boolean|String|Char)\\b"
                 },
                 {
                     "name": "storage.type.generic.restrict",
-                    "match": "\\b(Option|List|Array)\\b"
+                    "match": "\\b(Option|Result|List|Array|Range)\\b"
                 },
                 {
                     "name": "storage.type.user.restrict",
@@ -224,8 +248,8 @@
                     }
                 },
                 {
-                    "name": "entity.name.type.impl.restrict",
-                    "match": "(?<=impl\\s+)\\w+",
+                    "name": "entity.name.type.context.restrict",
+                    "match": "(?<=context\\s+)\\w+",
                     "captures": {
                         "0": {
                             "name": "entity.name.type.restrict"

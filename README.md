@@ -1,64 +1,37 @@
 <div align="center">
   <img src="assets/logo.svg" alt="Restrict Language Logo" width="200" height="200">
-  
+
   # Restrict Language
-  
+
   **A functional programming language with affine types for WebAssembly**
-  
+
   [![CI](https://github.com/restrict-lang/restrict_lang/actions/workflows/ci.yml/badge.svg)](https://github.com/restrict-lang/restrict_lang/actions/workflows/ci.yml)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![WASM](https://img.shields.io/badge/target-WebAssembly-orange.svg)](https://webassembly.org/)
   [![Documentation](https://img.shields.io/badge/docs-mdBook-green.svg)](https://restrict-lang.github.io/restrict_lang/)
-  [![Playground](https://img.shields.io/badge/playground-try%20online-brightgreen.svg)](https://ischca.github.io/restrict_lang/)
 </div>
 
 ---
 
+## 📖 Language Specification
+
+**IMPORTANT**: The authoritative language specification is at [`LANGUAGE_SPECIFICATION.md`](LANGUAGE_SPECIFICATION.md). This document defines all syntax rules, type system behavior, and language semantics. Always refer to this document when implementing features or writing code.
+
 A statically-typed functional programming language that compiles to WebAssembly, featuring an affine type system, pattern matching, lambda expressions with closures, and arena-based memory management.
-
-## 🎮 Try it Online
-
-Experience Restrict Language directly in your browser without any installation:
-
-**[🚀 Launch Playground](https://ischca.github.io/restrict_lang/)**
-
-The online playground allows you to:
-- ✍️ Write and execute Restrict Language code instantly
-- 🧪 Explore language features interactively  
-- 🔗 Share code snippets with others
-- 📚 Learn from built-in examples
-
----
 
 ## 🚀 Quick Start
 
-### Using the Package Manager (Warder)
+### From Source
 
 ```bash
-# Install warder (package manager)
-# TODO: Add installation instructions
-
-# Create a new project
-warder new my-project
-cd my-project
-
-# Build and run
-warder build
-warder run
-```
-
-### Manual Compilation
-
-```bash
-# Clone the repository
 git clone https://github.com/restrict-lang/restrict_lang
 cd restrict_lang
 
 # Build the compiler
-cargo build --release
+mise exec -- cargo build --release
 
 # Compile your first program
-echo 'fun main = { "Hello, World!" |> println }' > hello.rl
+echo 'fun main: () -> Int32 = { 42 }' > hello.rl
 ./target/release/restrict_lang hello.rl
 
 # Run the generated WebAssembly
@@ -68,335 +41,308 @@ wasmtime hello.wat
 ## ✨ Features
 
 - **🔒 Affine Type System**: Variables can be used at most once, preventing accidental resource duplication
-- **🧬 Generics**: Parametric polymorphism with type inference and monomorphization
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
 - **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for Option, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
-- **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support
-- **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition
-- **🔌 Context Binding**: Implicit parameter passing via algebraic effect-like contexts
-- **🧩 Scope Composition**: Combine multiple contexts with nested `with` blocks
-- **📦 Module System**: Import/export with file-based module resolution
+- **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support for the current concrete ABI surface
+- **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition (traditional function calls not supported)
 - **💬 Comments**: Full support for single-line (`//`) and multi-line (`/* */`) comments
-- **✂️ Semicolon-Free**: Kotlin-style newline-based statement termination (semicolons optional)
-- **🎨 Concise Syntax**: Parameter-less functions like `fun main = { ... }` without explicit `(): ()`
+- **🎪 Spread Destructuring**: Extract multiple record fields with rest patterns `{ field1, field2, ...rest }`
+- **⏰ Temporal Affine Types**: Experimental and excluded from the default v0.0.1 gate
+
+## v0.0.1 Design Boundaries
+
+The v0.0.1 release intentionally keeps a few language-shaping decisions out of
+the default support promise. These are not partially-complete user features:
+they need explicit design decisions before implementation.
+
+- User-defined `enum`/ADT declarations are reserved syntax only. Built-in
+  `Option<T>` and `Result<T, E>` are supported for sum-type workflows today.
+- User-defined `form`, `takes`, `of`, and associated-type declarations are
+  future design work. The current `Container` behavior used by `map` and
+  `filter` is a compiler-internal constraint for built-in `List` and `Option`.
+- Exported generic functions do not yet have a stable WebAssembly ABI and are
+  rejected by v0.0.1 release-surface validation before `--check` success or
+  code generation. Exported records are source-level module metadata only; they
+  do not create host-visible Wasm exports until a concrete record ABI is
+  designed.
+- Exported top-level constants are host-visible only when their literal value
+  has a scalar ABI: `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()`.
+  Composite global exports are rejected until that ABI is designed.
+- Generic functions, records, `Option`, and `Result` remain supported inside
+  Restrict programs. Records may cross source-module boundaries; generic
+  functions may not cross the unresolved host export ABI boundary.
 
 ## 📖 Language Overview
 
 ### Hello World
 
-```rust
+```restrict
 // hello.rl
-fun main = {
+fun main: () -> () = {
     "Hello, Restrict Language!" |> println
 }
 ```
 
 ### Basic Arithmetic
 
-```rust
+```restrict
 // arithmetic.rl
-fun add = x:Int y:Int {
+fun add: (x: Int32, y: Int32) -> Int32 = {
     x + y
 }
 
-fun main = {
+fun main: () -> Int32 = {
     val result = (10, 20) add
     "Result: " |> println
     result |> print_int
+    result
 }
 ```
 
 ### Variables and Affine Types
 
-```rust
-// Variables can only be used once (affine types)
-val x = 42
-val y = x    // x is consumed here
-// val z = x // Error: x already used!
+```restrict
+// Copyable primitives can be read more than once
+val score: Int32 = 42
+val doubled = score + score
 
-// Mutable variables can be reused
+// Heap-backed values move when used
+val message = "hello"
+val next = message
+
+// Mutable bindings can be reassigned
 mut val counter = 0
-counter = counter + 1  // OK
-counter = counter + 1  // OK
-
-// Semicolons are optional - use newlines to separate statements
-val a = 1
-val b = 2
-val c = a + b
+counter = counter + 1
+counter = counter + 1
 ```
 
 ### Functions and OSV Syntax
 
-```rust
+Restrict Language **exclusively uses OSV (Object-Subject-Verb) syntax**. Function-first call syntax is **not supported**.
+
+```restrict
 // Function definition
-fun add = x:Int y:Int { x + y }
+fun add: (x: Int32, y: Int32) -> Int32 = { x + y }
 
-// OSV (Object-Subject-Verb) function calls
-val result = (5, 10) add      // Multiple arguments
+fun double: (value: Int32) -> Int32 = { value * 2 }
 
-// Pipe operator for single arguments
-val doubled = 21 |> double
+fun say_hello: () -> String = { "hello" }
+
+// OSV function calls (ONLY supported syntax)
+val result = (5, 10) add      // Multiple arguments: (args) function
+val doubled = 21 |> double    // Single argument: value |> function
+val greeting = () say_hello   // No arguments: () function
+
+// Pattern: Arguments come BEFORE the function name
+val product = (2, 3) multiply             // Direct OSV with multiple args
+val message = "Hello, " + "Restrict"      // Current string composition
+
+// Function composition flows naturally left-to-right
+val process_data = data
+    |> validate
+    |> transform
+    |> save_to_database
 ```
 
 ### Lambda Expressions and Closures
 
-```rust
-// Simple lambda
-val double = |x| x * 2
-val result = 21 |> double  // Returns 42
-
-// Closures capture variables (advanced feature - may have limitations)
-fun make_adder = n:Int {
-    |x| x + n  // Captures 'n'
+```restrict
+fun apply_int: (f: Int32 -> Int32, value: Int32) -> Int32 = {
+    value |> f
 }
 
-val add5 = 5 |> make_adder
-val result = 10 |> add5  // Returns 15
+fun main: () -> Int32 = {
+    (|x| x * 2, 21) apply_int
+}
 ```
 
 ### Pattern Matching
 
-```rust
-// Option pattern matching
-val maybe_value: Option<Int> = Some(42)
-val result = maybe_value match {
-    Some(value) => { value * 2 }
-    None => { 0 }
+```restrict
+record Point { x: Int32, y: Int32 }
+
+fun score_option: (maybe_value: Option<Int32>) -> Int32 = {
+    maybe_value match {
+        Some(value) => { value * 2 }
+        None => { 0 }
+    }
 }
 
-// List pattern matching
-val numbers = [1, 2, 3, 4]
-val description = numbers match {
-    [] => { "empty" }
-    [head | tail] => { "head: " + head }
-    [a, b] => { "exactly two" }
-    _ => { "other" }
+fun score_list: (numbers: List<Int32>) -> Int32 = {
+    numbers match {
+        [] => { 0 }
+        [head | tail] => { head }
+        [a, b] => { a + b }
+        _ => { 1 }
+    }
 }
 
-// Record pattern matching
-record Point { x: Int y: Int }
-val point = Point { x: 10 y: 20 }
-val sum = point match {
-    Point { x: 0 y: 0 } => { "origin" }
-    Point { x y } => { x + y }  // Destructure both fields
-    _ => { "unknown" }
+fun score_point: (point: Point) -> Int32 = {
+    point match {
+        Point { x: 0, y: 0 } => { 0 }
+        Point { x, y } => { x + y }
+        _ => { 1 }
+    }
 }
 ```
 
-### Generics
+### Spread Destructuring
 
-```rust
-// Generic function
-fun identity<T>: (x: T) -> T = {
-    x
+Spread destructuring allows you to extract specific fields from records while capturing the rest:
+
+```restrict
+record User {
+    name: String,
+    email: String,
+    age: Int32,
+    department: String,
+    role: String
 }
 
-// Generic record
-record Box<T> {
-    value: T
+fun display_user: (user: User) -> String = {
+    user match {
+        User { name, role: "Manager", ..._ } => { name + " is a manager" }
+        User { name, department: "Engineering", ..._ } => { name + " is an engineer" }
+        User { name, ..._ } => { name + " works here" }
+    }
 }
 
-// Usage - types are inferred
-val a = 42 identity          // T = Int
-val b = "hello" identity     // T = String
-val box = Box { value = 42 } // Box<Int>
+// Practical example: User profile updates
+record UserUpdates {
+    name: Option<String>,
+    email: Option<String>
+}
+
+fun choose_string: (candidate: Option<String>, fallback: String) -> String = {
+    candidate match {
+        Some(value) => { value }
+        None => { fallback }
+    }
+}
+
+fun update_profile: (updates: UserUpdates) -> User = {
+    val current_user = () get_current_user
+    val User { name: new_name, email: new_email } = updates
+    val User { name, email, age, department, role } = current_user
+
+    User {
+        name: (new_name, name) choose_string,
+        email: (new_email, email) choose_string,
+        age: age,
+        department: department,
+        role: role
+    }
+}
 ```
 
 ### Records and Methods
 
-```rust
-// Record definition (comma-separated fields)
+```restrict
+// Record definition
 record Person {
     name: String,
-    age: Int,
+    age: Int32,
     email: String
 }
 
-// Method implementation
+// Impl functions are type-directed, but calls remain OSV.
 impl Person {
-    fun greet: (self: Person) -> String = {
-        "Hello, " + self.name + "!"
-    }
-
-    fun is_adult: (self: Person) -> Bool = {
+    fun is_adult: (self: Person) -> Boolean = {
         self.age >= 18
     }
 }
 
+fun greet: (self: Person) -> String = {
+    "Hello, " + self.name + "!"
+}
+
 // Usage
-val alice = Person { name = "Alice", age = 30, email = "alice@example.com" }
-val greeting = alice greet  // "Hello, Alice!"
-val adult = alice is_adult  // true
+val alice = Person { name: "Alice", age: 30, email: "alice@example.com" }
+val greeting = alice |> greet
+val bob = Person { name: "Bob", age: 17, email: "bob@example.com" }
+val adult = (bob) is_adult
 ```
 
 ### Arena Memory Management
 
-```rust
-// Arena-based memory - automatically freed when scope ends
-fun main = {
-    with Arena {
-        val user = Person { name = "Bob", age = 25 }
-        // Process data...
-        // All memory automatically freed when leaving scope
+```restrict
+// Arena context with scoped temporary heap allocation
+fun process_batch: () -> Int32 = {
+    with Arena { } {
+        val big_list = [1, 2, 3, 4, 5]
+        big_list |> list_count
     }
 }
 ```
 
-### Context Binding (Implicit Parameters)
+### Temporal Affine Types (TAT)
 
-```rust
-// Define a context (like Reader monad / algebraic effects)
-record Connection { id: Int }
-
-context Database {
-    val conn: Connection
-}
-
-// Function requires Database context
-fun query: (sql: String) -> String with Database = {
-    sql  // Would use conn from context in real code
-}
-
-fun main = {
-    with Arena {
-        val conn = Connection { id = 1 }
-        // Provide the context
-        with Database { conn = conn } {
-            "SELECT * FROM users" query |> println
-        }
-    }
-}
-```
-
-### Scope Composition (Multiple Contexts)
-
-```rust
-context Logging { val logger: Logger }
-context Config { val config: AppConfig }
-
-// Function requires BOTH contexts
-fun log_with_config: () with Logging, Config = {
-    "Logging with config" |> println
-}
-
-fun main = {
-    with Arena {
-        // Nested contexts compose automatically
-        with Logging { logger = myLogger } {
-            with Config { config = myConfig } {
-                log_with_config
-            }
-        }
-    }
-}
-```
-
-### FizzBuzz Example
-
-```rust
-fun fizzbuzz: (n: Int) -> String = {
-    n % 15 == 0 then { "FizzBuzz" } else {
-        n % 3 == 0 then { "Fizz" } else {
-            n % 5 == 0 then { "Buzz" } else {
-                n int_to_string
-            }
-        }
-    }
-}
-
-fun main = {
-    mut val i = 1
-    i <= 20 while {
-        i fizzbuzz |> println
-        i = i + 1
-    }
-}
-```
-
-### Semicolon-Free Syntax
-
-Restrict Language uses Kotlin-style newline-based statement termination. Semicolons are optional in most cases:
-
-```rust
-// Statements separated by newlines (no semicolons needed)
-fun main: () -> Int = {
-    val x = 42
-    val y = 10
-    val result = x + y
-    result
-}
-
-// Multiple statements on one line require semicolons
-fun compact: () -> Int = { val a = 1; val b = 2; a + b }
-
-// Line continuation: operators at end of line continue to next line
-fun multiline: () -> Int = {
-    val sum = 10 +
-        20 +
-        30
-
-    val piped = 42 |>
-        println
-
-    sum
-}
-
-// Method chaining can span multiple lines
-val result = obj
-    .method1()
-    .method2()
-    .method3()
-```
+Temporal Affine Types are part of the long-term Restrict design, but they are
+outside the default v0.0.1 quality gate. TAT-specific tests are available behind
+the `tat` Cargo feature while the core language release focuses on OSV syntax,
+affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 ## 📚 Documentation
 
-- **[Tutorial](TUTORIAL.md)** - Learn the language step by step
-- **[Reference](REFERENCE.md)** - Complete language reference
+- **[Quick Start](docs/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
+- **[Language Guide](docs/en/guide/README.md)** - Release-facing v0.0.1 syntax and design rules
+- **[Release Surface](docs/v001-release-surface.md)** - Supported, rejected, and experimental v0.0.1 boundaries
 - **[Examples](examples/)** - Sample programs and use cases
-- **[Temporal Affine Types Guide](docs/TEMPORAL_DESIGN_GUIDE.md)** - Comprehensive TAT documentation
-- **[TAT Implementation Status](docs/TAT_IMPLEMENTATION_STATUS.md)** - Current TAT implementation progress
 
 ## 🏗️ Implementation Status
 
 ### ✅ Completed Features
 
 - [x] Lexer with comment support
-- [x] Parser with OSV syntax
+- [x] Parser with OSV syntax (traditional function calls not supported)
 - [x] Type system with affine types
 - [x] Lambda expressions with closures
 - [x] Pattern matching (Option, List, Record)
+- [x] Spread destructuring with `...rest` syntax
 - [x] WebAssembly code generation
 - [x] Arena memory management
 - [x] Bidirectional type inference
 - [x] Function tables for indirect calls
-- [x] Kotlin-style semicolon-free syntax
-- [x] Conditional expressions (`then`/`else` syntax)
-- [x] Context binding with `context` and `with` blocks
-- [x] Scope composition (multiple contexts)
-- [x] Concise syntax (`fun main = { ... }` without parameter list)
-- [x] Return type inference from function body
+- [x] Higher-order functions (`map`, `filter`, `fold`) with typed function values
+- [x] Generics and parametric polymorphism inside Restrict programs
+- [x] Result types with expected-type inference
+- [x] Type-directed `impl` method dispatch through grouped OSV calls
+- [x] Source import resolution through the CLI
+- [x] Affine checking across complex expressions, OSV calls, field access, and branching
+- [x] Conditional expressions with chained/nested runtime coverage
+- [x] Recursive functions with direct and mutual runtime coverage
 
 ### 🚧 In Progress
 
-- [ ] Higher-order functions (map, filter, fold)
-- [ ] String interpolation
-- [ ] Module system
-- [ ] Recursive functions (basic parsing works, but execution has limitations)
+- [ ] Temporal Affine Types (TAT) outside the default v0.0.1 gate
+- [ ] User-defined enum/ADT declarations (`enum` is reserved; built-in `Option`/`Result` are supported)
+- [ ] Package-level module aliases, re-exports, and std aggregators beyond source-file import resolution
+- [ ] Direct WebAssembly ABI for exported generic functions and host-visible record values
 
 ### 📋 Planned Features
 
+- [ ] String interpolation
 - [ ] Async/await support
-- [ ] Error handling with Result types
-- [ ] Generics and parametric polymorphism
+- [ ] Ergonomic error propagation syntax
 - [ ] SIMD operations
 - [ ] WebGPU backend
 
-### ⚠️ Current Limitations
+### ⚠️ Current Boundaries
 
-- Recursive functions are not fully supported yet
-- Complex pattern matching may not work in all cases
-- Use `mut val` instead of `val mut` for mutable variables
+- Pattern guards and tuple patterns are future/design gaps; v0.0.1 covers
+  Option, Result, List, Record, nested, and spread record patterns
+- Source-file imports are implemented; package-level module aliases, re-exports,
+  and std aggregators still need a concrete design
+- String interpolation is not part of the v0.0.1 syntax; use concatenation today
+- User-defined `enum`/ADT declarations are an intentional v0.0.1 design gap;
+  use built-in `Option` and `Result` today
+- Exported generic functions require a concrete WebAssembly ABI design before
+  codegen support; exported records are source-level only and emit no direct
+  host-visible Wasm export
+- TAT examples and tests are experimental and run outside the default test gate
+- Some older examples are design sketches and may use syntax that is not in the v0.0.1 gate
+- Mutable variables use `mut val`
 
 ## 🔧 Architecture
 
@@ -404,7 +350,7 @@ val result = obj
 Source Code (.rl)
     ↓
 Lexer → Tokens
-    ↓  
+    ↓
 Parser → AST
     ↓
 Type Checker → Typed AST
@@ -432,13 +378,13 @@ WebAssembly Runtime (wasmtime, browser, etc.)
 
 ```bash
 # Run all tests
-cargo test
+mise exec -- cargo test
 
 # Run specific test suites
-cargo test lambda        # Lambda expression tests
-cargo test pattern      # Pattern matching tests  
-cargo test type_check    # Type checker tests
-cargo test codegen       # Code generation tests
+mise exec -- cargo test lambda        # Lambda expression tests
+mise exec -- cargo test pattern       # Pattern matching tests
+mise exec -- cargo test type_check    # Type checker tests
+mise exec -- cargo test codegen       # Code generation tests
 ```
 
 ## 🤝 Contributing
@@ -460,10 +406,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Clone and build
 git clone https://github.com/restrict-lang/restrict_lang
 cd restrict_lang
-cargo build
+mise exec -- cargo build
 
 # Run tests
-cargo test
+mise exec -- cargo test
 
 # Install WebAssembly runtime for testing
 curl https://wasmtime.dev/install.sh -sSf | bash

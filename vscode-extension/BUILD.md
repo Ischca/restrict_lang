@@ -86,36 +86,34 @@ vsce publish
 
 ## Language Server Integration
 
-The extension integrates with a Language Server Protocol (LSP) implementation. The LSP server should be built separately and made available as:
+The extension integrates with the compiler's Language Server Protocol (LSP) implementation. The LSP server runs as the main compiler in stdio mode:
 
-1. `restrict_lsp` executable in PATH, or
-2. Configured via `restrict.languageServerPath` setting, or
-3. The main compiler with `--lsp` flag support
+1. `restrict_lang` executable in PATH, or
+2. A compiler executable configured via the `restrict.languageServerPath` setting
 
-### Expected LSP Features
+The extension starts the configured command with the `--lsp` flag.
 
-The Language Server should implement:
+### v0.0.1 LSP Features
+
+The Language Server currently implements and advertises:
 
 - **textDocument/hover**: Type information on hover
 - **textDocument/completion**: Auto-completion
 - **textDocument/definition**: Go to definition
 - **textDocument/references**: Find all references
-- **textDocument/rename**: Symbol renaming
-- **textDocument/formatting**: Document formatting
 - **textDocument/documentSymbol**: Document outline
-- **workspace/symbol**: Workspace symbol search
-- **textDocument/codeAction**: Code actions (quick fixes)
-- **textDocument/signatureHelp**: Function signature help
+- **textDocument/semanticTokens/full**: Semantic highlighting
 - **textDocument/publishDiagnostics**: Error and warning diagnostics
+
+Rename, document formatting, workspace symbols, code actions, signature help,
+code lens, and semantic-token range requests are not advertised in v0.0.1.
 
 ### LSP Server Command Line
 
 The LSP server should accept:
 
 ```bash
-restrict_lang --lsp                    # Start LSP server mode
-restrict_lang --lsp --stdio           # Use stdio for communication
-restrict_lang --lsp --port 8080       # Use TCP port for communication
+restrict_lang --lsp                    # Start LSP stdio server mode
 ```
 
 ## File Structure
@@ -149,7 +147,7 @@ The extension can be configured through VS Code settings:
 ```json
 {
     "restrict.compilerPath": "restrict_lang",
-    "restrict.languageServerPath": "restrict_lsp",
+    "restrict.languageServerPath": "restrict_lang",
     "restrict.enableTypeChecking": true,
     "restrict.enableLSP": true,
     "restrict.showWarnings": true
@@ -166,7 +164,7 @@ The extension can be configured through VS Code settings:
 
 ### Language Server Not Starting
 
-1. Verify the LSP server executable exists and is executable
+1. Verify the compiler executable exists and is executable
 2. Check the `restrict.languageServerPath` setting
 3. Look at the "Restrict Language Server" output channel
 
@@ -189,7 +187,7 @@ Before releasing:
 - [ ] Syntax highlighting works for all language constructs
 - [ ] Code snippets insert correctly
 - [ ] Compiler integration (compile, type check, show AST) works
-- [ ] LSP features work (hover, go to definition, etc.)
+- [ ] v0.0.1 LSP features work (hover, completion, definitions, references, document symbols, diagnostics)
 - [ ] Themes display correctly
 - [ ] Auto-completion triggers appropriately
 - [ ] Error diagnostics show up correctly
@@ -206,8 +204,12 @@ Before releasing:
 
 ## Future Enhancements
 
-- Semantic highlighting
 - Inlay hints for type annotations
+- Rename support
+- Document formatting
+- Code actions and quick fixes
+- Signature help
+- Workspace symbol search
 - Code lens for references count
 - Integrated debugging support
 - Project management features

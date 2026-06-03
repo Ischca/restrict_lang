@@ -1,5 +1,7 @@
 [env]
 CARGO_TERM_COLOR = "always"
+MDBOOK_VERSION = "0.5.3"
+WASM_PACK_VERSION = "0.15.0"
 
 [tools]
 rust = "latest"
@@ -7,6 +9,14 @@ rust = "latest"
 [tasks.test]
 description = "Run all tests"
 run = ["cargo test -- --nocapture", "cd warder && cargo test -- --nocapture"]
+
+[tasks.test-quiet]
+description = "Run all tests (quiet)"
+run = ["cargo test", "cd warder && cargo test"]
+
+[tasks.test-root]
+description = "Run only root crate tests"
+run = ["cargo test"]
 
 [tasks.test-one]
 description = "Run specific test"
@@ -31,31 +41,22 @@ description = "Watch mode - auto recompile on changes"
 run = "cargo watch -x build -x test"
 
 [tasks.debug]
-description = "Debug specific file"
+description = "Print the parsed AST for a file"
 run = """
 if [ -z "$FILE" ]; then
   echo "Usage: mise run debug FILE=test/example.rl"
   exit 1
 fi
-cargo run -- debug $FILE
+cargo run --bin restrict_lang -- --ast "$FILE"
 """
-
-[tasks.repl]
-description = "Run interactive REPL"
-run = "cargo run -- repl"
 
 [tasks.check]
-description = "Check all test files"
-run = """
-for file in test/*.rl; do
-  echo "Checking $file..."
-  cargo run -- compile "$file" || true
-done
-"""
+description = "Check release example entrypoints"
+run = "cargo test --test test_release_example_hygiene standalone_release_examples_compile_through_cli -- --exact"
 
 [tasks.prop-test]
 description = "Property-based testing"
-run = "cargo test property_tests:: -- --nocapture"
+run = "cargo test property_tests -- --nocapture"
 
 [tasks.bench]
 description = "Benchmark compilation speed"
@@ -95,6 +96,16 @@ run = [
   "echo '  Book: docs/book/index.html'"
 ]
 
+[tasks.docs-pages]
+description = "Build the full GitHub Pages artifact"
+run = [
+  "mdbook --version",
+  "wasm-pack --version",
+  "mdbook build docs",
+  "wasm-pack build --target web --out-dir web/pkg",
+  "bash scripts/build-pages.sh",
+]
+
 [tasks.doc-book]
 description = "Build and serve the mdBook documentation"
 run = "cd docs && mdbook serve --open"
@@ -113,7 +124,9 @@ if [ -z "$FILE" ]; then
   echo "Usage: mise run run FILE=test/example.rl"
   exit 1
 fi
-cargo run -- compile "$FILE" && wasmtime "test/$(basename "${FILE%.rl}").wat"
+out="${FILE%.*}.wat"
+cargo run --bin restrict_lang -- "$FILE" "$out"
+wasmtime "$out"
 """
 
 [tasks.ci]
@@ -131,16 +144,13 @@ run = [
 description = "Setup development environment"
 run = """
 # Install cargo tools for development
-cargo install cargo-watch cargo-audit cargo-tarpaulin mdbook --force
+cargo install cargo-watch cargo-audit cargo-tarpaulin --force
+cargo install mdbook --version "$MDBOOK_VERSION" --force
+cargo install wasm-pack --version "$WASM_PACK_VERSION" --force
 
 # Install wasmtime for running WASM
 if ! command -v wasmtime &> /dev/null; then
   curl https://wasmtime.dev/install.sh -sSf | bash
-fi
-
-# Install wasm-pack for WASM builds
-if ! command -v wasm-pack &> /dev/null; then
-  curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 fi
 
 # Install mdBook plugins
@@ -314,18 +324,26 @@ cd docs
 ./scripts/sync-translations.sh
 echo ""
 echo "To update a specific translation:"
-echo "  1. Edit the Japanese file in docs/ja/"
+echo "  1. Edit the Japanese file in docs/public/ja/"
 echo "  2. Keep code examples identical to English version"
 echo "  3. Run 'mise run doc-check-translations' to verify"
 """
 
 # Quick development tasks
 [tasks.quick]
-description = "Quick test of a simple expression"
+description = "Quick check of a simple program"
 run = """
-echo "Enter Restrict Language expression:"
-read -r expr
-echo "$expr" | cargo run -- eval
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+cat > "$tmpdir/main.rl" <<'EOF'
+fun main: () -> () = {
+    val answer = 42
+    answer |> print_int
+}
+EOF
+
+cargo run --bin restrict_lang -- --check "$tmpdir/main.rl"
 """
 
 # Docker tasks

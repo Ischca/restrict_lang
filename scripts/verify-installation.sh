@@ -17,10 +17,9 @@ echo ""
 check_command() {
     local cmd=$1
     local name=$2
-    
+
     if command -v "$cmd" >/dev/null 2>&1; then
         echo -e "${GREEN}✓${NC} $name found"
-        $cmd --version
         return 0
     else
         echo -e "${RED}✗${NC} $name not found"
@@ -47,12 +46,13 @@ TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR"
 
 cat > test.rl << 'EOF'
-fn main() {
-    "Installation verified!" |> println
+fun main: () -> () = {
+    val message = "Installation verified!"
+    message |> println
 }
 EOF
 
-if restrict_lang compile test.rl >/dev/null 2>&1; then
+if restrict_lang test.rl test.wat >/dev/null 2>&1 && [ -s test.wat ]; then
     echo -e "${GREEN}✓${NC} Compilation works"
 else
     echo -e "${RED}✗${NC} Compilation failed"

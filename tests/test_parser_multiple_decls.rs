@@ -10,7 +10,7 @@ fn test_simple_two_functions() {
 fun second = {
     84
 }"#;
-    
+
     match parse_program(input) {
         Ok((remaining, program)) => {
             assert_eq!(program.declarations.len(), 2, "Should parse 2 functions");
@@ -24,17 +24,21 @@ fun second = {
 #[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_record_then_function() {
     let input = r#"record Point {
-    x: Int32
+    x: Int32,
     y: Int32
 }
 
-fun origin = {
+fun origin: () -> Point = {
     Point { x: 0, y: 0 }
 }"#;
-    
+
     match parse_program(input) {
         Ok((remaining, program)) => {
-            assert_eq!(program.declarations.len(), 2, "Should parse 1 record and 1 function");
+            assert_eq!(
+                program.declarations.len(),
+                2,
+                "Should parse 1 record and 1 function"
+            );
             assert!(remaining.trim().is_empty(), "Should parse all input");
         }
         Err(e) => panic!("Parse failed: {:?}", e),
@@ -49,15 +53,21 @@ fn test_temporal_record_then_function() {
 }
 
 fun useFile = {
-    Unit
+    ()
 }"#;
-    
+
     match parse_program(input) {
         Ok((remaining, program)) => {
-            eprintln!("Parsed {} declarations", program.declarations.len());
-            eprintln!("Remaining: {:?}", remaining);
-            assert_eq!(program.declarations.len(), 2, "Should parse 1 record and 1 function");
-            assert!(remaining.trim().is_empty(), "Should parse all input, but found: {:?}", remaining);
+            assert_eq!(
+                program.declarations.len(),
+                2,
+                "Should parse 1 record and 1 function"
+            );
+            assert!(
+                remaining.trim().is_empty(),
+                "Should parse all input, but found: {:?}",
+                remaining
+            );
         }
         Err(e) => panic!("Parse failed: {:?}", e),
     }

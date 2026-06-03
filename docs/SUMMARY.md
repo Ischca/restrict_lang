@@ -1,42 +1,24 @@
-# Summary
+# Internal Documentation Index
 
-[Introduction](./en/introduction.md)
+This file is not the GitHub Pages mdBook summary.
 
-# Getting Started
+Public language documentation is built from:
 
-- [Installation](./en/getting-started/installation.md)
-- [Hello, World!](./en/getting-started/hello-world.md)
+```text
+docs/public/SUMMARY.md
+docs/public/en/
+docs/public/ja/
+docs/public/theme/
+```
 
-# Language Guide
+Internal design notes, implementation plans, and release investigation documents
+stay under `docs/` and are not part of the Pages book unless they are copied or
+rewritten into `docs/public/`.
 
-- [Overview](./en/guide/README.md)
-- [OSV Word Order](./en/guide/osv-order.md)
-- [Syntax Reference](./en/guide/syntax.md)
-- [Type System](./en/guide/types.md)
-- [Ownership & Affine Types](./en/guide/ownership.md)
-- [Pattern Matching](./en/guide/patterns.md)
-- [Warder Package Manager](./en/guide/warder.md)
+Key internal entry points:
 
-# Reference
-
-- [Standard Library](./en/reference/stdlib.md)
-- [Keywords](./en/reference/keywords.md)
-- [Operators](./en/reference/operators.md)
-
-# Advanced Topics
-
-- [WebAssembly Integration](./en/advanced/wasm.md)
-- [Interoperability](./en/advanced/interop.md)
-- [Performance Tips](./en/advanced/performance.md)
-
----
-
-# 日本語版
-
-- [はじめに](./ja/introduction.md)
-- [インストール](./ja/getting-started/installation.md)
-- [Hello, World!](./ja/getting-started/hello-world.md)
-- [構文リファレンス](./ja/guide/syntax.md)
-- [型システム](./ja/guide/types.md)
-- [Warderパッケージマネージャー](./ja/guide/warder.md)
-- [標準ライブラリ](./ja/reference/stdlib.md)
+- [Type Inference Design](./TYPE_INFERENCE_DESIGN.md)
+- [v0.0.1 Release Surface Matrix](./v001-release-surface.md)
+- [Standard Library Architecture](./STDLIB_ARCHITECTURE.md)
+- [Future Scope Layers](./FUTURE_SCOPE_LAYERS.md)
+- [Documentation Rules](./DOCUMENTATION_RULES.md)

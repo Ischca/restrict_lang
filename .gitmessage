@@ -1,0 +1,40 @@
+# Commit Message Rules for Restrict Language
+
+# FORMAT:
+# <type>: <subject> (max 50 chars)
+#
+# <body> (optional, wrap at 72 chars)
+#
+# <footer> (optional)
+
+# TYPES:
+# - feat: New feature
+# - fix: Bug fix
+# - docs: Documentation only
+# - style: Formatting, no code change
+# - refactor: Code restructuring
+# - test: Adding tests
+# - chore: Maintenance
+
+# RULES:
+# 1. NO emoji in commit messages
+# 2. NO "Generated with Claude" or similar signatures
+# 3. NO Co-Authored-By for AI tools
+# 4. Keep subject line under 50 characters
+# 5. Use imperative mood ("Add" not "Added")
+# 6. No period at end of subject line
+# 7. Separate subject from body with blank line
+# 8. Wrap body at 72 characters
+# 9. Explain what and why, not how
+
+# EXAMPLES:
+# Good:
+#   fix: Restore WebAssembly code generation pipeline
+#
+#   All 8 WAT generation tests were failing due to parser not handling
+#   function declarations correctly. Fixed by supporting both complex
+#   and simple syntax styles.
+#
+# Bad:
+#   Fixed the bug in the code generator 🤖
+#   Co-Authored-By: Claude

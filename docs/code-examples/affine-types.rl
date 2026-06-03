@@ -1,15 +1,32 @@
 // Affine type examples
-
-fun greet: (name: String) -> String = {
-    name
+record Ticket {
+    severity: Int32,
+    owner: String
 }
 
-fun main = {
-    val message = "World"
+fun consume_message: (message: String) -> () = {
+    message |> println
+}
 
-    // First use - OK (consumes message)
-    message greet |> println
+fun affine_example: () -> () = {
+    val message = "This can only be used once"
 
-    // Second use would be a compile error:
-    // message greet |> println  // Error: message already consumed
+    message |> consume_message
+
+    // message |> consume_message  // Error: message already consumed
+}
+
+// Record updates use postfix .clone syntax.
+fun lower_severity: (ticket: Ticket) -> Ticket = {
+    ticket.clone {
+        severity: 1,
+        owner: "ops"
+    }
+}
+
+fun clone_example: () -> Int32 = {
+    val ticket = Ticket { severity: 5, owner: "ops" }
+    val lowered = ticket |> lower_severity
+
+    lowered.severity
 }

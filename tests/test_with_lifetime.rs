@@ -1,3 +1,5 @@
+#![cfg(feature = "tat")]
+
 use restrict_lang::{parse_program, TypeChecker};
 
 #[test]
@@ -8,18 +10,18 @@ fn test_with_lifetime_basic() {
     record File<~f> {
         handle: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { handle = 1 };
             file.handle
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -32,18 +34,18 @@ fn test_with_lifetime_anonymous() {
     record Resource<~r> {
         id: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime {
             val res = Resource { id = 42 };
             res.id
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }
@@ -56,14 +58,14 @@ fn test_with_lifetime_escape_error() {
     record File<~f> {
         handle: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { handle = 1 };
             file  // ERROR: Cannot return File<~f> outside lifetime scope
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
@@ -83,12 +85,12 @@ fn test_nested_with_lifetime() {
     record Outer<~out> {
         id: Int32
     }
-    
+
     record Inner<~in, ~out> where ~in within ~out {
         outer: Outer<~out>
         data: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~out> {
             val outer = Outer { id = 1 };
@@ -98,11 +100,11 @@ fn test_nested_with_lifetime() {
             }
         }
     }"#;
-    
+
     let (_, program) = parse_program(input).unwrap();
     let mut checker = TypeChecker::new();
     match checker.check_program(&program) {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => panic!("Type checking failed: {:?}", e),
     }
 }

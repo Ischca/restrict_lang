@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Type inference in the v0.0.1 surface</title>
+  <meta name="description" content="A short Restrict implementation note on v0.0.1 type inference boundaries.">
+  <meta name="theme-color" content="#ff6b35">
+  <meta property="og:site_name" content="Restrict Language">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Type inference in the v0.0.1 surface">
+  <meta property="og:description" content="A short Restrict implementation note on v0.0.1 type inference boundaries.">
+  <meta property="og:url" content="https://restrict-lang.github.io/restrict_lang/blog/type-inference-v001.html">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://restrict-lang.github.io/restrict_lang/blog/type-inference-v001.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="../">Restrict</a>
+    <nav aria-label="Primary navigation">
+      <a href="../docs/">Docs</a>
+      <a href="../compiler/">Compiler</a>
+      <a href="./" aria-current="page">Blog</a>
+      <a href="https://github.com/restrict-lang/restrict_lang">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="article-shell">
+    <article>
+      <p class="eyebrow">Compiler notes</p>
+      <h1>Type inference in the v0.0.1 surface</h1>
+      <p class="article-meta">Release note draft</p>
+      <p>
+        Restrict's current inference work is centered on a constraint-based,
+        bidirectional core. Generic calls, function values, expected lambda
+        propagation, and empty local container inference are part of the
+        release-facing path.
+      </p>
+      <p>
+        The important boundary is what the release does not promise. Temporal
+        affine types, source-level forms, user-defined ADTs, and host-visible
+        generic or composite exports remain outside v0.0.1.
+      </p>
+      <pre><code class="language-restrict">fun identity: &lt;T&gt;(value: T) -&gt; T = {
+    value
+}
+
+export fun answer: () -&gt; Int32 = {
+    42 |&gt; identity
+}</code></pre>
+      <p>
+        That gives the compiler room to make everyday generic code ergonomic
+        without treating the host ABI as solved before it is designed.
+      </p>
+    </article>
+  </main>
+  <footer>
+    <span>Restrict Language</span>
+    <span><a href="./">All posts</a></span>
+  </footer>
+  <script src="../restrict-highlight.js"></script>
+  <script src="../restrict-code-blocks.js"></script>
+</body>
+</html>

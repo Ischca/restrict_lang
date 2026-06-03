@@ -65,7 +65,7 @@ INSTALL_METHOD=${INSTALL_METHOD:-1}
 if [ "$INSTALL_METHOD" == "1" ]; then
     # Download pre-built binaries
     echo -e "\n${YELLOW}Downloading Restrict Language & Warder...${NC}"
-    
+
     # Determine platform
     PLATFORM=""
     case "$OS" in
@@ -87,22 +87,22 @@ if [ "$INSTALL_METHOD" == "1" ]; then
             exit 1
             ;;
     esac
-    
+
     # Create installation directory
     mkdir -p "$BIN_DIR"
-    
+
     # Download latest release
     LATEST_RELEASE=$(curl -s https://api.github.com/repos/restrict-lang/restrict_lang/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    
+
     if [ -z "$LATEST_RELEASE" ]; then
         echo -e "${YELLOW}No pre-built releases found. Falling back to source build...${NC}"
         INSTALL_METHOD="2"
     else
         DOWNLOAD_URL="https://github.com/restrict-lang/restrict_lang/releases/download/${LATEST_RELEASE}/restrict-lang-${LATEST_RELEASE}-${PLATFORM}.tar.gz"
-        
+
         echo -e "Downloading from: $DOWNLOAD_URL"
         curl -L "$DOWNLOAD_URL" | tar -xz -C "$BIN_DIR"
-        
+
         echo -e "${GREEN}✓ Downloaded successfully${NC}"
     fi
 fi
@@ -110,40 +110,40 @@ fi
 if [ "$INSTALL_METHOD" == "2" ]; then
     # Build from source
     echo -e "\n${YELLOW}Building from source...${NC}"
-    
+
     # Check Rust
     if ! check_command "cargo"; then
         echo -e "${YELLOW}Rust not found. Installing via rustup...${NC}"
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         source "$HOME/.cargo/env"
     fi
-    
+
     # Clone repository
     TEMP_DIR=$(mktemp -d)
     cd "$TEMP_DIR"
-    
+
     echo -e "${YELLOW}Cloning repository...${NC}"
     git clone "$REPO_URL" restrict_lang
     cd restrict_lang
-    
+
     # Build
     echo -e "${YELLOW}Building Restrict Language compiler...${NC}"
     cargo build --release
-    
+
     echo -e "${YELLOW}Building Warder package manager...${NC}"
     cd warder
     cargo build --release
     cd ..
-    
+
     # Install binaries
     mkdir -p "$BIN_DIR"
     cp target/release/restrict_lang "$BIN_DIR/"
     cp warder/target/release/warder "$BIN_DIR/"
-    
+
     # Cleanup
     cd /
     rm -rf "$TEMP_DIR"
-    
+
     echo -e "${GREEN}✓ Built and installed successfully${NC}"
 fi
 
@@ -166,7 +166,7 @@ echo -e "\n${YELLOW}Setting up PATH...${NC}"
 add_to_path() {
     local shell_rc="$1"
     local export_line="export PATH=\"$BIN_DIR:\$PATH\""
-    
+
     if [ -f "$shell_rc" ]; then
         if ! grep -q "$BIN_DIR" "$shell_rc"; then
             echo "" >> "$shell_rc"
@@ -195,12 +195,20 @@ fi
 echo -e "\n${YELLOW}Verifying installation...${NC}"
 export PATH="$BIN_DIR:$PATH"
 
-if "$BIN_DIR/restrict_lang" --version &> /dev/null; then
+VERIFY_DIR=$(mktemp -d)
+cat > "$VERIFY_DIR/main.rl" << 'EOF'
+fun main: () -> () = {
+    val message = "Installation verified!"
+    message |> println
+}
+EOF
+
+if "$BIN_DIR/restrict_lang" "$VERIFY_DIR/main.rl" "$VERIFY_DIR/main.wat" &> /dev/null && [ -s "$VERIFY_DIR/main.wat" ]; then
     echo -e "${GREEN}✓ Restrict Language compiler installed${NC}"
-    "$BIN_DIR/restrict_lang" --version
 else
     echo -e "${RED}✗ Restrict Language compiler installation failed${NC}"
 fi
+rm -rf "$VERIFY_DIR"
 
 if "$BIN_DIR/warder" --version &> /dev/null; then
     echo -e "${GREEN}✓ Warder package manager installed${NC}"
@@ -224,8 +232,9 @@ echo -e "   ${BLUE}warder new my-project${NC}"
 echo -e "   ${BLUE}cd my-project${NC}"
 echo ""
 echo "3. Write your first program in src/main.rl:"
-echo -e "   ${BLUE}fn main() {${NC}"
-echo -e "   ${BLUE}    \"Hello, World!\" |> println${NC}"
+echo -e "   ${BLUE}fun main: () -> () = {${NC}"
+echo -e "   ${BLUE}    val message = \"Hello, World!\"${NC}"
+echo -e "   ${BLUE}    message |> println${NC}"
 echo -e "   ${BLUE}}${NC}"
 echo ""
 echo "4. Run your program:"

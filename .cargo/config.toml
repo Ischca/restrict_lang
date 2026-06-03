@@ -6,9 +6,24 @@ browser = "open"
 # Build everything including docs
 build-all = "build --all-features"
 # Generate API documentation
-docs = "doc --all-features --no-deps --open"
+docs = [
+    "doc",
+    "--all-features",
+    "--no-deps",
+    "--open",
+    "--config",
+    'build.rustdocflags=["--html-logo-url","https://restrict-lang.org/logo.svg","--html-favicon-url","https://restrict-lang.org/favicon.ico","--html-playground-url","https://play.restrict-lang.org","--extend-css","docs/theme/rustdoc-restrict.css"]',
+]
 # Generate documentation with private items
-docs-private = "doc --all-features --no-deps --document-private-items --open"
+docs-private = [
+    "doc",
+    "--all-features",
+    "--no-deps",
+    "--document-private-items",
+    "--open",
+    "--config",
+    'build.rustdocflags=["--html-logo-url","https://restrict-lang.org/logo.svg","--html-favicon-url","https://restrict-lang.org/favicon.ico","--html-playground-url","https://play.restrict-lang.org","--extend-css","docs/theme/rustdoc-restrict.css"]',
+]
 # Run all tests
 test-all = "test --all-features"
 # Check without building

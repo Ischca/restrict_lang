@@ -2,24 +2,28 @@ use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn compile_to_wat(source: &str) -> Result<String, String> {
     // Parse
-    let (_, ast) = parse_program(source)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
-    
+    let (remaining, ast) = parse_program(source).map_err(|e| format!("Parse error: {:?}", e))?;
+    if !remaining.trim().is_empty() {
+        return Err(format!("Unparsed input remaining: {:?}", remaining));
+    }
+
     // Type check
     let mut type_checker = TypeChecker::new();
-    type_checker.check_program(&ast)
+    type_checker
+        .check_program(&ast)
         .map_err(|e| format!("Type error: {}", e))?;
-    
+
     // Generate WASM
     let mut codegen = WasmCodeGen::new();
-    codegen.generate(&ast)
+    codegen
+        .generate(&ast)
         .map_err(|e| format!("Codegen error: {}", e))
 }
 
 #[test]
 fn test_simple_match() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val x = 42;
             x match {
                 0 => { 100 }
@@ -28,9 +32,9 @@ fn test_simple_match() {
             }
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify match structure is generated
     assert!(wat.contains("if"));
     assert!(wat.contains("i32.const 42"));
@@ -40,7 +44,7 @@ fn test_simple_match() {
 #[test]
 fn test_match_with_binding() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val x = 10;
             x match {
                 0 => { 0 }
@@ -48,9 +52,9 @@ fn test_match_with_binding() {
             }
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify pattern binding
     assert!(wat.contains("local.set"));
     assert!(wat.contains("i32.add"));
@@ -59,20 +63,20 @@ fn test_match_with_binding() {
 #[test]
 fn test_boolean_match() {
     let source = r#"
-        fun test_bool = b: Boolean {
+        fun test_bool: (b: Boolean) -> Int32 = {
             b match {
                 true => { 1 }
                 false => { 0 }
             }
         }
-        
-        fun main: () -> Int = {
-            true test_bool
+
+        fun main: () -> Int32 = {
+            true |> test_bool
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Verify boolean matching
     assert!(wat.contains("i32.const 1"));
     assert!(wat.contains("i32.eq"));
@@ -81,7 +85,7 @@ fn test_boolean_match() {
 #[test]
 fn test_match_type_consistency() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val x = 5;
             x match {
                 0 => { "zero" }
@@ -89,9 +93,9 @@ fn test_match_type_consistency() {
             }
         }
     "#;
-    
+
     let result = compile_to_wat(source);
-    
+
     // Should fail due to type mismatch
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -101,16 +105,16 @@ fn test_match_type_consistency() {
 #[test]
 fn test_match_exhaustiveness() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val b = true;
             b match {
                 true => { 1 }
             }
         }
     "#;
-    
+
     let result = compile_to_wat(source);
-    
+
     // Should fail due to non-exhaustive patterns
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("exhaustive"));
@@ -119,10 +123,10 @@ fn test_match_exhaustiveness() {
 #[test]
 fn test_nested_match() {
     let source = r#"
-        fun main: () -> Int = {
+        fun main = {
             val x = 1;
             val y = 2;
-            
+
             x match {
                 0 => { 0 }
                 _ => {
@@ -134,9 +138,9 @@ fn test_nested_match() {
             }
         }
     "#;
-    
+
     let wat = compile_to_wat(source).unwrap();
-    
+
     // Should compile successfully
     assert!(wat.contains("if"));
 }
@@ -144,26 +148,27 @@ fn test_nested_match() {
 #[test]
 fn test_match_in_function() {
     let source = r#"
-        fun sign = x: Int {
+        fun sign: (x: Int32) -> Int32 = {
             // For testing purposes, just return 1
             // (In a real implementation, we'd need multiple functions to handle affine constraints)
             1
         }
-        
-        fun classify = x: Int {
-            (x) sign match {
-                1 => { "positive" }
-                -1 => { "negative" }
-                0 => { "zero" }
-                _ => { "unknown" }
+
+        fun classify: (x: Int32) -> Int32 = {
+            val signed = x |> sign;
+            signed match {
+                1 => { 100 }
+                2 => { 200 }
+                0 => { 0 }
+                _ => { 999 }
             }
         }
-        
-        fun main: () -> Int = {
-            42 classify
+
+        fun main: () -> Int32 = {
+            42 |> classify
         }
     "#;
-    
+
     // This test mainly checks that match expressions can be used in various contexts
     let result = compile_to_wat(source);
     if let Err(e) = &result {

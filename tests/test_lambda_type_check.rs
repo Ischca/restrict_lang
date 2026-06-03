@@ -8,31 +8,31 @@ fn type_check_str(input: &str) -> Result<(), TypeError> {
 
 #[test]
 fn test_simple_lambda_type_check() {
-    let input = "val f = |x| x + 1";
+    let input = "val f: Int32 -> Int32 = |x| x + 1";
     assert!(type_check_str(input).is_ok());
 }
 
 #[test]
 fn test_lambda_with_multiple_params() {
-    let input = "val add = |x, y| x + y";
+    let input = "val add: (Int32, Int32) -> Int32 = |x, y| x + y";
     assert!(type_check_str(input).is_ok());
 }
 
 #[test]
 fn test_lambda_no_params() {
-    let input = "val constant = || 42";
+    let input = "val constant: () -> Int32 = || 42";
     assert!(type_check_str(input).is_ok());
 }
 
 #[test]
 fn test_nested_lambda() {
-    let input = "val curry_add = |x| |y| x + y";
+    let input = "val curry_add: Int32 -> Int32 -> Int32 = |x| |y| x + y";
     assert!(type_check_str(input).is_ok());
 }
 
 #[test]
 fn test_lambda_with_block() {
-    let input = r#"val compute = |x| {
+    let input = r#"val compute: Int32 -> Int32 = |x| {
         val doubled = x * 2;
         val result = doubled + 1;
         result
@@ -43,7 +43,7 @@ fn test_lambda_with_block() {
 #[test]
 fn test_lambda_in_function() {
     let input = r#"fun test = {
-        val add_one = |x| x + 1;
+        val add_one: Int32 -> Int32 = |x| x + 1;
         val result = 5;
         result
     }"#;
@@ -55,7 +55,7 @@ fn test_lambda_application() {
     // Due to OSV syntax, add(5, 10) is parsed as 10(add, 5)
     // So we need to use the pipe syntax or parentheses
     let input = r#"fun test = {
-        val add = |x, y| x + y;
+        val add: (Int32, Int32) -> Int32 = |x, y| x + y;
         val result = (5, 10) add;
         result
     }"#;
@@ -66,7 +66,7 @@ fn test_lambda_application() {
 fn test_lambda_captures_variable() {
     let input = r#"fun test = {
         val x = 10;
-        val add_x = |y| x + y;
+        val add_x: Int32 -> Int32 = |y| x + y;
         val result = 5;
         result
     }"#;
@@ -76,11 +76,18 @@ fn test_lambda_captures_variable() {
 #[test]
 #[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_lambda_affine_types() {
-    let input = r#"fun test = {
-        val x = 10;
-        val use_x = |y| x + y;
-        // x should be consumed by the lambda
-        val another = |z| x + z;  // This should fail
+    let input = r#"record Token {
+        id: Int32
+    }
+
+    fun use_token: (token: Token, amount: Int32) -> Int32 = {
+        amount + token.id
+    }
+
+    fun test = {
+        val x = Token { id: 10 };
+        val use_x: Int32 -> Int32 = |y| (x, y) use_token;
+        val another: Int32 -> Int32 = |z| (x, z) use_token;
         42
     }"#;
     let result = type_check_str(input);

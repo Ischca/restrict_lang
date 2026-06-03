@@ -1,32 +1,33 @@
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn compile(input: &str) -> Result<String, String> {
-    let (remaining, program) = parse_program(input)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
+    let (remaining, program) = parse_program(input).map_err(|e| format!("Parse error: {:?}", e))?;
 
     if !remaining.trim().is_empty() {
         return Err(format!("Unparsed input remaining: {:?}", remaining));
     }
 
     let mut checker = TypeChecker::new();
-    checker.check_program(&program)
+    checker
+        .check_program(&program)
         .map_err(|e| format!("Type error: {:?}", e))?;
 
     let mut codegen = WasmCodeGen::new();
-    codegen.generate(&program)
+    codegen
+        .generate(&program)
         .map_err(|e| format!("Codegen error: {:?}", e))
 }
 
 fn type_check(input: &str) -> Result<(), String> {
-    let (remaining, program) = parse_program(input)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
+    let (remaining, program) = parse_program(input).map_err(|e| format!("Parse error: {:?}", e))?;
 
     if !remaining.trim().is_empty() {
         return Err(format!("Unparsed input remaining: {:?}", remaining));
     }
 
     let mut checker = TypeChecker::new();
-    checker.check_program(&program)
+    checker
+        .check_program(&program)
         .map_err(|e| format!("Type error: {:?}", e))?;
 
     Ok(())
@@ -53,7 +54,11 @@ fun main: () -> Int = {
         Ok((rem, prog)) => {
             println!("Remaining: {:?}", rem);
             println!("Declarations: {}", prog.declarations.len());
-            assert!(rem.trim().is_empty(), "Should parse all input, remaining: {:?}", rem);
+            assert!(
+                rem.trim().is_empty(),
+                "Should parse all input, remaining: {:?}",
+                rem
+            );
             assert_eq!(prog.declarations.len(), 2, "Should have 2 declarations");
         }
         Err(e) => panic!("Parse failed: {:?}", e),
@@ -279,8 +284,11 @@ fun main: () -> Int = {
             println!("Expected error: {}", e);
             // Check for type mismatch error (case-insensitive)
             let e_lower = e.to_lowercase();
-            assert!(e_lower.contains("type") || e_lower.contains("mismatch"),
-                    "Error should mention type mismatch: {}", e);
+            assert!(
+                e_lower.contains("type") || e_lower.contains("mismatch"),
+                "Error should mention type mismatch: {}",
+                e
+            );
         }
     }
 }

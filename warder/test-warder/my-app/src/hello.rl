@@ -1,4 +1,4 @@
-fun main = {
-    val x = 42;
+fun main: () -> Int32 = {
+    val x = 42
     x
 }

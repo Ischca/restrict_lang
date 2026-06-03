@@ -11,8 +11,8 @@
 //! 3. **Constraint Solving**: Solve constraints to determine lifetime relationships
 //! 4. **Annotation**: Apply inferred lifetimes to the AST
 
-use std::collections::{HashMap, HashSet};
 use crate::ast::*;
+use std::collections::{HashMap, HashSet};
 
 /// Represents a lifetime variable in the inference system
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -68,7 +68,7 @@ impl LifetimeInferenceContext {
             scope_stack: Vec::new(),
         }
     }
-    
+
     /// Generate a fresh anonymous lifetime
     fn fresh_lifetime(&mut self) -> LifetimeVar {
         let lifetime = LifetimeVar::Anonymous(self.anonymous_counter);
@@ -76,12 +76,12 @@ impl LifetimeInferenceContext {
         self.lifetime_vars.insert(lifetime.clone());
         lifetime
     }
-    
+
     /// Add a lifetime constraint
     fn add_constraint(&mut self, constraint: LifetimeConstraint) {
         self.constraints.push(constraint);
     }
-    
+
     /// Enter a new lifetime scope
     fn enter_scope(&mut self, lifetime: LifetimeVar) {
         if let Some(current) = &self.current_scope_lifetime {
@@ -89,7 +89,7 @@ impl LifetimeInferenceContext {
         }
         self.current_scope_lifetime = Some(lifetime);
     }
-    
+
     /// Exit the current lifetime scope
     fn exit_scope(&mut self) {
         if let Some(parent) = self.scope_stack.pop() {
@@ -97,6 +97,12 @@ impl LifetimeInferenceContext {
         } else {
             self.current_scope_lifetime = None;
         }
+    }
+}
+
+impl Default for LifetimeInferenceContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -111,24 +117,24 @@ impl LifetimeInference {
             context: LifetimeInferenceContext::new(),
         }
     }
-    
+
     /// Infer lifetimes for a program
     pub fn infer_program(&mut self, program: &Program) -> Result<LifetimeAnnotations, String> {
         // Phase 1: Collect temporal values and usage sites
         for decl in &program.declarations {
             self.collect_from_decl(decl)?;
         }
-        
+
         // Phase 2: Generate constraints
         self.generate_constraints(program)?;
-        
+
         // Phase 3: Solve constraints
         let solution = self.solve_constraints()?;
-        
+
         // Phase 4: Apply solution to create annotations
         Ok(self.create_annotations(solution))
     }
-    
+
     /// Collect temporal values from a declaration
     fn collect_from_decl(&mut self, decl: &TopDecl) -> Result<(), String> {
         match decl {
@@ -137,7 +143,7 @@ impl LifetimeInference {
             _ => Ok(()),
         }
     }
-    
+
     /// Collect temporal values from a function
     fn collect_from_function(&mut self, func: &FunDecl) -> Result<(), String> {
         // Create lifetime scope for function
@@ -148,16 +154,16 @@ impl LifetimeInference {
             // Create anonymous lifetime for function scope
             self.context.fresh_lifetime()
         };
-        
+
         self.context.enter_scope(func_lifetime);
-        
+
         // Analyze function body
         self.collect_from_block(&func.body)?;
-        
+
         self.context.exit_scope();
         Ok(())
     }
-    
+
     /// Collect temporal values from a record
     fn collect_from_record(&mut self, record: &RecordDecl) -> Result<(), String> {
         // Register temporal parameters
@@ -167,17 +173,18 @@ impl LifetimeInference {
                 self.context.lifetime_vars.insert(lifetime);
             }
         }
-        
+
         // Register temporal constraints
         for constraint in &record.temporal_constraints {
             let inner = LifetimeVar::Named(constraint.inner.clone());
             let outer = LifetimeVar::Named(constraint.outer.clone());
-            self.context.add_constraint(LifetimeConstraint::Within(inner, outer));
+            self.context
+                .add_constraint(LifetimeConstraint::Within(inner, outer));
         }
-        
+
         Ok(())
     }
-    
+
     /// Collect from a block expression
     fn collect_from_block(&mut self, block: &BlockExpr) -> Result<(), String> {
         for stmt in &block.statements {
@@ -197,29 +204,38 @@ impl LifetimeInference {
                 }
             }
         }
-        
+
         if let Some(expr) = &block.expr {
             self.collect_from_expr(expr)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Collect from an expression
     fn collect_from_expr(&mut self, expr: &Expr) -> Result<(), String> {
         match expr {
             Expr::RecordLit(record_lit) => {
                 // Check if this is a temporal record
                 if self.is_temporal_record(&record_lit.name) {
-                    let _lifetime = self.context.current_scope_lifetime
+                    let _lifetime = self
+                        .context
+                        .current_scope_lifetime
                         .clone()
                         .unwrap_or_else(|| self.context.fresh_lifetime());
                     // TODO: Store expr_id -> lifetime mapping
                 }
-                
+
                 // Recursively collect from field values
                 for field in &record_lit.fields {
-                    self.collect_from_expr(&field.value)?;
+                    match field {
+                        FieldInit::Field { value, .. } => {
+                            self.collect_from_expr(value)?;
+                        }
+                        FieldInit::Spread(expr) => {
+                            self.collect_from_expr(expr)?;
+                        }
+                    }
                 }
             }
             Expr::Call(call_expr) => {
@@ -243,22 +259,22 @@ impl LifetimeInference {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
-    
+
     /// Check if an expression produces a temporal value
     fn is_temporal_expr(&self, _expr: &Expr) -> bool {
         // TODO: Implement based on type information
         false
     }
-    
+
     /// Check if a record type is temporal
     fn is_temporal_record(&self, _name: &str) -> bool {
         // TODO: Implement based on record definitions
         false
     }
-    
+
     /// Generate lifetime constraints from the program
     fn generate_constraints(&mut self, _program: &Program) -> Result<(), String> {
         // TODO: Implement constraint generation
@@ -267,16 +283,16 @@ impl LifetimeInference {
         // 3. Pattern matches must respect lifetime bounds
         Ok(())
     }
-    
+
     /// Solve lifetime constraints
     fn solve_constraints(&self) -> Result<LifetimeSolution, String> {
         let mut solution = LifetimeSolution::new();
-        
+
         // Simple constraint solver using fixed-point iteration
         let mut changed = true;
         while changed {
             changed = false;
-            
+
             for constraint in &self.context.constraints {
                 match constraint {
                     LifetimeConstraint::Within(inner, outer) => {
@@ -303,19 +319,25 @@ impl LifetimeInference {
                 }
             }
         }
-        
+
         // Check for contradictions
         solution.validate()?;
-        
+
         Ok(solution)
     }
-    
+
     /// Create lifetime annotations from the solution
     fn create_annotations(&self, solution: LifetimeSolution) -> LifetimeAnnotations {
         LifetimeAnnotations {
             expr_lifetimes: HashMap::new(),
             inferred_lifetimes: solution.get_all_lifetimes(),
         }
+    }
+}
+
+impl Default for LifetimeInference {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -338,25 +360,25 @@ impl LifetimeSolution {
             outlives_relations: HashMap::new(),
         }
     }
-    
+
     fn is_within(&self, inner: &LifetimeVar, outer: &LifetimeVar) -> bool {
         self.within_relations
             .get(inner)
             .map(|outers| outers.contains(outer))
             .unwrap_or(false)
     }
-    
+
     fn add_within(&mut self, inner: LifetimeVar, outer: LifetimeVar) {
         self.within_relations
             .entry(inner)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(outer);
     }
-    
+
     fn are_equal(&self, a: &LifetimeVar, b: &LifetimeVar) -> bool {
         self.find_root(a) == self.find_root(b)
     }
-    
+
     fn unify(&mut self, a: LifetimeVar, b: LifetimeVar) {
         let root_a = self.find_root(&a);
         let root_b = self.find_root(&b);
@@ -364,21 +386,18 @@ impl LifetimeSolution {
             self.equiv_classes.insert(root_a, root_b);
         }
     }
-    
+
     fn outlives(&self, a: &LifetimeVar, b: &LifetimeVar) -> bool {
         self.outlives_relations
             .get(a)
             .map(|inners| inners.contains(b))
             .unwrap_or(false)
     }
-    
+
     fn add_outlives(&mut self, a: LifetimeVar, b: LifetimeVar) {
-        self.outlives_relations
-            .entry(a)
-            .or_insert_with(HashSet::new)
-            .insert(b);
+        self.outlives_relations.entry(a).or_default().insert(b);
     }
-    
+
     fn find_root(&self, var: &LifetimeVar) -> LifetimeVar {
         let mut current = var.clone();
         while let Some(parent) = self.equiv_classes.get(&current) {
@@ -389,7 +408,7 @@ impl LifetimeSolution {
         }
         current
     }
-    
+
     fn validate(&self) -> Result<(), String> {
         // Check for circular within constraints
         for (inner, outers) in &self.within_relations {
@@ -402,25 +421,25 @@ impl LifetimeSolution {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn get_all_lifetimes(&self) -> HashMap<LifetimeVar, LifetimeVar> {
         let mut result = HashMap::new();
-        
+
         // Collect all lifetime variables
         let mut all_vars = HashSet::new();
         all_vars.extend(self.equiv_classes.keys().cloned());
         all_vars.extend(self.equiv_classes.values().cloned());
         all_vars.extend(self.within_relations.keys().cloned());
         all_vars.extend(self.outlives_relations.keys().cloned());
-        
+
         // Map each variable to its canonical representative
         for var in all_vars {
             result.insert(var.clone(), self.find_root(&var));
         }
-        
+
         result
     }
 }

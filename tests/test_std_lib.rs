@@ -1,173 +1,189 @@
 use restrict_lang::*;
 
-fn check_program_str(input: &str) -> Result<(), TypeError> {
-    match parse_program(input) {
-        Ok((_, program)) => {
-            let mut checker = TypeChecker::new();
-            checker.check_program(&program)
-        }
-        Err(e) => panic!("Parse error: {:?}", e),
+fn check_program_str(input: &str) -> Result<(), String> {
+    let (remaining, program) = parse_program(input).map_err(|e| format!("Parse error: {:?}", e))?;
+    if !remaining.trim().is_empty() {
+        return Err(format!("Unparsed input remaining: {:?}", remaining));
     }
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|e| format!("Type error: {}", e))
 }
 
 #[test]
-fn test_std_math_functions() {
+fn std_math_functions_use_osv_calls() {
     let input = r#"
-        fun test_math() {
-            val a = abs(-5)
-            val b = max(10, 20)
-            val c = min(3, 7)
-            val d = pow(2, 3)
-            val e = factorial(4)
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_math: () -> Int32 = {
+    val a = -5 |> abs;
+    val b = (10, 20) max;
+    val c = (3, 7) min;
+    val d = (2, 3) pow;
+    val e = 4 |> factorial;
+    a + b + c + d + e
+}
+"#;
+
+    check_program_str(input).expect("math functions should type check");
 }
 
 #[test]
-fn test_std_list_functions() {
+fn std_list_functions_use_affine_aware_bindings() {
     let input = r#"
-        fun test_list() {
-            val numbers = [1, 2, 3, 4, 5]
-            val empty = list_is_empty(numbers)
-            val head = list_head(numbers)
-            val tail = list_tail(numbers)
-            val reversed = list_reverse(numbers)
-            val count = list_count(numbers)
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_list: () -> Int32 = {
+    mut val numbers = [1, 2, 3, 4, 5];
+    val empty = numbers |> list_is_empty;
+    val head = numbers |> list_head;
+    val tail = numbers |> list_tail;
+    val reversed = numbers |> list_reverse;
+    val count = numbers |> list_count;
+    count
+}
+"#;
+
+    check_program_str(input).expect("list functions should type check");
 }
 
 #[test]
-fn test_std_option_functions() {
+fn std_option_functions_use_osv_calls() {
     let input = r#"
-        fun test_option() {
-            val opt = Some(42)
-            val has_value = option_is_some(opt)
-            val is_empty = option_is_none(opt)
-            val value = option_unwrap_or(opt, 0)
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_option: () -> Int32 = {
+    val opt = Some(42);
+    val has_value = opt |> option_is_some;
+    val is_empty = opt |> option_is_none;
+    val value = (opt, 0) option_unwrap_or;
+    value
+}
+"#;
+
+    check_program_str(input).expect("option functions should type check");
 }
 
 #[test]
-fn test_std_io_functions() {
+fn std_io_functions_use_osv_calls() {
     let input = r#"
-        fun test_io() {
-            print("Hello")
-            print_int(42)
-            print_float(3.14)
-            eprint("Error")
-            eprintln("Error with newline")
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_io: () -> () = {
+    "Hello" |> print;
+    42 |> print_int;
+    3.14 |> print_float;
+    "Error" |> eprint;
+    "Error with newline" |> eprintln
+}
+"#;
+
+    check_program_str(input).expect("I/O functions should type check");
 }
 
 #[test]
-fn test_std_prelude_functions() {
+fn std_prelude_functions_use_osv_calls() {
     let input = r#"
-        fun test_prelude() {
-            val x = identity(42)
-            val bool_not = not(true)
-            val bool_and = and(true, false)
-            val bool_or = or(true, false)
-            assert(true, "This should pass")
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_prelude: () -> Boolean = {
+    val x = 42 |> identity;
+    val bool_not = true |> not;
+    val bool_and = (true, false) and;
+    val bool_or = (bool_and, false) or;
+    (true, "This should pass") assert;
+    bool_or
+}
+"#;
+
+    check_program_str(input).expect("prelude functions should type check");
 }
 
 #[test]
-fn test_generic_list_functions_with_type_inference() {
+fn generic_list_functions_infer_element_types() {
     let input = r#"
-        fun test_generic_lists() {
-            val strings = ["hello", "world"]
-            val string_count = list_count(strings)
-            val string_head = list_head(strings)
-            
-            val numbers = [1, 2, 3]
-            val number_count = list_count(numbers)
-            val number_head = list_head(numbers)
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_generic_lists: () -> Int32 = {
+    mut val strings = ["hello", "world"];
+    val string_count = strings |> list_count;
+    val string_head = strings |> list_head;
+
+    mut val numbers = [1, 2, 3];
+    val number_count = numbers |> list_count;
+    val number_head = numbers |> list_head;
+    string_count + number_count
+}
+"#;
+
+    check_program_str(input).expect("generic list functions should infer element types");
 }
 
 #[test]
-fn test_generic_option_functions() {
+fn generic_option_functions_infer_payload_types() {
     let input = r#"
-        fun test_generic_options() {
-            val int_opt = Some(42)
-            val string_opt = Some("hello")
-            val none_opt = None
-            
-            val int_value = option_unwrap_or(int_opt, 0)
-            val string_value = option_unwrap_or(string_opt, "default")
-            val default_value = option_unwrap_or(none_opt, 999)
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_generic_options: () -> Int32 = {
+    val int_opt = Some(42);
+    val int_value = (int_opt, 0) option_unwrap_or;
+
+    val string_opt = Some("hello");
+    val string_value = (string_opt, "default") option_unwrap_or;
+
+    val none_opt: Option<Int32> = None;
+    val default_value = (none_opt, 999) option_unwrap_or;
+    int_value + default_value
+}
+"#;
+
+    check_program_str(input).expect("generic option functions should infer payload types");
 }
 
 #[test]
-fn test_math_with_float() {
+fn float_math_functions_type_check() {
     let input = r#"
-        fun test_float_math() {
-            val a = abs_f(-3.14)
-            val b = max_f(1.5, 2.7)
-            val c = min_f(0.5, 1.0)
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_float_math: () -> Float64 = {
+    val a = -3.14 |> abs_f;
+    val b = (1.5, 2.7) max_f;
+    val c = (0.5, 1.0) min_f;
+    a + b + c
+}
+"#;
+
+    check_program_str(input).expect("float math functions should type check");
 }
 
 #[test]
-fn test_list_operations_chaining() {
+fn list_operations_compose_with_osv_calls() {
     let input = r#"
-        fun test_list_chaining() {
-            val numbers = [1, 2, 3, 4]
-            val item = 5
-            val extended = list_append(numbers, item)
-            val combined = list_concat(numbers, [6, 7, 8])
-            val first = list_prepend(0, numbers)
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun test_list_chaining: () -> Int32 = {
+    val extended = ([1, 2, 3, 4], 5) list_append;
+    val combined = ([1, 2, 3, 4], [6, 7, 8]) list_concat;
+    val first = (0, [1, 2, 3, 4]) list_prepend;
+    val a = extended |> list_count;
+    val b = combined |> list_count;
+    val c = first |> list_count;
+    a + b + c
+}
+"#;
+
+    check_program_str(input).expect("list operations should type check");
 }
 
 #[test]
-fn test_standard_library_comprehensive() {
+fn standard_library_comprehensive_osv_flow() {
     let input = r#"
-        fun comprehensive_test() {
-            // Math operations
-            val abs_result = abs(-42)
-            val max_result = max(abs_result, 50)
-            
-            // List operations
-            val my_list = [1, 2, 3, 4, 5]
-            val list_size = list_count(my_list)
-            val first_element = list_head(my_list)
-            val rest_elements = list_tail(my_list)
-            
-            // Option handling
-            val maybe_first = list_head(my_list)
-            val first_or_zero = option_unwrap_or(maybe_first, 0)
-            val has_value = option_is_some(maybe_first)
-            
-            // Boolean operations
-            val condition = and(has_value, max_result > 40)
-            val result = or(condition, false)
-            
-            // Output
-            print_int(first_or_zero)
-            print_int(list_size)
-            
-            // Assertions
-            assert(result, "Test should pass")
-        }
-    "#;
-    assert!(check_program_str(input).is_ok());
+fun comprehensive_test: () -> Boolean = {
+    val abs_result = -42 |> abs;
+    val max_result = (abs_result, 50) max;
+
+    mut val my_list = [1, 2, 3, 4, 5];
+    val list_size = my_list |> list_count;
+    val maybe_first = my_list |> list_head;
+    val rest_elements = my_list |> list_tail;
+
+    val first_or_zero = (maybe_first, 0) option_unwrap_or;
+    val has_value = maybe_first |> option_is_some;
+
+    val above_threshold = max_result > 40;
+    val condition = (has_value, above_threshold) and;
+    val result = (condition, false) or;
+
+    first_or_zero |> print_int;
+    list_size |> print_int;
+    (result, "Test should pass") assert;
+    result
+}
+"#;
+
+    check_program_str(input).expect("comprehensive stdlib flow should type check");
 }

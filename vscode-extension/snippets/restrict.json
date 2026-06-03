@@ -2,9 +2,8 @@
     "Function Definition": {
         "prefix": "fun",
         "body": [
-            "fun ${1:function_name} = ${2:param}:${3:Type} {",
-            "\t${4:// function body}",
-            "\t$0",
+            "fun ${1:function_name}: (${2:param}: ${3:Type}) -> ${4:ReturnType} = {",
+            "\t${5:body}$0",
             "}"
         ],
         "description": "Define a function"
@@ -26,15 +25,36 @@
     "Mutable Variable": {
         "prefix": "mut",
         "body": [
-            "val mut ${1:variable_name} = ${2:value}$0"
+            "mut val ${1:variable_name} = ${2:value}$0"
         ],
         "description": "Create a mutable variable"
+    },
+    "Named Import": {
+        "prefix": "import",
+        "body": [
+            "import ${1:module}.${2:path}.{${3:item}}$0"
+        ],
+        "description": "Import named items from a dotted module path"
+    },
+    "Wildcard Import": {
+        "prefix": "importall",
+        "body": [
+            "import ${1:module}.${2:path}.*$0"
+        ],
+        "description": "Import all public items from a dotted module path"
+    },
+    "Module Import": {
+        "prefix": "importmodule",
+        "body": [
+            "import ${1:module}.${2:path}$0"
+        ],
+        "description": "Import a dotted module path"
     },
     "Record Definition": {
         "prefix": "record",
         "body": [
             "record ${1:RecordName} {",
-            "\t${2:field_name}: ${3:Type},",
+            "\t${2:field_name}: ${3:Type}",
             "\t$0",
             "}"
         ],
@@ -50,17 +70,15 @@
         ],
         "description": "Create a record instance"
     },
-    "Impl Block": {
-        "prefix": "impl",
+    "Context Definition": {
+        "prefix": "context",
         "body": [
-            "impl ${1:RecordName} {",
-            "\tfun ${2:method_name} = self:${1:RecordName} {",
-            "\t\t${3:// method body}",
-            "\t\t$0",
-            "\t}",
+            "context ${1:ContextName} {",
+            "\t${2:resource}: ${3:Type}",
+            "\t$0",
             "}"
         ],
-        "description": "Implement methods for a record"
+        "description": "Define a context"
     },
     "Match Expression": {
         "prefix": "match",
@@ -95,32 +113,30 @@
         ],
         "description": "Pattern match on List type"
     },
-    "If Then Else": {
-        "prefix": "if",
+    "Then Else": {
+        "prefix": "then",
         "body": [
-            "if ${1:condition} { ${2:then_branch} } else { ${3:else_branch} }$0"
+            "${1:condition} then { ${2:then_branch} } else { ${3:else_branch} }$0"
         ],
         "description": "Conditional expression"
     },
     "While Loop": {
         "prefix": "while",
         "body": [
-            "while ${1:condition} {",
-            "\t${2:// loop body}",
-            "\t$0",
+            "${1:condition} while {",
+            "\t${2:body}$0",
             "}"
         ],
         "description": "While loop"
     },
-    "Arena Block": {
-        "prefix": "arena",
+    "With Context": {
+        "prefix": "with",
         "body": [
-            "new_arena(${1:size}) {",
-            "\t${2:// allocations}",
-            "\t$0",
+            "with ${1:ContextName} { ${2:resource}: ${3:value} } {",
+            "\t${4:body}$0",
             "}"
         ],
-        "description": "Arena allocation block"
+        "description": "Bind context resources"
     },
     "Pipe Operation": {
         "prefix": "pipe",
@@ -129,12 +145,18 @@
         ],
         "description": "Pipe operation"
     },
+    "OSV Function Call": {
+        "prefix": "call",
+        "body": [
+            "(${1:arg1}, ${2:arg2}) ${3:function}$0"
+        ],
+        "description": "Call a function with OSV argument order"
+    },
     "Main Function": {
         "prefix": "main",
         "body": [
-            "fun main = {",
-            "\t${1:// program entry point}",
-            "\t$0",
+            "fun main: () -> ${1:Int32} = {",
+            "\t${2:0}$0",
             "}"
         ],
         "description": "Main function template"
@@ -149,8 +171,19 @@
     "Array Literal": {
         "prefix": "array",
         "body": [
-            "[|${1:element1}, ${2:element2}$0|]"
+            "val ${1:arr}: Array<${2:Int32}, ${3:2}> = [${4:element1}, ${5:element2}]$0"
         ],
-        "description": "Array literal"
+        "description": "Array binding with expected type"
+    },
+    "Record Spread Pattern": {
+        "prefix": "spreadmatch",
+        "body": [
+            "${1:value} match {",
+            "\t${2:RecordName} { ${3:field}, ...${4:rest} } => { ${5:result} }",
+            "\t_ => { ${6:default} }",
+            "\t$0",
+            "}"
+        ],
+        "description": "Pattern match a record with spread destructuring"
     }
 }

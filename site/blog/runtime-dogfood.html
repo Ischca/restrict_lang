@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dogfooding Restrict with runtime examples</title>
+  <meta name="description" content="A short Restrict implementation note on executable runtime dogfood examples.">
+  <meta name="theme-color" content="#ff6b35">
+  <meta property="og:site_name" content="Restrict Language">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Dogfooding Restrict with runtime examples">
+  <meta property="og:description" content="A short Restrict implementation note on executable runtime dogfood examples.">
+  <meta property="og:url" content="https://restrict-lang.github.io/restrict_lang/blog/runtime-dogfood.html">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://restrict-lang.github.io/restrict_lang/blog/runtime-dogfood.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="../">Restrict</a>
+    <nav aria-label="Primary navigation">
+      <a href="../docs/">Docs</a>
+      <a href="../compiler/">Compiler</a>
+      <a href="./" aria-current="page">Blog</a>
+      <a href="https://github.com/restrict-lang/restrict_lang">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="article-shell">
+    <article>
+      <p class="eyebrow">Runtime coverage</p>
+      <h1>Dogfooding Restrict with runtime examples</h1>
+      <p class="article-meta">Release note draft</p>
+      <p>
+        Type-check-only examples are useful, but they do not prove that the
+        compiler can lower practical programs into executable WebAssembly.
+        Runtime dogfood examples close that gap.
+      </p>
+      <p>
+        The pattern is simple: keep rich records, lists, options, results, and
+        lambdas inside Restrict, then expose a small scalar wrapper for the host.
+        That stays inside the v0.0.1 ABI while still exercising real programs.
+      </p>
+      <pre><code class="language-restrict">export fun dogfood_score: () -&gt; Int32 = {
+    val report = () build_report
+    report.score
+}</code></pre>
+      <p>
+        This also makes the online compiler more honest. The examples linked
+        from docs and blog posts can represent what the release surface actually
+        supports today.
+      </p>
+    </article>
+  </main>
+  <footer>
+    <span>Restrict Language</span>
+    <span><a href="./">All posts</a></span>
+  </footer>
+  <script src="../restrict-highlight.js"></script>
+  <script src="../restrict-code-blocks.js"></script>
+</body>
+</html>

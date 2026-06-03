@@ -1,4 +1,4 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -28,9 +28,18 @@ pub struct Package {
 #[serde(untagged)]
 pub enum Dependency {
     Version(String),
-    Local { path: String },
-    Git { git: String, #[serde(skip_serializing_if = "Option::is_none")] tag: Option<String> },
-    Foreign { wasm: String, wit: String },
+    Local {
+        path: String,
+    },
+    Git {
+        git: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tag: Option<String>,
+    },
+    Foreign {
+        wasm: String,
+        wit: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,25 +89,24 @@ impl Manifest {
             build: Build::default(),
         }
     }
-    
+
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read manifest from {:?}", path))?;
         toml::from_str(&content)
             .with_context(|| format!("Failed to parse manifest from {:?}", path))
     }
-    
+
     pub fn save(&self, path: &Path) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize manifest")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize manifest")?;
         std::fs::write(path, content)
             .with_context(|| format!("Failed to write manifest to {:?}", path))
     }
-    
+
     pub fn add_dependency(&mut self, name: String, dep: Dependency) {
         self.dependencies.insert(name, dep);
     }
-    
+
     pub fn remove_dependency(&mut self, name: &str) -> Option<Dependency> {
         self.dependencies.remove(name)
     }
@@ -118,7 +126,7 @@ pub struct CageManifest {
 impl CageManifest {
     pub fn new(name: String, version: String) -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         Self {
             name,
             version,

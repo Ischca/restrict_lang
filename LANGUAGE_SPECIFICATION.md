@@ -38,12 +38,12 @@ designed.
 ```
 |>      // Pipe operator (primary)
 =       // Assignment
-=>      // Match arrow  
+=>      // Match arrow
 ->      // Function return type arrow
 +  -    // Arithmetic
 *  /  % // Arithmetic
 == !=   // Equality
-<  <=   // Comparison  
+<  <=   // Comparison
 >  >=   // Comparison
 &&  ||  // Logical
 !       // Logical not
@@ -138,7 +138,7 @@ fun process: <~t>(data: Data<~t>) -> Result<Data<~t>, Error> = {
 ### 4.2 Generic and Built-in Collection Types
 ```rust
 List<T>           // Dynamic list
-Array<T, N>       // Fixed-size array  
+Array<T, N>       // Fixed-size array
 Option<T>         // Maybe value
 Result<T, E>      // Success or error
 Range<Int32>      // v0.0.1 range values with Int32 endpoints
@@ -183,17 +183,17 @@ x               // Variable reference
 ```rust
 // ✅ CORRECT: OSV syntax (Object-Subject-Verb)
 value |> function           // Single argument via pipe
-(arg1, arg2) function       // Multiple arguments via tuple  
+(arg1, arg2) function       // Multiple arguments via tuple
 () function                 // No arguments via unit
 
-// ❌ COMPILE ERROR: Traditional function calls NOT supported  
+// ❌ COMPILE ERROR: Traditional function calls NOT supported
 function(args)              // ERROR: Traditional syntax forbidden
 function()                  // ERROR: Traditional syntax forbidden
 object.method(args)         // ERROR: Traditional syntax forbidden
 ```
 
-**CRITICAL RULE**: Restrict Language **exclusively** uses OSV syntax. 
-Arguments always come BEFORE the function name. Traditional parenthetical 
+**CRITICAL RULE**: Restrict Language **exclusively** uses OSV syntax.
+Arguments always come BEFORE the function name. Traditional parenthetical
 function calls `function(args)` will cause compilation errors.
 
 **OSV Pattern Examples:**
@@ -208,7 +208,7 @@ function calls `function(args)` will cause compilation errors.
 // Complex expressions maintain clarity
 val result = user_data
     |> validate_input
-    |> transform_data  
+    |> transform_data
     |> save_to_database
     |> generate_response
 
@@ -220,7 +220,7 @@ database.connection close      // Invalid traditional form: database.connection.
 ### 5.3 Binary Operations
 ```rust
 x + y           // Addition
-x - y           // Subtraction  
+x - y           // Subtraction
 x * y           // Multiplication
 x / y           // Division
 x % y           // Modulo
@@ -308,7 +308,7 @@ None            // Match None
 [head | tail]   // Head and tail (cons pattern)
 ```
 
-### 6.4 Record Patterns  
+### 6.4 Record Patterns
 ```rust
 Person { name, age }                    // Extract all fields
 Person { name: "Alice", age }          // Partial match with literal
@@ -335,10 +335,10 @@ value match {
 
 // Future/planned: nested spread patterns in backend codegen
 // Shown as a planned match-arm shape, not a current v0.0.1 guarantee.
-Company { 
+Company {
     name: companyName,
     contact: Contact { email, ...contactInfo },
-    ...companyDetails 
+    ...companyDetails
 } => {
     // Extract company name, contact email, and group remaining fields
     (companyName, email, contactInfo, companyDetails) process_company
@@ -579,7 +579,7 @@ The following syntax is **NO LONGER SUPPORTED** and will cause compilation error
 
 ### 15.1 Removed Keywords
 - `let` (use `val` instead)
-- `fn` (use `fun` instead)  
+- `fn` (use `fun` instead)
 - `if` (use `then/else` instead)
 - `Unit` as type name (use `()`)
 
@@ -652,19 +652,19 @@ record Person { name: String, age: Int32, address: Address, tags: List<String> }
 fun categorize_person: (person: Person) -> String = {
     person match {
         // Pattern with nested record destructuring
-        Person { 
-            age, 
+        Person {
+            age,
             address: Address { city: "Tokyo", ..._ },
             tags,
-            ..._ 
+            ..._
         } => { "Tokyo resident" }
-        
+
         // Pattern with list matching
         Person { name, tags: ["VIP" | _], ..._ } => { "VIP member: " + name }
         Person { name, tags: [], ..._ } => { "Untagged user: " + name }
-        
+
         // Catch-all with spread
-        Person { name, age, ...profile } => { 
+        Person { name, age, ...profile } => {
             "Regular user: " + name
         }
     }
@@ -714,7 +714,7 @@ If you have existing code using deprecated syntax:
 val mut x = 5
 let x = 5
 
-// NEW (correct)  
+// NEW (correct)
 mut val x = 5
 val x = 5
 ```
@@ -750,7 +750,7 @@ condition then { ... } else { ... }
 
 ## COMPLIANCE
 
-This specification defines Restrict Language v1.0. All implementations, documentation, tutorials, and examples MUST conform to this specification. 
+This specification defines Restrict Language v1.0. All implementations, documentation, tutorials, and examples MUST conform to this specification.
 
 **Parser Implementation**: The official parser in `src/parser.rs` is the
 authority for the current implementation. Sections marked future, planned, or
@@ -759,6 +759,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2025-01-10  
-**Version**: 1.0.0  
+**Last Updated**: 2025-01-10
+**Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

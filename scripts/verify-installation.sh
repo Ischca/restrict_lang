@@ -17,7 +17,7 @@ echo ""
 check_command() {
     local cmd=$1
     local name=$2
-    
+
     if command -v "$cmd" >/dev/null 2>&1; then
         echo -e "${GREEN}✓${NC} $name found"
         return 0

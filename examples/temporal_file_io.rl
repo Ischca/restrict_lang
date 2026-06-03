@@ -44,8 +44,8 @@ fun readFileContent: <~io>(file: File<~io>) -> String = {
 // Function with temporal constraint
 fun beginTransaction: <~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db>
 where ~tx within ~db = {
-    Transaction { 
-        db: db, 
+    Transaction {
+        db: db,
         txId: 42  // Simplified transaction ID
     }
 }
@@ -58,7 +58,7 @@ fun processFile: (filename: String) = {
             // file: File<~fs> is valid here
             val content = file |> FileSystem.read;
             content |> println;
-            
+
             // File automatically cleaned up when callback ends
         }  // ~fs scope ends, file is cleaned up
     }
@@ -68,13 +68,13 @@ fun processFile: (filename: String) = {
 fun databaseTransaction: () = {
     with Database {  // Creates ~db scope
         val db = Database { connection: 1 };
-        
+
         // Transaction must be within database scope
         val tx = db |> beginTransaction;  // tx: Transaction<~tx, ~db>
-        
+
         // Use transaction...
         "Processing transaction" |> println;
-        
+
         // Transaction cleaned up before database
     }  // ~db scope ends, all resources cleaned up in correct order
 }
@@ -82,12 +82,12 @@ fun databaseTransaction: () = {
 // Main function demonstrating temporal types
 fun main: () = {
     "=== Temporal Types Demo ===" |> println;
-    
+
     // Process a file with automatic cleanup
     "test.txt" |> processFile;
-    
+
     // Run a database transaction
     databaseTransaction;
-    
+
     "All resources cleaned up!" |> println;
 }

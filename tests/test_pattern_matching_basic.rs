@@ -31,7 +31,7 @@ fn test_integer_pattern_match() {
                 _ => { 99 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val a = 0 |> classify;
             val b = 1 |> classify;
@@ -53,7 +53,7 @@ fn test_match_with_variable_binding() {
                 x => { 42 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val a = -5 |> test_binding;
             val b = 0 |> test_binding;
@@ -94,7 +94,7 @@ fn test_nested_match() {
                 _ => { 30 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val a = 0 |> nested;
             val b = 1 |> nested;
@@ -119,7 +119,7 @@ fn test_match_with_complex_expressions() {
                 _ => { -1 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val a = 0 |> process;
             val b = 10 |> process;
@@ -156,7 +156,7 @@ fn test_match_with_block_patterns() {
     let source = r#"
         fun complex_match: (n: Int32) -> Int32 = {
             n match {
-                0 => { 
+                0 => {
                     val a = 10;
                     val b = 20;
                     a + b
@@ -170,7 +170,7 @@ fn test_match_with_block_patterns() {
                 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val a = 0 |> complex_match;
             val b = 1 |> complex_match;
@@ -191,7 +191,7 @@ fn test_wildcard_pattern() {
                 _ => { 42 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             100 |> always_42
         }
@@ -210,7 +210,7 @@ fn test_match_exhaustiveness_with_wildcard() {
                 divisor => { a / divisor }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val a = (10, 2) safe_divide;
             val b = (10, 0) safe_divide;

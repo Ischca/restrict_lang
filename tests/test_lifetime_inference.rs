@@ -10,11 +10,11 @@ fn test_basic_lifetime_inference() {
     record File<~f> {
         handle: Int32
     }
-    
+
     fun processFile<~io> = file: File<~io> {
         file.handle
     }
-    
+
     fun main: () -> Int = {
         42
     }"#;
@@ -40,12 +40,12 @@ fn test_lifetime_inference_with_constraints() {
     record Database<~db> {
         id: Int32
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         db: Database<~db>
         txId: Int32
     }
-    
+
     fun beginTx<~db, ~tx> = db: Database<~db> -> Transaction<~tx, ~db>
     where ~tx within ~db {
         Transaction { db = db, txId = 1 }
@@ -69,7 +69,7 @@ fn test_lifetime_inference_escape_detection() {
     record File<~f> {
         handle: Int32
     }
-    
+
     fun leakFile<~io> = {
         val file = File { handle = 1 };
         file  // Trying to return temporal value

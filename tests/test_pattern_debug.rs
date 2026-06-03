@@ -9,7 +9,7 @@ fn test_debug_pattern() {
                 None => { 0 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val some_score = Some(42) |> test_option
             val none_val: Option<Int32> = None

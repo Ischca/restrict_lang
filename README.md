@@ -1,10 +1,10 @@
 <div align="center">
   <img src="assets/logo.svg" alt="Restrict Language Logo" width="200" height="200">
-  
+
   # Restrict Language
-  
+
   **A functional programming language with affine types for WebAssembly**
-  
+
   [![CI](https://github.com/restrict-lang/restrict_lang/actions/workflows/ci.yml/badge.svg)](https://github.com/restrict-lang/restrict_lang/actions/workflows/ci.yml)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![WASM](https://img.shields.io/badge/target-WebAssembly-orange.svg)](https://webassembly.org/)
@@ -42,7 +42,7 @@ wasmtime hello.wat
 
 - **🔒 Affine Type System**: Variables can be used at most once, preventing accidental resource duplication
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
-- **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for Option, List, and Record types  
+- **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for Option, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support for the current concrete ABI surface
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition (traditional function calls not supported)
@@ -139,9 +139,9 @@ val product = (2, 3) multiply             // Direct OSV with multiple args
 val message = "Hello, " + "Restrict"      // Current string composition
 
 // Function composition flows naturally left-to-right
-val process_data = data 
-    |> validate 
-    |> transform 
+val process_data = data
+    |> validate
+    |> transform
     |> save_to_database
 ```
 
@@ -350,7 +350,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 Source Code (.rl)
     ↓
 Lexer → Tokens
-    ↓  
+    ↓
 Parser → AST
     ↓
 Type Checker → Typed AST

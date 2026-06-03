@@ -479,8 +479,16 @@ fn test_error_message_duplicate_form() {
     "#;
     let err = type_check(input).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("Duplicate"), "Error message should mention 'Duplicate': {}", msg);
-    assert!(msg.contains("Duplicated"), "Error message should include the form name: {}", msg);
+    assert!(
+        msg.contains("Duplicate"),
+        "Error message should mention 'Duplicate': {}",
+        msg
+    );
+    assert!(
+        msg.contains("Duplicated"),
+        "Error message should include the form name: {}",
+        msg
+    );
 }
 
 #[test]
@@ -492,10 +500,16 @@ fn test_error_message_undefined_form() {
     "#;
     let err = type_check(input).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("Undefined") || msg.contains("undefined"),
-        "Error message should mention undefined form: {}", msg);
-    assert!(msg.contains("MissingForm"),
-        "Error message should include the form name: {}", msg);
+    assert!(
+        msg.contains("Undefined") || msg.contains("undefined"),
+        "Error message should mention undefined form: {}",
+        msg
+    );
+    assert!(
+        msg.contains("MissingForm"),
+        "Error message should include the form name: {}",
+        msg
+    );
 }
 
 #[test]
@@ -511,8 +525,16 @@ fn test_error_message_missing_method() {
     "#;
     let err = type_check(input).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("rest"), "Error message should name the missing method: {}", msg);
-    assert!(msg.contains("Worker"), "Error message should name the form: {}", msg);
+    assert!(
+        msg.contains("rest"),
+        "Error message should name the missing method: {}",
+        msg
+    );
+    assert!(
+        msg.contains("Worker"),
+        "Error message should name the form: {}",
+        msg
+    );
 }
 
 #[test]
@@ -528,8 +550,16 @@ fn test_error_message_missing_associated_type() {
     "#;
     let err = type_check(input).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("Output"), "Error message should name the missing associated type: {}", msg);
-    assert!(msg.contains("Transformer"), "Error message should name the form: {}", msg);
+    assert!(
+        msg.contains("Output"),
+        "Error message should name the missing associated type: {}",
+        msg
+    );
+    assert!(
+        msg.contains("Transformer"),
+        "Error message should name the form: {}",
+        msg
+    );
 }
 
 // ========================================================================
@@ -562,8 +592,11 @@ fn test_codegen_form_and_takes_stores_form_info() {
     "#;
     let wat = codegen_ok(input);
     // The WAT should contain the takes method implementation
-    assert!(wat.contains("MyType_Showable_show"),
-        "WAT should contain mangled takes method name: {}", wat);
+    assert!(
+        wat.contains("MyType_Showable_show"),
+        "WAT should contain mangled takes method name: {}",
+        wat
+    );
 }
 
 #[test]
@@ -582,8 +615,10 @@ fn test_codegen_takes_generates_method_function() {
     "#;
     let wat = codegen_ok(input);
     // Should contain a function definition for the takes method
-    assert!(wat.contains("(func $Num_Computable_compute"),
-        "WAT should contain takes method function definition");
+    assert!(
+        wat.contains("(func $Num_Computable_compute"),
+        "WAT should contain takes method function definition"
+    );
 }
 
 #[test]
@@ -609,10 +644,14 @@ fn test_codegen_multiple_types_take_same_form() {
     "#;
     let wat1 = codegen_ok(input);
     let wat2 = codegen_ok(input2);
-    assert!(wat1.contains("Calc_Addable_add"),
-        "WAT should contain Calc takes method");
-    assert!(wat2.contains("NumOps_Addable_add"),
-        "WAT should contain NumOps takes method");
+    assert!(
+        wat1.contains("Calc_Addable_add"),
+        "WAT should contain Calc takes method"
+    );
+    assert!(
+        wat2.contains("NumOps_Addable_add"),
+        "WAT should contain NumOps takes method"
+    );
 }
 
 // ---- End-to-end tests: map/filter/forEach on List ----
@@ -624,7 +663,9 @@ fn compile(input: &str) -> Result<String, String> {
         return Err(format!("Type error: {:?}", e));
     }
     let mut codegen = WasmCodeGen::new();
-    codegen.generate(&program).map_err(|e| format!("Codegen error: {:?}", e))
+    codegen
+        .generate(&program)
+        .map_err(|e| format!("Codegen error: {:?}", e))
 }
 
 #[test]
@@ -637,9 +678,16 @@ fn test_e2e_map_on_list_compiles() {
         }
     "#;
     let result = compile(input);
-    assert!(result.is_ok(), "map on List should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "map on List should compile: {:?}",
+        result.err()
+    );
     let wat = result.unwrap();
-    assert!(wat.contains("call $list_map"), "Should dispatch to list_map");
+    assert!(
+        wat.contains("call $list_map"),
+        "Should dispatch to list_map"
+    );
 }
 
 #[test]
@@ -652,9 +700,16 @@ fn test_e2e_filter_on_list_compiles() {
         }
     "#;
     let result = compile(input);
-    assert!(result.is_ok(), "filter on List should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "filter on List should compile: {:?}",
+        result.err()
+    );
     let wat = result.unwrap();
-    assert!(wat.contains("call $list_filter"), "Should dispatch to list_filter");
+    assert!(
+        wat.contains("call $list_filter"),
+        "Should dispatch to list_filter"
+    );
 }
 
 #[test]
@@ -669,9 +724,16 @@ fn test_e2e_forEach_on_list_compiles() {
         }
     "#;
     let result = compile(input);
-    assert!(result.is_ok(), "forEach on List should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "forEach on List should compile: {:?}",
+        result.err()
+    );
     let wat = result.unwrap();
-    assert!(wat.contains("call $list_forEach"), "Should dispatch to list_forEach");
+    assert!(
+        wat.contains("call $list_forEach"),
+        "Should dispatch to list_forEach"
+    );
 }
 
 #[test]
@@ -684,9 +746,16 @@ fn test_e2e_map_on_option_compiles() {
         }
     "#;
     let result = compile(input);
-    assert!(result.is_ok(), "map on Option should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "map on Option should compile: {:?}",
+        result.err()
+    );
     let wat = result.unwrap();
-    assert!(wat.contains("call $option_map"), "Should dispatch to option_map");
+    assert!(
+        wat.contains("call $option_map"),
+        "Should dispatch to option_map"
+    );
 }
 
 #[test]
@@ -696,7 +765,16 @@ fn test_e2e_option_wasm_functions_generated() {
         fun main: () -> Int32 = { 0 }
     "#;
     let wat = codegen_ok(input);
-    assert!(wat.contains("(func $option_map"), "Should generate option_map");
-    assert!(wat.contains("(func $option_filter"), "Should generate option_filter");
-    assert!(wat.contains("(func $option_forEach"), "Should generate option_forEach");
+    assert!(
+        wat.contains("(func $option_map"),
+        "Should generate option_map"
+    );
+    assert!(
+        wat.contains("(func $option_filter"),
+        "Should generate option_filter"
+    );
+    assert!(
+        wat.contains("(func $option_forEach"),
+        "Should generate option_forEach"
+    );
 }

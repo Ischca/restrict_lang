@@ -5,7 +5,7 @@ fn test_single_line_comments() {
     let input = r#"
     // This is a comment
     val x = 42  // Another comment
-    
+
     // Function with comments
     fun test = {
         // Comment inside function
@@ -25,7 +25,7 @@ fn test_multi_line_comments() {
     /* This is a
        multi-line comment */
     val x = 42
-    
+
     /* Function with
        multi-line comments */
     fun test = {
@@ -47,7 +47,7 @@ fn test_mixed_comments() {
     // Single line comment
     /* Multi-line comment */
     val x = 42  // Inline comment
-    
+
     /* Mixed
        comments */
     fun test = {
@@ -69,7 +69,7 @@ fn test_lambda_with_comments() {
     fun test = {
         // Create a lambda
         val add_one: Int32 -> Int32 = |x| /* param x */ x + 1;  // adds one
-        
+
         /* Apply the lambda */
         val result = (41) add_one;
         result

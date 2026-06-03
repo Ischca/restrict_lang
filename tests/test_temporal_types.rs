@@ -10,11 +10,11 @@ fn test_temporal_type_basic() {
     record File<~f> {
         handle: Int32  // Simplified for now
     }
-    
+
     fun readFile: <~io>(file: File<~io>) -> Int32 = {
         42  // Dummy return
     }
-    
+
     fun main: () = {
         val file = File { handle = 1 };
         (file) readFile
@@ -33,12 +33,12 @@ fn test_temporal_constraint_within() {
     record Database<~db> {
         id: Int32
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         db: Database<~db>
         txId: Int32
     }
-    
+
     fun beginTx: <~db, ~tx>(db: Database<~db>) -> Transaction<~tx, ~db>
     where ~tx within ~db = {
         Transaction { db = db, txId = 1 }
@@ -58,11 +58,11 @@ fn test_temporal_inference() {
     record Resource<~r> {
         id: Int32
     }
-    
+
     fun useResource<~r> = res: Resource<~r> {
         res.id
     }
-    
+
     fun main: () -> Int = {
         val res = Resource { id: 42 };  // ~r should be inferred
         (res) useResource
@@ -118,11 +118,11 @@ fn test_temporal_with_context() {
     context FileSystem<~fs> {
         open: String -> File<~fs>
     }
-    
+
     record File<~f> {
         handle: Int32
     }
-    
+
     fun main: () -> Int = {
         with FileSystem {
             val file = "test.txt" |> open;  // file: File<~fs>
@@ -144,12 +144,12 @@ fn test_nested_temporal_scopes() {
     record Outer<~out> {
         id: Int32
     }
-    
+
     record Inner<~in, ~out> where ~in within ~out {
         outer: Outer<~out>
         data: Int32
     }
-    
+
     fun nested<~a, ~b> = outer: Outer<~a> -> Inner<~b, ~a>
     where ~b within ~a {
         Inner { outer: outer, data: 42 }

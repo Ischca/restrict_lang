@@ -72,7 +72,7 @@ fn test_tat_temporal_scope_with_file_cleanup() {
         handle: Int32,
         path: String
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~io> {
             val file = File { handle: 42, path: "test.txt" };
@@ -126,26 +126,26 @@ fn test_tat_database_transaction_cleanup_order() {
     record Database<~db> {
         connection: Int32
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         db: Database<~db>,
         txId: Int32
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~db> {
             val database = Database { connection: 1 };
-            
+
             with lifetime<~tx> {
-                val transaction = Transaction { 
-                    db: database, 
-                    txId: 100 
+                val transaction = Transaction {
+                    db: database,
+                    txId: 100
                 };
                 transaction.txId;
                 Unit
             }
             // Transaction cleaned up first (LIFO)
-            
+
             database.connection;
             Unit
         }
@@ -205,17 +205,17 @@ fn test_tat_resource_list_state_management() {
         handle: Int32,
         path: String
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~outer> {
             val file1 = File { handle: 1, path: "outer.txt" };
-            
+
             with lifetime<~inner> {
                 val file2 = File { handle: 2, path: "inner.txt" };
                 file2.handle;
                 Unit
             }
-            
+
             // After inner scope, should return to outer scope resource list
             file1.handle;
             Unit
@@ -256,17 +256,17 @@ fn test_tat_arena_restoration_after_cleanup() {
     record Database<~db> {
         connection: Int32
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~first> {
             val db1 = Database { connection: 1 };
-            
+
             with lifetime<~second> {
                 val db2 = Database { connection: 2 };
                 db2.connection;
                 Unit
             }
-            
+
             // Should be back in first arena context
             val db3 = Database { connection: 3 };
             db1.connection + db3.connection;
@@ -305,22 +305,22 @@ fn test_tat_cleanup_with_mixed_resource_types() {
         handle: Int32,
         path: String
     }
-    
+
     record Database<~db> {
         connection: Int32
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         db: Database<~db>,
         txId: Int32
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~mixed> {
             val file = File { handle: 42, path: "data.txt" };
             val db = Database { connection: 1 };
             val tx = Transaction { db: db, txId: 100 };
-            
+
             file.handle + db.connection + tx.txId;
             Unit
         }
@@ -379,11 +379,11 @@ fn test_tat_cleanup_with_control_flow() {
         handle: Int32,
         path: String
     }
-    
+
     fun main: () -> Unit = {
         with lifetime<~flow> {
             val file = File { handle: 42, path: "test.txt" };
-            
+
             if file.handle > 0 {
                 val result = file.handle * 2;
                 if result > 50 {
@@ -395,7 +395,7 @@ fn test_tat_cleanup_with_control_flow() {
             } else {
                 Unit
             };
-            
+
             Unit
         }
         // File should still be cleaned up regardless of control flow path

@@ -25,17 +25,17 @@ check_file() {
 check_outdated() {
     en_file=$1
     ja_file=$2
-    
+
     if [ ! -f "$ja_file" ]; then
         echo -e "${RED}Missing:${NC} $ja_file"
         return 1
     fi
-    
+
     if [ "$en_file" -nt "$ja_file" ]; then
         echo -e "${YELLOW}Outdated:${NC} $ja_file (EN version is newer)"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -61,7 +61,7 @@ outdated_count=0
 # Check each file pair
 for en_file in "${!file_map[@]}"; do
     ja_file=${file_map[$en_file]}
-    
+
     if [ ! -f "$ja_file" ]; then
         ((missing_count++))
         echo -e "${RED}Missing:${NC} $ja_file"
@@ -83,10 +83,10 @@ echo "Outdated translations: $outdated_count"
 if [ $missing_count -gt 0 ] || [ $outdated_count -gt 0 ]; then
     echo -e "\n📝 TODO List"
     echo "============"
-    
+
     for en_file in "${!file_map[@]}"; do
         ja_file=${file_map[$en_file]}
-        
+
         if [ ! -f "$ja_file" ]; then
             echo "- Create: $ja_file"
         elif [ "$en_file" -nt "$ja_file" ]; then
@@ -101,7 +101,7 @@ read -r response
 if [[ "$response" =~ ^[Yy]$ ]]; then
     for en_file in "${!file_map[@]}"; do
         ja_file=${file_map[$en_file]}
-        
+
         if [ -f "$ja_file" ] && [ "$en_file" -nt "$ja_file" ]; then
             echo -e "\n${YELLOW}Diff for $ja_file:${NC}"
             echo "=================="

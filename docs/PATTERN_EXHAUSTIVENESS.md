@@ -13,7 +13,7 @@ Exhaustiveness checking ensures that pattern matching expressions cover all poss
 The exhaustiveness checker analyzes different types:
 
 - **Boolean types**: Requires both `true` and `false` cases
-- **Option types**: Requires both `Some(_)` and `None` cases  
+- **Option types**: Requires both `Some(_)` and `None` cases
 - **Unit type**: Requires `()` case
 - **List types**: Requires `[]` and non-empty cases
 - **Record types**: Requires at least one record pattern
@@ -27,7 +27,7 @@ The checker recursively analyzes nested patterns:
 // This is exhaustive
 option_bool |> match {
     Some(true) => 1,
-    Some(false) => 0, 
+    Some(false) => 0,
     None => -1
 }
 
@@ -43,7 +43,7 @@ option_bool |> match {
 When patterns are non-exhaustive, the compiler provides specific missing patterns:
 
 ```
-Error: Non-exhaustive patterns: missing Some(false). 
+Error: Non-exhaustive patterns: missing Some(false).
 Add the missing patterns or use a wildcard pattern (_).
 ```
 
@@ -69,7 +69,7 @@ flag |> match {
     false => "no"
 }
 
-// ✗ Non-exhaustive: missing false  
+// ✗ Non-exhaustive: missing false
 flag |> match {
     true => "yes"
 }
@@ -101,7 +101,7 @@ list |> match {
 
 // ✗ Non-exhaustive: missing []
 list |> match {
-    [head | tail] => "non-empty"  
+    [head | tail] => "non-empty"
 }
 
 // ✗ Non-exhaustive: exact patterns need cons pattern for completeness
@@ -137,7 +137,7 @@ For types with infinite possible values (Int32, String, Float64, Char), exhausti
 // ✓ Exhaustive
 number |> match {
     0 => "zero",
-    1 => "one", 
+    1 => "one",
     _ => "other"
 }
 
@@ -163,7 +163,7 @@ nested |> match {
     None => -1
 }
 
-// ✗ Non-exhaustive: missing Some(None)  
+// ✗ Non-exhaustive: missing Some(None)
 nested |> match {
     Some(Some(value)) => value,
     None => -1
@@ -184,7 +184,7 @@ list |> match {
     [None | tail] => 0
 }
 
-// ✗ Non-exhaustive: missing [None|_] 
+// ✗ Non-exhaustive: missing [None|_]
 list |> match {
     [] => 0,
     [Some(x) | tail] => x
@@ -246,7 +246,7 @@ Non-exhaustive patterns: missing {patterns}. {suggestion}
 
 **Cause**: Match expression doesn't cover all possible cases of the matched type.
 
-**Solution**: 
+**Solution**:
 - Add the missing patterns listed in the error
 - Use a wildcard pattern (`_`) to cover remaining cases
 - Use an identifier pattern to bind and handle remaining cases

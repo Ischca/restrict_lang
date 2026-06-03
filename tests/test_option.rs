@@ -66,7 +66,7 @@ fn test_option_match() {
                 None => { default }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val x = Some(42);
             (x, 0) unwrap_or

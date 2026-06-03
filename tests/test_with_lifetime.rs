@@ -10,7 +10,7 @@ fn test_with_lifetime_basic() {
     record File<~f> {
         handle: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { handle = 1 };
@@ -34,7 +34,7 @@ fn test_with_lifetime_anonymous() {
     record Resource<~r> {
         id: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime {
             val res = Resource { id = 42 };
@@ -58,7 +58,7 @@ fn test_with_lifetime_escape_error() {
     record File<~f> {
         handle: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { handle = 1 };
@@ -85,12 +85,12 @@ fn test_nested_with_lifetime() {
     record Outer<~out> {
         id: Int32
     }
-    
+
     record Inner<~in, ~out> where ~in within ~out {
         outer: Outer<~out>
         data: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~out> {
             val outer = Outer { id = 1 };

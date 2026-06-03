@@ -15,7 +15,7 @@ fn test_scope_layer_ordering_chaos() {
     record DataProcessor<~t1, ~t2, ~t3> where ~t3 within ~t2, ~t2 within ~t1 {
         data: String
     }
-    
+
     fun main: () = {
         with lifetime<~long> {
             with lifetime<~medium> where ~medium within ~long {
@@ -42,19 +42,19 @@ fn test_scope_escape_through_layers() {
     record Escapist<~t> {
         secret: String
     }
-    
+
     fun extend_lifetime<~short, ~long>(item: Escapist<~short>) -> Escapist<~long>
     where ~short within ~long {
         // Attempting to extend temporal lifetime - should be valid
         item
     }
-    
+
     fun narrow_lifetime<~short, ~long>(item: Escapist<~long>) -> Escapist<~short>
     where ~short within ~long {
         // Attempting to narrow temporal lifetime - should fail
-        item  
+        item
     }
-    
+
     fun main: () = {
         with lifetime<~outer> {
             with lifetime<~inner> where ~inner within ~outer {
@@ -82,11 +82,11 @@ fn test_deeply_nested_scope_explosion() {
     // Edge Case 3: Deep temporal scope nesting
     // Tests parser and type checker limits with many nested temporal scopes
     let input = r#"
-    record DeepResource<~t1, ~t2, ~t3, ~t4, ~t5> 
+    record DeepResource<~t1, ~t2, ~t3, ~t4, ~t5>
     where ~t5 within ~t4, ~t4 within ~t3, ~t3 within ~t2, ~t2 within ~t1 {
         level: Int32
     }
-    
+
     fun main: () = {
         // 5 levels of nested temporal scopes
         with lifetime<~t1> {
@@ -115,11 +115,11 @@ fn test_scope_diamond_dependency() {
     // Edge Case 4: Diamond dependency in temporal constraints
     // Tests complex constraint resolution where one lifetime must be within multiple others
     let input = r#"
-    record DiamondResource<~base, ~left, ~right, ~merged> 
+    record DiamondResource<~base, ~left, ~right, ~merged>
     where ~left within ~base, ~right within ~base, ~merged within ~left, ~merged within ~right {
         data: String
     }
-    
+
     fun main: () = {
         with lifetime<~base> {
             with lifetime<~left> where ~left within ~base {
@@ -151,12 +151,12 @@ fn test_scope_cycle_detection() {
     record CyclicResource<~a, ~b> where ~a within ~b, ~b within ~a {
         data: String
     }
-    
+
     // Attempt 2: Indirect cycle through three scopes
     record TriangleCycle<~x, ~y, ~z> where ~x within ~y, ~y within ~z, ~z within ~x {
         data: String
     }
-    
+
     fun main: () = {
         // This should be caught at type definition time
         42
@@ -178,17 +178,17 @@ fn test_scope_variance_violations() {
     record Container<~t> {
         data: String
     }
-    
+
     // Function taking a temporal parameter - contravariant position
     fun process_container<~t>(item: Container<~t>) -> String {
         item.data
     }
-    
-    // Function returning a temporal parameter - covariant position  
+
+    // Function returning a temporal parameter - covariant position
     fun create_container<~t>() -> Container<~t> {
         Container { data: "created" }
     }
-    
+
     fun main: () = {
         with lifetime<~outer> {
             with lifetime<~inner> where ~inner within ~outer {
@@ -218,15 +218,15 @@ fn test_cross_layer_interference() {
         first: String,
         second: String
     }
-    
+
     fun create_pair<~t1, ~t2>() -> TemporalPair<~t1, ~t2>
     where ~t2 within ~t1 {
-        TemporalPair { 
+        TemporalPair {
             first: "outer",
             second: "inner"
         }
     }
-    
+
     fun main: () = {
         with lifetime<~long> {
             with lifetime<~short> where ~short within ~long {
@@ -250,19 +250,19 @@ fn test_scope_bound_affinity_confusion() {
     record AffineResource<~t> {
         precious: String
     }
-    
+
     fun consume_resource<~t>(item: AffineResource<~t>) -> String {
         // Use the resource once (affine consumption)
         item.precious
     }
-    
+
     fun try_double_use<~t>(item: AffineResource<~t>) -> String {
         val first = consume_resource(item);
         // This should fail: trying to use item again after consumption
         val second = consume_resource(item);
         first
     }
-    
+
     fun main: () = {
         with lifetime<~session> {
             val resource = AffineResource { precious: "one-time-token" };
@@ -289,13 +289,13 @@ fn test_phantom_scope_parameters() {
         // Temporal parameters not used in fields but affect type identity
         data: String
     }
-    
+
     fun compare_phantoms<~a, ~b, ~c, ~d>
     (p1: Phantom<~a, ~b>, p2: Phantom<~c, ~d>) -> String {
         // Different phantom types should not be directly comparable
         "compared"
     }
-    
+
     fun main: () = {
         with lifetime<~first> {
             with lifetime<~second> {
@@ -324,12 +324,12 @@ fn test_scope_inference_ambiguity() {
     record Container<~t> {
         data: String
     }
-    
+
     // Generic function that should infer temporal parameter
     fun process<~t>(x: Container<~t>) -> Container<~t> {
         x
     }
-    
+
     fun main: () = {
         with lifetime<~outer> {
             with lifetime<~inner> where ~inner within ~outer {

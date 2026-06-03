@@ -46,7 +46,7 @@ fn test_no_default_arena_in_other_functions() {
         fun helper: (x: Int32) -> Int32 = {
             x + 1
         }
-        
+
         fun main: () -> Int32 = {
             42 |> helper
         }

@@ -12,7 +12,7 @@ record File<~f> {
     path: String
 }
 
-// Database connection with temporal parameter ~db  
+// Database connection with temporal parameter ~db
 record Database<~db> {
     connection: Int32,
     name: String
@@ -35,13 +35,13 @@ record Logger<~l> {
 fun processFile: (filename: String) -> Int32 = {
     with lifetime<~file_io> {
         // File is automatically registered for cleanup
-        val file = File { 
-            handle: 42, 
-            path: filename 
+        val file = File {
+            handle: 42,
+            path: filename
         };
-        
+
         "Processing file: " ++ file.path |> println;
-        
+
         // Simulate file operations
         val bytes_read = file.handle * 100;
         bytes_read
@@ -53,27 +53,27 @@ fun processFile: (filename: String) -> Int32 = {
 fun runDatabaseOperation: () -> Bool = {
     with lifetime<~database> {
         // Database connection established
-        val db = Database { 
-            connection: 1001, 
-            name: "production" 
+        val db = Database {
+            connection: 1001,
+            name: "production"
         };
-        
+
         "Connected to database: " ++ db.name |> println;
-        
+
         with lifetime<~transaction> {
             // Transaction started within database scope
-            val tx = Transaction { 
-                db: db, 
-                txId: 2001, 
-                active: true 
+            val tx = Transaction {
+                db: db,
+                txId: 2001,
+                active: true
             };
-            
+
             "Started transaction: " |> println;
             tx.txId |> println;
-            
+
             // Simulate database work
             val success = tx.active;
-            
+
             if success {
                 "Transaction completed successfully" |> println;
                 true
@@ -83,7 +83,7 @@ fun runDatabaseOperation: () -> Bool = {
             }
         }
         // Transaction is automatically rolled back/committed here via cleanup_transaction()
-        
+
         "Database operations completed" |> println;
         true
     }
@@ -95,39 +95,39 @@ fun complexCleanupScenario: () -> Unit = {
     with lifetime<~outer> {
         val logger = Logger { name: "outer", level: 1 };
         "Starting complex scenario" |> println;
-        
+
         val file1 = File { handle: 100, path: "outer.log" };
-        
+
         with lifetime<~middle> {
             val db = Database { connection: 2002, name: "cache" };
             val file2 = File { handle: 200, path: "middle.tmp" };
-            
+
             with lifetime<~inner> {
-                val tx = Transaction { 
-                    db: db, 
-                    txId: 3003, 
-                    active: true 
+                val tx = Transaction {
+                    db: db,
+                    txId: 3003,
+                    active: true
                 };
                 val file3 = File { handle: 300, path: "inner.data" };
-                
+
                 "All resources allocated" |> println;
-                
+
                 // Use all resources
                 file1.handle + file2.handle + file3.handle + tx.txId;
                 Unit
             }
             // file3 and tx cleaned up here (inner scope)
-            
+
             "Inner scope cleaned up" |> println;
             Unit
         }
         // file2 and db cleaned up here (middle scope)
-        
+
         "Middle scope cleaned up" |> println;
         Unit
     }
     // logger and file1 cleaned up here (outer scope)
-    
+
     "All cleanup completed" |> println;
     Unit
 }
@@ -135,23 +135,23 @@ fun complexCleanupScenario: () -> Unit = {
 // Main function demonstrating TAT cleanup
 fun main: () -> Unit = {
     "=== Temporal Affine Types Cleanup Demo ===" |> println;
-    
+
     // Demonstrate file cleanup
     val file_result = ("input.dat") processFile;
     "File processing result: " |> println;
     file_result |> println;
-    
-    // Demonstrate database transaction cleanup  
+
+    // Demonstrate database transaction cleanup
     val db_success = () runDatabaseOperation;
     if db_success {
         "Database operations succeeded" |> println;
     } else {
         "Database operations failed" |> println;
     };
-    
+
     // Demonstrate complex nested cleanup
     () complexCleanupScenario;
-    
+
     "=== Demo completed - all resources cleaned up ===" |> println;
     Unit
 }

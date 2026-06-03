@@ -29,7 +29,7 @@ fn test_simple_match_some_none() {
                 None => { 0 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val some_val = Some(42);
             val none_val: Option<Int32> = None;
@@ -61,7 +61,7 @@ fn test_nested_pattern_match() {
                 None => { -2 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val nested = Some(Some(42));
             val some_none: Option<Option<Int32> > = Some(None);
@@ -88,7 +88,7 @@ fn test_list_pattern_matching() {
                 [head | tail] => { head }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val empty: List<Int32> = [];
             val single = [10];
@@ -114,7 +114,7 @@ fn test_record_pattern_matching() {
             x: Int32,
             y: Int32
         }
-        
+
         fun quadrant: (p: Point) -> Int32 = {
             p match {
                 Point { x: 0, y: 0 } => { 0 }
@@ -128,14 +128,14 @@ fn test_record_pattern_matching() {
                 _ => { -1 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val origin = Point { x: 0, y: 0 };
             val p1 = Point { x: 10, y: 20 };
             val p2 = Point { x: -10, y: 20 };
             val p3 = Point { x: -10, y: -20 };
             val p4 = Point { x: 10, y: -20 };
-            
+
             val a = origin |> quadrant;
             val b = p1 |> quadrant;
             val c = p2 |> quadrant;
@@ -165,7 +165,7 @@ fn test_wildcard_pattern() {
                 None => { 0 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val some_val = Some(42);
             val none_val: Option<Int32> = None;
@@ -189,7 +189,7 @@ fn test_pattern_match_with_guards() {
                 x then x > 0 => { 1 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val a = -10 |> classify;
             val b = 0 |> classify;
@@ -212,7 +212,7 @@ fn test_exhaustive_pattern_checking() {
                 // Missing None case
             }
         }
-        
+
         fun main: () -> Int32 = {
             Some(42) |> incomplete
         }
@@ -244,7 +244,7 @@ fn test_pattern_binding_affine_types() {
                 None => { 0 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             Some(Token { id: 42 }) |> test_affine
         }
@@ -321,7 +321,7 @@ fn test_multiple_pattern_variables() {
                 _ => { -1 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             val empty: List<Int32> = [];
             val a = [1, 2, 3] |> test_list;
@@ -345,7 +345,7 @@ fn test_pattern_match_osv_syntax() {
                 n => { n }
             }
         }
-        
+
         fun main: () -> Int32 = {
             42 |> process
         }
@@ -365,7 +365,7 @@ fn test_pattern_match_with_complex_expressions() {
                 None => { 0 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             () complex_match
         }
@@ -386,7 +386,7 @@ fn test_match_return_different_types() {
                 None => { "zero" }  // Type error: different return types
             }
         }
-        
+
         fun main: () -> Int32 = {
             Some(42) |> test_types
         }

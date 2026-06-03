@@ -41,7 +41,7 @@ mod tests {
             fun add: (x: Int32, y: Int32) -> Int32 = {
                 x + y
             }
-            
+
             fun main: () = {
                 val result = add(5, 10);  // This should FAIL
                 result
@@ -61,7 +61,7 @@ mod tests {
             fun add: (x: Int32, y: Int32) -> Int32 = {
                 x + y
             }
-            
+
             fun main: () = {
                 val result = (5, 10) add;  // OSV syntax - should work
                 result
@@ -78,7 +78,7 @@ mod tests {
             fun double: (x: Int32) -> Int32 = {
                 x * 2
             }
-            
+
             fun main: () = {
                 val result = 5 |> double;  // Pipe operator - should work
                 result
@@ -95,7 +95,7 @@ mod tests {
             fun get_value: () -> Int32 = {
                 42
             }
-            
+
             fun main: () = {
                 val result = () get_value;  // OSV with no args
                 result
@@ -112,7 +112,7 @@ mod tests {
             fun get_value: () -> Int32 = {
                 42
             }
-            
+
             fun main: () = {
                 val result = get_value();  // Traditional - should FAIL
                 result
@@ -252,7 +252,7 @@ mod tests {
         let nested_osv = r#"
             fun add: (x: Int32, y: Int32) -> Int32 = { x + y }
             fun double: (x: Int32) -> Int32 = { x * 2 }
-            
+
             fun main: () = {
                 val result = (5, 10) add |> double;  // Chained with pipe
                 val result2 = ((2, 3) add) double;   // Nested OSV
@@ -266,7 +266,7 @@ mod tests {
         let nested_traditional = r#"
             fun add: (x: Int32, y: Int32) -> Int32 = { x + y }
             fun double: (x: Int32) -> Int32 = { x * 2 }
-            
+
             fun main: () = {
                 val result = double(add(5, 10));  // Traditional nested - should FAIL
                 result

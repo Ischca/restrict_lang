@@ -45,7 +45,7 @@ WASM MVPの制約の中で、実用的な文字列サポートを実装する。
 ```wasm
 (module
   (data (i32.const 1024) "Hello, World!")
-  
+
   (func $get_hello (result i32 i32)
     i32.const 1024
     i32.const 13

@@ -3,7 +3,7 @@
 ## Problem Statement
 
 Records in Restrict Language are affine types (use-once), which prevents accessing multiple fields:
-- `p.x` consumes `p`  
+- `p.x` consumes `p`
 - Subsequent `p.y` causes `AffineViolation`
 - Borrowing is explicitly rejected as a solution
 
@@ -11,7 +11,7 @@ Records in Restrict Language are affine types (use-once), which prevents accessi
 
 Embrace constraints as features rather than limitations. The restriction should lead to:
 - More explicit code about field usage
-- Better memory safety guarantees  
+- Better memory safety guarantees
 - Clearer resource management patterns
 
 ## Proposed Solution: Hybrid Approach
@@ -38,7 +38,7 @@ record Point { x: Int32, y: Int32 }         // Int32 is copyable
 record Resource { handle: FileHandle, id: Int32 }  // FileHandle is affine
 
 val p = Point { x = 10, y = 20 }
-val x = p.x  // OK: Int32 is copyable, doesn't consume p  
+val x = p.x  // OK: Int32 is copyable, doesn't consume p
 val y = p.y  // OK: Int32 is copyable, p still available
 
 val r = Resource { handle = open_file(), id = 42 }
@@ -65,16 +65,16 @@ fn check_field_access(&mut self, expr: &Expr, field: &str) -> Result<TypedType, 
     // First determine the object type and field type
     let obj_ty = self.infer_expr_type(expr)?;
     let field_ty = self.get_field_type(&obj_ty, field)?;
-    
+
     // Consumption strategy based on field type
     if self.is_copyable(&field_ty) {
         // Copyable field: access without consuming the record
         self.check_expr_without_consumption(expr)?;
     } else {
-        // Affine field: consume the record  
+        // Affine field: consume the record
         self.check_expr(expr)?;
     }
-    
+
     Ok(field_ty)
 }
 ```
@@ -85,25 +85,25 @@ fn check_field_access(&mut self, expr: &Expr, field: &str) -> Result<TypedType, 
 fn is_copyable(&self, ty: &TypedType) -> bool {
     match ty {
         // Primitives are copyable
-        TypedType::Int32 | TypedType::Boolean | TypedType::Float64 
+        TypedType::Int32 | TypedType::Boolean | TypedType::Float64
         | TypedType::Char | TypedType::Unit => true,
-        
+
         // Heap-allocated types are not copyable
         TypedType::String | TypedType::List(_) => false,
-        
+
         // Records are copyable only if ALL fields are copyable
         TypedType::Record { name, .. } => {
             let record_def = self.records.get(name).unwrap();
             record_def.fields.values().all(|ty| self.is_copyable(ty))
         }
-        
+
         // Functions and handles are never copyable
         TypedType::Function { .. } => false,
-        
+
         // Composite types
         TypedType::Option(inner) => self.is_copyable(inner),
         TypedType::Array(inner, _) => self.is_copyable(inner),
-        
+
         // Temporal types follow base type rules
         TypedType::Temporal { base_type, .. } => self.is_copyable(base_type),
     }
@@ -125,12 +125,12 @@ fn is_copyable(&self, ty: &TypedType) -> bool {
 record Point2D { x: Float64, y: Float64 }
 val p = Point2D { x = 1.0, y = 2.0 }
 val x = p.x  // OK: Float64 is copyable
-val y = p.y  // OK: Float64 is copyable  
+val y = p.y  // OK: Float64 is copyable
 val len = sqrt(p.x * p.x + p.y * p.y)  // OK: can use p multiple times
 ```
 
 ### Mixed Record (Some fields affine)
-```restrict  
+```restrict
 record User { id: Int32, name: String, handle: FileHandle }
 val user = User { id = 123, name = "Alice", handle = open_log() }
 
@@ -149,7 +149,7 @@ val User { id, name, handle } = user  // Single consumption
 record Database { connection: DbConn, stats: DbStats }
 record DbStats { queries: Int32, errors: Int32, uptime: Float64 }
 
-val db = Database { 
+val db = Database {
     connection = connect_db(),
     stats = DbStats { queries = 100, errors = 2, uptime = 3600.0 }
 }
@@ -164,7 +164,7 @@ val conn = db.connection  // Consumes db (DbConn is affine)
 ## Migration Path
 
 1. **Phase 1**: Implement copyable field access optimization
-2. **Phase 2**: Add compiler hints suggesting destructuring  
+2. **Phase 2**: Add compiler hints suggesting destructuring
 3. **Phase 3**: Enhance destructuring syntax with pattern guards
 4. **Phase 4**: Consider advanced prototype-based view patterns
 

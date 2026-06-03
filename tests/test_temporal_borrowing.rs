@@ -10,12 +10,12 @@ fn test_sublifetime_constraint() {
     record Database<~db> {
         id: Int32
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         db: Database<~db>
         txId: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~db> {
             val database = Database { id = 1 };
@@ -42,18 +42,18 @@ fn test_invalid_sublifetime_constraint() {
     record Database<~db> {
         id: Int32
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         db: Database<~db>
         txId: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~db> {
             val database = Database { id = 1 };
             Unit
         };
-        
+
         // This should fail - ~tx is not within ~db scope
         with lifetime<~tx> {
             val transaction = Transaction { db = database, txId = 100 };
@@ -79,11 +79,11 @@ fn test_temporal_borrowing() {
     record Resource<~r> {
         data: Int32
     }
-    
+
     fun borrowResource<~r> = resource: Resource<~r> -> Int32 {
         resource.data
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~r> {
             val resource = Resource { data = 42 };
@@ -108,17 +108,17 @@ fn test_transitive_sublifetime() {
     record Outer<~out> {
         id: Int32
     }
-    
+
     record Middle<~mid, ~out> where ~mid within ~out {
         outer: Outer<~out>,
         midId: Int32
     }
-    
+
     record Inner<~in, ~mid, ~out> where ~in within ~mid, ~mid within ~out {
         middle: Middle<~mid, ~out>,
         innerId: Int32
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~out> {
             val outer = Outer { id = 1 };

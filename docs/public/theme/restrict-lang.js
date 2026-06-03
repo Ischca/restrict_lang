@@ -7,13 +7,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (languageSelector) {
         document.querySelector('.menu-title').appendChild(languageSelector);
     }
-    
+
     // Initialize code highlighting for OSV syntax
     initializeOSVHighlighting();
-    
+
     // Add interactive examples
     initializeInteractiveExamples();
-    
+
     // Setup tabs for multilingual examples
     setupExampleTabs();
 });
@@ -21,7 +21,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function createLanguageSelector() {
     const currentPath = window.location.pathname;
     const isJapanese = currentPath.includes('/ja/');
-    
+
     const selector = document.createElement('div');
     selector.className = 'language-selector';
     selector.innerHTML = `
@@ -30,14 +30,14 @@ function createLanguageSelector() {
             <option value="ja" ${isJapanese ? 'selected' : ''}>日本語</option>
         </select>
     `;
-    
+
     return selector;
 }
 
 function switchLanguage(lang) {
     const currentPath = window.location.pathname;
     let newPath;
-    
+
     if (lang === 'ja') {
         newPath = currentPath.replace(/\/en\//, '/ja/');
         if (!newPath.includes('/ja/')) {
@@ -49,7 +49,7 @@ function switchLanguage(lang) {
             newPath = currentPath.replace(/\/docs\//, '/docs/en/');
         }
     }
-    
+
     window.location.pathname = newPath;
 }
 
@@ -66,17 +66,17 @@ function initializeInteractiveExamples() {
     document.querySelectorAll('pre code.language-restrict').forEach((block, index) => {
         const pre = block.parentElement;
         const code = block.textContent;
-        
+
         // Skip if it's not a complete example
         if (!code.includes('fun main')) {
             return;
         }
-        
+
         const button = document.createElement('button');
         button.className = 'try-button';
         button.textContent = 'Try in Playground';
         button.onclick = () => openInPlayground(code);
-        
+
         pre.style.position = 'relative';
         pre.appendChild(button);
     });
@@ -107,19 +107,19 @@ function setupExampleTabs() {
     document.querySelectorAll('.example-tabs').forEach(tabContainer => {
         const buttons = tabContainer.querySelectorAll('.tab-button');
         const panes = tabContainer.querySelectorAll('.tab-pane');
-        
+
         buttons.forEach((button, index) => {
             button.addEventListener('click', () => {
                 // Remove active class from all
                 buttons.forEach(btn => btn.classList.remove('active'));
                 panes.forEach(pane => pane.classList.remove('active'));
-                
+
                 // Add active class to clicked
                 button.classList.add('active');
                 panes[index].classList.add('active');
             });
         });
-        
+
         // Activate first tab by default
         if (buttons.length > 0) {
             buttons[0].click();
@@ -133,7 +133,7 @@ document.querySelectorAll('pre code').forEach(block => {
     const button = document.createElement('button');
     button.className = 'copy-button';
     button.textContent = 'Copy';
-    
+
     button.addEventListener('click', () => {
         navigator.clipboard.writeText(block.textContent).then(() => {
             button.textContent = 'Copied!';
@@ -142,7 +142,7 @@ document.querySelectorAll('pre code').forEach(block => {
             }, 2000);
         });
     });
-    
+
     pre.style.position = 'relative';
     pre.appendChild(button);
 });
@@ -162,18 +162,18 @@ style.textContent = `
         cursor: pointer;
         transition: all 0.2s;
     }
-    
+
     .try-button {
         right: 60px;
     }
-    
+
     .copy-button {
         right: 5px;
     }
-    
+
     .try-button:hover, .copy-button:hover {
         background: var(--theme-hover);
     }
-    
+
 `;
 document.head.appendChild(style);

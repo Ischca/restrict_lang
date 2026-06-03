@@ -22,7 +22,7 @@
 //!
 //! **Affine Types** (do not implement Copy):
 //! - String (heap-allocated)
-//! - Record types (complex data structures)  
+//! - Record types (complex data structures)
 //! - Function types
 //! - Can only be used at most once, preventing resource leaks
 //! ```rust

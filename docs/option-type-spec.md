@@ -19,7 +19,7 @@ Option<T>
 val x = Some(42)      // Option<Int>
 val y = Some("hello") // Option<String>
 
-// None: 値がない場合  
+// None: 値がない場合
 val z = None          // Option<T> (型は文脈から推論)
 ```
 

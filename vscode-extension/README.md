@@ -140,10 +140,10 @@ fun age_bonus: (self: User) -> Int32 = {
 fun main: () -> Int32 = {
     val raw_score = (12, 30) add
     val score = raw_score |> clamp_positive
-    
+
     val user = User { name: "Alice", age: 25 }
     val bonus = user |> age_bonus
-    
+
     score + bonus
 }
 ```

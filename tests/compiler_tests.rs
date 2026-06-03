@@ -47,7 +47,7 @@ fn test_function_call_wat_generation() {
         fun double = x: Int32 {
             x * 2
         }
-        
+
         fun main = {
             21 |> double
         }
@@ -111,7 +111,7 @@ fn test_conditional_wat_generation() {
                 0
             }
         }
-        
+
         fun main = {
             42 |> is_positive
         }
@@ -138,7 +138,7 @@ fn test_pipe_operator_wat_generation() {
         fun inc = x: Int32 {
             x + 1
         }
-        
+
         fun main = {
             42 |> inc
         }
@@ -168,7 +168,7 @@ fn test_all_binary_operators() {
             val ge = 10 >= 3;
             42
         }
-        
+
         fun main = {
             test_ops
         }
@@ -216,7 +216,7 @@ fn test_multiple_parameters() {
         fun add3 = a: Int32 b: Int32 c: Int32 {
             a + b + c
         }
-        
+
         fun main = {
             val result = (10, 20, 30) add3
             result

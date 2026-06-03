@@ -69,7 +69,7 @@ fn test_boolean_match() {
                 false => { 0 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             true |> test_bool
         }
@@ -126,7 +126,7 @@ fn test_nested_match() {
         fun main = {
             val x = 1;
             val y = 2;
-            
+
             x match {
                 0 => { 0 }
                 _ => {
@@ -153,7 +153,7 @@ fn test_match_in_function() {
             // (In a real implementation, we'd need multiple functions to handle affine constraints)
             1
         }
-        
+
         fun classify: (x: Int32) -> Int32 = {
             val signed = x |> sign;
             signed match {
@@ -163,7 +163,7 @@ fn test_match_in_function() {
                 _ => { 999 }
             }
         }
-        
+
         fun main: () -> Int32 = {
             42 |> classify
         }

@@ -123,7 +123,7 @@ fn test_affine_with_mutable() {
 fn test_mutable_record_field() {
     let input = r#"
     record Point { x: Int32, y: Int32 }
-    
+
     fun test = {
         with Arena {
             val p = Point { x: 10, y: 20 }

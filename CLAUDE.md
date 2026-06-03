@@ -63,7 +63,7 @@ mise run ci  # Run full CI pipeline
 The Restrict Language compiler is structured as follows:
 
 1. **Lexer** (`src/lexer.rs`) - Tokenizes source code using nom parser combinators
-2. **AST** (`src/ast.rs`) - Defines the Abstract Syntax Tree structures  
+2. **AST** (`src/ast.rs`) - Defines the Abstract Syntax Tree structures
 3. **Parser** (`src/parser.rs`) - Parses tokens into AST using nom
 4. **Type Checker** (`src/type_checker.rs`) - Implements affine type checking with bidirectional type inference
 5. **Code Generator** (`src/codegen.rs`) - Generates WebAssembly (WAT) output

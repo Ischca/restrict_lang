@@ -13,7 +13,7 @@ for file in docs/public/en/**/*-template.md; do
     fi
 done
 
-# Process Japanese documentation  
+# Process Japanese documentation
 echo "Processing Japanese docs..."
 for file in docs/public/ja/**/*-template.md; do
     if [ -f "$file" ]; then

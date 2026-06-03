@@ -85,7 +85,7 @@ fn test_list_in_function() {
             // We'll implement list operations later
             42
         }
-        
+
         fun main = {
             val numbers = [1, 2, 3];
             numbers sum_list

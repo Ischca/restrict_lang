@@ -220,15 +220,15 @@ record Database<~db> { connection: Int32 }
 fun processData: () -> Unit = {
     with lifetime<~io> {
         val file = File { handle: 42, path: "data.txt" };    // Auto-registered
-        
+
         with lifetime<~db> {
             val db = Database { connection: 1001 };           // Auto-registered
-            
+
             // Use resources...
             file.handle + db.connection;
             Unit
         }  // db automatically cleaned up via cleanup_database()
-        
+
         Unit
     }  // file automatically cleaned up via cleanup_file()
 }
@@ -237,7 +237,7 @@ fun processData: () -> Unit = {
 Generated cleanup sequence:
 1. `cleanup_database()` called for db
 2. Database arena reset
-3. `cleanup_file()` called for file  
+3. `cleanup_file()` called for file
 4. File arena reset
 
 ## Future Enhancements

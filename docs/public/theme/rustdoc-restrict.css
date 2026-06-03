@@ -189,7 +189,7 @@
         font-size: 0.9em;
         padding: 10px;
     }
-    
+
     .osv-example {
         padding: 10px;
     }
@@ -202,7 +202,7 @@
     .toggle-wrapper {
         display: none;
     }
-    
+
     .docblock pre {
         border-left-width: 2px;
         page-break-inside: avoid;

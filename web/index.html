@@ -35,29 +35,29 @@
             background-color: var(--surface);
             color: var(--ink);
         }
-        
+
         .container {
             background: var(--paper);
             border-radius: 10px;
             box-shadow: 0 18px 45px rgba(193, 68, 14, 0.12);
             padding: 30px;
         }
-        
+
         h1 {
             color: var(--ink);
             text-align: center;
             margin-bottom: 30px;
         }
-        
+
         .editor-section {
             margin-bottom: 30px;
         }
-        
+
         .editor-section h3 {
             color: var(--muted);
             margin-bottom: 10px;
         }
-        
+
         .source-editor {
             position: relative;
             height: 260px;
@@ -88,7 +88,7 @@
             caret-color: var(--logo-deep);
             resize: none;
         }
-        
+
         textarea:focus {
             outline: none;
             border-color: var(--logo-primary);
@@ -155,12 +155,12 @@
             color: var(--syntax-primary);
             font-weight: 700;
         }
-        
+
         .button-container {
             text-align: center;
             margin: 30px 0;
         }
-        
+
         button {
             background-color: var(--logo-primary);
             color: white;
@@ -172,25 +172,25 @@
             margin: 0 10px;
             transition: background-color 0.3s;
         }
-        
+
         button:hover {
             background-color: var(--logo-deep);
         }
-        
+
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
         }
-        
+
         .output-section {
             margin-top: 30px;
         }
-        
+
         .output-tabs {
             border-bottom: 2px solid var(--line);
             margin-bottom: 20px;
         }
-        
+
         .tab {
             display: inline-block;
             padding: 10px 20px;
@@ -201,20 +201,20 @@
             margin-right: 5px;
             transition: background-color 0.3s;
         }
-        
+
         .tab.active {
             background-color: var(--logo-primary);
             color: white;
         }
-        
+
         .tab:hover {
             background-color: #ffe8d9;
         }
-        
+
         .tab.active:hover {
             background-color: var(--logo-deep);
         }
-        
+
         .output-content {
             background-color: #fffdfb;
             border: 1px solid var(--line);
@@ -223,7 +223,7 @@
             max-height: 400px;
             overflow-y: auto;
         }
-        
+
         .output-content pre {
             margin: 0;
             font-family: 'Consolas', 'Monaco', monospace;
@@ -231,7 +231,7 @@
             white-space: pre-wrap;
             word-wrap: break-word;
         }
-        
+
         .error {
             color: #d32f2f;
             background-color: #ffebee;
@@ -240,7 +240,7 @@
             border-radius: 5px;
             margin: 10px 0;
         }
-        
+
         .success {
             color: #388e3c;
             background-color: #e8f5e8;
@@ -249,25 +249,25 @@
             border-radius: 5px;
             margin: 10px 0;
         }
-        
+
         .loading {
             text-align: center;
             color: #666;
             font-style: italic;
         }
-        
+
         .examples {
             margin-top: 30px;
             padding: 20px;
             background-color: var(--surface);
             border-radius: 5px;
         }
-        
+
         .examples h3 {
             color: var(--ink);
             margin-bottom: 15px;
         }
-        
+
         .example {
             background-color: var(--paper);
             border: 1px solid var(--line);
@@ -277,17 +277,17 @@
             cursor: pointer;
             transition: background-color 0.3s;
         }
-        
+
         .example:hover {
             background-color: #ffe8d9;
         }
-        
+
         .example-title {
             font-weight: bold;
             color: #555;
             margin-bottom: 5px;
         }
-        
+
         .example-code {
             font-family: 'Consolas', 'Monaco', monospace;
             font-size: 12px;
@@ -302,7 +302,7 @@
 <body>
     <div class="container">
         <h1>🌐 Restrict Language Web Compiler</h1>
-        
+
         <div class="editor-section">
             <h3>📝 Source Code</h3>
             <div class="source-editor">
@@ -319,14 +319,14 @@ fun main: () -> Int32 = {
 }</textarea>
             </div>
         </div>
-        
+
         <div class="button-container">
             <button onclick="compile()" id="compileBtn">🔧 Compile</button>
             <button onclick="lexOnly()" id="lexBtn">📝 Lex Only</button>
             <button onclick="parseOnly()" id="parseBtn">🔍 Parse Only</button>
             <button onclick="clearOutput()" id="clearBtn">🗑️ Clear</button>
         </div>
-        
+
         <div class="output-section">
             <div class="output-tabs">
                 <button class="tab active" data-tab="wasm" onclick="showTab('wasm')">📦 WASM Output</button>
@@ -334,49 +334,49 @@ fun main: () -> Int32 = {
                 <button class="tab" data-tab="ast" onclick="showTab('ast')">🌳 AST</button>
                 <button class="tab" data-tab="error" onclick="showTab('error')">⚠️ Errors</button>
             </div>
-            
+
             <div id="wasm" class="output-content">
                 <pre id="wasmOutput">Ready to compile...</pre>
             </div>
-            
+
             <div id="tokens" class="output-content" style="display: none;">
                 <pre id="tokensOutput">No tokens yet...</pre>
             </div>
-            
+
             <div id="ast" class="output-content" style="display: none;">
                 <pre id="astOutput">No AST yet...</pre>
             </div>
-            
+
             <div id="error" class="output-content" style="display: none;">
                 <pre id="errorOutput">No errors...</pre>
             </div>
         </div>
-        
+
         <div class="examples">
             <h3>📚 Example Programs</h3>
-            
+
             <div class="example" onclick="loadExample('hello')">
                 <div class="example-title">Hello World</div>
                 <div class="example-code">fun main: () -> Int32 = { 42 }</div>
             </div>
-            
+
             <div class="example" onclick="loadExample('function')">
                 <div class="example-title">Function Definition</div>
                 <div class="example-code">fun add: (left: Int32, right: Int32) -> Int32 = { left + right }</div>
             </div>
-            
+
             <div class="example" onclick="loadExample('pipe')">
                 <div class="example-title">Pipe Operations</div>
                 <div class="example-code">42 |> increment</div>
             </div>
-            
+
             <div class="example" onclick="loadExample('record')">
                 <div class="example-title">Record Types</div>
                 <div class="example-code">record Point { x: Int32, y: Int32 }</div>
             </div>
         </div>
     </div>
-    
+
     <script src="./restrict-highlight.js"></script>
     <script type="module" src="./app.js"></script>
 </body>

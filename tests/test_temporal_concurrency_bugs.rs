@@ -17,29 +17,29 @@ fn test_temporal_scope_race_condition() {
         value: Int32,
         lock: Mutex<Bool>
     }
-    
+
     fun racy_increment<~t>(resource: SharedResource<~t>) -> Int32 {
         // Two tasks trying to increment concurrently
         spawn(|| {
             resource.value = resource.value + 1
         });
-        
+
         spawn(|| {
-            resource.value = resource.value + 1  
+            resource.value = resource.value + 1
         });
-        
+
         // Race: value might be incremented once or twice
         sync_wait();
         resource.value
     }
-    
+
     fun main = {
         with lifetime<~shared> {
-            val resource = SharedResource { 
+            val resource = SharedResource {
                 value = 0,
                 lock = Mutex::new(false)
             };
-            
+
             racy_increment(resource)  // Result: 1 or 2?
         }
     }"#;
@@ -58,7 +58,7 @@ fn test_temporal_lifetime_early_destruction() {
         path: String,
         handle: FileHandle
     }
-    
+
     fun spawn_file_reader<~f>(file: TempFile<~f>) {
         spawn(|| {
             // Async task that takes time
@@ -66,18 +66,18 @@ fn test_temporal_lifetime_early_destruction() {
             file.handle.read()  // Use after free?
         })
     }
-    
+
     fun main = {
         with lifetime<~temp> {
-            val file = TempFile { 
+            val file = TempFile {
                 path = "/tmp/test",
                 handle = open_file("/tmp/test")
             };
-            
+
             spawn_file_reader(file);
             // Lifetime ~temp ends here!
         }  // File destroyed while spawn task still running
-        
+
         sleep(200);  // Spawned task tries to read destroyed file
     }"#;
 
@@ -97,12 +97,12 @@ fn test_nested_temporal_deadlock() {
         name: String,
         lock: Mutex<()>
     }
-    
+
     record Transaction<~tx, ~db> where ~tx within ~db {
         id: Int32,
         db_lock: MutexGuard<()>
     }
-    
+
     fun deadlock_scenario<~db1, ~db2>
     (db1: Database<~db1>, db2: Database<~db2>) {
         // Thread 1
@@ -115,8 +115,8 @@ fn test_nested_temporal_deadlock() {
                 }
             }
         });
-        
-        // Thread 2  
+
+        // Thread 2
         spawn(|| {
             with lifetime<~tx2> where ~tx2 within ~db2 {
                 val lock2 = db2.lock.lock();
@@ -126,16 +126,16 @@ fn test_nested_temporal_deadlock() {
                 }
             }
         });
-        
+
         // Classic deadlock: T1 has db1, wants db2; T2 has db2, wants db1
     }
-    
+
     fun main = {
         with lifetime<~db1> {
         with lifetime<~db2> {
             val database1 = Database { name = "DB1", lock = Mutex::new(()) };
             val database2 = Database { name = "DB2", lock = Mutex::new(()) };
-            
+
             deadlock_scenario(database1, database2);
             sync_wait()
         }}
@@ -155,7 +155,7 @@ fn test_temporal_scope_migration() {
         data: String,
         current_scope: ~t
     }
-    
+
     fun migrate<~old, ~new>
     (resource: MigratableResource<~old>) -> MigratableResource<~new>
     where ~new within ~old {
@@ -164,14 +164,14 @@ fn test_temporal_scope_migration() {
             // Background task still using old scope
             resource.data |> process_slowly
         });
-        
+
         // Meanwhile, migrate to new scope
         MigratableResource {
             data = resource.data,  // Affine violation if spawn owns it
             current_scope = ~new
         }
     }
-    
+
     fun main = {
         with lifetime<~broad> {
             with lifetime<~narrow> where ~narrow within ~broad {
@@ -179,7 +179,7 @@ fn test_temporal_scope_migration() {
                     data = "sensitive",
                     current_scope = ~broad
                 };
-                
+
                 // Race: migration while spawn task active
                 val migrated = migrate(resource);
                 migrated.data
@@ -203,14 +203,14 @@ fn test_temporal_ordering_confusion() {
         timestamp: Int64,
         data: String
     }
-    
-    record Timeline<~past, ~present, ~future> 
+
+    record Timeline<~past, ~present, ~future>
     where ~past within ~present, ~present within ~future {
         past_events: List<Event<~past>>,
         current_event: Event<~present>,
         future_events: List<Event<~future>>
     }
-    
+
     fun time_travel<~p, ~n, ~f>
     (timeline: Timeline<~p, ~n, ~f>) -> Event<~p> {
         // Spawn a "future" task
@@ -221,11 +221,11 @@ fn test_temporal_ordering_confusion() {
                 data = "future event"
             })
         });
-        
+
         // But we return a past event that might be modified
         timeline.past_events[0]  // Data race with future task?
     }
-    
+
     fun main = {
         with lifetime<~future> {
             with lifetime<~present> where ~present within ~future {
@@ -235,7 +235,7 @@ fn test_temporal_ordering_confusion() {
                         current_event = Event { timestamp = 1, data = "now" },
                         future_events = []
                     };
-                    
+
                     time_travel(timeline)
                 }
             }
@@ -256,11 +256,11 @@ fn test_async_temporal_leak() {
         future: Future<String>,
         scope_marker: ~t
     }
-    
+
     fun leak_through_async<~temp>() -> Future<String> {
         with lifetime<~temp> {
             val secret = "temporal secret";
-            
+
             // Create async operation that captures temporal data
             val handle = AsyncHandle {
                 future = async {
@@ -269,11 +269,11 @@ fn test_async_temporal_leak() {
                 },
                 scope_marker = ~temp
             };
-            
+
             handle.future  // Future escapes temporal scope!
         }
     }
-    
+
     fun main = {
         val leaked_future = leak_through_async();
         leaked_future.await  // Access after temporal scope ended
@@ -296,22 +296,22 @@ fn test_channel_temporal_smuggling() {
         receiver: Receiver<T>,
         scope: ~t
     }
-    
-    fun smuggle_data<~short, ~long>() -> String 
+
+    fun smuggle_data<~short, ~long>() -> String
     where ~short within ~long {
         val (tx, rx) = channel();
-        
+
         spawn(|| {
             with lifetime<~short> {
                 val sensitive = "short-lived secret";
                 tx.send(sensitive);  // Send reference through channel
             }
         });
-        
+
         // Receive in longer-lived scope
         rx.recv()  // Got data that should have died with ~short
     }
-    
+
     fun main = {
         with lifetime<~long> {
             smuggle_data()  // Returns short-lived data in long scope
@@ -334,33 +334,33 @@ fn test_temporal_memory_barrier_violation() {
         value: AtomicI32,
         scope: ~t
     }
-    
+
     fun racy_counter<~t>() -> Int32 {
         with lifetime<~t> {
             val counter = AtomicCounter {
                 value = AtomicI32::new(0),
                 scope = ~t
             };
-            
+
             // Multiple threads incrementing without proper ordering
             spawn(|| {
                 counter.value.store(1, Ordering::Relaxed);
             });
-            
+
             spawn(|| {
                 counter.value.store(2, Ordering::Relaxed);
             });
-            
+
             spawn(|| {
                 // Read might see 0, 1, or 2 depending on timing
                 counter.value.load(Ordering::Relaxed)
             });
-            
+
             sync_wait();
             counter.value.load(Ordering::SeqCst)
         }
     }
-    
+
     fun main = {
         racy_counter()
     }"#;
@@ -379,7 +379,7 @@ fn test_temporal_scope_fork_bomb() {
         depth: Int32,
         scope: ~t
     }
-    
+
     fun fork_temporal<~t>(bomb: ForkBomb<~t>) {
         if bomb.depth > 0 {
             // Each spawn creates new temporal scope
@@ -395,7 +395,7 @@ fn test_temporal_scope_fork_bomb() {
             });
         }
     }
-    
+
     fun main = {
         with lifetime<~root> {
             val bomb = ForkBomb { depth = 20, scope = ~root };
@@ -419,23 +419,23 @@ fn test_temporal_aba_problem() {
         version: AtomicU64,
         scope: ~t
     }
-    
+
     fun aba_vulnerability<~t>(resource: VersionedResource<~t>) -> Bool {
         // Thread 1: Read value A
         val initial = resource.value;
         val version = resource.version.load(Ordering::Acquire);
-        
+
         // Thread 2 runs between reads
         spawn(|| {
             resource.value = "B";  // Change A to B
             resource.version.fetch_add(1, Ordering::Release);
-            
-            resource.value = "A";  // Change back to A  
+
+            resource.value = "A";  // Change back to A
             resource.version.fetch_add(1, Ordering::Release);
         });
-        
+
         sleep(10);
-        
+
         // Thread 1: Check if unchanged (ABA problem)
         if resource.value == initial {
             // Thinks nothing changed, but version did!
@@ -444,7 +444,7 @@ fn test_temporal_aba_problem() {
             false
         }
     }
-    
+
     fun main = {
         with lifetime<~test> {
             val resource = VersionedResource {
@@ -452,7 +452,7 @@ fn test_temporal_aba_problem() {
                 version = AtomicU64::new(0),
                 scope = ~test
             };
-            
+
             aba_vulnerability(resource)
         }
     }"#;

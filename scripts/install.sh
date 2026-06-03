@@ -87,7 +87,7 @@ download_binary() {
     local platform="$1"
     local version="$2"
     local temp_dir
-    
+
     temp_dir=$(mktemp -d)
     cd "$temp_dir"
 
@@ -256,7 +256,7 @@ main() {
 
     # Verify installation
     export PATH="$INSTALL_DIR/bin:$PATH"
-    
+
     echo ""
     local verify_dir
     verify_dir=$(mktemp -d)

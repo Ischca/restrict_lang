@@ -3,7 +3,7 @@
 //! This ensures that documentation examples, the web playground,
 //! and the canonical sample files all stay in sync with the compiler.
 
-use restrict_lang::{parse_program, WasmCodeGen, TypeChecker};
+use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 use std::fs;
 use std::path::Path;
 
@@ -41,11 +41,7 @@ fn all_samples_compile() {
     let mut entries: Vec<_> = fs::read_dir(&samples_dir)
         .expect("Failed to read samples/ directory")
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map_or(false, |ext| ext == "rl")
-        })
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "rl"))
         .collect();
 
     entries.sort_by_key(|e| e.file_name());
@@ -77,10 +73,7 @@ fn all_samples_compile() {
         );
     }
 
-    println!(
-        "\nAll {} samples compiled successfully.",
-        entries.len()
-    );
+    println!("\nAll {} samples compiled successfully.", entries.len());
 }
 
 #[test]
@@ -88,8 +81,8 @@ fn samples_manifest_matches_files() {
     let samples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
     let manifest_path = samples_dir.join("manifest.json");
 
-    let manifest_content = fs::read_to_string(&manifest_path)
-        .expect("Failed to read samples/manifest.json");
+    let manifest_content =
+        fs::read_to_string(&manifest_path).expect("Failed to read samples/manifest.json");
 
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_content).expect("Failed to parse manifest.json");
@@ -100,7 +93,9 @@ fn samples_manifest_matches_files() {
 
     // Every file in manifest must exist
     for entry in sample_entries {
-        let file = entry["file"].as_str().expect("each sample needs a 'file' field");
+        let file = entry["file"]
+            .as_str()
+            .expect("each sample needs a 'file' field");
         let path = samples_dir.join(file);
         assert!(
             path.exists(),

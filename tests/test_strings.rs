@@ -95,7 +95,7 @@ fn test_string_in_function() {
         fun greet: (name: String) -> () = {
             name |> println
         }
-        
+
         fun main: () = {
             "Alice" |> greet
         }

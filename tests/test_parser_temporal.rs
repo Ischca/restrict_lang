@@ -109,7 +109,7 @@ fn test_parse_function_with_temporal() {
 #[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_parse_function_with_temporal_constraint() {
     let input = r#"
-    fun beginTx<~db, ~tx> = db: Database<~db> 
+    fun beginTx<~db, ~tx> = db: Database<~db>
     where ~tx within ~db {
         Unit
     }"#;

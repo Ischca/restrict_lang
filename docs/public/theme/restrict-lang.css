@@ -234,11 +234,11 @@ pre code.language-restrict {
         margin: 10px 0;
         text-align: right;
     }
-    
+
     .example-tabs .tab-header {
         flex-wrap: wrap;
     }
-    
+
     .example-tabs .tab-button {
         flex: 1;
         min-width: 120px;

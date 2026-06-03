@@ -91,7 +91,7 @@ fn test_mutually_recursive_functions() {
             next |> is_odd
         }
     }
-    
+
     fun is_odd: (n: Int32) -> Boolean = {
         n == 0 then {
             false
@@ -138,7 +138,7 @@ fn test_tail_recursive_function() {
             (next, next_acc) factorial_tail
         }
     }
-    
+
     fun factorial: (n: Int32) -> Int32 = {
         (n, 1) factorial_tail
     }

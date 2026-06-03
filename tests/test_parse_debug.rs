@@ -10,7 +10,7 @@ mod tests {
         path: String,
         content: String
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~f> {
             val file = File { path = "test.txt", content = "data" };

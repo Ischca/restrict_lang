@@ -47,12 +47,12 @@ fn test_temporal_scope_arena_allocation() {
 fun main: () -> Int = {
     with lifetime<~outer> {
         val p1 = Point { x = 10, y = 20 };
-        
+
         with lifetime<~inner> {
             val p2 = Point { x = 30, y = 40 };
             p2.x
         };
-        
+
         p1.x
     }
 }"#;
@@ -92,18 +92,18 @@ fn test_nested_temporal_scope_memory() {
 fun main: () -> Int = {
     with lifetime<~level1> {
         val buf1 = Buffer { data = "Level 1", size = 7 };
-        
+
         with lifetime<~level2> {
             val buf2 = Buffer { data = "Level 2", size = 7 };
-            
+
             with lifetime<~level3> {
                 val buf3 = Buffer { data = "Level 3", size = 7 };
                 buf3.size
             };
-            
+
             buf2.size
         };
-        
+
         buf1.size
     }
 }"#;

@@ -140,7 +140,7 @@ block_expr          = "{" { statement } [ expression ] "}" ;
                       (* implicit Unit if no final expression *)
 
 (* Conditional Expression *)
-then_else_expr      = expression lexeme_gap "then" lexeme_gap block_expr 
+then_else_expr      = expression lexeme_gap "then" lexeme_gap block_expr
                       lexeme_gap "else" lexeme_gap block_expr ;
 
 (* Match Expression *)
@@ -179,8 +179,8 @@ scope_value         = identifier                      (* context name *)
 ## 4. Statements
 
 ```ebnf
-statement           = val_decl 
-                    | assignment 
+statement           = val_decl
+                    | assignment
                     | temporal_decl
                     | expression [ ";" ] ;  (* semicolon optional *)
                                            (* type checker enforces purity *)
@@ -201,15 +201,15 @@ temporal_decl       = "temporal" temporal_var [ where_clause ] ;
 (* Program Structure *)
 program             = { top_decl } ;
 
-top_decl            = function_decl 
-                    | record_decl 
+top_decl            = function_decl
+                    | record_decl
                     | context_decl
                     | impl_decl
                     | import_decl ;
                     (* reserved: enum_decl, macro_decl, trait_decl, type_decl *)
 
 (* Function Declaration *)
-function_decl       = { context_ann } [ "pub" ] "fun" identifier ":" 
+function_decl       = { context_ann } [ "pub" ] "fun" identifier ":"
                       function_signature "=" block_expr ;
 
 function_signature  = [ type_params ] param_block [ "->" type ] [ where_clause ] ;
@@ -224,13 +224,13 @@ context_ann         = "@" identifier ;  (* multiple @Context on separate lines *
                                        (* type checker handles set semantics *)
 
 (* Record Declaration *)
-record_decl         = "record" identifier [ type_params ] "{" 
+record_decl         = "record" identifier [ type_params ] "{"
                       field_decl { field_decl } "}" ;
 
 field_decl          = identifier ":" type [ "," | "\n" ] ;
 
 (* Context Declaration *)
-context_decl        = "context" identifier [ type_params ] "{" 
+context_decl        = "context" identifier [ type_params ] "{"
                       field_decl { field_decl } "}" ;
 
 (* Implementation Block *)
@@ -239,7 +239,7 @@ method_decl         = "fun" identifier ":" function_signature "=" block_expr ;
                       (* first parameter must be self: Target; calls remain OSV *)
 
 (* Reserved Enum Declaration: post-v0.0.1, not reachable from top_decl *)
-enum_decl           = "enum" identifier [ type_params ] "{" 
+enum_decl           = "enum" identifier [ type_params ] "{"
                       variant { variant } "}" ;
 
 variant             = identifier [ variant_data ] ;

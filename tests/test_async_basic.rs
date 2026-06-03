@@ -10,16 +10,16 @@ fn test_async_function_basic() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     async fun fetchUser<~async> = userId: Int32 -> User {
         User { id = userId, name = "Test" }
     }
-    
+
     record User {
         id: Int32,
         name: String
     }
-    
+
     fun main: () -> Int = {
         42
     }"#;
@@ -39,16 +39,16 @@ fn test_async_with_lifetime() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     record AsyncFile<~f, ~async> where ~f within ~async {
         handle: Int32
     }
-    
-    async fun openFile<~async> = path: String -> AsyncFile<~f, ~async> 
+
+    async fun openFile<~async> = path: String -> AsyncFile<~f, ~async>
     where ~f within ~async {
         AsyncFile { handle = 1 }
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~async> {
             // In real implementation, this would use await
@@ -71,12 +71,12 @@ fn test_await_in_pipe() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     record User {
         id: Int32,
         name: String
     }
-    
+
     // await is a built-in function that takes Task<T, ~async> -> T
     fun await<T, ~async> = task: Task<T, ~async> -> T {
         // Built-in implementation
@@ -84,11 +84,11 @@ fn test_await_in_pipe() {
             _ => User { id = 1, name = "Test" }
         }
     }
-    
+
     async fun fetchUser<~async> = userId: Int32 -> Task<User, ~async> {
         Task { id = userId }
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~async> {
             val userTask = (123) fetchUser;
@@ -112,12 +112,12 @@ fn test_spawn_task() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     record User {
         id: Int32,
         name: String
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~async> {
             // Spawn a lambda that returns a User
@@ -142,17 +142,17 @@ fn test_async_with_temporal_constraints() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     record AsyncFile<~f, ~async> where ~f within ~async {
         handle: Int32,
         data: String
     }
-    
-    async fun readFile<~f, ~async> = path: String -> Task<AsyncFile<~f, ~async>, ~async> 
+
+    async fun readFile<~f, ~async> = path: String -> Task<AsyncFile<~f, ~async>, ~async>
     where ~f within ~async {
         Task { id = 1 }
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~async> {
             with lifetime<~f> where ~f within ~async {
@@ -178,18 +178,18 @@ fn test_async_runtime_context() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     record User {
         id: Int32,
         name: String
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~async> {
             with AsyncRuntime<~async> {
                 // spawn in AsyncRuntime context
                 val task = spawn { User { id = 42, name = "Test" } };
-                
+
                 // await in AsyncRuntime context
                 val user = await task;
                 user.id
@@ -212,12 +212,12 @@ fn test_async_runtime_context_error() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     record User {
         id: Int32,
         name: String
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~async> {
             // This should fail - spawn without AsyncRuntime context
@@ -249,26 +249,26 @@ fn test_async_runtime_with_channels() {
     record Task<T, ~async> {
         id: Int32
     }
-    
+
     record Channel<T, ~async> {
         sender: Int32,
         receiver: Int32
     }
-    
+
     record User {
         id: Int32,
         name: String
     }
-    
+
     fun main: () -> Int = {
         with lifetime<~async> {
             with AsyncRuntime<~async> {
                 // Create channel
                 val ch = channel;
-                
+
                 // Spawn task
                 val task = spawn { User { id = 1, name = "Worker" } };
-                
+
                 // Await result
                 val user = await task;
                 user.id

@@ -229,10 +229,10 @@ fn test_array_vs_list() {
             with Arena {
                 val list = [1, 2, 3];      // List literal
                 val arr: Array<Int32, 3> = [1, 2, 3];     // Array by expected type
-                
+
                 val list_len = list |> list_length;
                 val arr_first = (arr, 0) array_get;
-                
+
                 list_len + arr_first
             }
         }

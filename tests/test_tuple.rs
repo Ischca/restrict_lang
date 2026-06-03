@@ -1,13 +1,14 @@
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn compile_to_wat(source: &str) -> Result<String, String> {
-    let (_, ast) = parse_program(source)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
+    let (_, ast) = parse_program(source).map_err(|e| format!("Parse error: {:?}", e))?;
     let mut type_checker = TypeChecker::new();
-    type_checker.check_program(&ast)
+    type_checker
+        .check_program(&ast)
         .map_err(|e| format!("Type error: {}", e))?;
     let mut codegen = WasmCodeGen::new();
-    codegen.generate(&ast)
+    codegen
+        .generate(&ast)
         .map_err(|e| format!("Codegen error: {}", e))
 }
 
@@ -87,5 +88,9 @@ fn test_pipe_chain() {
     // Should call double twice
     let double_count = wat.matches("call $double").count();
     // At least 2 calls to $double in the main function
-    assert!(double_count >= 2, "Expected at least 2 calls to $double, found {}", double_count);
+    assert!(
+        double_count >= 2,
+        "Expected at least 2 calls to $double, found {}",
+        double_count
+    );
 }

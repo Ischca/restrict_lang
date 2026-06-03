@@ -31,18 +31,18 @@ fn test_arena_use_after_free() {
         data: &str,
         arena: @arena
     }
-    
+
     fun create_dangling_reference() -> &str {
         with arena<@temp> {
             val s = ArenaString {
                 data = "allocated in temp arena",
                 arena: @temp
             };
-            
+
             s.data  // Returns reference to arena that's about to die!
         }  // @temp arena is freed here
     }
-    
+
     fun main = {
         val dangling = create_dangling_reference();
         dangling.len()  // Use after free!
@@ -60,7 +60,7 @@ fn test_arena_double_free() {
         arena1: @a1,
         arena2: @a2
     }
-    
+
     fun double_arena_trouble() {
         with arena<@first> {
             with arena<@second> {
@@ -69,13 +69,13 @@ fn test_arena_double_free() {
                     arena1: @first,
                     arena2: @second
                 };
-                
+
                 // Which arena owns the data?
                 drop(buffer);  // Explicit drop
             }  // @second freed - partial free?
         }  // @first freed - double free?
     }
-    
+
     fun main = {
         double_arena_trouble()
     }"#;
@@ -92,7 +92,7 @@ fn test_arena_stack_overflow() {
         children: List<RecursiveNode<@arena>>,
         arena_ref: @arena
     }
-    
+
     fun create_deep_tree<@parent>(depth: Int32) -> RecursiveNode<@parent> {
         if depth <= 0 {
             RecursiveNode {
@@ -107,7 +107,7 @@ fn test_arena_stack_overflow() {
                     create_deep_tree(depth - 1),
                     create_deep_tree(depth - 1)
                 ];
-                
+
                 RecursiveNode {
                     value: depth,
                     children: children,
@@ -116,7 +116,7 @@ fn test_arena_stack_overflow() {
             }
         }
     }
-    
+
     fun main = {
         with arena<@root> {
             create_deep_tree(1000)  // Stack overflow from nested arenas
@@ -134,26 +134,26 @@ fn test_arena_cross_contamination() {
         password: String,
         arena: @arena
     }
-    
+
     fun leak_between_arenas() -> String {
         var leaked = "";
-        
+
         with arena<@secure> {
             val secret = Sensitive {
                 password: "super_secret_123",
                 arena: @secure
             };
-            
+
             // Try to copy out of arena
             leaked = secret.password;  // Deep copy or reference?
         }
-        
+
         with arena<@public> {
             // Can we access the leaked data?
             leaked  // Contains data from freed @secure arena
         }
     }
-    
+
     fun main = {
         leak_between_arenas()
     }"#;
@@ -169,12 +169,12 @@ fn test_arena_allocation_overflow() {
         data: Array<u8, 1_000_000>,
         arena: @arena
     }
-    
+
     fun overflow_arena_size() {
         with arena<@huge> size = 100_000_000 {
             var chunks = [];
             var i = 0;
-            
+
             // Allocate until we overflow arena size
             while i < 1000 {
                 chunks.push(BigChunk {
@@ -183,12 +183,12 @@ fn test_arena_allocation_overflow() {
                 });
                 i = i + 1;
             }
-            
+
             // 1000 * 1_000_000 = 1_000_000_000 > arena size
             // Integer overflow or out-of-memory?
         }
     }
-    
+
     fun main = {
         overflow_arena_size()
     }"#;
@@ -204,7 +204,7 @@ fn test_arena_pointer_smuggling() {
         ptr: *T,
         arena: @arena
     }
-    
+
     fun smuggle_pointer<@src, @dst>() -> Pointer<Int32, @dst> {
         with arena<@src> {
             val value = 42;
@@ -212,7 +212,7 @@ fn test_arena_pointer_smuggling() {
                 ptr: &value as *Int32,
                 arena: @src
             };
-            
+
             // Type-level pointer laundering
             Pointer {
                 ptr: src_ptr.ptr,  // Same pointer
@@ -220,7 +220,7 @@ fn test_arena_pointer_smuggling() {
             }
         }
     }
-    
+
     fun main = {
         with arena<@destination> {
             val smuggled = smuggle_pointer();
@@ -240,12 +240,12 @@ fn test_arena_fragmentation_attack() {
         data: Vec<u8>,
         arena: @arena
     }
-    
+
     fun fragment_arena<@victim>() {
         // Allocate and free in pattern to maximize fragmentation
         var fragments = [];
         var i = 0;
-        
+
         // Phase 1: Allocate alternating sizes
         while i < 1000 {
             let size = if i % 2 == 0 { 1024 } else { 1 };
@@ -256,7 +256,7 @@ fn test_arena_fragmentation_attack() {
             });
             i = i + 1;
         }
-        
+
         // Phase 2: Free every other allocation
         i = 0;
         while i < fragments.len() {
@@ -265,7 +265,7 @@ fn test_arena_fragmentation_attack() {
             }
             i = i + 2;
         }
-        
+
         // Phase 3: Try to allocate large contiguous block
         val large = Fragment {
             size: 500_000,
@@ -273,7 +273,7 @@ fn test_arena_fragmentation_attack() {
             arena: @victim
         };
     }
-    
+
     fun main = {
         with arena<@target> size = 1_000_000 {
             fragment_arena()
@@ -291,30 +291,30 @@ fn test_arena_type_confusion() {
         value: Int32,
         arena: @arena
     }
-    
+
     record FloatHolder<@arena> {
         value: Float32,
         arena: @arena
     }
-    
+
     fun type_pun<@arena>() -> Float32 {
         // Allocate as integer
         val int_data = IntHolder {
             value: 0x41414141,  // Bit pattern
             arena: @arena
         };
-        
+
         // Get raw pointer
         val ptr = &int_data as *u8;
-        
+
         // Reinterpret as float (type punning)
         val float_data = unsafe {
             *(ptr as *FloatHolder)
         };
-        
+
         float_data.value  // Type confusion!
     }
-    
+
     fun main = {
         with arena<@pun> {
             type_pun()
@@ -333,24 +333,24 @@ fn test_arena_reset_invalidation() {
         cache_ptr: *T,
         arena: @arena
     }
-    
+
     fun arena_reset_bug<@arena>() -> Int32 {
         val cached = Cached {
             value: 42,
             cache_ptr: null,
             arena: @arena
         };
-        
+
         // Store pointer to value
         cached.cache_ptr = &cached.value;
-        
+
         // Imagine arena supports reset operation
         arena_reset(@arena);  // Clears all allocations
-        
+
         // Use cached pointer - points to freed memory!
         unsafe { *cached.cache_ptr }
     }
-    
+
     fun main = {
         with arena<@resetable> {
             arena_reset_bug()
@@ -369,39 +369,39 @@ fn test_arena_alignment_chaos() {
         data: [u8; 64],
         arena: @arena
     }
-    
+
     #[repr(packed)]
     record Packed<@arena> {
         a: u8,
         b: u64,  // Unaligned!
         arena: @arena
     }
-    
+
     fun alignment_chaos<@arena>() {
         // Allocate with strict alignment
         val aligned = CacheAligned {
             data: [0; 64],
             arena: @arena
         };
-        
+
         // Followed by packed struct
         val packed = Packed {
             a: 1,
             b: 0xDEADBEEF,
             arena: @arena
         };
-        
+
         // Does arena respect alignment requirements?
         // Unaligned access to packed.b could crash
         val sum = aligned.data[0] as u64 + packed.b;
-        
+
         // Cast shenanigans
         val ptr = &packed as *u8;
         val misaligned = unsafe {
             *((ptr + 1) as *u64)  // Definitely unaligned!
         };
     }
-    
+
     fun main = {
         with arena<@chaotic> {
             alignment_chaos()

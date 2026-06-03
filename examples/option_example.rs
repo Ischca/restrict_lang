@@ -25,18 +25,18 @@ fun main: () = {
     // Basic Option usage
     val x = Some(42)
     val y = None
-    
+
     // Unwrapping with default
     val result1 = (x, 0) unwrap_or
     val result2 = (y, 0) unwrap_or
-    
+
     // Finding first even number
     val first_even = (1, 10) find_first_even
     first_even match {
         Some(n) => { n |> print_int }
         None => { "No even number found" |> println }
     }
-    
+
     // Nested Options
     val nested = Some(Some(100))
     nested match {

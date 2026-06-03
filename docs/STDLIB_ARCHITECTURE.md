@@ -113,7 +113,7 @@ Since JSON is crucial for web backends, here's a specific approach:
 // std/encoding/json.rl
 
 // JSON value type using tagged unions
-export type JsonValue = 
+export type JsonValue =
     | Null
     | Bool(Boolean)
     | Number(Float64)
@@ -151,7 +151,7 @@ fun main = {
         |> Router.get("/users/:id", getUser)
         |> Router.post("/users", createUser)
         |> Router.static("/public", "./static")
-    
+
     Server.new()
         |> Server.port(8080)
         |> Server.router(router)
@@ -160,10 +160,10 @@ fun main = {
 
 fun getUser = req: Request {
     val userId = req.params.get("id") |> unwrap |> parseInt
-    
+
     // Fetch user from database...
     val user = User { id: userId, name: "Alice" }
-    
+
     Response.ok()
         |> Response.json(user |> toJson)
 }

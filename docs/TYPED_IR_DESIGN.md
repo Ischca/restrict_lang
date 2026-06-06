@@ -84,6 +84,16 @@ IR. These IDs are provenance links for builder validation and migration tests;
 they are not stable `BindingId`s, ownership authorities, region capabilities,
 ABI handles, or cross-build identities.
 
+The builder also assigns builder-local `BindingId`s for parameters and simple
+identifier bindings such as `val alias = value` or `mut val alias = value`.
+Identifier expressions that resolve through this shadow scope are emitted as
+`TypedExprKind::Binding`. Complex pattern bindings are not decomposed at this
+stage; names introduced by those patterns are installed only as shadow barriers
+so later identifier expressions do not accidentally resolve to an outer binding
+with the same name. These IDs are useful provenance for diagnostics and
+optimization reports, but they are not yet authoritative symbol identities or
+rewrite handles.
+
 A read-only shadow invariant validator runs after Checked IR construction. It
 only checks builder-local provenance: each `NormalizedApplySite.expr_id` must
 point to a `TypedExprKind::Apply` with the same `ApplyIr`, `TypedExpr.value`
@@ -249,12 +259,13 @@ an analysis bridge for later move/copy elimination; it does not rewrite Checked
 IR, does not change WAT generation, and does not authorize removing Apply nodes.
 
 The first affine forwarding report is similarly conservative. It may flag a
-runtime-reference `PlainValue` that is moved exactly once into one Apply
-argument, preserving the Apply flavor and argument index for diagnostics and
-future lowering. It deliberately excludes direct literal moves and scalar copy
-reads, and every candidate remains blocked on stable `BindingId` / expression
-provenance before any rewrite can happen. This keeps the optimization path tied
-to Restrict's affine value flow without introducing hidden clone/copy behavior.
+runtime-reference binding value that is moved exactly once into one Apply
+argument, preserving the binding id/name, Apply flavor, and argument index for
+diagnostics and future lowering. It deliberately excludes direct literal moves
+and scalar copy reads, and every candidate remains blocked on stable
+authoritative `BindingId` / expression provenance before any rewrite can happen.
+This keeps the optimization path tied to Restrict's affine value flow without
+introducing hidden clone/copy behavior.
 
 ## Invariants
 
@@ -285,6 +296,10 @@ to Restrict's affine value flow without introducing hidden clone/copy behavior.
 14. Shadow Apply `FlowSummary` use events must cover `ApplyIr.args` in
     OSV/evaluation order without adding callee ownership semantics for top-level
     function symbols.
+15. Builder-local `BindingId`s must identify parameter and simple identifier
+    binding provenance only. Complex pattern names must block outer provenance
+    but not create partial binding identities. They are not stable symbol
+    identities until the authoritative binding graph replaces the shadow scope.
 
 ## Migration Plan
 

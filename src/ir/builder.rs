@@ -11,8 +11,8 @@ use crate::type_checker::{CheckedFunctionSignature, TypeChecker};
 
 use super::layout::{LayoutId, LayoutKind, LayoutTable};
 use super::{
-    ApplyFlavor, ApplyIr, ExprId, FinalType, FlowSummary, HostAbi, InternalOnlyReason, TypedExpr,
-    TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr,
+    ApplyFlavor, ApplyIr, BindingId, ExprId, FinalType, FlowSummary, HostAbi, InternalOnlyReason,
+    TypedExpr, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +36,7 @@ pub struct CheckedFunctionIr {
     pub params: Vec<CheckedParamIr>,
     pub return_type: FinalType,
     pub return_repr: ValueRepr,
+    pub bindings: Vec<CheckedBindingIr>,
     pub apply_sites: Vec<NormalizedApplySite>,
     pub typed_exprs: Vec<TypedExpr>,
     pub monomorphic: bool,
@@ -63,6 +64,44 @@ impl CheckedFunctionIr {
                         value, self.name
                     )));
                 }
+            }
+        }
+
+        let mut bindings_by_id = HashMap::new();
+        for binding in &self.bindings {
+            if bindings_by_id.insert(binding.id, binding).is_some() {
+                return Err(shadow_invariant_violation(format!(
+                    "duplicate binding id {:?} in {}",
+                    binding.id, self.name
+                )));
+            }
+            if let Some(value) = binding.value {
+                if !value_producers.contains_key(&value) {
+                    return Err(shadow_invariant_violation(format!(
+                        "binding {:?} in {} points at unproduced value {:?}",
+                        binding.id, self.name, value
+                    )));
+                }
+            }
+        }
+
+        for (index, param) in self.params.iter().enumerate() {
+            let binding = bindings_by_id.get(&param.binding).ok_or_else(|| {
+                shadow_invariant_violation(format!(
+                    "parameter '{}' in {} points at missing binding {:?}",
+                    param.name, self.name, param.binding
+                ))
+            })?;
+            if binding.name != param.name
+                || binding.source != (CheckedBindingSource::Param { index })
+                || binding.value.is_some()
+                || binding.final_type != param.final_type
+                || binding.repr != param.repr
+            {
+                return Err(shadow_invariant_violation(format!(
+                    "parameter '{}' in {} has stale binding provenance",
+                    param.name, self.name
+                )));
             }
         }
 
@@ -251,8 +290,26 @@ impl CheckedFunctionIr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckedParamIr {
     pub name: String,
+    pub binding: BindingId,
     pub final_type: FinalType,
     pub repr: ValueRepr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckedBindingIr {
+    pub id: BindingId,
+    pub name: String,
+    pub mutable: bool,
+    pub source: CheckedBindingSource,
+    pub value: Option<ValueId>,
+    pub final_type: FinalType,
+    pub repr: ValueRepr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckedBindingSource {
+    Param { index: usize },
+    Local,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,6 +378,12 @@ struct PendingApply {
     apply: ApplyIr,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingScopeEntry {
+    Known(BindingId),
+    ShadowOnly,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IrBuildError {
     MissingCheckedReturn(String),
@@ -354,8 +417,10 @@ struct CheckedIrBuilder<'a> {
     checker: &'a TypeChecker,
     layout_table: LayoutTable,
     value_reprs: HashMap<ValueId, ValueRepr>,
+    binding_scopes: Vec<HashMap<String, BindingScopeEntry>>,
     next_expr: u32,
     next_value: u32,
+    next_binding: u32,
     next_apply: usize,
 }
 
@@ -365,8 +430,10 @@ impl<'a> CheckedIrBuilder<'a> {
             checker,
             layout_table: LayoutTable::new(),
             value_reprs: HashMap::new(),
+            binding_scopes: Vec::new(),
             next_expr: 0,
             next_value: 0,
+            next_binding: 0,
             next_apply: 0,
         }
     }
@@ -423,16 +490,20 @@ impl<'a> CheckedIrBuilder<'a> {
     ) -> Result<CheckedFunctionIr, IrBuildError> {
         let return_type = FinalType::new(signature.return_type.clone())?;
         let return_repr = self.layout_table.value_repr_for_type(&return_type);
+        self.start_function_binding_scope();
+        let mut bindings = Vec::new();
 
         let params = signature
             .params
             .iter()
-            .map(|(name, ty)| self.build_param_ir(name, ty))
+            .enumerate()
+            .map(|(index, (name, ty))| self.build_param_ir(index, name, ty, &mut bindings))
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut apply_sites = Vec::new();
         let (typed_exprs, body_result) =
-            self.collect_typed_exprs_from_block(&func.body, &mut apply_sites)?;
+            self.collect_typed_exprs_from_block(&func.body, &mut apply_sites, &mut bindings)?;
+        self.finish_function_binding_scope();
 
         let monomorphic = return_type.is_monomorphic()
             && params.iter().all(|param| param.final_type.is_monomorphic());
@@ -453,6 +524,7 @@ impl<'a> CheckedIrBuilder<'a> {
             params,
             return_type,
             return_repr,
+            bindings,
             apply_sites,
             typed_exprs,
             monomorphic,
@@ -465,14 +537,28 @@ impl<'a> CheckedIrBuilder<'a> {
 
     fn build_param_ir(
         &mut self,
+        index: usize,
         name: &str,
         ty: &crate::type_checker::TypedType,
+        bindings: &mut Vec<CheckedBindingIr>,
     ) -> Result<CheckedParamIr, IrBuildError> {
         let final_type = FinalType::new(ty.clone())?;
         let repr = self.layout_table.value_repr_for_type(&final_type);
+        let binding = self.next_binding_id();
+        self.register_binding_name(name, binding);
+        bindings.push(CheckedBindingIr {
+            id: binding,
+            name: name.to_string(),
+            mutable: false,
+            source: CheckedBindingSource::Param { index },
+            value: None,
+            final_type: final_type.clone(),
+            repr,
+        });
 
         Ok(CheckedParamIr {
             name: name.to_string(),
+            binding,
             final_type,
             repr,
         })
@@ -482,9 +568,10 @@ impl<'a> CheckedIrBuilder<'a> {
         &mut self,
         block: &BlockExpr,
         sites: &mut Vec<NormalizedApplySite>,
+        bindings: &mut Vec<CheckedBindingIr>,
     ) -> Result<(Vec<TypedExpr>, Option<ValueId>), IrBuildError> {
         let mut exprs = Vec::new();
-        let body_result = self.push_typed_exprs_from_block(block, &mut exprs, sites)?;
+        let body_result = self.push_typed_exprs_from_block(block, &mut exprs, sites, bindings)?;
         Ok((exprs, body_result))
     }
 
@@ -493,24 +580,30 @@ impl<'a> CheckedIrBuilder<'a> {
         block: &BlockExpr,
         exprs: &mut Vec<TypedExpr>,
         sites: &mut Vec<NormalizedApplySite>,
+        bindings: &mut Vec<CheckedBindingIr>,
     ) -> Result<Option<ValueId>, IrBuildError> {
+        self.push_binding_scope();
         let mut last_value = None;
         for stmt in &block.statements {
             match stmt {
                 Stmt::Binding(binding) => {
-                    last_value = self.push_typed_exprs_from_expr(&binding.value, exprs, sites)?;
+                    last_value =
+                        self.push_typed_exprs_from_expr(&binding.value, exprs, sites, bindings)?;
+                    self.register_local_binding(binding, last_value, exprs, bindings)?;
                 }
                 Stmt::Assignment(assign) => {
-                    last_value = self.push_typed_exprs_from_expr(&assign.value, exprs, sites)?;
+                    last_value =
+                        self.push_typed_exprs_from_expr(&assign.value, exprs, sites, bindings)?;
                 }
                 Stmt::Expr(expr) => {
-                    last_value = self.push_typed_exprs_from_expr(expr, exprs, sites)?;
+                    last_value = self.push_typed_exprs_from_expr(expr, exprs, sites, bindings)?;
                 }
             }
         }
         if let Some(expr) = &block.expr {
-            last_value = self.push_typed_exprs_from_expr(expr, exprs, sites)?;
+            last_value = self.push_typed_exprs_from_expr(expr, exprs, sites, bindings)?;
         }
+        self.pop_binding_scope();
         Ok(last_value)
     }
 
@@ -519,6 +612,7 @@ impl<'a> CheckedIrBuilder<'a> {
         expr: &Expr,
         exprs: &mut Vec<TypedExpr>,
         sites: &mut Vec<NormalizedApplySite>,
+        bindings: &mut Vec<CheckedBindingIr>,
     ) -> Result<Option<ValueId>, IrBuildError> {
         let mut apply = None;
 
@@ -527,12 +621,12 @@ impl<'a> CheckedIrBuilder<'a> {
                 let mut args = Vec::new();
                 for arg in &call.args {
                     let value = self
-                        .push_typed_exprs_from_expr(arg, exprs, sites)?
+                        .push_typed_exprs_from_expr(arg, exprs, sites, bindings)?
                         .ok_or_else(|| missing_apply_value("tuple argument"))?;
                     args.push(value);
                 }
                 let callee = self
-                    .push_typed_exprs_from_expr(&call.function, exprs, sites)?
+                    .push_typed_exprs_from_expr(&call.function, exprs, sites, bindings)?
                     .unwrap_or_else(|| self.next_value());
                 apply = Some(PendingApply {
                     callee_hint: callee_hint(call.function.as_ref()),
@@ -540,12 +634,12 @@ impl<'a> CheckedIrBuilder<'a> {
                 });
             }
             Expr::Pipe(pipe) => {
-                let object = self.push_typed_exprs_from_expr(&pipe.expr, exprs, sites)?;
+                let object = self.push_typed_exprs_from_expr(&pipe.expr, exprs, sites, bindings)?;
                 match &pipe.target {
                     PipeTarget::Expr(target) => {
                         let object = object.ok_or_else(|| missing_apply_value("pipe object"))?;
                         let callee = self
-                            .push_typed_exprs_from_expr(target, exprs, sites)?
+                            .push_typed_exprs_from_expr(target, exprs, sites, bindings)?
                             .unwrap_or_else(|| self.next_value());
                         apply = Some(PendingApply {
                             callee_hint: callee_hint(target),
@@ -567,13 +661,13 @@ impl<'a> CheckedIrBuilder<'a> {
             }
             Expr::RecordLit(record) => {
                 for field in &record.fields {
-                    self.push_typed_exprs_from_field_init(field, exprs, sites)?;
+                    self.push_typed_exprs_from_field_init(field, exprs, sites, bindings)?;
                 }
             }
             Expr::Clone(clone) => {
-                self.push_typed_exprs_from_expr(&clone.base, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&clone.base, exprs, sites, bindings)?;
                 for field in &clone.updates.fields {
-                    self.push_typed_exprs_from_field_init(field, exprs, sites)?;
+                    self.push_typed_exprs_from_field_init(field, exprs, sites, bindings)?;
                 }
             }
             Expr::Freeze(inner)
@@ -583,67 +677,67 @@ impl<'a> CheckedIrBuilder<'a> {
             | Expr::Ok(inner)
             | Expr::Err(inner)
             | Expr::FieldAccess(inner, _) => {
-                self.push_typed_exprs_from_expr(inner, exprs, sites)?;
+                self.push_typed_exprs_from_expr(inner, exprs, sites, bindings)?;
             }
             Expr::PrototypeClone(clone) => {
                 for field in &clone.updates.fields {
-                    self.push_typed_exprs_from_field_init(field, exprs, sites)?;
+                    self.push_typed_exprs_from_field_init(field, exprs, sites, bindings)?;
                 }
             }
             Expr::Then(then) => {
-                self.push_typed_exprs_from_expr(&then.condition, exprs, sites)?;
-                self.push_typed_exprs_from_block(&then.then_block, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&then.condition, exprs, sites, bindings)?;
+                self.push_typed_exprs_from_block(&then.then_block, exprs, sites, bindings)?;
                 for (condition, block) in &then.else_ifs {
-                    self.push_typed_exprs_from_expr(condition, exprs, sites)?;
-                    self.push_typed_exprs_from_block(block, exprs, sites)?;
+                    self.push_typed_exprs_from_expr(condition, exprs, sites, bindings)?;
+                    self.push_typed_exprs_from_block(block, exprs, sites, bindings)?;
                 }
                 if let Some(block) = &then.else_block {
-                    self.push_typed_exprs_from_block(block, exprs, sites)?;
+                    self.push_typed_exprs_from_block(block, exprs, sites, bindings)?;
                 }
             }
             Expr::While(while_expr) => {
-                self.push_typed_exprs_from_expr(&while_expr.condition, exprs, sites)?;
-                self.push_typed_exprs_from_block(&while_expr.body, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&while_expr.condition, exprs, sites, bindings)?;
+                self.push_typed_exprs_from_block(&while_expr.body, exprs, sites, bindings)?;
             }
             Expr::Match(match_expr) => {
-                self.push_typed_exprs_from_expr(&match_expr.expr, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&match_expr.expr, exprs, sites, bindings)?;
                 for arm in &match_expr.arms {
-                    self.push_typed_exprs_from_block(&arm.body, exprs, sites)?;
+                    self.push_typed_exprs_from_block(&arm.body, exprs, sites, bindings)?;
                 }
             }
             Expr::Binary(binary) => {
-                self.push_typed_exprs_from_expr(&binary.left, exprs, sites)?;
-                self.push_typed_exprs_from_expr(&binary.right, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&binary.left, exprs, sites, bindings)?;
+                self.push_typed_exprs_from_expr(&binary.right, exprs, sites, bindings)?;
             }
             Expr::Unary(unary) => {
-                self.push_typed_exprs_from_expr(&unary.expr, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&unary.expr, exprs, sites, bindings)?;
             }
             Expr::Cast(cast) => {
-                self.push_typed_exprs_from_expr(&cast.expr, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&cast.expr, exprs, sites, bindings)?;
             }
             Expr::With(with) => {
                 for binding in &with.bindings {
-                    self.push_typed_exprs_from_field_init(binding, exprs, sites)?;
+                    self.push_typed_exprs_from_field_init(binding, exprs, sites, bindings)?;
                 }
-                self.push_typed_exprs_from_block(&with.body, exprs, sites)?;
+                self.push_typed_exprs_from_block(&with.body, exprs, sites, bindings)?;
             }
             Expr::WithLifetime(with) => {
-                self.push_typed_exprs_from_block(&with.body, exprs, sites)?;
+                self.push_typed_exprs_from_block(&with.body, exprs, sites, bindings)?;
             }
             Expr::Block(block) => {
-                self.push_typed_exprs_from_block(block, exprs, sites)?;
+                self.push_typed_exprs_from_block(block, exprs, sites, bindings)?;
             }
             Expr::ListLit(items) | Expr::ArrayLit(items) => {
                 for item in items {
-                    self.push_typed_exprs_from_expr(item, exprs, sites)?;
+                    self.push_typed_exprs_from_expr(item, exprs, sites, bindings)?;
                 }
             }
             Expr::RangeLit(range) => {
-                self.push_typed_exprs_from_expr(&range.start, exprs, sites)?;
-                self.push_typed_exprs_from_expr(&range.end, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&range.start, exprs, sites, bindings)?;
+                self.push_typed_exprs_from_expr(&range.end, exprs, sites, bindings)?;
             }
             Expr::Lambda(lambda) => {
-                self.push_typed_exprs_from_expr(&lambda.body, exprs, sites)?;
+                self.push_typed_exprs_from_expr(&lambda.body, exprs, sites, bindings)?;
             }
             Expr::IntLit(_)
             | Expr::FloatLit(_)
@@ -669,10 +763,11 @@ impl<'a> CheckedIrBuilder<'a> {
         field: &FieldInit,
         exprs: &mut Vec<TypedExpr>,
         sites: &mut Vec<NormalizedApplySite>,
+        bindings: &mut Vec<CheckedBindingIr>,
     ) -> Result<(), IrBuildError> {
         match field {
             FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
-                self.push_typed_exprs_from_expr(value, exprs, sites)?;
+                self.push_typed_exprs_from_expr(value, exprs, sites, bindings)?;
                 Ok(())
             }
         }
@@ -716,6 +811,10 @@ impl<'a> CheckedIrBuilder<'a> {
                 let value = self.next_value();
                 let kind = if is_literal_expr(expr) {
                     TypedExprKind::Literal
+                } else if let Expr::Ident(name) = expr {
+                    self.lookup_binding(name)
+                        .map(TypedExprKind::Binding)
+                        .unwrap_or(TypedExprKind::Value(value))
                 } else {
                     TypedExprKind::Value(value)
                 };
@@ -782,6 +881,81 @@ impl<'a> CheckedIrBuilder<'a> {
         }
     }
 
+    fn start_function_binding_scope(&mut self) {
+        self.binding_scopes.clear();
+        self.push_binding_scope();
+    }
+
+    fn finish_function_binding_scope(&mut self) {
+        self.binding_scopes.clear();
+    }
+
+    fn push_binding_scope(&mut self) {
+        self.binding_scopes.push(HashMap::new());
+    }
+
+    fn pop_binding_scope(&mut self) {
+        self.binding_scopes.pop();
+    }
+
+    fn register_binding_name(&mut self, name: &str, binding: BindingId) {
+        if let Some(scope) = self.binding_scopes.last_mut() {
+            scope.insert(name.to_string(), BindingScopeEntry::Known(binding));
+        }
+    }
+
+    fn shadow_binding_name(&mut self, name: &str) {
+        if let Some(scope) = self.binding_scopes.last_mut() {
+            scope.insert(name.to_string(), BindingScopeEntry::ShadowOnly);
+        }
+    }
+
+    fn lookup_binding(&self, name: &str) -> Option<BindingId> {
+        for scope in self.binding_scopes.iter().rev() {
+            match scope.get(name) {
+                Some(BindingScopeEntry::Known(binding)) => return Some(*binding),
+                Some(BindingScopeEntry::ShadowOnly) => return None,
+                None => {}
+            }
+        }
+        None
+    }
+
+    fn register_local_binding(
+        &mut self,
+        binding: &BindDecl,
+        value: Option<ValueId>,
+        exprs: &[TypedExpr],
+        bindings: &mut Vec<CheckedBindingIr>,
+    ) -> Result<(), IrBuildError> {
+        let Pattern::Ident(name) = &binding.pattern else {
+            for name in pattern_bound_names(&binding.pattern) {
+                self.shadow_binding_name(&name);
+            }
+            return Ok(());
+        };
+        let Some(value) = value else {
+            return Ok(());
+        };
+        let Some(producer) = producer_for_value(exprs, value) else {
+            return Ok(());
+        };
+
+        let id = self.next_binding_id();
+        self.register_binding_name(name, id);
+        bindings.push(CheckedBindingIr {
+            id,
+            name: name.clone(),
+            mutable: binding.mutable,
+            source: CheckedBindingSource::Local,
+            value: Some(value),
+            final_type: producer.final_type.clone(),
+            repr: producer.repr,
+        });
+
+        Ok(())
+    }
+
     fn next_expr_id(&mut self) -> ExprId {
         let id = ExprId(self.next_expr);
         self.next_expr += 1;
@@ -791,6 +965,12 @@ impl<'a> CheckedIrBuilder<'a> {
     fn next_value(&mut self) -> ValueId {
         let id = ValueId(self.next_value);
         self.next_value += 1;
+        id
+    }
+
+    fn next_binding_id(&mut self) -> BindingId {
+        let id = BindingId(self.next_binding);
+        self.next_binding += 1;
         id
     }
 
@@ -1042,6 +1222,50 @@ fn callee_hint(expr: &Expr) -> Option<String> {
     }
 }
 
+fn pattern_bound_names(pattern: &Pattern) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_pattern_bound_names(pattern, &mut names);
+    names
+}
+
+fn collect_pattern_bound_names(pattern: &Pattern, names: &mut Vec<String>) {
+    match pattern {
+        Pattern::Ident(name) if name != "_" => names.push(name.clone()),
+        Pattern::Record(_, fields) => {
+            for (_, field_pattern) in fields {
+                collect_pattern_bound_names(field_pattern, names);
+            }
+        }
+        Pattern::RecordDestruct { fields, rest, .. } => {
+            for (_, field_pattern) in fields {
+                collect_pattern_bound_names(field_pattern, names);
+            }
+            if let Some(rest) = rest {
+                if rest != "_" {
+                    names.push(rest.clone());
+                }
+            }
+        }
+        Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
+            collect_pattern_bound_names(inner, names);
+        }
+        Pattern::ListCons(head, tail) => {
+            collect_pattern_bound_names(head, names);
+            collect_pattern_bound_names(tail, names);
+        }
+        Pattern::ListExact(patterns) => {
+            for pattern in patterns {
+                collect_pattern_bound_names(pattern, names);
+            }
+        }
+        Pattern::Wildcard
+        | Pattern::Literal(_)
+        | Pattern::None
+        | Pattern::EmptyList
+        | Pattern::Ident(_) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1114,6 +1338,105 @@ fun identity: <T>(value: T) -> T = {
             &TypedType::TypeParam("T".to_string())
         );
         assert!(!function.monomorphic);
+    }
+
+    #[test]
+    fn builder_records_param_binding_provenance() {
+        let ir = checked_ir(
+            r#"
+fun main: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+        let param_binding = function.params[0].binding;
+
+        assert_eq!(function.bindings.len(), 1);
+        assert_eq!(function.bindings[0].id, param_binding);
+        assert_eq!(function.bindings[0].name, "items");
+        assert_eq!(
+            function.bindings[0].source,
+            CheckedBindingSource::Param { index: 0 }
+        );
+        assert!(function.bindings[0].value.is_none());
+        assert!(function.typed_exprs.iter().any(|expr| {
+            matches!(expr.kind, TypedExprKind::Binding(binding) if binding == param_binding)
+        }));
+    }
+
+    #[test]
+    fn builder_records_local_identifier_binding_provenance() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: (items: List<Int32>) -> List<Int32> = {
+    val alias = items
+    alias |> keep
+}
+"#,
+        );
+
+        let main = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main IR should be present");
+        let alias = main
+            .bindings
+            .iter()
+            .find(|binding| binding.name == "alias")
+            .expect("local alias binding should be present");
+
+        assert_eq!(alias.source, CheckedBindingSource::Local);
+        assert!(!alias.mutable);
+        assert!(alias.value.is_some());
+
+        let pipe_site = main
+            .apply_sites
+            .iter()
+            .find(|site| site.apply.flavor == ApplyFlavor::Pipe)
+            .expect("pipe apply should be present");
+        let moved_binding_expr = main
+            .typed_exprs
+            .iter()
+            .find(|expr| expr.value == Some(pipe_site.apply.args[0]))
+            .expect("pipe argument producer should be present");
+
+        assert!(matches!(
+            moved_binding_expr.kind,
+            TypedExprKind::Binding(binding) if binding == alias.id
+        ));
+    }
+
+    #[test]
+    fn builder_shadows_complex_pattern_names_without_binding_provenance() {
+        let checker = TypeChecker::new();
+        let mut builder = CheckedIrBuilder::new(&checker);
+        let mut bindings = Vec::new();
+        builder.start_function_binding_scope();
+        let outer_alias_binding = builder.next_binding_id();
+        builder.register_binding_name("alias", outer_alias_binding);
+        builder.push_binding_scope();
+
+        let binding = BindDecl {
+            mutable: false,
+            pattern: Pattern::Some(Box::new(Pattern::Ident("alias".to_string()))),
+            type_annotation: None,
+            value: Box::new(Expr::None),
+        };
+        builder
+            .register_local_binding(&binding, None, &[], &mut bindings)
+            .expect("complex pattern shadowing should not fail");
+
+        assert!(bindings.is_empty());
+        assert_eq!(builder.lookup_binding("alias"), None);
+        builder.pop_binding_scope();
+        assert_eq!(builder.lookup_binding("alias"), Some(outer_alias_binding));
     }
 
     #[test]
@@ -1412,6 +1735,7 @@ fun main: () -> Int32 = {
             params: Vec::new(),
             return_type: FinalType::new(TypedType::Int32).unwrap(),
             return_repr: ValueRepr::Scalar(ScalarRepr::I32),
+            bindings: Vec::new(),
             apply_sites: vec![NormalizedApplySite {
                 source_index: 0,
                 expr_id: ExprId(9),
@@ -1527,7 +1851,7 @@ fun main: () -> Int32 = {
         let pipe_object_value = main.typed_exprs[..pipe_expr_index]
             .iter()
             .rev()
-            .find(|expr| matches!(expr.kind, TypedExprKind::Value(_)))
+            .find(|expr| expr.value == Some(pipe_site.apply.args[0]))
             .and_then(|expr| expr.value)
             .expect("pipe object should produce a value before the pipe apply");
 

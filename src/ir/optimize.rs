@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use super::builder::{CheckedFunctionIr, CheckedProgramIr};
-use super::{ApplyFlavor, ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
+use super::builder::{CheckedBindingIr, CheckedFunctionIr, CheckedProgramIr};
+use super::{ApplyFlavor, BindingId, ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramValueUseSummary {
@@ -23,6 +23,7 @@ pub struct ValueUseSummary {
     pub value: ValueId,
     pub producer: ExprId,
     pub producer_kind: ValueProducerKind,
+    pub binding: Option<BindingId>,
     pub repr: ValueRepr,
     pub is_body_result: bool,
     pub uses: Vec<UseEvent>,
@@ -90,6 +91,8 @@ pub enum ValueUseFinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AffineForwardingCandidate {
     pub value: ValueId,
+    pub binding: BindingId,
+    pub binding_name: String,
     pub producer: ExprId,
     pub apply_expr: ExprId,
     pub apply_flavor: ApplyFlavor,
@@ -120,6 +123,11 @@ pub fn summarize_checked_function_value_uses(
     let mut value_indexes = HashMap::new();
     let body_result = function.lowering.body_result;
     let mut applies_by_expr = HashMap::new();
+    let bindings_by_id = function
+        .bindings
+        .iter()
+        .map(|binding| (binding.id, binding))
+        .collect::<HashMap<_, _>>();
 
     for expr in &function.typed_exprs {
         if let TypedExprKind::Apply(apply) = &expr.kind {
@@ -134,6 +142,7 @@ pub fn summarize_checked_function_value_uses(
                 value: *value,
                 producer: expr.id,
                 producer_kind: producer_kind(&expr.kind),
+                binding: binding_for_kind(&expr.kind),
                 repr: expr.repr,
                 is_body_result: Some(*value) == body_result,
                 uses: Vec::new(),
@@ -157,7 +166,8 @@ pub fn summarize_checked_function_value_uses(
             findings.push(finding);
         }
     }
-    let forwarding_candidates = forwarding_candidates_for_values(&values, &applies_by_expr);
+    let forwarding_candidates =
+        forwarding_candidates_for_values(&values, &applies_by_expr, &bindings_by_id);
 
     FunctionValueUseSummary {
         name: function.name.clone(),
@@ -177,6 +187,13 @@ fn producer_kind(kind: &TypedExprKind) -> ValueProducerKind {
         TypedExprKind::Branch { .. } => ValueProducerKind::Branch,
         TypedExprKind::Match { .. } => ValueProducerKind::Match,
         TypedExprKind::Region { .. } => ValueProducerKind::Region,
+    }
+}
+
+fn binding_for_kind(kind: &TypedExprKind) -> Option<BindingId> {
+    match kind {
+        TypedExprKind::Binding(binding) => Some(*binding),
+        _ => None,
     }
 }
 
@@ -268,6 +285,7 @@ fn finding_for_value(value: &ValueUseSummary) -> Option<ValueUseFinding> {
 fn forwarding_candidates_for_values(
     values: &[ValueUseSummary],
     applies_by_expr: &HashMap<ExprId, &super::ApplyIr>,
+    bindings_by_id: &HashMap<BindingId, &CheckedBindingIr>,
 ) -> Vec<AffineForwardingCandidate> {
     let mut candidates = Vec::new();
 
@@ -275,10 +293,19 @@ fn forwarding_candidates_for_values(
         if value.classification != ValueUseClassification::SingleMove {
             continue;
         }
-        if value.producer_kind != ValueProducerKind::PlainValue {
+        if value.producer_kind != ValueProducerKind::Binding {
             continue;
         }
         if !value.repr.is_runtime_reference() {
+            continue;
+        }
+        let Some(binding) = value.binding else {
+            continue;
+        };
+        let Some(binding_info) = bindings_by_id.get(&binding) else {
+            continue;
+        };
+        if binding_info.mutable {
             continue;
         }
 
@@ -294,6 +321,8 @@ fn forwarding_candidates_for_values(
 
         candidates.push(AffineForwardingCandidate {
             value: value.value,
+            binding,
+            binding_name: binding_info.name.clone(),
             producer: value.producer,
             apply_expr: event.at,
             apply_flavor: apply.flavor,
@@ -531,7 +560,9 @@ fun main: (items: List<Int32>) -> List<Int32> = {
             .find(|value| value.value == candidate.value)
             .expect("candidate value should be summarized");
 
-        assert_eq!(value.producer_kind, ValueProducerKind::PlainValue);
+        assert_eq!(value.producer_kind, ValueProducerKind::Binding);
+        assert_eq!(candidate.binding_name, "items");
+        assert_eq!(value.binding, Some(candidate.binding));
         assert_eq!(value.classification, ValueUseClassification::SingleMove);
         assert_eq!(candidate.apply_flavor, ApplyFlavor::Pipe);
         assert_eq!(candidate.arg_index, 0);
@@ -540,6 +571,66 @@ fun main: (items: List<Int32>) -> List<Int32> = {
             ForwardingRewriteBlocker::StableBindingGraphRequired
         );
         assert!(candidate.repr.is_runtime_reference());
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_reports_local_alias_forwarding_candidate() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: (items: List<Int32>) -> List<Int32> = {
+    val alias = items
+    alias |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert_eq!(main.forwarding_candidates.len(), 1);
+        let candidate = &main.forwarding_candidates[0];
+        let value = main
+            .values
+            .iter()
+            .find(|value| value.value == candidate.value)
+            .expect("candidate value should be summarized");
+
+        assert_eq!(candidate.binding_name, "alias");
+        assert_eq!(value.binding, Some(candidate.binding));
+        assert_eq!(value.producer_kind, ValueProducerKind::Binding);
+        assert_eq!(candidate.apply_flavor, ApplyFlavor::Pipe);
+        assert_eq!(
+            candidate.rewrite_blocker,
+            ForwardingRewriteBlocker::StableBindingGraphRequired
+        );
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_does_not_forward_mutable_alias() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: () -> List<Int32> = {
+    mut val alias: List<Int32> = []
+    alias |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert!(main.forwarding_candidates.is_empty());
+        assert!(main.values.iter().any(|value| {
+            value.binding.is_some() && value.classification == ValueUseClassification::SingleMove
+        }));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use super::builder::{CheckedBindingIr, CheckedFunctionIr, CheckedProgramIr};
+use super::layout::{LayoutId, LayoutKind, LayoutTable, SumOptimizationCandidate, SumStrategy};
 use super::{ApplyFlavor, BindingId, ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +107,30 @@ pub enum ForwardingRewriteBlocker {
     StableBindingGraphRequired,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramLayoutOptimizationSummary {
+    pub functions: Vec<FunctionLayoutOptimizationSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionLayoutOptimizationSummary {
+    pub name: String,
+    pub sum_candidates: Vec<SumLayoutOptimizationCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SumLayoutOptimizationCandidate {
+    pub layout: LayoutId,
+    pub strategy: SumStrategy,
+    pub candidates: Vec<SumOptimizationCandidate>,
+    pub rewrite_blocker: LayoutOptimizationRewriteBlocker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutOptimizationRewriteBlocker {
+    AdvisoryOnly,
+}
+
 pub fn summarize_checked_program_value_uses(program: &CheckedProgramIr) -> ProgramValueUseSummary {
     ProgramValueUseSummary {
         functions: program
@@ -113,6 +138,50 @@ pub fn summarize_checked_program_value_uses(program: &CheckedProgramIr) -> Progr
             .iter()
             .map(summarize_checked_function_value_uses)
             .collect(),
+    }
+}
+
+pub fn summarize_checked_program_layout_optimizations(
+    program: &CheckedProgramIr,
+) -> ProgramLayoutOptimizationSummary {
+    ProgramLayoutOptimizationSummary {
+        functions: program
+            .functions
+            .iter()
+            .map(|function| {
+                summarize_checked_function_layout_optimizations(function, &program.layout_table)
+            })
+            .collect(),
+    }
+}
+
+pub fn summarize_checked_function_layout_optimizations(
+    function: &CheckedFunctionIr,
+    layout_table: &LayoutTable,
+) -> FunctionLayoutOptimizationSummary {
+    let mut sum_candidates = Vec::new();
+
+    for layout in &function.lowering.required_layouts {
+        let Some(descriptor) = layout_table.get(*layout) else {
+            continue;
+        };
+        let LayoutKind::Sum(sum) = &descriptor.kind else {
+            continue;
+        };
+        if sum.optimization_candidates.is_empty() {
+            continue;
+        }
+        sum_candidates.push(SumLayoutOptimizationCandidate {
+            layout: *layout,
+            strategy: sum.strategy.clone(),
+            candidates: sum.optimization_candidates.clone(),
+            rewrite_blocker: LayoutOptimizationRewriteBlocker::AdvisoryOnly,
+        });
+    }
+
+    FunctionLayoutOptimizationSummary {
+        name: function.name.clone(),
+        sum_candidates,
     }
 }
 
@@ -434,18 +503,30 @@ fn fold_i32_add_constants(function: &mut WasmMirFunction) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::Program;
     use crate::ir::builder::{build_checked_ir, CheckedProgramIr};
+    use crate::ir::layout::SumVariantIdentity;
+    use crate::ir::{HostAbi, InternalOnlyReason};
     use crate::parser::parse_program;
     use crate::type_checker::TypeChecker;
 
-    fn checked_ir(source: &str) -> CheckedProgramIr {
+    fn parse_source(source: &str) -> Program {
         let (remaining, program) = parse_program(source).expect("source should parse");
         assert!(remaining.trim().is_empty(), "unparsed input: {remaining:?}");
+        program
+    }
+
+    fn checked_ir(source: &str) -> CheckedProgramIr {
+        let program = parse_source(source);
+        checked_ir_for_program(&program)
+    }
+
+    fn checked_ir_for_program(program: &Program) -> CheckedProgramIr {
         let mut checker = TypeChecker::new();
         checker
-            .check_program(&program)
+            .check_program(program)
             .expect("source should type-check");
-        build_checked_ir(&program, &checker).expect("checked IR should build")
+        build_checked_ir(program, &checker).expect("checked IR should build")
     }
 
     fn function_summary<'a>(
@@ -457,6 +538,144 @@ mod tests {
             .iter()
             .find(|function| function.name == name)
             .expect("function summary should be present")
+    }
+
+    fn layout_function_summary<'a>(
+        summary: &'a ProgramLayoutOptimizationSummary,
+        name: &str,
+    ) -> &'a FunctionLayoutOptimizationSummary {
+        summary
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .expect("function layout summary should be present")
+    }
+
+    fn sum_variant(tag: u32, name: &str) -> SumVariantIdentity {
+        SumVariantIdentity {
+            tag,
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_reports_sum_candidates() {
+        let ir = checked_ir(
+            r#"
+fun keep_option_string: (value: Option<String>) -> Option<String> = {
+    value
+}
+
+fun keep_result_scalar: (value: Result<Int32, Boolean>) -> Result<Int32, Boolean> = {
+    value
+}
+
+fun keep_range: (value: Range<Int32>) -> Range<Int32> = {
+    value
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+
+        let option = layout_function_summary(&summary, "keep_option_string");
+        assert_eq!(option.sum_candidates.len(), 1);
+        let option_candidate = &option.sum_candidates[0];
+        assert_eq!(option_candidate.strategy, SumStrategy::TaggedPayload);
+        assert_eq!(
+            option_candidate.rewrite_blocker,
+            LayoutOptimizationRewriteBlocker::AdvisoryOnly
+        );
+        assert_eq!(
+            option_candidate.candidates,
+            vec![SumOptimizationCandidate::NullNiche {
+                payload_variant: sum_variant(1, "Some"),
+            }]
+        );
+
+        let result = layout_function_summary(&summary, "keep_result_scalar");
+        assert_eq!(result.sum_candidates.len(), 1);
+        let result_candidate = &result.sum_candidates[0];
+        assert_eq!(result_candidate.strategy, SumStrategy::TaggedPayload);
+        assert_eq!(
+            result_candidate.rewrite_blocker,
+            LayoutOptimizationRewriteBlocker::AdvisoryOnly
+        );
+        assert!(result_candidate
+            .candidates
+            .contains(&SumOptimizationCandidate::ScalarPair {
+                payload_variants: vec![sum_variant(0, "Err"), sum_variant(1, "Ok")]
+            }));
+        assert!(result_candidate
+            .candidates
+            .contains(&SumOptimizationCandidate::ScalarLocal {
+                payload_variants: vec![sum_variant(0, "Err"), sum_variant(1, "Ok")]
+            }));
+
+        let range = layout_function_summary(&summary, "keep_range");
+        assert!(range.sum_candidates.is_empty());
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_keeps_host_abi_internal_only() {
+        let ir = checked_ir(
+            r#"
+fun keep_option: (value: Option<Int32>) -> Option<Int32> = {
+    value
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+        let function = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "keep_option")
+            .expect("function should be present");
+        let layout_summary = layout_function_summary(&summary, "keep_option");
+        let composite = InternalOnlyReason::CompositeHostAbiUnstable;
+
+        assert_eq!(layout_summary.sum_candidates.len(), 1);
+        assert_eq!(
+            function.lowering.param_host_abis,
+            vec![HostAbi::InternalOnly(composite.clone())]
+        );
+        assert_eq!(
+            function.lowering.return_host_abi,
+            HostAbi::InternalOnly(composite)
+        );
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_does_not_mutate_ir_or_wat() {
+        let program = parse_source(
+            r#"
+fun keep_option: (value: Option<Int32>) -> Option<Int32> = {
+    value
+}
+
+fun main: () -> Int32 = {
+    42
+}
+"#,
+        );
+        let before_wat = crate::generate(&program).expect("source should generate WAT");
+        let ir = checked_ir_for_program(&program);
+        let before_ir = ir.clone();
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+        assert_eq!(
+            layout_function_summary(&summary, "keep_option")
+                .sum_candidates
+                .len(),
+            1
+        );
+        assert_eq!(ir, before_ir);
+        assert_eq!(
+            crate::generate(&program).expect("source should still generate WAT"),
+            before_wat
+        );
     }
 
     #[test]

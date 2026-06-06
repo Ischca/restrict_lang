@@ -1085,6 +1085,10 @@ fn missing_apply_value(value: &str) -> IrBuildError {
     IrBuildError::MissingApplyValue(value.to_string())
 }
 
+// Gathers every finalized fact needed for one function's lowering summary in a
+// single pass; the parameters are cohesive inputs rather than separable concerns,
+// so they stay positional instead of being grouped into a one-off struct.
+#[allow(clippy::too_many_arguments)]
 fn build_lowering_summary(
     source_exported: bool,
     signature: &CheckedFunctionSignature,

@@ -258,6 +258,11 @@ pub struct ApplyIr {
     pub result: ValueId,
 }
 
+// The `Apply` variant carries full normalized callee provenance, which makes it
+// far larger than the other variants. The shadow IR is a non-perf-critical
+// migration scaffold stored per function, so the size disparity is accepted here
+// rather than boxing and threading indirection through the invariant validator.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedExprKind {
     Literal,

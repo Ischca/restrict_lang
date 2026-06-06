@@ -421,6 +421,7 @@ impl WasmMirModule {
             report.removed_nops += remove_nops(function);
             if level >= OptimizationLevel::Local {
                 report.folded_constants += fold_i32_add_constants_to_fixpoint(function);
+                report.removed_dead_stack_values += remove_dead_stack_values_to_fixpoint(function);
             }
         }
 
@@ -456,6 +457,7 @@ pub enum OptimizationLevel {
 pub struct OptimizationReport {
     pub removed_nops: usize,
     pub folded_constants: usize,
+    pub removed_dead_stack_values: usize,
 }
 
 fn remove_nops(function: &mut WasmMirFunction) -> usize {
@@ -498,6 +500,44 @@ fn fold_i32_add_constants(function: &mut WasmMirFunction) -> usize {
 
     function.instructions = output;
     folded
+}
+
+fn remove_dead_stack_values_to_fixpoint(function: &mut WasmMirFunction) -> usize {
+    let mut removed = 0;
+
+    loop {
+        let pass_removed = remove_dead_stack_values(function);
+        if pass_removed == 0 {
+            return removed;
+        }
+        removed += pass_removed;
+    }
+}
+
+fn remove_dead_stack_values(function: &mut WasmMirFunction) -> usize {
+    let mut removed = 0;
+    let mut output = Vec::with_capacity(function.instructions.len());
+    let mut cursor = 0;
+
+    while cursor < function.instructions.len() {
+        if cursor + 1 < function.instructions.len()
+            && is_pure_stack_producer(&function.instructions[cursor])
+            && function.instructions[cursor + 1] == WasmMirInstr::Drop
+        {
+            removed += 1;
+            cursor += 2;
+        } else {
+            output.push(function.instructions[cursor].clone());
+            cursor += 1;
+        }
+    }
+
+    function.instructions = output;
+    removed
+}
+
+fn is_pure_stack_producer(instr: &WasmMirInstr) -> bool {
+    matches!(instr, WasmMirInstr::I32Const(_) | WasmMirInstr::LocalGet(_))
 }
 
 #[cfg(test)]
@@ -1030,6 +1070,47 @@ fun main: () -> Int32 = {
             module.functions[0].instructions,
             vec![WasmMirInstr::I32Const(6), WasmMirInstr::Return]
         );
+    }
+
+    #[test]
+    fn local_optimization_removes_dead_pure_stack_values() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(7),
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.removed_dead_stack_values, 2);
+        assert_eq!(module.functions[0].instructions, vec![WasmMirInstr::Return]);
+    }
+
+    #[test]
+    fn local_optimization_folds_then_removes_dead_constant_result() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(20),
+                    WasmMirInstr::I32Const(22),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(report.removed_dead_stack_values, 1);
+        assert_eq!(module.functions[0].instructions, vec![WasmMirInstr::Return]);
     }
 
     #[test]

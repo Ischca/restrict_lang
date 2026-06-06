@@ -275,6 +275,12 @@ patterns using WebAssembly wrapping integer semantics. It intentionally remains
 below Layout IR: it does not change `HostAbi`, layout descriptors, regions, or
 ownership facts.
 
+The local pass may also remove a pure stack value producer immediately followed
+by `drop`, such as `i32.const; drop` or `local.get; drop`. This is deliberately
+limited to Wasm MIR instructions that cannot allocate, trap, mutate locals, or
+observe ownership. It is an actual MIR rewrite, but it stays below Restrict's
+affine and ABI layers.
+
 Planned passes such as copy/move elimination, closure direct-call conversion,
 scalar replacement, and list pipeline fusion require stronger flow and layout
 metadata before they can become authoritative.

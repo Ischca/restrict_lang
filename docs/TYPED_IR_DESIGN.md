@@ -252,9 +252,15 @@ The optimization stage exposes those layout facts through a read-only Checked IR
 layout optimization summary. It walks each function's `required_layouts`,
 reports sum descriptors that already have advisory candidates, and reports
 concrete source-record field layout facts for later scalar replacement analysis.
-Every report remains blocked as `AdvisoryOnly`. This makes the next optimization
-boundary visible without treating `LayoutId` as stable ABI, changing `HostAbi`,
-or rewriting the current WAT path.
+Each concrete record fact also carries a scalar-replacement *shape eligibility*
+classification: records whose fields are all scalar or unit values are flagged
+`ScalarFieldsOnly`, while records with any runtime-reference field are
+`HasReferenceFields`. Shape eligibility is necessary but not sufficient, so the
+eligible case is explicitly blocked on `EscapeAnalysisRequired` rather than the
+generic advisory marker — the record may still be observed by reference, which
+flat scalar replacement cannot yet see. Every report remains blocked from any
+rewrite. This makes the next optimization boundary visible without treating
+`LayoutId` as stable ABI, changing `HostAbi`, or rewriting the current WAT path.
 
 ## Wasm MIR
 

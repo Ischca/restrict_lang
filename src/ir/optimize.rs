@@ -136,6 +136,7 @@ pub struct RecordLayoutOptimizationCandidate {
     pub type_args: Vec<String>,
     pub strategy: RecordStrategy,
     pub fields: Vec<RecordFieldLayoutFact>,
+    pub scalar_replacement: RecordScalarReplacement,
     pub rewrite_blocker: LayoutOptimizationRewriteBlocker,
 }
 
@@ -146,6 +147,31 @@ pub struct RecordFieldLayoutFact {
     pub repr: ValueRepr,
     pub size: u32,
     pub align: u32,
+}
+
+/// Whether a concrete record is shape-eligible for scalar replacement of
+/// aggregates, i.e. exploding the record into one local per field. Shape
+/// eligibility is necessary but not sufficient: it does not prove the record is
+/// safe to replace, only that its fields fit individual locals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordScalarReplacement {
+    /// Every field is a scalar or unit value, so each field could live in its
+    /// own local. Still blocked until escape/flow analysis proves the record is
+    /// never observed by reference.
+    ScalarFieldsOnly {
+        rewrite_blocker: ScalarReplacementBlocker,
+    },
+    /// At least one field is a runtime reference, so flat scalar replacement is
+    /// not shape-eligible. Nested replacement is left to later passes.
+    HasReferenceFields,
+}
+
+/// The analysis still missing before a shape-eligible record may actually be
+/// scalar-replaced. Naming the real gate keeps the candidate honest rather than
+/// implying the rewrite is already safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarReplacementBlocker {
+    EscapeAnalysisRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,22 +230,25 @@ pub fn summarize_checked_function_layout_optimizations(
                 if record.fields.is_empty() {
                     continue;
                 }
+                let fields = record
+                    .fields
+                    .iter()
+                    .map(|field| RecordFieldLayoutFact {
+                        name: field.name.clone(),
+                        offset: field.offset,
+                        repr: field.element.repr,
+                        size: field.element.size,
+                        align: field.element.align,
+                    })
+                    .collect::<Vec<_>>();
+                let scalar_replacement = classify_record_scalar_replacement(&fields);
                 record_layouts.push(RecordLayoutOptimizationCandidate {
                     layout: *layout,
                     name: record.name.clone(),
                     type_args: record.type_args.clone(),
                     strategy: record.strategy.clone(),
-                    fields: record
-                        .fields
-                        .iter()
-                        .map(|field| RecordFieldLayoutFact {
-                            name: field.name.clone(),
-                            offset: field.offset,
-                            repr: field.element.repr,
-                            size: field.element.size,
-                            align: field.element.align,
-                        })
-                        .collect(),
+                    fields,
+                    scalar_replacement,
                     rewrite_blocker: LayoutOptimizationRewriteBlocker::AdvisoryOnly,
                 });
             }
@@ -236,6 +265,23 @@ pub fn summarize_checked_function_layout_optimizations(
         name: function.name.clone(),
         sum_candidates,
         record_layouts,
+    }
+}
+
+fn classify_record_scalar_replacement(fields: &[RecordFieldLayoutFact]) -> RecordScalarReplacement {
+    // The caller filters empty records before classification. Assert that
+    // contract so a degenerate empty slice can never be silently reported as
+    // scalar-replaceable rather than flagged (No Silent Fallbacks).
+    debug_assert!(
+        !fields.is_empty(),
+        "scalar replacement classification expects a non-empty record"
+    );
+    if fields.iter().any(|field| field.repr.is_runtime_reference()) {
+        RecordScalarReplacement::HasReferenceFields
+    } else {
+        RecordScalarReplacement::ScalarFieldsOnly {
+            rewrite_blocker: ScalarReplacementBlocker::EscapeAnalysisRequired,
+        }
     }
 }
 
@@ -743,6 +789,10 @@ fun keep_box: <T>(item: Box<T>) -> Box<T> = {
             record.rewrite_blocker,
             LayoutOptimizationRewriteBlocker::AdvisoryOnly
         );
+        assert_eq!(
+            record.scalar_replacement,
+            RecordScalarReplacement::HasReferenceFields
+        );
         assert_eq!(record.fields.len(), 2);
         assert_eq!(
             record.fields[0],
@@ -762,6 +812,49 @@ fun keep_box: <T>(item: Box<T>) -> Box<T> = {
 
         let open_generic = layout_function_summary(&summary, "keep_box");
         assert!(open_generic.record_layouts.is_empty());
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_flags_scalar_record_for_replacement() {
+        let ir = checked_ir(
+            r#"
+record Point {
+    x: Int32,
+    y: Int32
+}
+
+record Tagged {
+    id: Int32,
+    label: String
+}
+
+fun keep_point: (point: Point) -> Point = {
+    point
+}
+
+fun keep_tagged: (tagged: Tagged) -> Tagged = {
+    tagged
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+
+        let point = layout_function_summary(&summary, "keep_point");
+        assert_eq!(point.record_layouts.len(), 1);
+        assert_eq!(
+            point.record_layouts[0].scalar_replacement,
+            RecordScalarReplacement::ScalarFieldsOnly {
+                rewrite_blocker: ScalarReplacementBlocker::EscapeAnalysisRequired,
+            }
+        );
+
+        let tagged = layout_function_summary(&summary, "keep_tagged");
+        assert_eq!(tagged.record_layouts.len(), 1);
+        assert_eq!(
+            tagged.record_layouts[0].scalar_replacement,
+            RecordScalarReplacement::HasReferenceFields
+        );
     }
 
     #[test]

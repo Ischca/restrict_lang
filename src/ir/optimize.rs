@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::builder::{CheckedFunctionIr, CheckedProgramIr};
-use super::{ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
+use super::{ApplyFlavor, ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramValueUseSummary {
@@ -15,6 +15,7 @@ pub struct FunctionValueUseSummary {
     pub name: String,
     pub values: Vec<ValueUseSummary>,
     pub findings: Vec<ValueUseFinding>,
+    pub forwarding_candidates: Vec<AffineForwardingCandidate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +87,22 @@ pub enum ValueUseFinding {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AffineForwardingCandidate {
+    pub value: ValueId,
+    pub producer: ExprId,
+    pub apply_expr: ExprId,
+    pub apply_flavor: ApplyFlavor,
+    pub arg_index: usize,
+    pub repr: ValueRepr,
+    pub rewrite_blocker: ForwardingRewriteBlocker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardingRewriteBlocker {
+    StableBindingGraphRequired,
+}
+
 pub fn summarize_checked_program_value_uses(program: &CheckedProgramIr) -> ProgramValueUseSummary {
     ProgramValueUseSummary {
         functions: program
@@ -102,8 +119,12 @@ pub fn summarize_checked_function_value_uses(
     let mut values = Vec::new();
     let mut value_indexes = HashMap::new();
     let body_result = function.lowering.body_result;
+    let mut applies_by_expr = HashMap::new();
 
     for expr in &function.typed_exprs {
+        if let TypedExprKind::Apply(apply) = &expr.kind {
+            applies_by_expr.insert(expr.id, apply);
+        }
         for value in expr.flow.produced() {
             if value_indexes.contains_key(value) {
                 continue;
@@ -136,11 +157,13 @@ pub fn summarize_checked_function_value_uses(
             findings.push(finding);
         }
     }
+    let forwarding_candidates = forwarding_candidates_for_values(&values, &applies_by_expr);
 
     FunctionValueUseSummary {
         name: function.name.clone(),
         values,
         findings,
+        forwarding_candidates,
     }
 }
 
@@ -240,6 +263,47 @@ fn finding_for_value(value: &ValueUseSummary) -> Option<ValueUseFinding> {
         | ValueUseClassification::AffineConsumed { .. }
         | ValueUseClassification::UnusedValue => None,
     }
+}
+
+fn forwarding_candidates_for_values(
+    values: &[ValueUseSummary],
+    applies_by_expr: &HashMap<ExprId, &super::ApplyIr>,
+) -> Vec<AffineForwardingCandidate> {
+    let mut candidates = Vec::new();
+
+    for value in values {
+        if value.classification != ValueUseClassification::SingleMove {
+            continue;
+        }
+        if value.producer_kind != ValueProducerKind::PlainValue {
+            continue;
+        }
+        if !value.repr.is_runtime_reference() {
+            continue;
+        }
+
+        let Some(event) = value.uses.first() else {
+            continue;
+        };
+        let Some(apply) = applies_by_expr.get(&event.at) else {
+            continue;
+        };
+        let Some(arg_index) = apply.args.iter().position(|arg| *arg == value.value) else {
+            continue;
+        };
+
+        candidates.push(AffineForwardingCandidate {
+            value: value.value,
+            producer: value.producer,
+            apply_expr: event.at,
+            apply_flavor: apply.flavor,
+            arg_index,
+            repr: value.repr,
+            rewrite_blocker: ForwardingRewriteBlocker::StableBindingGraphRequired,
+        });
+    }
+
+    candidates
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -440,6 +504,92 @@ fun main: () -> List<Int32> = {
                     if *value == moved_list.value && *repr == moved_list.repr
             )
         }));
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_reports_affine_forwarding_candidate() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: (items: List<Int32>) -> List<Int32> = {
+    items |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert_eq!(main.forwarding_candidates.len(), 1);
+        let candidate = &main.forwarding_candidates[0];
+        let value = main
+            .values
+            .iter()
+            .find(|value| value.value == candidate.value)
+            .expect("candidate value should be summarized");
+
+        assert_eq!(value.producer_kind, ValueProducerKind::PlainValue);
+        assert_eq!(value.classification, ValueUseClassification::SingleMove);
+        assert_eq!(candidate.apply_flavor, ApplyFlavor::Pipe);
+        assert_eq!(candidate.arg_index, 0);
+        assert_eq!(
+            candidate.rewrite_blocker,
+            ForwardingRewriteBlocker::StableBindingGraphRequired
+        );
+        assert!(candidate.repr.is_runtime_reference());
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_does_not_forward_literal_direct_move() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: () -> List<Int32> = {
+    [] |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert!(main.forwarding_candidates.is_empty());
+        assert!(main.findings.iter().any(|finding| {
+            matches!(
+                finding,
+                ValueUseFinding::SingleMove { repr, .. } if repr.is_runtime_reference()
+            )
+        }));
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_does_not_forward_scalar_copy() {
+        let ir = checked_ir(
+            r#"
+fun inc: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: (value: Int32) -> Int32 = {
+    value |> inc
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert!(main.forwarding_candidates.is_empty());
+        assert!(main
+            .findings
+            .iter()
+            .any(|finding| { matches!(finding, ValueUseFinding::CopyOnly { reads: 1, .. }) }));
     }
 
     #[test]

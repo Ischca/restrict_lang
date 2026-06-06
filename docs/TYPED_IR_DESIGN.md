@@ -248,6 +248,14 @@ results that must not be rewritten while effect information is unknown. This is
 an analysis bridge for later move/copy elimination; it does not rewrite Checked
 IR, does not change WAT generation, and does not authorize removing Apply nodes.
 
+The first affine forwarding report is similarly conservative. It may flag a
+runtime-reference `PlainValue` that is moved exactly once into one Apply
+argument, preserving the Apply flavor and argument index for diagnostics and
+future lowering. It deliberately excludes direct literal moves and scalar copy
+reads, and every candidate remains blocked on stable `BindingId` / expression
+provenance before any rewrite can happen. This keeps the optimization path tied
+to Restrict's affine value flow without introducing hidden clone/copy behavior.
+
 ## Invariants
 
 1. IR and codegen never accept `InferVar` or `Projection`.

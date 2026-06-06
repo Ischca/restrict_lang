@@ -420,8 +420,7 @@ impl WasmMirModule {
         for function in &mut self.functions {
             report.removed_nops += remove_nops(function);
             if level >= OptimizationLevel::Local {
-                report.folded_constants += fold_i32_add_constants_to_fixpoint(function);
-                report.removed_dead_stack_values += remove_dead_stack_values_to_fixpoint(function);
+                report += optimize_local_to_fixpoint(function);
             }
         }
 
@@ -460,6 +459,14 @@ pub struct OptimizationReport {
     pub removed_dead_stack_values: usize,
 }
 
+impl std::ops::AddAssign for OptimizationReport {
+    fn add_assign(&mut self, other: Self) {
+        self.removed_nops += other.removed_nops;
+        self.folded_constants += other.folded_constants;
+        self.removed_dead_stack_values += other.removed_dead_stack_values;
+    }
+}
+
 fn remove_nops(function: &mut WasmMirFunction) -> usize {
     let before = function.instructions.len();
     function
@@ -468,15 +475,17 @@ fn remove_nops(function: &mut WasmMirFunction) -> usize {
     before - function.instructions.len()
 }
 
-fn fold_i32_add_constants_to_fixpoint(function: &mut WasmMirFunction) -> usize {
-    let mut folded = 0;
+fn optimize_local_to_fixpoint(function: &mut WasmMirFunction) -> OptimizationReport {
+    let mut report = OptimizationReport::default();
 
     loop {
-        let pass_folded = fold_i32_add_constants(function);
-        if pass_folded == 0 {
-            return folded;
+        let folded_constants = fold_i32_add_constants(function);
+        let removed_dead_stack_values = remove_dead_stack_values(function);
+        if folded_constants == 0 && removed_dead_stack_values == 0 {
+            return report;
         }
-        folded += pass_folded;
+        report.folded_constants += folded_constants;
+        report.removed_dead_stack_values += removed_dead_stack_values;
     }
 }
 
@@ -500,18 +509,6 @@ fn fold_i32_add_constants(function: &mut WasmMirFunction) -> usize {
 
     function.instructions = output;
     folded
-}
-
-fn remove_dead_stack_values_to_fixpoint(function: &mut WasmMirFunction) -> usize {
-    let mut removed = 0;
-
-    loop {
-        let pass_removed = remove_dead_stack_values(function);
-        if pass_removed == 0 {
-            return removed;
-        }
-        removed += pass_removed;
-    }
 }
 
 fn remove_dead_stack_values(function: &mut WasmMirFunction) -> usize {
@@ -1111,6 +1108,31 @@ fun main: () -> Int32 = {
         assert_eq!(report.folded_constants, 1);
         assert_eq!(report.removed_dead_stack_values, 1);
         assert_eq!(module.functions[0].instructions, vec![WasmMirInstr::Return]);
+    }
+
+    #[test]
+    fn local_optimization_repeats_when_dead_value_removal_exposes_fold() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Const(99),
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(report.removed_dead_stack_values, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(3), WasmMirInstr::Return]
+        );
     }
 
     #[test]

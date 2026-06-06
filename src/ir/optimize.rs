@@ -16,7 +16,7 @@ impl WasmMirModule {
         for function in &mut self.functions {
             report.removed_nops += remove_nops(function);
             if level >= OptimizationLevel::Local {
-                report.folded_constants += fold_i32_add_constants(function);
+                report.folded_constants += fold_i32_add_constants_to_fixpoint(function);
             }
         }
 
@@ -60,6 +60,18 @@ fn remove_nops(function: &mut WasmMirFunction) -> usize {
         .instructions
         .retain(|instr| !matches!(instr, WasmMirInstr::Nop));
     before - function.instructions.len()
+}
+
+fn fold_i32_add_constants_to_fixpoint(function: &mut WasmMirFunction) -> usize {
+    let mut folded = 0;
+
+    loop {
+        let pass_folded = fold_i32_add_constants(function);
+        if pass_folded == 0 {
+            return folded;
+        }
+        folded += pass_folded;
+    }
 }
 
 fn fold_i32_add_constants(function: &mut WasmMirFunction) -> usize {
@@ -129,6 +141,30 @@ mod tests {
         assert_eq!(
             module.functions[0].instructions,
             vec![WasmMirInstr::I32Const(42), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_folds_i32_add_chains_to_fixpoint() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::I32Const(3),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 2);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(6), WasmMirInstr::Return]
         );
     }
 

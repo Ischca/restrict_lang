@@ -175,6 +175,21 @@ The current `src/ir/optimize.rs` foundation is intentionally small. It proves
 that the pipeline has a distinct optimization stage without committing codegen
 to a full rewrite.
 
+Implemented Wasm MIR optimization levels are ordered as validation barriers:
+
+- `None`: preserve the MIR exactly.
+- `Hygiene`: remove semantically empty instructions such as `nop`.
+- `Local`: run hygiene first, then local stack rewrites to a fixpoint.
+
+The current local pass folds adjacent `i32.const`, `i32.const`, `i32.add`
+patterns using WebAssembly wrapping integer semantics. It intentionally remains
+below Layout IR: it does not change `HostAbi`, layout descriptors, regions, or
+ownership facts.
+
+Planned passes such as copy/move elimination, closure direct-call conversion,
+scalar replacement, and list pipeline fusion require stronger flow and layout
+metadata before they can become authoritative.
+
 ## Invariants
 
 1. IR and codegen never accept `InferVar` or `Projection`.

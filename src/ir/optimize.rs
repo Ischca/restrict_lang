@@ -1,5 +1,247 @@
 //! Low-level optimization stage for the future Wasm MIR pipeline.
 
+use std::collections::HashMap;
+
+use super::builder::{CheckedFunctionIr, CheckedProgramIr};
+use super::{ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramValueUseSummary {
+    pub functions: Vec<FunctionValueUseSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionValueUseSummary {
+    pub name: String,
+    pub values: Vec<ValueUseSummary>,
+    pub findings: Vec<ValueUseFinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueUseSummary {
+    pub value: ValueId,
+    pub producer: ExprId,
+    pub producer_kind: ValueProducerKind,
+    pub repr: ValueRepr,
+    pub is_body_result: bool,
+    pub uses: Vec<UseEvent>,
+    pub classification: ValueUseClassification,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueProducerKind {
+    Literal,
+    PlainValue,
+    Binding,
+    Apply,
+    Block,
+    Branch,
+    Match,
+    Region,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueUseClassification {
+    BodyResult,
+    CopyOnly {
+        reads: usize,
+    },
+    SingleMove,
+    AffineConsumed {
+        copy_reads: usize,
+        moves: usize,
+        borrows: usize,
+        drops: usize,
+    },
+    UnusedPureValue,
+    NotRewritableApply {
+        reason: ApplyRewriteBlocker,
+    },
+    UnusedValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyRewriteBlocker {
+    EffectUnknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueUseFinding {
+    CopyOnly {
+        value: ValueId,
+        reads: usize,
+    },
+    SingleMove {
+        value: ValueId,
+        repr: ValueRepr,
+    },
+    UnusedPureValue {
+        value: ValueId,
+        producer: ExprId,
+    },
+    NotRewritableApply {
+        value: ValueId,
+        producer: ExprId,
+        reason: ApplyRewriteBlocker,
+    },
+}
+
+pub fn summarize_checked_program_value_uses(program: &CheckedProgramIr) -> ProgramValueUseSummary {
+    ProgramValueUseSummary {
+        functions: program
+            .functions
+            .iter()
+            .map(summarize_checked_function_value_uses)
+            .collect(),
+    }
+}
+
+pub fn summarize_checked_function_value_uses(
+    function: &CheckedFunctionIr,
+) -> FunctionValueUseSummary {
+    let mut values = Vec::new();
+    let mut value_indexes = HashMap::new();
+    let body_result = function.lowering.body_result;
+
+    for expr in &function.typed_exprs {
+        for value in expr.flow.produced() {
+            if value_indexes.contains_key(value) {
+                continue;
+            }
+            value_indexes.insert(*value, values.len());
+            values.push(ValueUseSummary {
+                value: *value,
+                producer: expr.id,
+                producer_kind: producer_kind(&expr.kind),
+                repr: expr.repr,
+                is_body_result: Some(*value) == body_result,
+                uses: Vec::new(),
+                classification: ValueUseClassification::UnusedValue,
+            });
+        }
+    }
+
+    for expr in &function.typed_exprs {
+        for event in expr.flow.uses() {
+            if let Some(index) = value_indexes.get(&event.value) {
+                values[*index].uses.push(*event);
+            }
+        }
+    }
+
+    let mut findings = Vec::new();
+    for value in &mut values {
+        value.classification = classify_value_use(value);
+        if let Some(finding) = finding_for_value(value) {
+            findings.push(finding);
+        }
+    }
+
+    FunctionValueUseSummary {
+        name: function.name.clone(),
+        values,
+        findings,
+    }
+}
+
+fn producer_kind(kind: &TypedExprKind) -> ValueProducerKind {
+    match kind {
+        TypedExprKind::Literal => ValueProducerKind::Literal,
+        TypedExprKind::Value(_) => ValueProducerKind::PlainValue,
+        TypedExprKind::Binding(_) => ValueProducerKind::Binding,
+        TypedExprKind::Apply(_) => ValueProducerKind::Apply,
+        TypedExprKind::Block(_) => ValueProducerKind::Block,
+        TypedExprKind::Branch { .. } => ValueProducerKind::Branch,
+        TypedExprKind::Match { .. } => ValueProducerKind::Match,
+        TypedExprKind::Region { .. } => ValueProducerKind::Region,
+    }
+}
+
+fn classify_value_use(value: &ValueUseSummary) -> ValueUseClassification {
+    if value.is_body_result {
+        return ValueUseClassification::BodyResult;
+    }
+
+    if value.uses.is_empty() {
+        return match value.producer_kind {
+            ValueProducerKind::Literal | ValueProducerKind::PlainValue => {
+                ValueUseClassification::UnusedPureValue
+            }
+            ValueProducerKind::Apply => ValueUseClassification::NotRewritableApply {
+                reason: ApplyRewriteBlocker::EffectUnknown,
+            },
+            ValueProducerKind::Binding
+            | ValueProducerKind::Block
+            | ValueProducerKind::Branch
+            | ValueProducerKind::Match
+            | ValueProducerKind::Region => ValueUseClassification::UnusedValue,
+        };
+    }
+
+    let copy_reads = value
+        .uses
+        .iter()
+        .filter(|event| event.kind == UseKind::ReadCopy)
+        .count();
+    let moves = value
+        .uses
+        .iter()
+        .filter(|event| event.kind == UseKind::Move)
+        .count();
+    let borrows = value
+        .uses
+        .iter()
+        .filter(|event| matches!(event.kind, UseKind::BorrowShared | UseKind::BorrowMut))
+        .count();
+    let drops = value
+        .uses
+        .iter()
+        .filter(|event| event.kind == UseKind::Drop)
+        .count();
+
+    if copy_reads == value.uses.len() {
+        return ValueUseClassification::CopyOnly { reads: copy_reads };
+    }
+
+    if moves == 1 && copy_reads == 0 && borrows == 0 && drops == 0 {
+        return ValueUseClassification::SingleMove;
+    }
+
+    ValueUseClassification::AffineConsumed {
+        copy_reads,
+        moves,
+        borrows,
+        drops,
+    }
+}
+
+fn finding_for_value(value: &ValueUseSummary) -> Option<ValueUseFinding> {
+    match value.classification {
+        ValueUseClassification::CopyOnly { reads } => Some(ValueUseFinding::CopyOnly {
+            value: value.value,
+            reads,
+        }),
+        ValueUseClassification::SingleMove => Some(ValueUseFinding::SingleMove {
+            value: value.value,
+            repr: value.repr,
+        }),
+        ValueUseClassification::UnusedPureValue => Some(ValueUseFinding::UnusedPureValue {
+            value: value.value,
+            producer: value.producer,
+        }),
+        ValueUseClassification::NotRewritableApply { reason } => {
+            Some(ValueUseFinding::NotRewritableApply {
+                value: value.value,
+                producer: value.producer,
+                reason,
+            })
+        }
+        ValueUseClassification::BodyResult
+        | ValueUseClassification::AffineConsumed { .. }
+        | ValueUseClassification::UnusedValue => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WasmMirModule {
     pub functions: Vec<WasmMirFunction>,
@@ -99,6 +341,168 @@ fn fold_i32_add_constants(function: &mut WasmMirFunction) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::builder::{build_checked_ir, CheckedProgramIr};
+    use crate::parser::parse_program;
+    use crate::type_checker::TypeChecker;
+
+    fn checked_ir(source: &str) -> CheckedProgramIr {
+        let (remaining, program) = parse_program(source).expect("source should parse");
+        assert!(remaining.trim().is_empty(), "unparsed input: {remaining:?}");
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .expect("source should type-check");
+        build_checked_ir(&program, &checker).expect("checked IR should build")
+    }
+
+    fn function_summary<'a>(
+        summary: &'a ProgramValueUseSummary,
+        name: &str,
+    ) -> &'a FunctionValueUseSummary {
+        summary
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .expect("function summary should be present")
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_marks_scalar_copy_reads() {
+        let ir = checked_ir(
+            r#"
+fun add: (left: Int32, right: Int32) -> Int32 = {
+    left + right
+}
+
+fun main: () -> Int32 = {
+    (1, 2) add
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+        let copied_literals = main
+            .values
+            .iter()
+            .filter(|value| value.producer_kind == ValueProducerKind::Literal)
+            .filter(|value| {
+                matches!(
+                    value.classification,
+                    ValueUseClassification::CopyOnly { reads: 1 }
+                )
+            })
+            .count();
+
+        assert_eq!(copied_literals, 2);
+        assert_eq!(
+            main.findings
+                .iter()
+                .filter(|finding| matches!(finding, ValueUseFinding::CopyOnly { reads: 1, .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_marks_composite_single_move() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: () -> List<Int32> = {
+    [] |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+        let moved_list = main
+            .values
+            .iter()
+            .find(|value| {
+                value.producer_kind == ValueProducerKind::Literal
+                    && value.repr.is_runtime_reference()
+            })
+            .expect("list literal should be tracked");
+
+        assert_eq!(
+            moved_list.classification,
+            ValueUseClassification::SingleMove
+        );
+        assert!(main.findings.iter().any(|finding| {
+            matches!(
+                finding,
+                ValueUseFinding::SingleMove { value, repr }
+                    if *value == moved_list.value && *repr == moved_list.repr
+            )
+        }));
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_treats_body_result_as_live() {
+        let ir = checked_ir(
+            r#"
+fun main: () -> Int32 = {
+    42
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert_eq!(main.values.len(), 1);
+        assert_eq!(
+            main.values[0].classification,
+            ValueUseClassification::BodyResult
+        );
+        assert!(main.findings.is_empty());
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_keeps_unused_apply_non_rewritable() {
+        let ir = checked_ir(
+            r#"
+fun inc: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: () -> Int32 = {
+    (1) inc
+    42
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+        let apply_result = main
+            .values
+            .iter()
+            .find(|value| value.producer_kind == ValueProducerKind::Apply)
+            .expect("unused apply result should be tracked");
+
+        assert_eq!(
+            apply_result.classification,
+            ValueUseClassification::NotRewritableApply {
+                reason: ApplyRewriteBlocker::EffectUnknown
+            }
+        );
+        assert!(main.findings.iter().any(|finding| {
+            matches!(
+                finding,
+                ValueUseFinding::NotRewritableApply {
+                    value,
+                    reason: ApplyRewriteBlocker::EffectUnknown,
+                    ..
+                } if *value == apply_result.value
+            )
+        }));
+    }
 
     #[test]
     fn hygiene_optimization_removes_nops() {

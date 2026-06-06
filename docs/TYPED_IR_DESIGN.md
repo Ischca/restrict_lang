@@ -241,6 +241,13 @@ Planned passes such as copy/move elimination, closure direct-call conversion,
 scalar replacement, and list pipeline fusion require stronger flow and layout
 metadata before they can become authoritative.
 
+The current optimization foundation also includes a read-only Checked IR
+value-use summary. It classifies produced `ValueId`s as body results,
+copy-only scalar flows, single affine moves, unused pure values, or apply
+results that must not be rewritten while effect information is unknown. This is
+an analysis bridge for later move/copy elimination; it does not rewrite Checked
+IR, does not change WAT generation, and does not authorize removing Apply nodes.
+
 ## Invariants
 
 1. IR and codegen never accept `InferVar` or `Projection`.

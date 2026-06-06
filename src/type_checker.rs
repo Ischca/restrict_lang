@@ -5797,7 +5797,9 @@ impl TypeChecker {
         )?;
         self.apply_substitution_to_var_env(&substitution)?;
         for (arg, actual_ty) in call.args.iter().zip(checked_arg_types.iter()) {
-            self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            let resolved =
+                self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            self.record_checked_expr_type(arg, &resolved);
         }
         finalize_type(&return_type, &substitution)
     }
@@ -6280,7 +6282,9 @@ impl TypeChecker {
         }
         self.apply_substitution_to_var_env(&substitution)?;
         for (arg, actual_ty) in args.iter().zip(checked_arg_types.iter()) {
-            self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            let resolved =
+                self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            self.record_checked_expr_type(arg, &resolved);
         }
         if let Some(func_var_name) = func_var_name {
             if Self::contains_inference_internal_type(&lowered_func_ty) {
@@ -7417,7 +7421,9 @@ impl TypeChecker {
                         function: Box::new(Expr::Ident(name.clone())),
                         args: vec![pipe.expr.clone()],
                     };
-                    self.check_call_expr_with_expected(&call, expected)
+                    let result = self.check_call_expr_with_expected(&call, expected)?;
+                    self.copy_pipe_object_checked_fact(pipe, &call);
+                    Ok(result)
                 } else if matches!(name.as_str(), "some" | "none") {
                     Err(lowercase_option_constructor_error(name))
                 } else {
@@ -7433,7 +7439,17 @@ impl TypeChecker {
                     function: target_expr.clone(),
                     args: vec![pipe.expr.clone()],
                 };
-                self.check_call_expr_with_expected(&call, expected)
+                let result = self.check_call_expr_with_expected(&call, expected)?;
+                self.copy_pipe_object_checked_fact(pipe, &call);
+                Ok(result)
+            }
+        }
+    }
+
+    fn copy_pipe_object_checked_fact(&mut self, pipe: &PipeExpr, call: &CallExpr) {
+        if let Some(arg) = call.args.first() {
+            if let Some(ty) = self.checked_expr_type(arg) {
+                self.record_checked_expr_type(&pipe.expr, &ty);
             }
         }
     }

@@ -75,6 +75,15 @@ placeholders for validation and migration tests. They must not be treated as the
 final flow graph until stable `BindingId` assignment and the shadow affine
 verifier are in place.
 
+During the read-only shadow stage, builder-local `ValueId`s must still be
+internally coherent. An `ApplyIr` result must be the value produced by its
+matching `TypedExpr`, and apply argument IDs should refer to values already
+produced by child shadow expressions. Callee IDs may remain explicit synthetic
+placeholders for top-level functions until symbol identity is represented in the
+IR. These IDs are provenance links for builder validation and migration tests;
+they are not stable `BindingId`s, ownership authorities, region capabilities,
+ABI handles, or cross-build identities.
+
 ## Apply Normalization
 
 The following source surfaces should converge to one IR shape:
@@ -134,6 +143,13 @@ UseEvent {
   at: ExprId
 }
 ```
+
+The current shadow builder records Apply argument uses in OSV/evaluation order.
+For example, `(a, b) f` records uses for `a` then `b`, `value |> f` records the
+left-side object as the single argument use, and `() f` records no argument
+uses. Scalar and unit arguments are `ReadCopy`; composite reference and closure
+arguments are `Move` until a later borrow/copy analysis proves a narrower
+effect.
 
 Later, this becomes the authoritative place for:
 
@@ -215,6 +231,12 @@ metadata before they can become authoritative.
     fallback codegen inference or by re-checking expressions inside the builder.
 12. Shadow `TypedExpr` `ValueId`s are not a control-flow or ownership authority
     yet; they become meaningful only after the flow verifier owns the graph.
+13. Shadow `ApplyIr` value flow must be provenance-coherent within one builder
+    run, but remains builder-local until stable `ExprId` / `BindingId` and the
+    affine flow verifier own the graph.
+14. Shadow Apply `FlowSummary` use events must cover `ApplyIr.args` in
+    OSV/evaluation order without adding callee ownership semantics for top-level
+    function symbols.
 
 ## Migration Plan
 

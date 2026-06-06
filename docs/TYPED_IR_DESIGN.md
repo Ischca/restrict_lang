@@ -68,10 +68,12 @@ stop depending on ad hoc AST/type-checker queries one feature family at a time.
 Facts that still contain `InferVar` or `Projection` are deliberately not
 materialized as `TypedExpr` entries.
 
-The `ValueId` and `ApplyIr` values inside that shadow list are placeholders for
-validation and migration tests. They must not be treated as the final flow graph
-until stable `ExprId` / `BindingId` assignment and the shadow affine verifier
-are in place.
+The `ApplyIr` values inside that shadow list are shared with normalized apply
+site metadata through builder-local `ExprId`s, so source-level call surfaces can
+be validated without regenerating placeholder value IDs. The `ValueId`s remain
+placeholders for validation and migration tests. They must not be treated as the
+final flow graph until stable `BindingId` assignment and the shadow affine
+verifier are in place.
 
 ## Apply Normalization
 
@@ -206,8 +208,9 @@ metadata before they can become authoritative.
    `TypeChecker` affine state, or become the codegen source of truth until the
    Layout IR migration begins.
 10. Checked expression facts are snapshots for the current AST instance. Pointer
-    keys are acceptable only at this read-only shadow stage; stable `ExprId` and
-    `BindingId` assignment must replace them before IR becomes authoritative.
+    keys are acceptable only at this read-only shadow stage; authoritative
+    stable `ExprId` and `BindingId` assignment must replace them before IR
+    becomes authoritative.
 11. `TypedExpr.final_type` must be derived from post-check facts, not from
     fallback codegen inference or by re-checking expressions inside the builder.
 12. Shadow `TypedExpr` `ValueId`s are not a control-flow or ownership authority
@@ -218,8 +221,9 @@ metadata before they can become authoritative.
 1. Add IR foundations and unit tests.
 2. Capture checked expression type facts from `TypeChecker` without mutating
    affine state during IR construction.
-3. Introduce stable `ExprId` / `BindingId` assignment and replace temporary
-   AST-instance pointer keys.
+3. Introduce authoritative stable `ExprId` / `BindingId` assignment and replace
+   temporary AST-instance pointer keys. Builder-local `ExprId`s already link
+   normalized apply metadata to matching shadow `TypedExpr` entries.
 4. Build read-only Checked IR from AST while existing codegen remains active.
    The current builder covers function signatures, normalized Apply sites, and
    a flat `TypedExpr` skeleton from checked facts.

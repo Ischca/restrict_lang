@@ -4,7 +4,7 @@
 //! It does not re-run inference, does not inspect or mutate affine checker
 //! state, and is not yet the codegen source of truth.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::type_checker::{CheckedFunctionSignature, TypeChecker};
@@ -30,6 +30,155 @@ pub struct CheckedFunctionIr {
     pub apply_sites: Vec<NormalizedApplySite>,
     pub typed_exprs: Vec<TypedExpr>,
     pub monomorphic: bool,
+}
+
+impl CheckedFunctionIr {
+    pub fn validate_shadow_invariants(&self) -> Result<(), IrBuildError> {
+        let mut exprs_by_id = HashMap::new();
+        let mut expr_positions = HashMap::new();
+        let mut value_producers = HashMap::new();
+
+        for (index, expr) in self.typed_exprs.iter().enumerate() {
+            if exprs_by_id.insert(expr.id, expr).is_some() {
+                return Err(shadow_invariant_violation(format!(
+                    "duplicate typed expression id {:?} in {}",
+                    expr.id, self.name
+                )));
+            }
+            expr_positions.insert(expr.id, index);
+            for value in expr.flow.produced() {
+                if value_producers.insert(*value, (index, expr.repr)).is_some() {
+                    return Err(shadow_invariant_violation(format!(
+                        "value {:?} in {} is produced more than once",
+                        value, self.name
+                    )));
+                }
+            }
+        }
+
+        let apply_expr_count = self
+            .typed_exprs
+            .iter()
+            .filter(|expr| matches!(expr.kind, TypedExprKind::Apply(_)))
+            .count();
+        if self.apply_sites.len() != apply_expr_count {
+            return Err(shadow_invariant_violation(format!(
+                "{} has {} apply sites but {} typed apply expressions",
+                self.name,
+                self.apply_sites.len(),
+                apply_expr_count
+            )));
+        }
+
+        let mut apply_expr_ids = HashSet::new();
+        let mut moved_values = HashSet::new();
+        for (expected_source_index, site) in self.apply_sites.iter().enumerate() {
+            if site.source_index != expected_source_index {
+                return Err(shadow_invariant_violation(format!(
+                    "apply site in {} has source index {}, expected {}",
+                    self.name, site.source_index, expected_source_index
+                )));
+            }
+            let expr = exprs_by_id.get(&site.expr_id).ok_or_else(|| {
+                shadow_invariant_violation(format!(
+                    "apply site {} in {} points at missing expr {:?}",
+                    site.source_index, self.name, site.expr_id
+                ))
+            })?;
+            let TypedExprKind::Apply(apply) = &expr.kind else {
+                return Err(shadow_invariant_violation(format!(
+                    "apply site {} in {} points at non-apply expr {:?}",
+                    site.source_index, self.name, site.expr_id
+                )));
+            };
+
+            if apply != &site.apply {
+                return Err(shadow_invariant_violation(format!(
+                    "apply site {} in {} does not match typed expr {:?}",
+                    site.source_index, self.name, site.expr_id
+                )));
+            }
+            if expr.value != Some(site.apply.result) {
+                return Err(shadow_invariant_violation(format!(
+                    "apply site {} in {} result does not match typed expr value",
+                    site.source_index, self.name
+                )));
+            }
+            if expr.flow.produced() != [site.apply.result] {
+                return Err(shadow_invariant_violation(format!(
+                    "apply site {} in {} has invalid produced flow",
+                    site.source_index, self.name
+                )));
+            }
+            let expr_index = *expr_positions.get(&expr.id).ok_or_else(|| {
+                shadow_invariant_violation(format!(
+                    "apply site {} in {} has no expression position",
+                    site.source_index, self.name
+                ))
+            })?;
+            let used_values = expr
+                .flow
+                .uses()
+                .iter()
+                .map(|event| event.value)
+                .collect::<Vec<_>>();
+            if used_values != site.apply.args {
+                return Err(shadow_invariant_violation(format!(
+                    "apply site {} in {} has invalid argument use flow",
+                    site.source_index, self.name
+                )));
+            }
+            for event in expr.flow.uses() {
+                if event.at != expr.id {
+                    return Err(shadow_invariant_violation(format!(
+                        "apply site {} in {} has use events at the wrong expr",
+                        site.source_index, self.name
+                    )));
+                }
+                let (producer_index, producer_repr) =
+                    value_producers.get(&event.value).ok_or_else(|| {
+                        shadow_invariant_violation(format!(
+                            "apply site {} in {} uses unproduced value {:?}",
+                            site.source_index, self.name, event.value
+                        ))
+                    })?;
+                if *producer_index >= expr_index {
+                    return Err(shadow_invariant_violation(format!(
+                        "apply site {} in {} uses value {:?} before it is produced",
+                        site.source_index, self.name, event.value
+                    )));
+                }
+                let expected_kind = use_kind_for_repr(*producer_repr);
+                if event.kind != expected_kind {
+                    return Err(shadow_invariant_violation(format!(
+                        "apply site {} in {} uses value {:?} as {:?}, expected {:?}",
+                        site.source_index, self.name, event.value, event.kind, expected_kind
+                    )));
+                }
+                if matches!(event.kind, UseKind::Move | UseKind::Drop)
+                    && !moved_values.insert(event.value)
+                {
+                    return Err(shadow_invariant_violation(format!(
+                        "value {:?} in {} is moved more than once",
+                        event.value, self.name
+                    )));
+                }
+            }
+
+            apply_expr_ids.insert(site.expr_id);
+        }
+
+        for expr in &self.typed_exprs {
+            if matches!(expr.kind, TypedExprKind::Apply(_)) && !apply_expr_ids.contains(&expr.id) {
+                return Err(shadow_invariant_violation(format!(
+                    "typed apply expr {:?} in {} has no apply site",
+                    expr.id, self.name
+                )));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +208,7 @@ pub enum IrBuildError {
     MissingCheckedExprType(String),
     MissingApplyValue(String),
     MissingValueRepr(ValueId),
+    ShadowInvariantViolation(String),
     UnfinalizedType(String),
 }
 
@@ -67,7 +217,7 @@ impl From<super::IrError> for IrBuildError {
         match value {
             super::IrError::UnfinalizedType(ty) => IrBuildError::UnfinalizedType(ty),
             super::IrError::AffineDoubleUse(value) => {
-                IrBuildError::UnfinalizedType(format!("unexpected affine event for {:?}", value))
+                shadow_invariant_violation(format!("unexpected affine double-use for {:?}", value))
             }
         }
     }
@@ -156,7 +306,7 @@ impl<'a> CheckedIrBuilder<'a> {
         let monomorphic = return_type.is_monomorphic()
             && params.iter().all(|param| param.final_type.is_monomorphic());
 
-        Ok(CheckedFunctionIr {
+        let function = CheckedFunctionIr {
             name: func.name.clone(),
             params,
             return_type,
@@ -164,7 +314,9 @@ impl<'a> CheckedIrBuilder<'a> {
             apply_sites,
             typed_exprs,
             monomorphic,
-        })
+        };
+        function.validate_shadow_invariants()?;
+        Ok(function)
     }
 
     fn build_param_ir(
@@ -452,8 +604,7 @@ impl<'a> CheckedIrBuilder<'a> {
 
     fn use_kind_for_value(&self, value: ValueId) -> Result<UseKind, IrBuildError> {
         match self.value_reprs.get(&value).copied() {
-            Some(ValueRepr::Unit | ValueRepr::Scalar(_)) => Ok(UseKind::ReadCopy),
-            Some(ValueRepr::Ref(_) | ValueRepr::Closure { .. }) => Ok(UseKind::Move),
+            Some(repr) => Ok(use_kind_for_repr(repr)),
             None => Err(IrBuildError::MissingValueRepr(value)),
         }
     }
@@ -510,6 +661,17 @@ fn missing_apply_value(value: &str) -> IrBuildError {
     IrBuildError::MissingApplyValue(value.to_string())
 }
 
+fn use_kind_for_repr(repr: ValueRepr) -> UseKind {
+    match repr {
+        ValueRepr::Unit | ValueRepr::Scalar(_) => UseKind::ReadCopy,
+        ValueRepr::Ref(_) | ValueRepr::Closure { .. } => UseKind::Move,
+    }
+}
+
+fn shadow_invariant_violation(message: String) -> IrBuildError {
+    IrBuildError::ShadowInvariantViolation(message)
+}
+
 fn is_literal_expr(expr: &Expr) -> bool {
     matches!(
         expr,
@@ -536,6 +698,7 @@ fn callee_hint(expr: &Expr) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::ScalarRepr;
     use crate::parser::parse_program;
     use crate::type_checker::TypedType;
 
@@ -722,6 +885,63 @@ fun main: () -> Int32 = {
             .typed_exprs
             .iter()
             .all(|expr| expr.validate_for_codegen().is_ok()));
+    }
+
+    #[test]
+    fn builder_rejects_apply_site_without_typed_apply_expr() {
+        let apply = ApplyIr {
+            flavor: ApplyFlavor::TupleCall,
+            callee: ValueId(0),
+            args: vec![ValueId(1)],
+            result: ValueId(2),
+        };
+        let function = CheckedFunctionIr {
+            name: "main".to_string(),
+            params: Vec::new(),
+            return_type: FinalType::new(TypedType::Int32).unwrap(),
+            return_repr: ValueRepr::Scalar(ScalarRepr::I32),
+            apply_sites: vec![NormalizedApplySite {
+                source_index: 0,
+                expr_id: ExprId(9),
+                callee_hint: Some("add".to_string()),
+                apply,
+            }],
+            typed_exprs: Vec::new(),
+            monomorphic: true,
+        };
+
+        assert!(matches!(
+            function.validate_shadow_invariants(),
+            Err(IrBuildError::ShadowInvariantViolation(_))
+        ));
+    }
+
+    #[test]
+    fn builder_rejects_apply_site_source_index_mismatch() {
+        let ir = checked_ir(
+            r#"
+fun add: (left: Int32, right: Int32) -> Int32 = {
+    left + right
+}
+
+fun main: () -> Int32 = {
+    (1, 2) add
+}
+"#,
+        );
+
+        let mut function = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main IR should be present")
+            .clone();
+        function.apply_sites[0].source_index = 3;
+
+        assert!(matches!(
+            function.validate_shadow_invariants(),
+            Err(IrBuildError::ShadowInvariantViolation(_))
+        ));
     }
 
     #[test]

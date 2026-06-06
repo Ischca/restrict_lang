@@ -84,6 +84,16 @@ IR. These IDs are provenance links for builder validation and migration tests;
 they are not stable `BindingId`s, ownership authorities, region capabilities,
 ABI handles, or cross-build identities.
 
+A read-only shadow invariant validator runs after Checked IR construction. It
+only checks builder-local provenance: each `NormalizedApplySite.expr_id` must
+point to a `TypedExprKind::Apply` with the same `ApplyIr`, `TypedExpr.value`
+must be that `ApplyIr.result`, and the expression's `FlowSummary` must record
+that result as produced. For each Apply expression, `FlowSummary.uses()` must
+cover `ApplyIr.args` one-for-one in OSV/evaluation order with events at the
+Apply `ExprId`; top-level callee placeholders are not treated as ownership uses.
+Passing this validator does not make Checked IR the codegen source of truth, a
+stable `BindingId` graph, or an ownership authority.
+
 ## Apply Normalization
 
 The following source surfaces should converge to one IR shape:

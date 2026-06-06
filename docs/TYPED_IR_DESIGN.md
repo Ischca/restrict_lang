@@ -227,6 +227,12 @@ descriptors are intentionally not canonicalized until they carry enough
 provenance to preserve diagnostics. The IDs are still build-local compiler
 metadata, not source-visible names or host ABI handles.
 
+`Range<Int32>` remains a source-level record-shaped type fact after checking,
+but Layout IR gives it a dedicated internal descriptor with `start` and `end`
+`i32` endpoints at fixed offsets. This preserves the current v0.0.1 range
+surface while giving later lowering and optimization passes the concrete
+two-endpoint shape instead of an empty generic record descriptor.
+
 ## Wasm MIR
 
 Wasm MIR is deliberately lower level than Checked IR. It is where semantic

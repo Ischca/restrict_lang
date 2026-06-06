@@ -121,6 +121,11 @@ impl LayoutTable {
             TypedType::Record {
                 name, type_args, ..
             } => {
+                if is_range_int32_record(name, type_args) {
+                    let id = self.insert(LayoutKind::Range(range_int32_layout()));
+                    return ValueRepr::Ref(id);
+                }
+
                 let type_args = type_args.iter().map(format_type_arg).collect();
                 let id = self.insert(LayoutKind::Record(RecordLayout {
                     name: name.clone(),
@@ -193,6 +198,25 @@ fn format_type_arg(ty: &TypedType) -> String {
     crate::type_checker::format_typed_type(ty)
 }
 
+fn is_range_int32_record(name: &str, type_args: &[TypedType]) -> bool {
+    name == "Range" && type_args == [TypedType::Int32]
+}
+
+fn range_int32_layout() -> RangeLayout {
+    let endpoint = ElementLayout {
+        repr: ValueRepr::Scalar(ScalarRepr::I32),
+        size: 4,
+        align: 4,
+    };
+    RangeLayout {
+        endpoint,
+        start_offset: 0,
+        end_offset: 4,
+        size: 8,
+        align: 4,
+    }
+}
+
 fn size_of_repr(repr: ValueRepr) -> u32 {
     match repr {
         ValueRepr::Unit => 0,
@@ -220,6 +244,7 @@ pub enum LayoutKind {
     String(StringLayout),
     List(ListLayout),
     Array(ArrayLayout),
+    Range(RangeLayout),
     Record(RecordLayout),
     Sum(SumLayout),
     Closure(ClosureLayout),
@@ -253,6 +278,15 @@ pub struct ListLayout {
 pub struct ArrayLayout {
     pub element: ElementLayout,
     pub length: ArrayLength,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RangeLayout {
+    pub endpoint: ElementLayout,
+    pub start_offset: u32,
+    pub end_offset: u32,
+    pub size: u32,
+    pub align: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -375,6 +409,35 @@ mod tests {
             panic!("expected Array layout");
         };
         assert_eq!(layout.length, ArrayLength::Known(3));
+    }
+
+    #[test]
+    fn range_int32_layout_records_endpoint_offsets() {
+        let final_type = FinalType::new(TypedType::Record {
+            name: "Range".to_string(),
+            type_args: vec![TypedType::Int32],
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+        })
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type(&final_type);
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("Range<Int32> should lower to a typed ref");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Range(layout) = &descriptor.kind else {
+            panic!("expected Range layout");
+        };
+        assert_eq!(layout.endpoint.repr, ValueRepr::Scalar(ScalarRepr::I32));
+        assert_eq!(layout.endpoint.size, 4);
+        assert_eq!(layout.endpoint.align, 4);
+        assert_eq!(layout.start_offset, 0);
+        assert_eq!(layout.end_offset, 4);
+        assert_eq!(layout.size, 8);
+        assert_eq!(layout.align, 4);
     }
 
     #[test]

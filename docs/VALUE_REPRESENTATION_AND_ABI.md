@@ -145,8 +145,8 @@ These are internal optimizations, not source-level semantics.
 ### Range<Int32>
 
 `Range<Int32>` is a current v0.0.1 source type. The existing codegen treats it
-as a pointer-shaped internal value. The initial descriptor should keep the
-current two-endpoint model:
+as a pointer-shaped internal value. The IR layout table now keeps that
+two-endpoint model as a dedicated internal descriptor:
 
 ```text
 RangeRef -> [start:i32][end:i32]
@@ -207,7 +207,8 @@ must not keep that metadata as runtime cost unless required.
 2. Introduce `ValueRepr` and `LayoutTable` as compile-time metadata first.
 3. Move codegen layout choices behind descriptor queries incrementally.
 4. Treat `Range<Int32>` as a source-type migration item because the finalized
-   typed representation does not yet expose a dedicated range variant.
+   typed representation does not yet expose a dedicated range variant even
+   though the IR layout table has a dedicated descriptor for its internal shape.
 5. Generate composite host adapters only after internal descriptors are stable.
 
 ## Read-Only ABI Summary

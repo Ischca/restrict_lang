@@ -1242,6 +1242,9 @@ fn collect_layout(layout: LayoutId, layout_table: &LayoutTable, layouts: &mut Ha
         LayoutKind::Array(array) => {
             collect_layouts_from_repr(array.element.repr, layout_table, layouts);
         }
+        LayoutKind::Range(range) => {
+            collect_layouts_from_repr(range.endpoint.repr, layout_table, layouts);
+        }
         LayoutKind::Record(record) => {
             for field in &record.fields {
                 collect_layouts_from_repr(field.element.repr, layout_table, layouts);
@@ -1649,6 +1652,37 @@ fun keep_scores: (items: List<Int32>) -> List<Int32> = {
             .readiness
             .host_abi_blockers
             .contains(&HostAbiBlocker::ReturnInternalOnly { reason: composite }));
+    }
+
+    #[test]
+    fn builder_records_range_layout_for_lowering_readiness() {
+        let ir = checked_ir(
+            r#"
+fun main: () -> Range<Int32> = {
+    [1..10]
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+        let ValueRepr::Ref(layout_id) = function.return_repr else {
+            panic!("Range<Int32> should use a typed ref representation");
+        };
+        let descriptor = ir
+            .layout_table
+            .get(layout_id)
+            .expect("range layout should be present");
+        let LayoutKind::Range(layout) = &descriptor.kind else {
+            panic!("expected Range layout descriptor");
+        };
+
+        assert_eq!(layout.start_offset, 0);
+        assert_eq!(layout.end_offset, 4);
+        assert_eq!(layout.size, 8);
+        assert_eq!(layout.align, 4);
+        assert!(function.lowering.required_layouts.contains(&layout_id));
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+        assert!(function.lowering.readiness.internal_layout_ready);
     }
 
     #[test]

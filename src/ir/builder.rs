@@ -9,16 +9,25 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::type_checker::{CheckedFunctionSignature, TypeChecker};
 
-use super::layout::LayoutTable;
+use super::layout::{LayoutId, LayoutKind, LayoutTable};
 use super::{
-    ApplyFlavor, ApplyIr, ExprId, FinalType, FlowSummary, TypedExpr, TypedExprKind, UseEvent,
-    UseKind, ValueId, ValueRepr,
+    ApplyFlavor, ApplyIr, ExprId, FinalType, FlowSummary, HostAbi, InternalOnlyReason, TypedExpr,
+    TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckedProgramIr {
     pub functions: Vec<CheckedFunctionIr>,
     pub layout_table: LayoutTable,
+}
+
+impl CheckedProgramIr {
+    pub fn validate_lowering_summaries(&self) -> Result<(), IrBuildError> {
+        for function in &self.functions {
+            function.validate_lowering_summary(&self.layout_table)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +39,7 @@ pub struct CheckedFunctionIr {
     pub apply_sites: Vec<NormalizedApplySite>,
     pub typed_exprs: Vec<TypedExpr>,
     pub monomorphic: bool,
+    pub lowering: CheckedFunctionLoweringSummary,
 }
 
 impl CheckedFunctionIr {
@@ -179,6 +189,63 @@ impl CheckedFunctionIr {
 
         Ok(())
     }
+
+    pub fn validate_lowering_summary(
+        &self,
+        layout_table: &LayoutTable,
+    ) -> Result<(), IrBuildError> {
+        self.validate_shadow_invariants()?;
+
+        if self.lowering.param_host_abis.len() != self.params.len() {
+            return Err(lowering_invariant_violation(format!(
+                "{} has {} parameter host ABIs for {} parameters",
+                self.name,
+                self.lowering.param_host_abis.len(),
+                self.params.len()
+            )));
+        }
+
+        for (index, param) in self.params.iter().enumerate() {
+            let expected = param.final_type.host_abi();
+            if self.lowering.param_host_abis[index] != expected {
+                return Err(lowering_invariant_violation(format!(
+                    "{} parameter '{}' host ABI summary is stale",
+                    self.name, param.name
+                )));
+            }
+        }
+
+        if self.lowering.return_host_abi != self.return_type.host_abi() {
+            return Err(lowering_invariant_violation(format!(
+                "{} return host ABI summary is stale",
+                self.name
+            )));
+        }
+
+        let required_layouts = collect_required_layouts(
+            &self.params,
+            self.return_repr,
+            &self.typed_exprs,
+            layout_table,
+        );
+        if self.lowering.required_layouts != required_layouts {
+            return Err(lowering_invariant_violation(format!(
+                "{} required layout summary is stale",
+                self.name
+            )));
+        }
+
+        for layout in &self.lowering.required_layouts {
+            if layout_table.get(*layout).is_none() {
+                return Err(lowering_invariant_violation(format!(
+                    "{} references missing layout {:?}",
+                    self.name, layout
+                )));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +253,58 @@ pub struct CheckedParamIr {
     pub name: String,
     pub final_type: FinalType,
     pub repr: ValueRepr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedFunctionLoweringSummary {
+    pub source_exported: bool,
+    pub declared_type_params: Vec<String>,
+    pub temporal_constraints: Vec<CheckedTemporalConstraintIr>,
+    pub param_host_abis: Vec<HostAbi>,
+    pub return_host_abi: HostAbi,
+    pub body_result: Option<ValueId>,
+    pub required_layouts: Vec<LayoutId>,
+    pub readiness: LoweringReadiness,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedTemporalConstraintIr {
+    pub inner: String,
+    pub outer: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoweringReadiness {
+    pub v001_host_abi_eligible: bool,
+    pub internal_layout_ready: bool,
+    pub host_abi_blockers: Vec<HostAbiBlocker>,
+    pub internal_lowering_blockers: Vec<InternalLoweringBlocker>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostAbiBlocker {
+    DeclaredTypeParam(String),
+    TemporalConstraint(CheckedTemporalConstraintIr),
+    NonMonomorphicSignature,
+    ParamInternalOnly {
+        name: String,
+        reason: InternalOnlyReason,
+    },
+    ReturnInternalOnly {
+        reason: InternalOnlyReason,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InternalLoweringBlocker {
+    MissingBodyResult,
+    MissingBodyProducer(ValueId),
+    BodyResultTypeMismatch {
+        value: ValueId,
+        expected: String,
+        actual: String,
+    },
+    MissingRequiredLayout(LayoutId),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -209,6 +328,7 @@ pub enum IrBuildError {
     MissingApplyValue(String),
     MissingValueRepr(ValueId),
     ShadowInvariantViolation(String),
+    LoweringInvariantViolation(String),
     UnfinalizedType(String),
 }
 
@@ -254,44 +374,54 @@ impl<'a> CheckedIrBuilder<'a> {
     fn build(mut self, program: &Program) -> Result<CheckedProgramIr, IrBuildError> {
         let mut functions = Vec::new();
         for decl in &program.declarations {
-            self.collect_function_ir_from_decl(decl, &mut functions)?;
+            self.collect_function_ir_from_decl(decl, &mut functions, false)?;
         }
 
-        Ok(CheckedProgramIr {
+        let program_ir = CheckedProgramIr {
             functions,
             layout_table: self.layout_table,
-        })
+        };
+        program_ir.validate_lowering_summaries()?;
+        Ok(program_ir)
     }
 
     fn collect_function_ir_from_decl(
         &mut self,
         decl: &TopDecl,
         functions: &mut Vec<CheckedFunctionIr>,
+        source_exported: bool,
     ) -> Result<(), IrBuildError> {
         match decl {
-            TopDecl::Function(func) => functions.push(self.build_function_ir(func)?),
+            TopDecl::Function(func) => {
+                functions.push(self.build_function_ir(func, source_exported)?)
+            }
             TopDecl::Export(export) => {
-                self.collect_function_ir_from_decl(export.item.as_ref(), functions)?
+                self.collect_function_ir_from_decl(export.item.as_ref(), functions, true)?
             }
             TopDecl::Impl(_) | TopDecl::Record(_) | TopDecl::Context(_) | TopDecl::Binding(_) => {}
         }
         Ok(())
     }
 
-    fn build_function_ir(&mut self, func: &FunDecl) -> Result<CheckedFunctionIr, IrBuildError> {
+    fn build_function_ir(
+        &mut self,
+        func: &FunDecl,
+        source_exported: bool,
+    ) -> Result<CheckedFunctionIr, IrBuildError> {
         let signature = self
             .checker
             .checked_function_signature(&func.name)
             .ok_or_else(|| IrBuildError::MissingCheckedReturn(func.name.clone()))?;
-        self.build_function_ir_from_signature(func, signature)
+        self.build_function_ir_from_signature(func, signature, source_exported)
     }
 
     fn build_function_ir_from_signature(
         &mut self,
         func: &FunDecl,
         signature: CheckedFunctionSignature,
+        source_exported: bool,
     ) -> Result<CheckedFunctionIr, IrBuildError> {
-        let return_type = FinalType::new(signature.return_type)?;
+        let return_type = FinalType::new(signature.return_type.clone())?;
         let return_repr = self.layout_table.value_repr_for_type(&return_type);
 
         let params = signature
@@ -301,10 +431,22 @@ impl<'a> CheckedIrBuilder<'a> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut apply_sites = Vec::new();
-        let typed_exprs = self.collect_typed_exprs_from_block(&func.body, &mut apply_sites)?;
+        let (typed_exprs, body_result) =
+            self.collect_typed_exprs_from_block(&func.body, &mut apply_sites)?;
 
         let monomorphic = return_type.is_monomorphic()
             && params.iter().all(|param| param.final_type.is_monomorphic());
+        let lowering = build_lowering_summary(
+            source_exported,
+            &signature,
+            &params,
+            &return_type,
+            return_repr,
+            body_result,
+            &typed_exprs,
+            &self.layout_table,
+            monomorphic,
+        );
 
         let function = CheckedFunctionIr {
             name: func.name.clone(),
@@ -314,8 +456,10 @@ impl<'a> CheckedIrBuilder<'a> {
             apply_sites,
             typed_exprs,
             monomorphic,
+            lowering,
         };
         function.validate_shadow_invariants()?;
+        function.validate_lowering_summary(&self.layout_table)?;
         Ok(function)
     }
 
@@ -338,10 +482,10 @@ impl<'a> CheckedIrBuilder<'a> {
         &mut self,
         block: &BlockExpr,
         sites: &mut Vec<NormalizedApplySite>,
-    ) -> Result<Vec<TypedExpr>, IrBuildError> {
+    ) -> Result<(Vec<TypedExpr>, Option<ValueId>), IrBuildError> {
         let mut exprs = Vec::new();
-        self.push_typed_exprs_from_block(block, &mut exprs, sites)?;
-        Ok(exprs)
+        let body_result = self.push_typed_exprs_from_block(block, &mut exprs, sites)?;
+        Ok((exprs, body_result))
     }
 
     fn push_typed_exprs_from_block(
@@ -661,6 +805,205 @@ fn missing_apply_value(value: &str) -> IrBuildError {
     IrBuildError::MissingApplyValue(value.to_string())
 }
 
+fn build_lowering_summary(
+    source_exported: bool,
+    signature: &CheckedFunctionSignature,
+    params: &[CheckedParamIr],
+    return_type: &FinalType,
+    return_repr: ValueRepr,
+    body_result: Option<ValueId>,
+    typed_exprs: &[TypedExpr],
+    layout_table: &LayoutTable,
+    monomorphic: bool,
+) -> CheckedFunctionLoweringSummary {
+    let declared_type_params = signature
+        .type_params
+        .iter()
+        .map(format_type_param_name)
+        .collect::<Vec<_>>();
+    let temporal_constraints = signature
+        .temporal_constraints
+        .iter()
+        .map(|constraint| CheckedTemporalConstraintIr {
+            inner: constraint.inner.clone(),
+            outer: constraint.outer.clone(),
+        })
+        .collect::<Vec<_>>();
+    let param_host_abis = params
+        .iter()
+        .map(|param| param.final_type.host_abi())
+        .collect::<Vec<_>>();
+    let return_host_abi = return_type.host_abi();
+    let required_layouts = collect_required_layouts(params, return_repr, typed_exprs, layout_table);
+
+    let mut host_abi_blockers = Vec::new();
+    for type_param in &declared_type_params {
+        host_abi_blockers.push(HostAbiBlocker::DeclaredTypeParam(type_param.clone()));
+    }
+    for constraint in &temporal_constraints {
+        host_abi_blockers.push(HostAbiBlocker::TemporalConstraint(constraint.clone()));
+    }
+    if !monomorphic {
+        host_abi_blockers.push(HostAbiBlocker::NonMonomorphicSignature);
+    }
+    for (param, abi) in params.iter().zip(&param_host_abis) {
+        if let HostAbi::InternalOnly(reason) = abi {
+            host_abi_blockers.push(HostAbiBlocker::ParamInternalOnly {
+                name: param.name.clone(),
+                reason: reason.clone(),
+            });
+        }
+    }
+    if let HostAbi::InternalOnly(reason) = &return_host_abi {
+        host_abi_blockers.push(HostAbiBlocker::ReturnInternalOnly {
+            reason: reason.clone(),
+        });
+    }
+
+    let mut internal_lowering_blockers = Vec::new();
+    if !matches!(
+        return_type.as_typed_type(),
+        crate::type_checker::TypedType::Unit
+    ) {
+        match body_result {
+            Some(value) => match producer_for_value(typed_exprs, value) {
+                Some(producer) if producer.final_type != *return_type => {
+                    internal_lowering_blockers.push(
+                        InternalLoweringBlocker::BodyResultTypeMismatch {
+                            value,
+                            expected: crate::type_checker::format_typed_type(
+                                return_type.as_typed_type(),
+                            ),
+                            actual: crate::type_checker::format_typed_type(
+                                producer.final_type.as_typed_type(),
+                            ),
+                        },
+                    );
+                }
+                Some(_) => {}
+                None => internal_lowering_blockers
+                    .push(InternalLoweringBlocker::MissingBodyProducer(value)),
+            },
+            None => internal_lowering_blockers.push(InternalLoweringBlocker::MissingBodyResult),
+        }
+    }
+    for layout in &required_layouts {
+        if layout_table.get(*layout).is_none() {
+            internal_lowering_blockers
+                .push(InternalLoweringBlocker::MissingRequiredLayout(*layout));
+        }
+    }
+
+    CheckedFunctionLoweringSummary {
+        source_exported,
+        declared_type_params,
+        temporal_constraints,
+        param_host_abis,
+        return_host_abi,
+        body_result,
+        required_layouts,
+        readiness: LoweringReadiness {
+            v001_host_abi_eligible: host_abi_blockers.is_empty()
+                && monomorphic
+                && params
+                    .iter()
+                    .all(|param| param.final_type.host_abi().is_v001_exportable())
+                && return_type.host_abi().is_v001_exportable(),
+            internal_layout_ready: internal_lowering_blockers.is_empty(),
+            host_abi_blockers,
+            internal_lowering_blockers,
+        },
+    }
+}
+
+fn format_type_param_name(param: &TypeParam) -> String {
+    if param.is_temporal {
+        format!("~{}", param.name)
+    } else {
+        param.name.clone()
+    }
+}
+
+fn producer_for_value(typed_exprs: &[TypedExpr], value: ValueId) -> Option<&TypedExpr> {
+    typed_exprs
+        .iter()
+        .find(|expr| expr.flow.produced().contains(&value))
+}
+
+fn collect_required_layouts(
+    params: &[CheckedParamIr],
+    return_repr: ValueRepr,
+    typed_exprs: &[TypedExpr],
+    layout_table: &LayoutTable,
+) -> Vec<LayoutId> {
+    let mut layouts = HashSet::new();
+    for param in params {
+        collect_layouts_from_repr(param.repr, layout_table, &mut layouts);
+    }
+    collect_layouts_from_repr(return_repr, layout_table, &mut layouts);
+    for expr in typed_exprs {
+        collect_layouts_from_repr(expr.repr, layout_table, &mut layouts);
+    }
+
+    let mut layouts = layouts.into_iter().collect::<Vec<_>>();
+    layouts.sort_by_key(|layout| layout.0);
+    layouts
+}
+
+fn collect_layouts_from_repr(
+    repr: ValueRepr,
+    layout_table: &LayoutTable,
+    layouts: &mut HashSet<LayoutId>,
+) {
+    match repr {
+        ValueRepr::Ref(layout) | ValueRepr::Closure { layout, .. } => {
+            collect_layout(layout, layout_table, layouts);
+        }
+        ValueRepr::Unit | ValueRepr::Scalar(_) => {}
+    }
+}
+
+fn collect_layout(layout: LayoutId, layout_table: &LayoutTable, layouts: &mut HashSet<LayoutId>) {
+    if !layouts.insert(layout) {
+        return;
+    }
+
+    let Some(descriptor) = layout_table.get(layout) else {
+        return;
+    };
+
+    match &descriptor.kind {
+        LayoutKind::String(_) | LayoutKind::Opaque(_) => {}
+        LayoutKind::List(list) => {
+            collect_layouts_from_repr(list.element.repr, layout_table, layouts);
+        }
+        LayoutKind::Array(array) => {
+            collect_layouts_from_repr(array.element.repr, layout_table, layouts);
+        }
+        LayoutKind::Record(record) => {
+            for field in &record.fields {
+                collect_layouts_from_repr(field.element.repr, layout_table, layouts);
+            }
+        }
+        LayoutKind::Sum(sum) => {
+            for variant in &sum.variants {
+                if let Some(payload) = &variant.payload {
+                    collect_layouts_from_repr(payload.repr, layout_table, layouts);
+                }
+            }
+        }
+        LayoutKind::Closure(closure) => {
+            for param in &closure.params {
+                collect_layouts_from_repr(param.repr, layout_table, layouts);
+            }
+            collect_layouts_from_repr(closure.result.repr, layout_table, layouts);
+            for capture in &closure.captures {
+                collect_layouts_from_repr(capture.repr, layout_table, layouts);
+            }
+        }
+    }
+}
+
 fn use_kind_for_repr(repr: ValueRepr) -> UseKind {
     match repr {
         ValueRepr::Unit | ValueRepr::Scalar(_) => UseKind::ReadCopy,
@@ -670,6 +1013,10 @@ fn use_kind_for_repr(repr: ValueRepr) -> UseKind {
 
 fn shadow_invariant_violation(message: String) -> IrBuildError {
     IrBuildError::ShadowInvariantViolation(message)
+}
+
+fn lowering_invariant_violation(message: String) -> IrBuildError {
+    IrBuildError::LoweringInvariantViolation(message)
 }
 
 fn is_literal_expr(expr: &Expr) -> bool {
@@ -698,7 +1045,8 @@ fn callee_hint(expr: &Expr) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::ScalarRepr;
+    use crate::ir::layout::LayoutId;
+    use crate::ir::{HostAbi, InternalOnlyReason, ScalarRepr};
     use crate::parser::parse_program;
     use crate::type_checker::TypedType;
 
@@ -710,6 +1058,24 @@ mod tests {
             .check_program(&program)
             .expect("source should type-check");
         build_checked_ir(&program, &checker).expect("checked IR should build")
+    }
+
+    fn scalar_test_lowering_summary() -> CheckedFunctionLoweringSummary {
+        CheckedFunctionLoweringSummary {
+            source_exported: false,
+            declared_type_params: Vec::new(),
+            temporal_constraints: Vec::new(),
+            param_host_abis: Vec::new(),
+            return_host_abi: HostAbi::Scalar(ScalarRepr::I32),
+            body_result: None,
+            required_layouts: Vec::new(),
+            readiness: LoweringReadiness {
+                v001_host_abi_eligible: true,
+                internal_layout_ready: false,
+                host_abi_blockers: Vec::new(),
+                internal_lowering_blockers: vec![InternalLoweringBlocker::MissingBodyResult],
+            },
+        }
     }
 
     #[test]
@@ -748,6 +1114,141 @@ fun identity: <T>(value: T) -> T = {
             &TypedType::TypeParam("T".to_string())
         );
         assert!(!function.monomorphic);
+    }
+
+    #[test]
+    fn builder_records_exported_scalar_lowering_readiness() {
+        let ir = checked_ir(
+            r#"
+export fun public_score: (value: Int32) -> Int32 = {
+    value + 1
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+        let summary = &function.lowering;
+
+        assert!(summary.source_exported);
+        assert!(summary.declared_type_params.is_empty());
+        assert_eq!(
+            summary.param_host_abis,
+            vec![HostAbi::Scalar(ScalarRepr::I32)]
+        );
+        assert_eq!(summary.return_host_abi, HostAbi::Scalar(ScalarRepr::I32));
+        assert!(summary.body_result.is_some());
+        assert!(summary.readiness.v001_host_abi_eligible);
+        assert!(summary.readiness.internal_layout_ready);
+        assert!(summary.readiness.host_abi_blockers.is_empty());
+        assert!(summary.readiness.internal_lowering_blockers.is_empty());
+    }
+
+    #[test]
+    fn builder_blocks_declared_generic_signature_from_v001_host_abi() {
+        let ir = checked_ir(
+            r#"
+fun tagged: <T>(value: Int32) -> Int32 = {
+    value
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+
+        assert!(function.monomorphic);
+        assert_eq!(function.lowering.declared_type_params, vec!["T"]);
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+        assert!(function
+            .lowering
+            .readiness
+            .host_abi_blockers
+            .contains(&HostAbiBlocker::DeclaredTypeParam("T".to_string())));
+    }
+
+    #[test]
+    fn builder_keeps_composite_layout_internal_only() {
+        let ir = checked_ir(
+            r#"
+fun keep_scores: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+        let composite = InternalOnlyReason::CompositeHostAbiUnstable;
+
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+        assert!(function.lowering.readiness.internal_layout_ready);
+        assert!(!function.lowering.required_layouts.is_empty());
+        assert_eq!(
+            function.lowering.param_host_abis,
+            vec![HostAbi::InternalOnly(composite.clone())]
+        );
+        assert_eq!(
+            function.lowering.return_host_abi,
+            HostAbi::InternalOnly(composite.clone())
+        );
+        assert!(function.lowering.readiness.host_abi_blockers.contains(
+            &HostAbiBlocker::ParamInternalOnly {
+                name: "items".to_string(),
+                reason: composite.clone(),
+            }
+        ));
+        assert!(function
+            .lowering
+            .readiness
+            .host_abi_blockers
+            .contains(&HostAbiBlocker::ReturnInternalOnly { reason: composite }));
+    }
+
+    #[test]
+    fn builder_records_body_result_producer_for_lowering() {
+        let ir = checked_ir(
+            r#"
+fun add_one: (value: Int32) -> Int32 = {
+    value + 1
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+        let body_result = function
+            .lowering
+            .body_result
+            .expect("non-unit function should record a body result");
+        let producer = function
+            .typed_exprs
+            .iter()
+            .find(|expr| expr.flow.produced().contains(&body_result))
+            .expect("body result should have a typed producer");
+
+        assert_eq!(
+            producer.final_type.as_typed_type(),
+            function.return_type.as_typed_type()
+        );
+        assert_eq!(producer.repr, function.return_repr);
+    }
+
+    #[test]
+    fn builder_rejects_stale_lowering_layout_summary() {
+        let mut ir = checked_ir(
+            r#"
+fun keep_scores: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+"#,
+        );
+
+        ir.functions[0]
+            .lowering
+            .required_layouts
+            .push(LayoutId(999));
+
+        assert!(matches!(
+            ir.validate_lowering_summaries(),
+            Err(IrBuildError::LoweringInvariantViolation(_))
+        ));
     }
 
     #[test]
@@ -908,6 +1409,7 @@ fun main: () -> Int32 = {
             }],
             typed_exprs: Vec::new(),
             monomorphic: true,
+            lowering: scalar_test_lowering_summary(),
         };
 
         assert!(matches!(

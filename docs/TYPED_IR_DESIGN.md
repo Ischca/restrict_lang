@@ -94,6 +94,21 @@ Apply `ExprId`; top-level callee placeholders are not treated as ownership uses.
 Passing this validator does not make Checked IR the codegen source of truth, a
 stable `BindingId` graph, or an ownership authority.
 
+### Read-Only Function Lowering Readiness
+
+Checked IR also reports a read-only lowering-readiness summary for each
+function: whether the source declaration was exported, which type parameters and
+temporal constraints were declared, parameter and return `HostAbi` values, the
+current body result `ValueId`, required layout descriptors, and separated
+readiness for internal lowering versus v0.0.1 host ABI eligibility.
+
+This is migration evidence only. It does not make Checked IR the source of WAT
+generation, replace `WasmCodeGen::generate`, or authorize a new host-visible ABI
+surface. `HostAbi::Unit` and `HostAbi::Scalar` remain the only v0.0.1
+host-exportable shapes. Composite, generic, closure/function-value, temporal, or
+unfinalized types stay internal-only unless a future host adapter explicitly
+defines otherwise.
+
 ## Apply Normalization
 
 The following source surfaces should converge to one IR shape:
@@ -270,4 +285,5 @@ metadata before they can become authoritative.
 This design stage adds the skeleton, invariants, and a read-only builder for
 function signatures, Apply sites, and checked expression type facts. It does not
 yet replace `WasmCodeGen::generate`, change generated WAT, or broaden the host
-ABI.
+ABI. The lowering-readiness summary is advisory metadata for the migration plan;
+the release-surface validator and existing codegen remain authoritative.

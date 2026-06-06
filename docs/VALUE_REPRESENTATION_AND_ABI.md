@@ -201,3 +201,17 @@ must not keep that metadata as runtime cost unless required.
 4. Treat `Range<Int32>` as a source-type migration item because the finalized
    typed representation does not yet expose a dedicated range variant.
 5. Generate composite host adapters only after internal descriptors are stable.
+
+## Read-Only ABI Summary
+
+The IR ABI summary is advisory compiler metadata. A function can be marked as a
+v0.0.1 host-ABI candidate only when it has no declared generic or temporal
+signature surface, is monomorphic after checking, and every host-visible
+parameter and return maps to `HostAbi::Unit` or `HostAbi::Scalar`.
+
+All `Ref(LayoutId)`, closure, descriptor, region, and composite layouts remain
+internal representation details. This summary must not export additional
+functions, expose raw linear-memory pointers, expose function table indexes, or
+generate composite adapters. The release-surface validator and existing codegen
+remain authoritative until Layout IR and Wasm MIR lowering are adopted
+incrementally.

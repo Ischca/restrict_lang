@@ -387,6 +387,67 @@ mod tests {
     }
 
     #[test]
+    fn host_abi_internal_only_matrix() {
+        let composite = InternalOnlyReason::CompositeHostAbiUnstable;
+        let internal_only = [
+            (TypedType::String, composite.clone()),
+            (
+                TypedType::Record {
+                    name: "ReleaseSlice".to_string(),
+                    type_args: Vec::new(),
+                    frozen: false,
+                    hash: None,
+                    parent_hash: None,
+                },
+                composite.clone(),
+            ),
+            (
+                TypedType::Function {
+                    params: vec![TypedType::Int32],
+                    return_type: Box::new(TypedType::Int32),
+                },
+                composite.clone(),
+            ),
+            (
+                TypedType::Option(Box::new(TypedType::Int32)),
+                composite.clone(),
+            ),
+            (
+                TypedType::Result(Box::new(TypedType::Int32), Box::new(TypedType::Int32)),
+                composite.clone(),
+            ),
+            (
+                TypedType::List(Box::new(TypedType::Int32)),
+                composite.clone(),
+            ),
+            (
+                TypedType::Array(
+                    Box::new(TypedType::Int32),
+                    crate::type_checker::ArrayLength::Known(2),
+                ),
+                composite.clone(),
+            ),
+            (
+                TypedType::Temporal {
+                    base_type: Box::new(TypedType::Int32),
+                    temporals: vec!["t".to_string()],
+                },
+                composite,
+            ),
+            (
+                TypedType::TypeParam("T".to_string()),
+                InternalOnlyReason::GenericType,
+            ),
+        ];
+
+        for (ty, reason) in internal_only {
+            let final_type = FinalType::new(ty).unwrap();
+            assert_eq!(final_type.host_abi(), HostAbi::InternalOnly(reason));
+            assert!(!final_type.host_abi().is_v001_exportable());
+        }
+    }
+
+    #[test]
     fn final_type_distinguishes_generic_from_monomorphic() {
         let generic = FinalType::new(TypedType::TypeParam("T".to_string())).unwrap();
         assert!(!generic.is_monomorphic());

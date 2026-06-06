@@ -286,17 +286,23 @@ Implemented Wasm MIR optimization levels are ordered as validation barriers:
 - `Hygiene`: remove semantically empty instructions such as `nop`.
 - `Local`: run hygiene first, then local stack rewrites to a fixpoint.
 
-The current local pass folds adjacent `i32.const`, `i32.const`, `i32.add`
-patterns using WebAssembly wrapping integer semantics. It intentionally remains
-below Layout IR: it does not change `HostAbi`, layout descriptors, regions, or
-ownership facts.
+The current local pass folds adjacent `i32.const`, `i32.const` operands feeding
+`i32.add`, `i32.sub`, or `i32.mul` using WebAssembly wrapping integer semantics.
+It also elides arithmetic identities where a constant operand leaves the other
+operand unchanged: `x + 0`, `x - 0`, and `x * 1`. The matched window always
+encodes the constant as the right-hand operand, so `i32.sub`'s non-commutativity
+is safe; `x * 0` is excluded because it would have to drop `x` rather than simply
+remove the operation. The pass intentionally remains below Layout IR: it does not
+change `HostAbi`, layout descriptors, regions, or ownership facts.
 
 The local pass may also remove a pure stack value producer immediately followed
 by `drop`, such as `i32.const; drop` or `local.get; drop`. This is deliberately
 limited to Wasm MIR instructions that cannot allocate, trap, mutate locals, or
 observe ownership. It is an actual MIR rewrite, but it stays below Restrict's
-affine and ABI layers. Local rewrites run to a combined fixpoint so a dead-value
-cleanup can expose a later constant fold, and vice versa.
+affine and ABI layers. Constant folding, identity elimination, and dead-value
+cleanup run together to a combined fixpoint so that one rewrite can expose work
+for another: a fold can produce an identity operand, and a dead-value cleanup can
+expose a later fold.
 
 Planned passes such as copy/move elimination, closure direct-call conversion,
 scalar replacement, and list pipeline fusion require stronger flow and layout

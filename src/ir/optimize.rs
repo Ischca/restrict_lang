@@ -539,6 +539,8 @@ pub enum WasmMirInstr {
     Nop,
     I32Const(i32),
     I32Add,
+    I32Sub,
+    I32Mul,
     LocalGet(u32),
     LocalSet(u32),
     Drop,
@@ -556,6 +558,7 @@ pub enum OptimizationLevel {
 pub struct OptimizationReport {
     pub removed_nops: usize,
     pub folded_constants: usize,
+    pub simplified_identities: usize,
     pub removed_dead_stack_values: usize,
 }
 
@@ -563,6 +566,7 @@ impl std::ops::AddAssign for OptimizationReport {
     fn add_assign(&mut self, other: Self) {
         self.removed_nops += other.removed_nops;
         self.folded_constants += other.folded_constants;
+        self.simplified_identities += other.simplified_identities;
         self.removed_dead_stack_values += other.removed_dead_stack_values;
     }
 }
@@ -578,37 +582,88 @@ fn remove_nops(function: &mut WasmMirFunction) -> usize {
 fn optimize_local_to_fixpoint(function: &mut WasmMirFunction) -> OptimizationReport {
     let mut report = OptimizationReport::default();
 
+    // Each rewrite strictly shrinks the instruction list when it fires, so the
+    // combined loop is monotonic and converges. Running them together lets one
+    // rewrite expose work for another (a fold can produce an identity operand,
+    // and a dead-value removal can expose a fold) within the same fixpoint.
     loop {
-        let folded_constants = fold_i32_add_constants(function);
+        let folded_constants = fold_i32_arith_constants(function);
+        let simplified_identities = simplify_i32_identities(function);
         let removed_dead_stack_values = remove_dead_stack_values(function);
-        if folded_constants == 0 && removed_dead_stack_values == 0 {
+        if folded_constants == 0 && simplified_identities == 0 && removed_dead_stack_values == 0 {
             return report;
         }
         report.folded_constants += folded_constants;
+        report.simplified_identities += simplified_identities;
         report.removed_dead_stack_values += removed_dead_stack_values;
     }
 }
 
-fn fold_i32_add_constants(function: &mut WasmMirFunction) -> usize {
+fn fold_i32_arith_constants(function: &mut WasmMirFunction) -> usize {
     let mut folded = 0;
     let mut output = Vec::with_capacity(function.instructions.len());
     let mut cursor = 0;
 
     while cursor < function.instructions.len() {
-        if let [WasmMirInstr::I32Const(left), WasmMirInstr::I32Const(right), WasmMirInstr::I32Add] =
-            &function.instructions[cursor..function.instructions.len().min(cursor + 3)]
-        {
-            output.push(WasmMirInstr::I32Const(left.wrapping_add(*right)));
-            folded += 1;
-            cursor += 3;
-        } else {
-            output.push(function.instructions[cursor].clone());
-            cursor += 1;
+        let window = &function.instructions[cursor..function.instructions.len().min(cursor + 3)];
+        if let [WasmMirInstr::I32Const(left), WasmMirInstr::I32Const(right), op] = window {
+            if let Some(value) = fold_i32_binop(*left, *right, op) {
+                output.push(WasmMirInstr::I32Const(value));
+                folded += 1;
+                cursor += 3;
+                continue;
+            }
         }
+        output.push(function.instructions[cursor].clone());
+        cursor += 1;
     }
 
     function.instructions = output;
     folded
+}
+
+fn fold_i32_binop(left: i32, right: i32, op: &WasmMirInstr) -> Option<i32> {
+    match op {
+        WasmMirInstr::I32Add => Some(left.wrapping_add(right)),
+        WasmMirInstr::I32Sub => Some(left.wrapping_sub(right)),
+        WasmMirInstr::I32Mul => Some(left.wrapping_mul(right)),
+        _ => None,
+    }
+}
+
+fn simplify_i32_identities(function: &mut WasmMirFunction) -> usize {
+    let mut simplified = 0;
+    let mut output = Vec::with_capacity(function.instructions.len());
+    let mut cursor = 0;
+
+    while cursor < function.instructions.len() {
+        let window = &function.instructions[cursor..function.instructions.len().min(cursor + 2)];
+        if let [WasmMirInstr::I32Const(value), op] = window {
+            if is_i32_identity(*value, op) {
+                simplified += 1;
+                cursor += 2;
+                continue;
+            }
+        }
+        output.push(function.instructions[cursor].clone());
+        cursor += 1;
+    }
+
+    function.instructions = output;
+    simplified
+}
+
+// A constant operand that leaves the other operand unchanged: `x + 0`, `x - 0`,
+// and `x * 1`. The matched window always encodes the constant as the right-hand
+// operand, so `i32.sub`'s non-commutativity is safe (`0 - x` could never appear
+// as `[I32Const(0), I32Sub]`). `x * 0` is intentionally excluded: it would have
+// to drop `x` rather than simply elide the operation.
+fn is_i32_identity(value: i32, op: &WasmMirInstr) -> bool {
+    match op {
+        WasmMirInstr::I32Add | WasmMirInstr::I32Sub => value == 0,
+        WasmMirInstr::I32Mul => value == 1,
+        _ => false,
+    }
 }
 
 fn remove_dead_stack_values(function: &mut WasmMirFunction) -> usize {
@@ -1377,6 +1432,126 @@ fun main: () -> Int32 = {
         assert_eq!(
             module.functions[0].instructions,
             vec![WasmMirInstr::I32Const(i32::MIN)]
+        );
+    }
+
+    #[test]
+    fn local_optimization_folds_i32_sub_and_mul_constants() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(40),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Sub,
+                    WasmMirInstr::I32Const(3),
+                    WasmMirInstr::I32Mul,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 2);
+        assert_eq!(report.simplified_identities, 0);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(114), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_eliminates_additive_identities() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::I32Const(0),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::I32Const(0),
+                    WasmMirInstr::I32Sub,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.simplified_identities, 2);
+        assert_eq!(report.folded_constants, 0);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::LocalGet(0), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_eliminates_multiplicative_identity() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(1),
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Mul,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.simplified_identities, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::LocalGet(1), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_keeps_non_identity_constants() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::LocalGet(1),
+                    WasmMirInstr::I32Const(0),
+                    WasmMirInstr::I32Mul,
+                ],
+            }],
+        };
+        let original = module.clone();
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.simplified_identities, 0);
+        assert_eq!(report.folded_constants, 0);
+        assert_eq!(module, original);
+    }
+
+    #[test]
+    fn local_optimization_folds_then_eliminates_identity_to_fixpoint() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Sub,
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(report.simplified_identities, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::LocalGet(0), WasmMirInstr::Return]
         );
     }
 }

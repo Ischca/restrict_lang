@@ -8,7 +8,10 @@ use crate::ast::*;
 use crate::type_checker::{CheckedFunctionSignature, TypeChecker};
 
 use super::layout::LayoutTable;
-use super::{ApplyFlavor, ApplyIr, FinalType, ValueId, ValueRepr};
+use super::{
+    ApplyFlavor, ApplyIr, ExprId, FinalType, FlowSummary, TypedExpr, TypedExprKind, ValueId,
+    ValueRepr,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckedProgramIr {
@@ -23,6 +26,7 @@ pub struct CheckedFunctionIr {
     pub return_type: FinalType,
     pub return_repr: ValueRepr,
     pub apply_sites: Vec<NormalizedApplySite>,
+    pub typed_exprs: Vec<TypedExpr>,
     pub monomorphic: bool,
 }
 
@@ -67,6 +71,7 @@ pub fn build_checked_ir(
 struct CheckedIrBuilder<'a> {
     checker: &'a TypeChecker,
     layout_table: LayoutTable,
+    next_expr: u32,
     next_value: u32,
     next_apply: usize,
 }
@@ -76,6 +81,7 @@ impl<'a> CheckedIrBuilder<'a> {
         Self {
             checker,
             layout_table: LayoutTable::new(),
+            next_expr: 0,
             next_value: 0,
             next_apply: 0,
         }
@@ -132,6 +138,7 @@ impl<'a> CheckedIrBuilder<'a> {
 
         let mut apply_sites = Vec::new();
         self.collect_applies_from_block(&func.body, &mut apply_sites);
+        let typed_exprs = self.collect_typed_exprs_from_block(&func.body)?;
 
         let monomorphic = return_type.is_monomorphic()
             && params.iter().all(|param| param.final_type.is_monomorphic());
@@ -142,6 +149,7 @@ impl<'a> CheckedIrBuilder<'a> {
             return_type,
             return_repr,
             apply_sites,
+            typed_exprs,
             monomorphic,
         })
     }
@@ -289,31 +297,213 @@ impl<'a> CheckedIrBuilder<'a> {
         }
     }
 
-    fn push_call_apply(&mut self, call: &CallExpr, sites: &mut Vec<NormalizedApplySite>) {
-        let flavor = match call.function.as_ref() {
-            Expr::Lambda(_) => ApplyFlavor::ImmediateLambda,
-            Expr::FieldAccess(_, _) => ApplyFlavor::MethodResolution,
-            Expr::Ident(_) if call.args.is_empty() => ApplyFlavor::UnitCall,
-            Expr::Ident(_) => ApplyFlavor::TupleCall,
-            _ => ApplyFlavor::FunctionValue,
+    fn collect_typed_exprs_from_block(
+        &mut self,
+        block: &BlockExpr,
+    ) -> Result<Vec<TypedExpr>, IrBuildError> {
+        let mut exprs = Vec::new();
+        self.push_typed_exprs_from_block(block, &mut exprs)?;
+        Ok(exprs)
+    }
+
+    fn push_typed_exprs_from_block(
+        &mut self,
+        block: &BlockExpr,
+        exprs: &mut Vec<TypedExpr>,
+    ) -> Result<(), IrBuildError> {
+        for stmt in &block.statements {
+            match stmt {
+                Stmt::Binding(binding) => {
+                    self.push_typed_exprs_from_expr(&binding.value, exprs)?;
+                }
+                Stmt::Assignment(assign) => {
+                    self.push_typed_exprs_from_expr(&assign.value, exprs)?;
+                }
+                Stmt::Expr(expr) => {
+                    self.push_typed_exprs_from_expr(expr, exprs)?;
+                }
+            }
+        }
+        if let Some(expr) = &block.expr {
+            self.push_typed_exprs_from_expr(expr, exprs)?;
+        }
+        Ok(())
+    }
+
+    fn push_typed_exprs_from_expr(
+        &mut self,
+        expr: &Expr,
+        exprs: &mut Vec<TypedExpr>,
+    ) -> Result<(), IrBuildError> {
+        let mut apply = None;
+
+        match expr {
+            Expr::Call(call) => {
+                for arg in &call.args {
+                    self.push_typed_exprs_from_expr(arg, exprs)?;
+                }
+                self.push_typed_exprs_from_expr(&call.function, exprs)?;
+                apply = Some(self.make_call_apply(call));
+            }
+            Expr::Pipe(pipe) => {
+                self.push_typed_exprs_from_expr(&pipe.expr, exprs)?;
+                match &pipe.target {
+                    PipeTarget::Expr(target) => {
+                        self.push_typed_exprs_from_expr(target, exprs)?;
+                        apply = Some(self.make_pipe_apply(pipe));
+                    }
+                    PipeTarget::Ident(name) => {
+                        if self.checker.checked_function_return_type(name).is_some() {
+                            apply = Some(self.make_pipe_apply(pipe));
+                        }
+                    }
+                }
+            }
+            Expr::RecordLit(record) => {
+                for field in &record.fields {
+                    self.push_typed_exprs_from_field_init(field, exprs)?;
+                }
+            }
+            Expr::Clone(clone) => {
+                self.push_typed_exprs_from_expr(&clone.base, exprs)?;
+                for field in &clone.updates.fields {
+                    self.push_typed_exprs_from_field_init(field, exprs)?;
+                }
+            }
+            Expr::Freeze(inner)
+            | Expr::Await(inner)
+            | Expr::Spawn(inner)
+            | Expr::Some(inner)
+            | Expr::Ok(inner)
+            | Expr::Err(inner)
+            | Expr::FieldAccess(inner, _) => self.push_typed_exprs_from_expr(inner, exprs)?,
+            Expr::PrototypeClone(clone) => {
+                for field in &clone.updates.fields {
+                    self.push_typed_exprs_from_field_init(field, exprs)?;
+                }
+            }
+            Expr::Then(then) => {
+                self.push_typed_exprs_from_expr(&then.condition, exprs)?;
+                self.push_typed_exprs_from_block(&then.then_block, exprs)?;
+                for (condition, block) in &then.else_ifs {
+                    self.push_typed_exprs_from_expr(condition, exprs)?;
+                    self.push_typed_exprs_from_block(block, exprs)?;
+                }
+                if let Some(block) = &then.else_block {
+                    self.push_typed_exprs_from_block(block, exprs)?;
+                }
+            }
+            Expr::While(while_expr) => {
+                self.push_typed_exprs_from_expr(&while_expr.condition, exprs)?;
+                self.push_typed_exprs_from_block(&while_expr.body, exprs)?;
+            }
+            Expr::Match(match_expr) => {
+                self.push_typed_exprs_from_expr(&match_expr.expr, exprs)?;
+                for arm in &match_expr.arms {
+                    self.push_typed_exprs_from_block(&arm.body, exprs)?;
+                }
+            }
+            Expr::Binary(binary) => {
+                self.push_typed_exprs_from_expr(&binary.left, exprs)?;
+                self.push_typed_exprs_from_expr(&binary.right, exprs)?;
+            }
+            Expr::Unary(unary) => self.push_typed_exprs_from_expr(&unary.expr, exprs)?,
+            Expr::Cast(cast) => self.push_typed_exprs_from_expr(&cast.expr, exprs)?,
+            Expr::With(with) => {
+                for binding in &with.bindings {
+                    self.push_typed_exprs_from_field_init(binding, exprs)?;
+                }
+                self.push_typed_exprs_from_block(&with.body, exprs)?;
+            }
+            Expr::WithLifetime(with) => self.push_typed_exprs_from_block(&with.body, exprs)?,
+            Expr::Block(block) => self.push_typed_exprs_from_block(block, exprs)?,
+            Expr::ListLit(items) | Expr::ArrayLit(items) => {
+                for item in items {
+                    self.push_typed_exprs_from_expr(item, exprs)?;
+                }
+            }
+            Expr::RangeLit(range) => {
+                self.push_typed_exprs_from_expr(&range.start, exprs)?;
+                self.push_typed_exprs_from_expr(&range.end, exprs)?;
+            }
+            Expr::Lambda(lambda) => self.push_typed_exprs_from_expr(&lambda.body, exprs)?,
+            Expr::IntLit(_)
+            | Expr::FloatLit(_)
+            | Expr::StringLit(_)
+            | Expr::CharLit(_)
+            | Expr::BoolLit(_)
+            | Expr::Unit
+            | Expr::Ident(_)
+            | Expr::None => {}
+        }
+
+        if let Some(typed_expr) = self.build_typed_expr_skeleton(expr, apply)? {
+            exprs.push(typed_expr);
+        }
+
+        Ok(())
+    }
+
+    fn push_typed_exprs_from_field_init(
+        &mut self,
+        field: &FieldInit,
+        exprs: &mut Vec<TypedExpr>,
+    ) -> Result<(), IrBuildError> {
+        match field {
+            FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
+                self.push_typed_exprs_from_expr(value, exprs)
+            }
+        }
+    }
+
+    fn build_typed_expr_skeleton(
+        &mut self,
+        expr: &Expr,
+        apply: Option<ApplyIr>,
+    ) -> Result<Option<TypedExpr>, IrBuildError> {
+        let Some(ty) = self.checker.checked_expr_type(expr) else {
+            return Ok(None);
         };
+
+        let final_type = FinalType::new(ty)?;
+        let repr = self.layout_table.value_repr_for_type(&final_type);
+        let id = self.next_expr_id();
+        let (value, kind) = match apply {
+            Some(apply) => (Some(apply.result), TypedExprKind::Apply(apply)),
+            None => {
+                let value = self.next_value();
+                let kind = if is_literal_expr(expr) {
+                    TypedExprKind::Literal
+                } else {
+                    TypedExprKind::Value(value)
+                };
+                (Some(value), kind)
+            }
+        };
+
+        let mut flow = FlowSummary::new();
+        if let Some(value) = value {
+            flow.record_produced(value);
+        }
+
+        Ok(Some(TypedExpr {
+            id,
+            value,
+            final_type,
+            repr,
+            flow,
+            kind,
+        }))
+    }
+
+    fn push_call_apply(&mut self, call: &CallExpr, sites: &mut Vec<NormalizedApplySite>) {
         let callee_hint = callee_hint(call.function.as_ref());
-        let callee = self.next_value();
-        let args = (0..call.args.len())
-            .map(|_| self.next_value())
-            .collect::<Vec<_>>();
-        let result = self.next_value();
         let source_index = self.next_apply_index();
 
         sites.push(NormalizedApplySite {
             source_index,
             callee_hint,
-            apply: ApplyIr {
-                flavor,
-                callee,
-                args,
-                result,
-            },
+            apply: self.make_call_apply(call),
         });
     }
 
@@ -322,21 +512,54 @@ impl<'a> CheckedIrBuilder<'a> {
             PipeTarget::Ident(name) => Some(name.clone()),
             PipeTarget::Expr(expr) => callee_hint(expr),
         };
-        let callee = self.next_value();
-        let arg = self.next_value();
-        let result = self.next_value();
         let source_index = self.next_apply_index();
 
         sites.push(NormalizedApplySite {
             source_index,
             callee_hint,
-            apply: ApplyIr {
-                flavor: ApplyFlavor::Pipe,
-                callee,
-                args: vec![arg],
-                result,
-            },
+            apply: self.make_pipe_apply(pipe),
         });
+    }
+
+    fn make_call_apply(&mut self, call: &CallExpr) -> ApplyIr {
+        let flavor = match call.function.as_ref() {
+            Expr::Lambda(_) => ApplyFlavor::ImmediateLambda,
+            Expr::FieldAccess(_, _) => ApplyFlavor::MethodResolution,
+            Expr::Ident(_) if call.args.is_empty() => ApplyFlavor::UnitCall,
+            Expr::Ident(_) => ApplyFlavor::TupleCall,
+            _ => ApplyFlavor::FunctionValue,
+        };
+        let callee = self.next_value();
+        let args = (0..call.args.len())
+            .map(|_| self.next_value())
+            .collect::<Vec<_>>();
+        let result = self.next_value();
+
+        ApplyIr {
+            flavor,
+            callee,
+            args,
+            result,
+        }
+    }
+
+    fn make_pipe_apply(&mut self, _pipe: &PipeExpr) -> ApplyIr {
+        let callee = self.next_value();
+        let arg = self.next_value();
+        let result = self.next_value();
+
+        ApplyIr {
+            flavor: ApplyFlavor::Pipe,
+            callee,
+            args: vec![arg],
+            result,
+        }
+    }
+
+    fn next_expr_id(&mut self) -> ExprId {
+        let id = ExprId(self.next_expr);
+        self.next_expr += 1;
+        id
     }
 
     fn next_value(&mut self) -> ValueId {
@@ -350,6 +573,21 @@ impl<'a> CheckedIrBuilder<'a> {
         self.next_apply += 1;
         index
     }
+}
+
+fn is_literal_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::IntLit(_)
+            | Expr::FloatLit(_)
+            | Expr::StringLit(_)
+            | Expr::CharLit(_)
+            | Expr::BoolLit(_)
+            | Expr::Unit
+            | Expr::ListLit(_)
+            | Expr::ArrayLit(_)
+            | Expr::None
+    )
 }
 
 fn callee_hint(expr: &Expr) -> Option<String> {
@@ -392,6 +630,7 @@ fun add_one: (value: Int32) -> Int32 = {
         assert_eq!(function.params.len(), 1);
         assert_eq!(function.params[0].name, "value");
         assert_eq!(function.return_type.as_typed_type(), &TypedType::Int32);
+        assert!(!function.typed_exprs.is_empty());
         assert!(function.monomorphic);
     }
 
@@ -493,5 +732,74 @@ fun main: () -> Int32 = {
         assert_eq!(main.apply_sites[0].apply.flavor, ApplyFlavor::TupleCall);
         assert_eq!(main.apply_sites[0].apply.args.len(), 1);
         assert_eq!(main.apply_sites[0].callee_hint.as_deref(), Some("inc"));
+    }
+
+    #[test]
+    fn builder_collects_checked_typed_expr_skeleton() {
+        let ir = checked_ir(
+            r#"
+fun add: (left: Int32, right: Int32) -> Int32 = {
+    left + right
+}
+
+fun inc: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: () -> Int32 = {
+    val value = (1, 2) add
+    value |> inc
+}
+"#,
+        );
+
+        let main = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main IR should be present");
+        let apply_exprs = main
+            .typed_exprs
+            .iter()
+            .filter(|expr| matches!(expr.kind, TypedExprKind::Apply(_)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(apply_exprs.len(), 2);
+        assert!(apply_exprs
+            .iter()
+            .all(|expr| expr.final_type.as_typed_type() == &TypedType::Int32));
+        assert!(main
+            .typed_exprs
+            .iter()
+            .all(|expr| expr.validate_for_codegen().is_ok()));
+    }
+
+    #[test]
+    fn builder_uses_contextual_checked_fact_for_collection_literal() {
+        let ir = checked_ir(
+            r#"
+fun main: () -> List<Int32> = {
+    []
+}
+"#,
+        );
+
+        let main = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main IR should be present");
+        let list_expr = main
+            .typed_exprs
+            .iter()
+            .find(|expr| matches!(expr.kind, TypedExprKind::Literal))
+            .expect("contextual list literal should produce a typed expr");
+
+        assert_eq!(
+            list_expr.final_type.as_typed_type(),
+            &TypedType::List(Box::new(TypedType::Int32))
+        );
+        assert!(matches!(list_expr.repr, ValueRepr::Ref(_)));
+        assert!(list_expr.validate_for_codegen().is_ok());
     }
 }

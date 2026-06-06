@@ -680,6 +680,8 @@ pub struct TypeChecker {
     records: HashMap<String, RecordDef>,
     // Function definitions
     functions: HashMap<String, FunctionDef>,
+    // Checked expression types for the current AST instance.
+    checked_expr_types: HashMap<usize, TypedType>,
     // Method implementations: record_name -> method_name -> function_def
     methods: HashMap<String, HashMap<String, FunctionDef>>,
     // Functions whose signatures were registered with a provisional return type.
@@ -715,6 +717,7 @@ impl TypeChecker {
             trait_impls: HashMap::new(),
             records: HashMap::new(),
             functions: HashMap::new(),
+            checked_expr_types: HashMap::new(),
             methods: HashMap::new(),
             provisional_function_returns: HashSet::new(),
             provisional_method_returns: HashSet::new(),
@@ -751,8 +754,43 @@ impl TypeChecker {
             })
     }
 
+    /// Return the finalized type recorded while checking this exact AST node.
+    ///
+    /// The current bridge uses expression pointer identity and is therefore
+    /// valid only after a successful check of the same `Program` instance.
+    pub fn checked_expr_type(&self, expr: &Expr) -> Option<TypedType> {
+        self.checked_expr_types.get(&Self::expr_key(expr)).cloned()
+    }
+
+    pub fn checked_expr_type_count(&self) -> usize {
+        self.checked_expr_types.len()
+    }
+
+    /// Expose checked expression types for the legacy AST-driven codegen path.
+    ///
+    /// This is a temporary migration bridge. New IR work should prefer
+    /// `checked_expr_type` and replace pointer keys with stable `ExprId`s.
+    pub fn expr_types(&self) -> HashMap<*const Expr, String> {
+        self.checked_expr_types
+            .iter()
+            .map(|(key, ty)| (*key as *const Expr, format_typed_type(ty)))
+            .collect()
+    }
+
     pub fn checked_variable_type(&self, name: &str) -> Option<TypedType> {
         self.peek_var_type(name)
+    }
+
+    fn expr_key(expr: &Expr) -> usize {
+        expr as *const Expr as usize
+    }
+
+    fn record_checked_expr_type(&mut self, expr: &Expr, ty: &TypedType) {
+        if Self::contains_inference_internal_type(ty) {
+            return;
+        }
+        self.checked_expr_types
+            .insert(Self::expr_key(expr), ty.clone());
     }
 
     fn range_int32_type() -> TypedType {
@@ -3007,6 +3045,7 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), TypeError> {
+        self.checked_expr_types.clear();
         self.reject_unresolved_imports(&program.imports)?;
 
         // Run lifetime inference if needed
@@ -4887,162 +4926,177 @@ impl TypeChecker {
         expr: &Expr,
         expected: Option<&TypedType>,
     ) -> Result<TypedType, TypeError> {
-        match expr {
-            Expr::IntLit(value) => self.check_int_lit(*value, expected),
-            Expr::FloatLit(_) => Ok(TypedType::Float64),
-            Expr::StringLit(_) => Ok(TypedType::String),
-            Expr::CharLit(_) => Ok(TypedType::Char),
-            Expr::BoolLit(_) => Ok(TypedType::Boolean),
-            Expr::Unit => Ok(TypedType::Unit),
-            Expr::Ident(name) => {
-                // First try as a variable
-                match self.lookup_var(name) {
-                    Ok(ty) => {
-                        if let Some(expected_ty) = expected {
-                            if let Some(deferred) = self.peek_deferred_callable(name) {
-                                if matches!(expected_ty, TypedType::Function { .. }) {
-                                    let mut substitution = ConstraintSubstitution::new();
-                                    return self.check_deferred_callable_against_expected(
+        let result = (|| -> Result<TypedType, TypeError> {
+            match expr {
+                Expr::IntLit(value) => self.check_int_lit(*value, expected),
+                Expr::FloatLit(_) => Ok(TypedType::Float64),
+                Expr::StringLit(_) => Ok(TypedType::String),
+                Expr::CharLit(_) => Ok(TypedType::Char),
+                Expr::BoolLit(_) => Ok(TypedType::Boolean),
+                Expr::Unit => Ok(TypedType::Unit),
+                Expr::Ident(name) => {
+                    // First try as a variable
+                    match self.lookup_var(name) {
+                        Ok(ty) => {
+                            if let Some(expected_ty) = expected {
+                                if let Some(deferred) = self.peek_deferred_callable(name) {
+                                    if matches!(expected_ty, TypedType::Function { .. }) {
+                                        let mut substitution = ConstraintSubstitution::new();
+                                        return self.check_deferred_callable_against_expected(
+                                            name,
+                                            &deferred,
+                                            expected_ty,
+                                            &mut substitution,
+                                        );
+                                    }
+                                }
+
+                                if let Some(constrained_ty) = self
+                                    .constrain_inference_binding_from_expected(
                                         name,
-                                        &deferred,
+                                        &ty,
                                         expected_ty,
-                                        &mut substitution,
-                                    );
+                                    )?
+                                {
+                                    return Ok(constrained_ty);
                                 }
                             }
 
-                            if let Some(constrained_ty) = self
-                                .constrain_inference_binding_from_expected(name, &ty, expected_ty)?
-                            {
-                                return Ok(constrained_ty);
-                            }
+                            Ok(ty)
                         }
-
-                        Ok(ty)
-                    }
-                    Err(e) => {
-                        // If not a variable, check if it's a function. In expression
-                        // position a function identifier is a function value. A
-                        // zero-argument function must still be invoked with the
-                        // OSV unit form `() function` when a value is expected.
-                        if let Some(func_def) = self.functions.get(name).cloned() {
-                            if self.provisional_function_returns.contains(name) {
-                                return Err(TypeError::CannotInferType(format!(
+                        Err(e) => {
+                            // If not a variable, check if it's a function. In expression
+                            // position a function identifier is a function value. A
+                            // zero-argument function must still be invoked with the
+                            // OSV unit form `() function` when a value is expected.
+                            if let Some(func_def) = self.functions.get(name).cloned() {
+                                if self.provisional_function_returns.contains(name) {
+                                    return Err(TypeError::CannotInferType(format!(
                                     "function '{}' is used before its return type has been inferred; add an explicit return annotation",
                                     name
                                 )));
-                            }
+                                }
 
-                            if func_def.params.is_empty()
-                                && expected.is_some()
-                                && !matches!(expected, Some(TypedType::Function { .. }))
-                            {
-                                Err(TypeError::UnsupportedFeature(format!(
+                                if func_def.params.is_empty()
+                                    && expected.is_some()
+                                    && !matches!(expected, Some(TypedType::Function { .. }))
+                                {
+                                    Err(TypeError::UnsupportedFeature(format!(
                                     "zero-argument function '{name}' must be called with OSV unit syntax `() {name}` or used where a `() -> ...` function type is expected"
                                 )))
+                                } else {
+                                    self.named_function_value_type(name, &func_def, expected)
+                                }
                             } else {
-                                self.named_function_value_type(name, &func_def, expected)
+                                if matches!(name.as_str(), "some" | "none") {
+                                    return Err(lowercase_option_constructor_error(name));
+                                }
+                                Err(e) // Return the original error
                             }
-                        } else {
-                            if matches!(name.as_str(), "some" | "none") {
-                                return Err(lowercase_option_constructor_error(name));
-                            }
-                            Err(e) // Return the original error
                         }
                     }
                 }
-            }
-            Expr::RecordLit(record_lit) => {
-                self.check_record_lit_with_expected(record_lit, expected)
-            }
-            Expr::Clone(clone_expr) => self.check_clone_expr(clone_expr),
-            Expr::Freeze(expr) => self.check_freeze_expr(expr),
-            Expr::FieldAccess(expr, field) => self.check_field_access(expr, field),
-            Expr::Call(call) => self.check_call_expr_with_expected(call, expected),
-            Expr::Block(block) => self.check_block_expr_with_expected(block, expected),
-            Expr::Binary(binary) => self.check_binary_expr(binary, expected),
-            Expr::Unary(unary) => self.check_unary_expr(unary, expected),
-            Expr::Cast(cast) => self.check_cast_expr(cast),
-            Expr::Pipe(pipe) => self.check_pipe_expr_with_expected(pipe, expected),
-            Expr::With(with) => self.check_with_expr_with_expected(with, expected),
-            Expr::WithLifetime(with_lifetime) => self.check_with_lifetime_expr(with_lifetime),
-            Expr::Then(then) => self.check_then_expr_with_expected(then, expected),
-            Expr::While(while_expr) => self.check_while_expr(while_expr),
-            Expr::Match(match_expr) => self.check_match_expr_with_expected(match_expr, expected),
-            Expr::ListLit(elements) if matches!(expected, Some(TypedType::Array(_, _))) => {
-                self.check_array_lit(elements, expected)
-            }
-            Expr::ListLit(elements) => self.check_list_lit(elements, expected),
-            Expr::RangeLit(range) => self.check_range_lit(range, expected),
-            Expr::ArrayLit(elements) => self.check_array_lit(elements, expected),
-            Expr::Some(expr) => {
-                let inferred_inner;
-                let expected_inner = if let Some(TypedType::Option(inner)) = expected {
-                    Some(inner.as_ref())
-                } else if matches!(expected, Some(TypedType::InferVar(_))) {
-                    inferred_inner = self.type_var_generator.fresh_var();
-                    Some(&inferred_inner)
-                } else {
-                    None
-                };
-                let inner_type = self.check_expr_with_expected(expr, expected_inner)?;
-                Ok(TypedType::Option(Box::new(inner_type)))
-            }
-            Expr::None => {
-                // Use expected type if available
-                if let Some(TypedType::Option(inner)) = expected {
-                    Ok(TypedType::Option(inner.clone()))
-                } else if matches!(expected, Some(TypedType::InferVar(_))) {
-                    Ok(TypedType::Option(Box::new(
-                        self.type_var_generator.fresh_var(),
-                    )))
-                } else {
-                    Err(TypeError::CannotInferType(
-                        "None requires an expected Option type".to_string(),
-                    ))
+                Expr::RecordLit(record_lit) => {
+                    self.check_record_lit_with_expected(record_lit, expected)
                 }
+                Expr::Clone(clone_expr) => self.check_clone_expr(clone_expr),
+                Expr::Freeze(expr) => self.check_freeze_expr(expr),
+                Expr::FieldAccess(expr, field) => self.check_field_access(expr, field),
+                Expr::Call(call) => self.check_call_expr_with_expected(call, expected),
+                Expr::Block(block) => self.check_block_expr_with_expected(block, expected),
+                Expr::Binary(binary) => self.check_binary_expr(binary, expected),
+                Expr::Unary(unary) => self.check_unary_expr(unary, expected),
+                Expr::Cast(cast) => self.check_cast_expr(cast),
+                Expr::Pipe(pipe) => self.check_pipe_expr_with_expected(pipe, expected),
+                Expr::With(with) => self.check_with_expr_with_expected(with, expected),
+                Expr::WithLifetime(with_lifetime) => self.check_with_lifetime_expr(with_lifetime),
+                Expr::Then(then) => self.check_then_expr_with_expected(then, expected),
+                Expr::While(while_expr) => self.check_while_expr(while_expr),
+                Expr::Match(match_expr) => {
+                    self.check_match_expr_with_expected(match_expr, expected)
+                }
+                Expr::ListLit(elements) if matches!(expected, Some(TypedType::Array(_, _))) => {
+                    self.check_array_lit(elements, expected)
+                }
+                Expr::ListLit(elements) => self.check_list_lit(elements, expected),
+                Expr::RangeLit(range) => self.check_range_lit(range, expected),
+                Expr::ArrayLit(elements) => self.check_array_lit(elements, expected),
+                Expr::Some(expr) => {
+                    let inferred_inner;
+                    let expected_inner = if let Some(TypedType::Option(inner)) = expected {
+                        Some(inner.as_ref())
+                    } else if matches!(expected, Some(TypedType::InferVar(_))) {
+                        inferred_inner = self.type_var_generator.fresh_var();
+                        Some(&inferred_inner)
+                    } else {
+                        None
+                    };
+                    let inner_type = self.check_expr_with_expected(expr, expected_inner)?;
+                    Ok(TypedType::Option(Box::new(inner_type)))
+                }
+                Expr::None => {
+                    // Use expected type if available
+                    if let Some(TypedType::Option(inner)) = expected {
+                        Ok(TypedType::Option(inner.clone()))
+                    } else if matches!(expected, Some(TypedType::InferVar(_))) {
+                        Ok(TypedType::Option(Box::new(
+                            self.type_var_generator.fresh_var(),
+                        )))
+                    } else {
+                        Err(TypeError::CannotInferType(
+                            "None requires an expected Option type".to_string(),
+                        ))
+                    }
+                }
+                Expr::Ok(expr) => match expected {
+                    Some(TypedType::Result(ok_ty, err_ty)) => {
+                        let actual_ok = self.check_expr_with_expected(expr, Some(ok_ty))?;
+                        Ok(TypedType::Result(Box::new(actual_ok), err_ty.clone()))
+                    }
+                    Some(TypedType::InferVar(_)) => {
+                        let inferred_ok = self.type_var_generator.fresh_var();
+                        let inferred_err = self.type_var_generator.fresh_var();
+                        let actual_ok = self.check_expr_with_expected(expr, Some(&inferred_ok))?;
+                        Ok(TypedType::Result(
+                            Box::new(actual_ok),
+                            Box::new(inferred_err),
+                        ))
+                    }
+                    _ => Err(TypeError::CannotInferType(
+                        "Ok requires an expected Result type".to_string(),
+                    )),
+                },
+                Expr::Err(expr) => match expected {
+                    Some(TypedType::Result(ok_ty, err_ty)) => {
+                        let actual_err = self.check_expr_with_expected(expr, Some(err_ty))?;
+                        Ok(TypedType::Result(ok_ty.clone(), Box::new(actual_err)))
+                    }
+                    Some(TypedType::InferVar(_)) => {
+                        let inferred_ok = self.type_var_generator.fresh_var();
+                        let inferred_err = self.type_var_generator.fresh_var();
+                        let actual_err =
+                            self.check_expr_with_expected(expr, Some(&inferred_err))?;
+                        Ok(TypedType::Result(
+                            Box::new(inferred_ok),
+                            Box::new(actual_err),
+                        ))
+                    }
+                    _ => Err(TypeError::CannotInferType(
+                        "Err requires an expected Result type".to_string(),
+                    )),
+                },
+                Expr::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
+                Expr::PrototypeClone(proto_clone) => self.check_prototype_clone_expr(proto_clone),
+                Expr::Await(expr) => self.check_await_expr(expr),
+                Expr::Spawn(expr) => self.check_spawn_expr(expr),
             }
-            Expr::Ok(expr) => match expected {
-                Some(TypedType::Result(ok_ty, err_ty)) => {
-                    let actual_ok = self.check_expr_with_expected(expr, Some(ok_ty))?;
-                    Ok(TypedType::Result(Box::new(actual_ok), err_ty.clone()))
-                }
-                Some(TypedType::InferVar(_)) => {
-                    let inferred_ok = self.type_var_generator.fresh_var();
-                    let inferred_err = self.type_var_generator.fresh_var();
-                    let actual_ok = self.check_expr_with_expected(expr, Some(&inferred_ok))?;
-                    Ok(TypedType::Result(
-                        Box::new(actual_ok),
-                        Box::new(inferred_err),
-                    ))
-                }
-                _ => Err(TypeError::CannotInferType(
-                    "Ok requires an expected Result type".to_string(),
-                )),
-            },
-            Expr::Err(expr) => match expected {
-                Some(TypedType::Result(ok_ty, err_ty)) => {
-                    let actual_err = self.check_expr_with_expected(expr, Some(err_ty))?;
-                    Ok(TypedType::Result(ok_ty.clone(), Box::new(actual_err)))
-                }
-                Some(TypedType::InferVar(_)) => {
-                    let inferred_ok = self.type_var_generator.fresh_var();
-                    let inferred_err = self.type_var_generator.fresh_var();
-                    let actual_err = self.check_expr_with_expected(expr, Some(&inferred_err))?;
-                    Ok(TypedType::Result(
-                        Box::new(inferred_ok),
-                        Box::new(actual_err),
-                    ))
-                }
-                _ => Err(TypeError::CannotInferType(
-                    "Err requires an expected Result type".to_string(),
-                )),
-            },
-            Expr::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
-            Expr::PrototypeClone(proto_clone) => self.check_prototype_clone_expr(proto_clone),
-            Expr::Await(expr) => self.check_await_expr(expr),
-            Expr::Spawn(expr) => self.check_spawn_expr(expr),
+        })();
+
+        if let Ok(ty) = &result {
+            self.record_checked_expr_type(expr, ty);
         }
+
+        result
     }
 
     fn expected_record_type_args(

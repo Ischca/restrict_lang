@@ -261,6 +261,10 @@ impl WasmCodeGen {
         }
     }
 
+    pub fn set_expr_types(&mut self, expr_types: HashMap<*const Expr, String>) {
+        self.expr_types = expr_types;
+    }
+
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
         self.output.push_str("(module\n");
 

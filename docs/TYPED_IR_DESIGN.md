@@ -22,8 +22,9 @@ The IR work should be introduced as a foundation first, then made authoritative
 one boundary at a time.
 
 The current IR foundation includes a read-only Checked IR builder. It constructs
-function signature IR and normalized Apply sites after type checking while the
-existing code generator remains AST-driven.
+function signature IR, normalized Apply sites, and a flat `TypedExpr` skeleton
+from checked expression facts after type checking while the existing code
+generator remains AST-driven.
 
 ## Why Restrict Needs Its Own IR Shape
 
@@ -58,6 +59,19 @@ TypedExprKind
 
 `FinalType` must not contain `InferVar` or `Projection`. Those are A-layer
 implementation details and must not pass into codegen or layout selection.
+
+The current builder creates a flat shadow list of `TypedExpr` entries for AST
+expressions that the type checker has already checked. This list is not yet an
+authoritative typed tree. It is the first bridge from finalized type facts into
+the IR layer, allowing layout selection and later local optimization work to
+stop depending on ad hoc AST/type-checker queries one feature family at a time.
+Facts that still contain `InferVar` or `Projection` are deliberately not
+materialized as `TypedExpr` entries.
+
+The `ValueId` and `ApplyIr` values inside that shadow list are placeholders for
+validation and migration tests. They must not be treated as the final flow graph
+until stable `ExprId` / `BindingId` assignment and the shadow affine verifier
+are in place.
 
 ## Apply Normalization
 
@@ -176,21 +190,33 @@ to a full rewrite.
 9. The read-only Checked IR builder must not re-run inference, mutate
    `TypeChecker` affine state, or become the codegen source of truth until the
    Layout IR migration begins.
+10. Checked expression facts are snapshots for the current AST instance. Pointer
+    keys are acceptable only at this read-only shadow stage; stable `ExprId` and
+    `BindingId` assignment must replace them before IR becomes authoritative.
+11. `TypedExpr.final_type` must be derived from post-check facts, not from
+    fallback codegen inference or by re-checking expressions inside the builder.
+12. Shadow `TypedExpr` `ValueId`s are not a control-flow or ownership authority
+    yet; they become meaningful only after the flow verifier owns the graph.
 
 ## Migration Plan
 
 1. Add IR foundations and unit tests.
-2. Introduce checked maps from type checking to stable `ExprId` / `BindingId`.
-3. Build read-only Checked IR from AST while existing codegen remains active.
-   The current builder covers function signatures and normalized Apply sites.
-4. Extend Apply normalization with checked function-value and method metadata.
-5. Move layout selection behind `LayoutTable`.
-6. Add a shadow flow verifier matching current affine behavior.
-7. Make codegen consume Layout IR for one feature family at a time.
-8. Add Wasm MIR lowering and make the optimizer authoritative.
+2. Capture checked expression type facts from `TypeChecker` without mutating
+   affine state during IR construction.
+3. Introduce stable `ExprId` / `BindingId` assignment and replace temporary
+   AST-instance pointer keys.
+4. Build read-only Checked IR from AST while existing codegen remains active.
+   The current builder covers function signatures, normalized Apply sites, and
+   a flat `TypedExpr` skeleton from checked facts.
+5. Extend Apply normalization with checked function-value and method metadata.
+6. Move layout selection behind `LayoutTable`.
+7. Add a shadow flow verifier matching current affine behavior.
+8. Make codegen consume Layout IR for one feature family at a time.
+9. Add Wasm MIR lowering and make the optimizer authoritative.
 
 ## Current Scope
 
 This design stage adds the skeleton, invariants, and a read-only builder for
-function signatures and Apply sites. It does not yet replace
-`WasmCodeGen::generate`, change generated WAT, or broaden the host ABI.
+function signatures, Apply sites, and checked expression type facts. It does not
+yet replace `WasmCodeGen::generate`, change generated WAT, or broaden the host
+ABI.

@@ -230,9 +230,26 @@ pub enum ApplyFlavor {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum CalleeProvenance {
+    TopLevelFunction(FunctionCalleeIr),
+    Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionCalleeIr {
+    pub name: String,
+    pub declared_type_params: Vec<String>,
+    pub params: Vec<FinalType>,
+    pub return_type: FinalType,
+    pub return_repr: ValueRepr,
+    pub monomorphic: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ApplyIr {
     pub flavor: ApplyFlavor,
     pub callee: ValueId,
+    pub callee_provenance: CalleeProvenance,
     pub args: Vec<ValueId>,
     pub result: ValueId,
 }

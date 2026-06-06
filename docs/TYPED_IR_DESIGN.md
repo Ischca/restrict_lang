@@ -78,9 +78,13 @@ verifier are in place.
 During the read-only shadow stage, builder-local `ValueId`s must still be
 internally coherent. An `ApplyIr` result must be the value produced by its
 matching `TypedExpr`, and apply argument IDs should refer to values already
-produced by child shadow expressions. Callee IDs may remain explicit synthetic
-placeholders for top-level functions until symbol identity is represented in the
-IR. These IDs are provenance links for builder validation and migration tests;
+produced by child shadow expressions. The callee `ValueId` may still be a
+synthetic placeholder, but top-level function callees now carry builder-local
+`callee_provenance` with the source name, declared type parameters, finalized
+declaration signature, return representation, and monomorphic status. Function
+values, immediate lambdas, and method-resolution calls remain value-based until
+their symbol and receiver identities are represented explicitly. These IDs and
+callee facts are provenance links for builder validation and migration tests;
 they are not stable `BindingId`s, ownership authorities, region capabilities,
 ABI handles, or cross-build identities.
 
@@ -137,14 +141,19 @@ The IR node is:
 Apply {
   flavor,
   callee,
+  callee_provenance,
   args,
   result
 }
 ```
 
-`flavor` is retained for diagnostics and source reconstruction. It should not
-create separate type-inference or codegen semantics unless the source form
-actually requires it.
+`flavor` is retained for diagnostics and source reconstruction.
+`callee_provenance` separates top-level function symbols from value callees
+without changing ownership flow: top-level symbols are not recorded as argument
+uses, and value callees do not become direct calls until a later authoritative
+symbol graph and closure representation exist. Neither field should create
+separate type-inference or codegen semantics unless the source form actually
+requires it.
 
 ## A-Layer Boundary
 
@@ -300,6 +309,10 @@ introducing hidden clone/copy behavior.
     binding provenance only. Complex pattern names must block outer provenance
     but not create partial binding identities. They are not stable symbol
     identities until the authoritative binding graph replaces the shadow scope.
+16. Top-level `ApplyIr.callee_provenance` must agree with the normalized callee
+    hint and its monomorphic flag must match the finalized declaration
+    signature. Value callees must not be promoted to top-level provenance by
+    name alone.
 
 ## Migration Plan
 

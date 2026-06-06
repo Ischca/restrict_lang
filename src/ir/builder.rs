@@ -11,8 +11,9 @@ use crate::type_checker::{CheckedFunctionSignature, TypeChecker};
 
 use super::layout::{LayoutId, LayoutKind, LayoutTable};
 use super::{
-    ApplyFlavor, ApplyIr, BindingId, ExprId, FinalType, FlowSummary, HostAbi, InternalOnlyReason,
-    TypedExpr, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr,
+    ApplyFlavor, ApplyIr, BindingId, CalleeProvenance, ExprId, FinalType, FlowSummary,
+    FunctionCalleeIr, HostAbi, InternalOnlyReason, TypedExpr, TypedExprKind, UseEvent, UseKind,
+    ValueId, ValueRepr,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +148,7 @@ impl CheckedFunctionIr {
                     site.source_index, self.name, site.expr_id
                 )));
             }
+            validate_apply_callee_provenance(&site.apply, site.callee_hint.as_deref(), &self.name)?;
             if expr.value != Some(site.apply.result) {
                 return Err(shadow_invariant_violation(format!(
                     "apply site {} in {} result does not match typed expr value",
@@ -630,7 +632,7 @@ impl<'a> CheckedIrBuilder<'a> {
                     .unwrap_or_else(|| self.next_value());
                 apply = Some(PendingApply {
                     callee_hint: callee_hint(call.function.as_ref()),
-                    apply: self.make_call_apply(call, callee, args),
+                    apply: self.make_call_apply(call, callee, args)?,
                 });
             }
             Expr::Pipe(pipe) => {
@@ -643,7 +645,7 @@ impl<'a> CheckedIrBuilder<'a> {
                             .unwrap_or_else(|| self.next_value());
                         apply = Some(PendingApply {
                             callee_hint: callee_hint(target),
-                            apply: self.make_pipe_apply(callee, object),
+                            apply: self.make_pipe_apply(callee, object, target)?,
                         });
                     }
                     PipeTarget::Ident(name) => {
@@ -653,7 +655,7 @@ impl<'a> CheckedIrBuilder<'a> {
                             let callee = self.next_value();
                             apply = Some(PendingApply {
                                 callee_hint: Some(name.clone()),
-                                apply: self.make_pipe_apply(callee, object),
+                                apply: self.make_top_level_pipe_apply(callee, object, name)?,
                             });
                         }
                     }
@@ -852,7 +854,12 @@ impl<'a> CheckedIrBuilder<'a> {
         }
     }
 
-    fn make_call_apply(&mut self, call: &CallExpr, callee: ValueId, args: Vec<ValueId>) -> ApplyIr {
+    fn make_call_apply(
+        &mut self,
+        call: &CallExpr,
+        callee: ValueId,
+        args: Vec<ValueId>,
+    ) -> Result<ApplyIr, IrBuildError> {
         let flavor = match call.function.as_ref() {
             Expr::Lambda(_) => ApplyFlavor::ImmediateLambda,
             Expr::FieldAccess(_, _) => ApplyFlavor::MethodResolution,
@@ -860,25 +867,100 @@ impl<'a> CheckedIrBuilder<'a> {
             Expr::Ident(_) => ApplyFlavor::TupleCall,
             _ => ApplyFlavor::FunctionValue,
         };
+        let callee_provenance = self.callee_provenance_for_expr(call.function.as_ref())?;
         let result = self.next_value();
 
-        ApplyIr {
+        Ok(ApplyIr {
             flavor,
             callee,
+            callee_provenance,
             args,
             result,
-        }
+        })
     }
 
-    fn make_pipe_apply(&mut self, callee: ValueId, object: ValueId) -> ApplyIr {
+    fn make_pipe_apply(
+        &mut self,
+        callee: ValueId,
+        object: ValueId,
+        target: &Expr,
+    ) -> Result<ApplyIr, IrBuildError> {
+        let callee_provenance = self.callee_provenance_for_expr(target)?;
+        Ok(self.make_pipe_apply_with_provenance(callee, object, callee_provenance))
+    }
+
+    fn make_top_level_pipe_apply(
+        &mut self,
+        callee: ValueId,
+        object: ValueId,
+        name: &str,
+    ) -> Result<ApplyIr, IrBuildError> {
+        let callee_provenance = self
+            .top_level_callee_provenance(name)?
+            .unwrap_or(CalleeProvenance::Value);
+        Ok(self.make_pipe_apply_with_provenance(callee, object, callee_provenance))
+    }
+
+    fn make_pipe_apply_with_provenance(
+        &mut self,
+        callee: ValueId,
+        object: ValueId,
+        callee_provenance: CalleeProvenance,
+    ) -> ApplyIr {
         let result = self.next_value();
 
         ApplyIr {
             flavor: ApplyFlavor::Pipe,
             callee,
+            callee_provenance,
             args: vec![object],
             result,
         }
+    }
+
+    fn callee_provenance_for_expr(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<CalleeProvenance, IrBuildError> {
+        match expr {
+            Expr::Ident(name) => Ok(self
+                .top_level_callee_provenance(name)?
+                .unwrap_or(CalleeProvenance::Value)),
+            _ => Ok(CalleeProvenance::Value),
+        }
+    }
+
+    fn top_level_callee_provenance(
+        &mut self,
+        name: &str,
+    ) -> Result<Option<CalleeProvenance>, IrBuildError> {
+        let Some(signature) = self.checker.checked_function_signature(name) else {
+            return Ok(None);
+        };
+
+        let params = signature
+            .params
+            .iter()
+            .map(|(_, ty)| FinalType::new(ty.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let return_type = FinalType::new(signature.return_type)?;
+        let return_repr = self.layout_table.value_repr_for_type(&return_type);
+        let monomorphic =
+            return_type.is_monomorphic() && params.iter().all(FinalType::is_monomorphic);
+        let declared_type_params = signature
+            .type_params
+            .iter()
+            .map(format_type_param_name)
+            .collect::<Vec<_>>();
+
+        Ok(Some(CalleeProvenance::TopLevelFunction(FunctionCalleeIr {
+            name: name.to_string(),
+            declared_type_params,
+            params,
+            return_type,
+            return_repr,
+            monomorphic,
+        })))
     }
 
     fn start_function_binding_scope(&mut self) {
@@ -1189,6 +1271,39 @@ fn use_kind_for_repr(repr: ValueRepr) -> UseKind {
         ValueRepr::Unit | ValueRepr::Scalar(_) => UseKind::ReadCopy,
         ValueRepr::Ref(_) | ValueRepr::Closure { .. } => UseKind::Move,
     }
+}
+
+fn validate_apply_callee_provenance(
+    apply: &ApplyIr,
+    callee_hint: Option<&str>,
+    function_name: &str,
+) -> Result<(), IrBuildError> {
+    let CalleeProvenance::TopLevelFunction(callee) = &apply.callee_provenance else {
+        return Ok(());
+    };
+    if callee.name.is_empty() {
+        return Err(shadow_invariant_violation(format!(
+            "apply in {} has empty top-level callee name",
+            function_name
+        )));
+    }
+    if let Some(hint) = callee_hint {
+        if hint != callee.name {
+            return Err(shadow_invariant_violation(format!(
+                "apply in {} has callee hint '{}' but top-level callee '{}'",
+                function_name, hint, callee.name
+            )));
+        }
+    }
+    let expected_monomorphic =
+        callee.return_type.is_monomorphic() && callee.params.iter().all(FinalType::is_monomorphic);
+    if callee.monomorphic != expected_monomorphic {
+        return Err(shadow_invariant_violation(format!(
+            "apply in {} has stale monomorphic callee provenance for '{}'",
+            function_name, callee.name
+        )));
+    }
+    Ok(())
 }
 
 fn shadow_invariant_violation(message: String) -> IrBuildError {
@@ -1618,8 +1733,94 @@ fun main: () -> Int32 = {
         assert_eq!(flavors, vec![ApplyFlavor::TupleCall, ApplyFlavor::Pipe]);
         assert_eq!(main.apply_sites[0].callee_hint.as_deref(), Some("add"));
         assert_eq!(main.apply_sites[1].callee_hint.as_deref(), Some("inc"));
+        let callee_names = main
+            .apply_sites
+            .iter()
+            .map(|site| match &site.apply.callee_provenance {
+                CalleeProvenance::TopLevelFunction(callee) => callee.name.as_str(),
+                CalleeProvenance::Value => "<value>",
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(callee_names, vec!["add", "inc"]);
         assert_eq!(main.apply_sites[0].source_index, 0);
         assert_eq!(main.apply_sites[1].source_index, 1);
+    }
+
+    #[test]
+    fn builder_records_top_level_callee_signature_provenance() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: () -> List<Int32> = {
+    [] |> keep
+}
+"#,
+        );
+
+        let main = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main IR should be present");
+        let site = main
+            .apply_sites
+            .iter()
+            .find(|site| site.apply.flavor == ApplyFlavor::Pipe)
+            .expect("pipe apply should be present");
+        let CalleeProvenance::TopLevelFunction(callee) = &site.apply.callee_provenance else {
+            panic!("top-level pipe target should record function callee provenance");
+        };
+
+        assert_eq!(callee.name, "keep");
+        assert!(callee.declared_type_params.is_empty());
+        assert_eq!(callee.params.len(), 1);
+        assert_eq!(
+            callee.params[0].as_typed_type(),
+            &TypedType::List(Box::new(TypedType::Int32))
+        );
+        assert_eq!(
+            callee.return_type.as_typed_type(),
+            &TypedType::List(Box::new(TypedType::Int32))
+        );
+        let keep = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "keep")
+            .expect("keep IR should be present");
+        assert_eq!(callee.return_repr, keep.return_repr);
+        assert!(callee.return_repr.is_runtime_reference());
+        assert!(callee.monomorphic);
+    }
+
+    #[test]
+    fn builder_keeps_immediate_lambda_callee_as_value_provenance() {
+        let ir = checked_ir(
+            r#"
+fun main: () -> Int32 = {
+    41 |> (|value| value + 1)
+}
+"#,
+        );
+
+        let main = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main IR should be present");
+        let site = main
+            .apply_sites
+            .iter()
+            .find(|site| site.apply.flavor == ApplyFlavor::Pipe)
+            .expect("pipe apply should be present");
+
+        assert!(site.callee_hint.is_none());
+        assert!(matches!(
+            site.apply.callee_provenance,
+            CalleeProvenance::Value
+        ));
     }
 
     #[test]
@@ -1727,6 +1928,7 @@ fun main: () -> Int32 = {
         let apply = ApplyIr {
             flavor: ApplyFlavor::TupleCall,
             callee: ValueId(0),
+            callee_provenance: CalleeProvenance::Value,
             args: vec![ValueId(1)],
             result: ValueId(2),
         };

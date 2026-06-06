@@ -233,6 +233,15 @@ but Layout IR gives it a dedicated internal descriptor with `start` and `end`
 surface while giving later lowering and optimization passes the concrete
 two-endpoint shape instead of an empty generic record descriptor.
 
+Ordinary source records keep source declaration order in the checked record
+metadata and use that order to populate internal `RecordLayout.fields` for
+concrete monomorphic record instantiations with field names, offsets, and
+`ElementLayout` values. Open generic record layouts keep their fields opaque
+until monomorphization supplies stable field sizes. This centralizes the first
+record offset facts in Layout IR for later lowering and scalar replacement. It
+does not make record pointers host ABI, publish field offsets as stable external
+layout, or change the current AST-driven WAT generator.
+
 Sum descriptors for `Option` and `Result` retain logical tags and continue to
 use `TaggedPayload` as the concrete layout strategy. They may also carry
 advisory optimization candidates such as null niches and scalar tag-payload

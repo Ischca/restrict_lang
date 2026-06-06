@@ -117,8 +117,13 @@ Two strategies are expected:
 - `DescriptorManaged`: layout is centralized and may evolve.
 - `FieldsOnly`: a concrete lowerable layout with known offsets.
 
-The current implementation should move toward centralizing record offset
-calculation in the layout table instead of recomputing it in codegen paths.
+Checked record metadata preserves source field order, and Layout IR records
+internal field names, offsets, and element layouts for concrete monomorphic
+source record instantiations. Open generic record layouts remain opaque until
+monomorphization supplies stable field sizes. These offsets are compiler
+metadata for lowering and optimization; they are not published as a v0.0.1 host
+ABI and the legacy codegen path remains authoritative until Layout IR lowering
+is adopted feature by feature.
 
 ### Option<T> and Result<T, E>
 

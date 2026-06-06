@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::type_checker::{CheckedFunctionSignature, TypeChecker};
+use crate::type_checker::{CheckedFunctionSignature, TypeChecker, TypedType};
 
 use super::layout::{LayoutId, LayoutKind, LayoutTable};
 use super::{
@@ -454,6 +454,24 @@ impl<'a> CheckedIrBuilder<'a> {
         Ok(program_ir)
     }
 
+    fn value_repr_for_type(&mut self, final_type: &FinalType) -> ValueRepr {
+        let checker = self.checker;
+        self.layout_table
+            .value_repr_for_type_with_record_fields(final_type, &|name, type_args| {
+                if type_args.iter().any(contains_record_layout_type_param) {
+                    return None;
+                }
+                let record_type = TypedType::Record {
+                    name: name.to_string(),
+                    type_args: type_args.to_vec(),
+                    frozen: false,
+                    hash: None,
+                    parent_hash: None,
+                };
+                checker.checked_record_fields_for_type(&record_type)
+            })
+    }
+
     fn collect_function_ir_from_decl(
         &mut self,
         decl: &TopDecl,
@@ -491,7 +509,7 @@ impl<'a> CheckedIrBuilder<'a> {
         source_exported: bool,
     ) -> Result<CheckedFunctionIr, IrBuildError> {
         let return_type = FinalType::new(signature.return_type.clone())?;
-        let return_repr = self.layout_table.value_repr_for_type(&return_type);
+        let return_repr = self.value_repr_for_type(&return_type);
         self.start_function_binding_scope();
         let mut bindings = Vec::new();
 
@@ -545,7 +563,7 @@ impl<'a> CheckedIrBuilder<'a> {
         bindings: &mut Vec<CheckedBindingIr>,
     ) -> Result<CheckedParamIr, IrBuildError> {
         let final_type = FinalType::new(ty.clone())?;
-        let repr = self.layout_table.value_repr_for_type(&final_type);
+        let repr = self.value_repr_for_type(&final_type);
         let binding = self.next_binding_id();
         self.register_binding_name(name, binding);
         bindings.push(CheckedBindingIr {
@@ -794,7 +812,7 @@ impl<'a> CheckedIrBuilder<'a> {
         };
 
         let final_type = FinalType::new(ty)?;
-        let repr = self.layout_table.value_repr_for_type(&final_type);
+        let repr = self.value_repr_for_type(&final_type);
         let id = self.next_expr_id();
         let (value, kind, apply_args) = match apply {
             Some(pending) => {
@@ -944,7 +962,7 @@ impl<'a> CheckedIrBuilder<'a> {
             .map(|(_, ty)| FinalType::new(ty.clone()))
             .collect::<Result<Vec<_>, _>>()?;
         let return_type = FinalType::new(signature.return_type)?;
-        let return_repr = self.layout_table.value_repr_for_type(&return_type);
+        let return_repr = self.value_repr_for_type(&return_type);
         let monomorphic =
             return_type.is_monomorphic() && params.iter().all(FinalType::is_monomorphic);
         let declared_type_params = signature
@@ -1183,6 +1201,38 @@ fn format_type_param_name(param: &TypeParam) -> String {
         format!("~{}", param.name)
     } else {
         param.name.clone()
+    }
+}
+
+fn contains_record_layout_type_param(ty: &TypedType) -> bool {
+    match ty {
+        TypedType::TypeParam(_) | TypedType::InferVar(_) | TypedType::Projection { .. } => true,
+        TypedType::Record { type_args, .. } => {
+            type_args.iter().any(contains_record_layout_type_param)
+        }
+        TypedType::Function {
+            params,
+            return_type,
+        } => {
+            params.iter().any(contains_record_layout_type_param)
+                || contains_record_layout_type_param(return_type)
+        }
+        TypedType::Option(inner)
+        | TypedType::List(inner)
+        | TypedType::Array(inner, _)
+        | TypedType::Temporal {
+            base_type: inner, ..
+        } => contains_record_layout_type_param(inner),
+        TypedType::Result(ok, err) => {
+            contains_record_layout_type_param(ok) || contains_record_layout_type_param(err)
+        }
+        TypedType::Int32
+        | TypedType::Int64
+        | TypedType::Float64
+        | TypedType::Boolean
+        | TypedType::String
+        | TypedType::Char
+        | TypedType::Unit => false,
     }
 }
 
@@ -1459,6 +1509,40 @@ fun identity: <T>(value: T) -> T = {
     }
 
     #[test]
+    fn builder_keeps_open_generic_record_fields_opaque() {
+        let ir = checked_ir(
+            r#"
+record Box<T> {
+    value: T
+}
+
+fun keep_box: <T>(item: Box<T>) -> Box<T> = {
+    item
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+        let ValueRepr::Ref(layout_id) = function.return_repr else {
+            panic!("Box<T> should use a typed ref representation");
+        };
+        let descriptor = ir
+            .layout_table
+            .get(layout_id)
+            .expect("record layout should be present");
+        let LayoutKind::Record(layout) = &descriptor.kind else {
+            panic!("expected Record layout descriptor");
+        };
+
+        assert_eq!(layout.name, "Box");
+        assert_eq!(layout.type_args, vec!["T"]);
+        assert!(layout.fields.is_empty());
+        assert!(!function.monomorphic);
+        assert!(function.lowering.required_layouts.contains(&layout_id));
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    }
+
+    #[test]
     fn builder_records_param_binding_provenance() {
         let ir = checked_ir(
             r#"
@@ -1683,6 +1767,74 @@ fun main: () -> Range<Int32> = {
         assert!(function.lowering.required_layouts.contains(&layout_id));
         assert!(!function.lowering.readiness.v001_host_abi_eligible);
         assert!(function.lowering.readiness.internal_layout_ready);
+    }
+
+    #[test]
+    fn builder_records_source_record_field_layouts_without_host_abi() {
+        let ir = checked_ir(
+            r#"
+record ReleaseScore {
+    value: Int32,
+    label: String
+}
+
+export fun keep_score: (score: ReleaseScore) -> ReleaseScore = {
+    score
+}
+"#,
+        );
+
+        let function = &ir.functions[0];
+        let ValueRepr::Ref(layout_id) = function.return_repr else {
+            panic!("ReleaseScore should use a typed ref representation");
+        };
+        assert_eq!(function.params[0].repr, function.return_repr);
+        let descriptor = ir
+            .layout_table
+            .get(layout_id)
+            .expect("record layout should be present");
+        let LayoutKind::Record(layout) = &descriptor.kind else {
+            panic!("expected Record layout descriptor");
+        };
+        assert_eq!(layout.name, "ReleaseScore");
+        assert_eq!(layout.fields.len(), 2);
+        assert_eq!(layout.fields[0].name, "value");
+        assert_eq!(layout.fields[0].offset, 0);
+        assert_eq!(
+            layout.fields[0].element.repr,
+            ValueRepr::Scalar(ScalarRepr::I32)
+        );
+        assert_eq!(layout.fields[1].name, "label");
+        assert_eq!(layout.fields[1].offset, 4);
+        let ValueRepr::Ref(string_layout) = layout.fields[1].element.repr else {
+            panic!("String field should require a nested layout");
+        };
+
+        let composite = InternalOnlyReason::CompositeHostAbiUnstable;
+        assert!(function.lowering.required_layouts.contains(&layout_id));
+        assert!(function.lowering.required_layouts.contains(&string_layout));
+        assert!(function.lowering.source_exported);
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+        assert!(function.lowering.readiness.internal_layout_ready);
+        assert_eq!(
+            function.lowering.param_host_abis,
+            vec![HostAbi::InternalOnly(composite.clone())]
+        );
+        assert_eq!(
+            function.lowering.return_host_abi,
+            HostAbi::InternalOnly(composite.clone())
+        );
+        assert!(function.lowering.readiness.host_abi_blockers.contains(
+            &HostAbiBlocker::ParamInternalOnly {
+                name: "score".to_string(),
+                reason: composite.clone(),
+            }
+        ));
+        assert!(function
+            .lowering
+            .readiness
+            .host_abi_blockers
+            .contains(&HostAbiBlocker::ReturnInternalOnly { reason: composite }));
     }
 
     #[test]

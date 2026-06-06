@@ -52,6 +52,17 @@ impl LayoutTable {
     }
 
     pub fn value_repr_for_type(&mut self, final_type: &FinalType) -> ValueRepr {
+        self.value_repr_for_type_with_record_fields(final_type, &|_, _| None)
+    }
+
+    pub fn value_repr_for_type_with_record_fields<F>(
+        &mut self,
+        final_type: &FinalType,
+        record_fields: &F,
+    ) -> ValueRepr
+    where
+        F: Fn(&str, &[TypedType]) -> Option<Vec<(String, TypedType)>> + ?Sized,
+    {
         match final_type.as_typed_type() {
             TypedType::Unit => ValueRepr::Unit,
             TypedType::Int32 | TypedType::Boolean | TypedType::Char => {
@@ -67,12 +78,12 @@ impl LayoutTable {
                 ValueRepr::Ref(id)
             }
             TypedType::List(inner) => {
-                let element = self.element_layout(inner);
+                let element = self.element_layout_with_record_fields(inner, record_fields);
                 let id = self.insert(LayoutKind::List(ListLayout { element }));
                 ValueRepr::Ref(id)
             }
             TypedType::Array(inner, length) => {
-                let element = self.element_layout(inner);
+                let element = self.element_layout_with_record_fields(inner, record_fields);
                 let id = self.insert(LayoutKind::Array(ArrayLayout {
                     element,
                     length: *length,
@@ -80,7 +91,7 @@ impl LayoutTable {
                 ValueRepr::Ref(id)
             }
             TypedType::Option(inner) => {
-                let payload = self.element_layout(inner);
+                let payload = self.element_layout_with_record_fields(inner, record_fields);
                 let variants = vec![
                     SumVariantLayout {
                         tag: 0,
@@ -102,8 +113,8 @@ impl LayoutTable {
                 ValueRepr::Ref(id)
             }
             TypedType::Result(ok, err) => {
-                let ok_payload = self.element_layout(ok);
-                let err_payload = self.element_layout(err);
+                let ok_payload = self.element_layout_with_record_fields(ok, record_fields);
+                let err_payload = self.element_layout_with_record_fields(err, record_fields);
                 let variants = vec![
                     SumVariantLayout {
                         tag: 0,
@@ -132,11 +143,14 @@ impl LayoutTable {
                     return ValueRepr::Ref(id);
                 }
 
+                let fields = record_fields(name, type_args)
+                    .map(|fields| self.record_field_layouts(fields))
+                    .unwrap_or_default();
                 let type_args = type_args.iter().map(format_type_arg).collect();
                 let id = self.insert(LayoutKind::Record(RecordLayout {
                     name: name.clone(),
                     type_args,
-                    fields: Vec::new(),
+                    fields,
                     strategy: RecordStrategy::DescriptorManaged,
                 }));
                 ValueRepr::Ref(id)
@@ -147,9 +161,10 @@ impl LayoutTable {
             } => {
                 let params = params
                     .iter()
-                    .map(|param| self.element_layout(param))
+                    .map(|param| self.element_layout_with_record_fields(param, record_fields))
                     .collect();
-                let result = Box::new(self.element_layout(return_type));
+                let result =
+                    Box::new(self.element_layout_with_record_fields(return_type, record_fields));
                 let id = self.insert(LayoutKind::Closure(ClosureLayout {
                     abi: AbiId(0),
                     params,
@@ -164,7 +179,7 @@ impl LayoutTable {
             TypedType::Temporal { base_type, .. } => {
                 let wrapped = FinalType::new((**base_type).clone())
                     .expect("temporal final type should contain a finalized base type");
-                self.value_repr_for_type(&wrapped)
+                self.value_repr_for_type_with_record_fields(&wrapped, record_fields)
             }
             TypedType::TypeParam(_) | TypedType::InferVar(_) | TypedType::Projection { .. } => {
                 let id = self.insert(LayoutKind::Opaque(OpaqueLayout {
@@ -176,8 +191,21 @@ impl LayoutTable {
     }
 
     fn element_layout(&mut self, ty: &TypedType) -> ElementLayout {
+        self.element_layout_with_record_fields(ty, &|_, _| None)
+    }
+
+    fn element_layout_with_record_fields<F>(
+        &mut self,
+        ty: &TypedType,
+        record_fields: &F,
+    ) -> ElementLayout
+    where
+        F: Fn(&str, &[TypedType]) -> Option<Vec<(String, TypedType)>> + ?Sized,
+    {
         let repr = match FinalType::new(ty.clone()) {
-            Ok(final_type) => self.value_repr_for_type(&final_type),
+            Ok(final_type) => {
+                self.value_repr_for_type_with_record_fields(&final_type, record_fields)
+            }
             Err(_) => {
                 let id = self.insert(LayoutKind::Opaque(OpaqueLayout {
                     reason: OpaqueReason::UnfinalizedType,
@@ -191,6 +219,23 @@ impl LayoutTable {
             size: size_of_repr(repr),
             align: align_of_repr(repr),
         }
+    }
+
+    fn record_field_layouts(&mut self, fields: Vec<(String, TypedType)>) -> Vec<FieldLayout> {
+        let mut offset = 0;
+        fields
+            .into_iter()
+            .map(|(name, ty)| {
+                let element = self.element_layout(&ty);
+                let field = FieldLayout {
+                    name,
+                    offset,
+                    element,
+                };
+                offset += field.element.size;
+                field
+            })
+            .collect()
     }
 }
 
@@ -572,6 +617,87 @@ mod tests {
         assert_eq!(layout.end_offset, 4);
         assert_eq!(layout.size, 8);
         assert_eq!(layout.align, 4);
+    }
+
+    #[test]
+    fn record_layout_uses_provider_field_order_and_offsets() {
+        let final_type = FinalType::new(TypedType::Record {
+            name: "ReleaseScore".to_string(),
+            type_args: Vec::new(),
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+        })
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type_with_record_fields(&final_type, &|name, type_args| {
+            assert_eq!(name, "ReleaseScore");
+            assert!(type_args.is_empty());
+            Some(vec![
+                ("value".to_string(), TypedType::Int32),
+                ("label".to_string(), TypedType::String),
+                ("weight".to_string(), TypedType::Int64),
+            ])
+        });
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("Record should lower to a typed ref");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Record(layout) = &descriptor.kind else {
+            panic!("expected Record layout");
+        };
+
+        assert_eq!(layout.name, "ReleaseScore");
+        assert_eq!(layout.fields.len(), 3);
+        assert_eq!(layout.fields[0].name, "value");
+        assert_eq!(layout.fields[0].offset, 0);
+        assert_eq!(
+            layout.fields[0].element.repr,
+            ValueRepr::Scalar(ScalarRepr::I32)
+        );
+        assert_eq!(layout.fields[1].name, "label");
+        assert_eq!(layout.fields[1].offset, 4);
+        assert!(matches!(layout.fields[1].element.repr, ValueRepr::Ref(_)));
+        assert_eq!(layout.fields[2].name, "weight");
+        assert_eq!(layout.fields[2].offset, 8);
+        assert_eq!(
+            layout.fields[2].element.repr,
+            ValueRepr::Scalar(ScalarRepr::I64)
+        );
+    }
+
+    #[test]
+    fn generic_record_layout_applies_provider_type_args() {
+        let final_type = FinalType::new(TypedType::Record {
+            name: "Box".to_string(),
+            type_args: vec![TypedType::Int64],
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+        })
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type_with_record_fields(&final_type, &|name, type_args| {
+            assert_eq!(name, "Box");
+            Some(vec![("value".to_string(), type_args[0].clone())])
+        });
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("Record should lower to a typed ref");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Record(layout) = &descriptor.kind else {
+            panic!("expected Record layout");
+        };
+
+        assert_eq!(layout.type_args, vec!["Int64"]);
+        assert_eq!(layout.fields.len(), 1);
+        assert_eq!(
+            layout.fields[0].element.repr,
+            ValueRepr::Scalar(ScalarRepr::I64)
+        );
+        assert_eq!(layout.fields[0].element.size, 8);
     }
 
     #[test]

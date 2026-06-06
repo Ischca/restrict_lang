@@ -630,6 +630,7 @@ struct DeferredLambdaCandidate {
 #[derive(Debug)]
 struct RecordDef {
     fields: HashMap<String, TypedType>,
+    field_order: Vec<String>,
     type_params: Vec<TypeParam>,
     temporal_constraints: Vec<TemporalConstraint>,
     hash: Option<String>,
@@ -752,6 +753,37 @@ impl TypeChecker {
                 type_params: function.type_params.clone(),
                 temporal_constraints: function.temporal_constraints.clone(),
             })
+    }
+
+    pub fn checked_record_fields_for_type(
+        &self,
+        ty: &TypedType,
+    ) -> Option<Vec<(String, TypedType)>> {
+        let base_ty = match ty {
+            TypedType::Temporal { base_type, .. } => base_type.as_ref(),
+            _ => ty,
+        };
+        let TypedType::Record {
+            name, type_args, ..
+        } = base_ty
+        else {
+            return None;
+        };
+
+        let record_def = self.records.get(name)?;
+        let bindings = Self::type_arg_bindings(&record_def.type_params, type_args);
+        record_def
+            .field_order
+            .iter()
+            .map(|field_name| {
+                record_def.fields.get(field_name).map(|field_ty| {
+                    (
+                        field_name.clone(),
+                        Self::apply_type_arg_bindings(field_ty, &bindings),
+                    )
+                })
+            })
+            .collect()
     }
 
     /// Return the finalized type recorded while checking this exact AST node.
@@ -2564,7 +2596,8 @@ impl TypeChecker {
             }
         }
 
-        let remaining_names: Vec<String> = remaining_fields.keys().cloned().collect();
+        let mut remaining_names: Vec<String> = remaining_fields.keys().cloned().collect();
+        remaining_names.sort();
         let residual_name = Self::residual_record_name(record_name, &remaining_names);
 
         if !self.records.contains_key(&residual_name) {
@@ -2572,6 +2605,7 @@ impl TypeChecker {
                 residual_name.clone(),
                 RecordDef {
                     fields: remaining_fields,
+                    field_order: remaining_names,
                     type_params: vec![],
                     temporal_constraints: vec![],
                     hash: None,
@@ -3641,6 +3675,11 @@ impl TypeChecker {
         }
 
         self.push_type_param_scope(&record.type_params);
+        let field_order = record
+            .fields
+            .iter()
+            .map(|field| field.name.clone())
+            .collect::<Vec<_>>();
         let fields = record
             .fields
             .iter()
@@ -3656,6 +3695,7 @@ impl TypeChecker {
             record.name.clone(),
             RecordDef {
                 fields,
+                field_order,
                 type_params: record.type_params.clone(),
                 temporal_constraints: record
                     .temporal_constraints
@@ -4872,8 +4912,10 @@ impl TypeChecker {
     fn check_context_decl(&mut self, context: &ContextDecl) -> Result<(), TypeError> {
         // Store context definition
         let mut fields = HashMap::new();
+        let mut field_order = Vec::new();
         for field in &context.fields {
             let ty = self.convert_type(&field.ty)?;
+            field_order.push(field.name.clone());
             fields.insert(field.name.clone(), ty);
         }
 
@@ -4885,6 +4927,7 @@ impl TypeChecker {
             context.name.clone(),
             RecordDef {
                 fields,
+                field_order,
                 type_params: vec![],
                 temporal_constraints: vec![],
                 hash: None,
@@ -9005,6 +9048,45 @@ mod tests {
     }
 
     #[test]
+    fn checked_record_fields_preserve_order_and_apply_type_args() {
+        let (_, program) = parse_program(
+            r#"
+record Box<T> {
+    label: String,
+    value: T
+}
+
+fun main: (item: Box<Int64>) -> Box<Int64> = {
+    item
+}
+"#,
+        )
+        .unwrap();
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .expect("program should type-check");
+
+        let fields = checker
+            .checked_record_fields_for_type(&TypedType::Record {
+                name: "Box".to_string(),
+                type_args: vec![TypedType::Int64],
+                frozen: false,
+                hash: None,
+                parent_hash: None,
+            })
+            .expect("checked record fields should be available");
+
+        assert_eq!(
+            fields,
+            vec![
+                ("label".to_string(), TypedType::String),
+                ("value".to_string(), TypedType::Int64),
+            ]
+        );
+    }
+
+    #[test]
     fn unresolved_inference_types_are_affine_conservative() {
         let checker = TypeChecker::new();
 
@@ -9296,6 +9378,7 @@ mod tests {
             "Point".to_string(),
             RecordDef {
                 fields: HashMap::from([("x".to_string(), TypedType::Int32)]),
+                field_order: vec!["x".to_string()],
                 type_params: vec![],
                 temporal_constraints: vec![],
                 hash: None,

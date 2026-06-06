@@ -20,9 +20,10 @@ mise run check
 ```
 
 `mise run test-fast` is the normal local gate for compiler work. It runs
-formatting plus focused compiler, docs, release-surface, sample, and generic
-tests without the slow release example CLI sweep. Use `mise run test-full` or
-`mise run ci` before release handoff.
+formatting, focused library checks, and one combined Cargo invocation for docs,
+release-surface, sample, and generic integration tests without the slow release
+example CLI sweep. Use `mise run test-full` or `mise run ci` before release
+handoff.
 
 `mise run check` executes the slow release example CLI entrypoint validation.
 Those tests are ignored in the default `cargo test` run so active compiler

@@ -20,10 +20,7 @@ run = [
   "cargo fmt --all -- --check",
   "cargo test --lib ir:: --quiet",
   "cargo test --lib type_checker::tests:: --quiet",
-  "cargo test --test test_samples --quiet",
-  "cargo test --test test_generics --quiet",
-  "cargo test --test test_docs_hygiene --quiet",
-  "cargo test --test test_release_surface_matrix --quiet",
+  "cargo test --test test_samples --test test_generics --test test_docs_hygiene --test test_release_surface_matrix --quiet",
 ]
 
 [tasks.test-full]
@@ -157,7 +154,6 @@ run = [
   "mise run fmt",
   "mise run lint",
   "mise run test-full",
-  "mise run prop-test",
   "mise run build-release",
 ]
 

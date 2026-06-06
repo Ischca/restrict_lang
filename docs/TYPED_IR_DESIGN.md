@@ -249,11 +249,12 @@ pairs. Those candidates are facts for future lowering decisions, not permission
 for the current shadow IR builder or WAT generator to change representation.
 
 The optimization stage exposes those layout facts through a read-only Checked IR
-layout optimization summary. It walks each function's `required_layouts`, reports
-sum descriptors that already have advisory candidates, and keeps every report
-blocked as `AdvisoryOnly`. This makes the next optimization boundary visible
-without treating `LayoutId` as stable ABI, changing `HostAbi`, or rewriting the
-current WAT path.
+layout optimization summary. It walks each function's `required_layouts`,
+reports sum descriptors that already have advisory candidates, and reports
+concrete source-record field layout facts for later scalar replacement analysis.
+Every report remains blocked as `AdvisoryOnly`. This makes the next optimization
+boundary visible without treating `LayoutId` as stable ABI, changing `HostAbi`,
+or rewriting the current WAT path.
 
 ## Wasm MIR
 

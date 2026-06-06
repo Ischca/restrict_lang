@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use super::builder::{CheckedBindingIr, CheckedFunctionIr, CheckedProgramIr};
-use super::layout::{LayoutId, LayoutKind, LayoutTable, SumOptimizationCandidate, SumStrategy};
+use super::layout::{
+    LayoutId, LayoutKind, LayoutTable, RecordStrategy, SumOptimizationCandidate, SumStrategy,
+};
 use super::{ApplyFlavor, BindingId, ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +118,7 @@ pub struct ProgramLayoutOptimizationSummary {
 pub struct FunctionLayoutOptimizationSummary {
     pub name: String,
     pub sum_candidates: Vec<SumLayoutOptimizationCandidate>,
+    pub record_layouts: Vec<RecordLayoutOptimizationCandidate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +127,25 @@ pub struct SumLayoutOptimizationCandidate {
     pub strategy: SumStrategy,
     pub candidates: Vec<SumOptimizationCandidate>,
     pub rewrite_blocker: LayoutOptimizationRewriteBlocker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordLayoutOptimizationCandidate {
+    pub layout: LayoutId,
+    pub name: String,
+    pub type_args: Vec<String>,
+    pub strategy: RecordStrategy,
+    pub fields: Vec<RecordFieldLayoutFact>,
+    pub rewrite_blocker: LayoutOptimizationRewriteBlocker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldLayoutFact {
+    pub name: String,
+    pub offset: u32,
+    pub repr: ValueRepr,
+    pub size: u32,
+    pub align: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,28 +182,60 @@ pub fn summarize_checked_function_layout_optimizations(
     layout_table: &LayoutTable,
 ) -> FunctionLayoutOptimizationSummary {
     let mut sum_candidates = Vec::new();
+    let mut record_layouts = Vec::new();
 
     for layout in &function.lowering.required_layouts {
         let Some(descriptor) = layout_table.get(*layout) else {
             continue;
         };
-        let LayoutKind::Sum(sum) = &descriptor.kind else {
-            continue;
-        };
-        if sum.optimization_candidates.is_empty() {
-            continue;
+        match &descriptor.kind {
+            LayoutKind::Sum(sum) => {
+                if sum.optimization_candidates.is_empty() {
+                    continue;
+                }
+                sum_candidates.push(SumLayoutOptimizationCandidate {
+                    layout: *layout,
+                    strategy: sum.strategy.clone(),
+                    candidates: sum.optimization_candidates.clone(),
+                    rewrite_blocker: LayoutOptimizationRewriteBlocker::AdvisoryOnly,
+                });
+            }
+            LayoutKind::Record(record) => {
+                if record.fields.is_empty() {
+                    continue;
+                }
+                record_layouts.push(RecordLayoutOptimizationCandidate {
+                    layout: *layout,
+                    name: record.name.clone(),
+                    type_args: record.type_args.clone(),
+                    strategy: record.strategy.clone(),
+                    fields: record
+                        .fields
+                        .iter()
+                        .map(|field| RecordFieldLayoutFact {
+                            name: field.name.clone(),
+                            offset: field.offset,
+                            repr: field.element.repr,
+                            size: field.element.size,
+                            align: field.element.align,
+                        })
+                        .collect(),
+                    rewrite_blocker: LayoutOptimizationRewriteBlocker::AdvisoryOnly,
+                });
+            }
+            LayoutKind::String(_)
+            | LayoutKind::List(_)
+            | LayoutKind::Array(_)
+            | LayoutKind::Range(_)
+            | LayoutKind::Closure(_)
+            | LayoutKind::Opaque(_) => {}
         }
-        sum_candidates.push(SumLayoutOptimizationCandidate {
-            layout: *layout,
-            strategy: sum.strategy.clone(),
-            candidates: sum.optimization_candidates.clone(),
-            rewrite_blocker: LayoutOptimizationRewriteBlocker::AdvisoryOnly,
-        });
     }
 
     FunctionLayoutOptimizationSummary {
         name: function.name.clone(),
         sum_candidates,
+        record_layouts,
     }
 }
 
@@ -543,7 +597,7 @@ mod tests {
     use crate::ast::Program;
     use crate::ir::builder::{build_checked_ir, CheckedProgramIr};
     use crate::ir::layout::SumVariantIdentity;
-    use crate::ir::{HostAbi, InternalOnlyReason};
+    use crate::ir::{HostAbi, InternalOnlyReason, ScalarRepr};
     use crate::parser::parse_program;
     use crate::type_checker::TypeChecker;
 
@@ -651,6 +705,63 @@ fun keep_range: (value: Range<Int32>) -> Range<Int32> = {
 
         let range = layout_function_summary(&summary, "keep_range");
         assert!(range.sum_candidates.is_empty());
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_reports_record_layout_facts() {
+        let ir = checked_ir(
+            r#"
+record ReleaseScore {
+    value: Int32,
+    label: String
+}
+
+record Box<T> {
+    value: T
+}
+
+fun keep_score: (score: ReleaseScore) -> ReleaseScore = {
+    score
+}
+
+fun keep_box: <T>(item: Box<T>) -> Box<T> = {
+    item
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+
+        let score = layout_function_summary(&summary, "keep_score");
+        assert!(score.sum_candidates.is_empty());
+        assert_eq!(score.record_layouts.len(), 1);
+        let record = &score.record_layouts[0];
+        assert_eq!(record.name, "ReleaseScore");
+        assert!(record.type_args.is_empty());
+        assert_eq!(record.strategy, RecordStrategy::DescriptorManaged);
+        assert_eq!(
+            record.rewrite_blocker,
+            LayoutOptimizationRewriteBlocker::AdvisoryOnly
+        );
+        assert_eq!(record.fields.len(), 2);
+        assert_eq!(
+            record.fields[0],
+            RecordFieldLayoutFact {
+                name: "value".to_string(),
+                offset: 0,
+                repr: ValueRepr::Scalar(ScalarRepr::I32),
+                size: 4,
+                align: 4,
+            }
+        );
+        assert_eq!(record.fields[1].name, "label");
+        assert_eq!(record.fields[1].offset, 4);
+        assert!(matches!(record.fields[1].repr, ValueRepr::Ref(_)));
+        assert_eq!(record.fields[1].size, 4);
+        assert_eq!(record.fields[1].align, 4);
+
+        let open_generic = layout_function_summary(&summary, "keep_box");
+        assert!(open_generic.record_layouts.is_empty());
     }
 
     #[test]

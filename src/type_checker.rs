@@ -653,6 +653,14 @@ struct FunctionDef {
     temporal_constraints: Vec<TemporalConstraint>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CheckedFunctionSignature {
+    pub params: Vec<(String, TypedType)>,
+    pub return_type: TypedType,
+    pub type_params: Vec<TypeParam>,
+    pub temporal_constraints: Vec<TemporalConstraint>,
+}
+
 struct VariantPayloadExpectedContext<'a> {
     field_template: &'a TypedType,
     expected: Option<&'a TypedType>,
@@ -730,6 +738,17 @@ impl TypeChecker {
         self.functions
             .get(name)
             .map(|function| function.return_type.clone())
+    }
+
+    pub fn checked_function_signature(&self, name: &str) -> Option<CheckedFunctionSignature> {
+        self.functions
+            .get(name)
+            .map(|function| CheckedFunctionSignature {
+                params: function.params.clone(),
+                return_type: function.return_type.clone(),
+                type_params: function.type_params.clone(),
+                temporal_constraints: function.temporal_constraints.clone(),
+            })
     }
 
     pub fn checked_variable_type(&self, name: &str) -> Option<TypedType> {

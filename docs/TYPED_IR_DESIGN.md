@@ -21,6 +21,10 @@ The current compiler still lowers mostly from AST and type-checker side tables.
 The IR work should be introduced as a foundation first, then made authoritative
 one boundary at a time.
 
+The current IR foundation includes a read-only Checked IR builder. It constructs
+function signature IR and normalized Apply sites after type checking while the
+existing code generator remains AST-driven.
+
 ## Why Restrict Needs Its Own IR Shape
 
 Restrict should not treat OSV as a parser-only surface. OSV gives the source
@@ -169,13 +173,17 @@ to a full rewrite.
    allocator calls.
 8. Optimizations may erase metadata, but must not introduce hidden clone or
    implicit copy.
+9. The read-only Checked IR builder must not re-run inference, mutate
+   `TypeChecker` affine state, or become the codegen source of truth until the
+   Layout IR migration begins.
 
 ## Migration Plan
 
 1. Add IR foundations and unit tests.
 2. Introduce checked maps from type checking to stable `ExprId` / `BindingId`.
 3. Build read-only Checked IR from AST while existing codegen remains active.
-4. Normalize call, pipe, function value, and lambda call surfaces to `Apply`.
+   The current builder covers function signatures and normalized Apply sites.
+4. Extend Apply normalization with checked function-value and method metadata.
 5. Move layout selection behind `LayoutTable`.
 6. Add a shadow flow verifier matching current affine behavior.
 7. Make codegen consume Layout IR for one feature family at a time.
@@ -183,5 +191,6 @@ to a full rewrite.
 
 ## Current Scope
 
-This design stage adds the skeleton and invariants. It does not yet replace
+This design stage adds the skeleton, invariants, and a read-only builder for
+function signatures and Apply sites. It does not yet replace
 `WasmCodeGen::generate`, change generated WAT, or broaden the host ABI.

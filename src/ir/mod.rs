@@ -114,6 +114,10 @@ impl ValueRepr {
     pub fn is_runtime_reference(self) -> bool {
         matches!(self, ValueRepr::Ref(_) | ValueRepr::Closure { .. })
     }
+
+    pub fn is_copy_scalar(self) -> bool {
+        matches!(self, ValueRepr::Scalar(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

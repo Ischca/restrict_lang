@@ -140,7 +140,10 @@ The descriptor should retain optimization candidates:
 - scalar pair for small copy payloads
 - unboxed tag and payload for scalar-only local flows
 
-These are internal optimizations, not source-level semantics.
+These candidates are advisory metadata on the descriptor. The current concrete
+layout strategy remains `TaggedPayload`; candidates must not become source-level
+semantics, host ABI promises, or implicit layout changes until a later lowering
+pass explicitly makes one authoritative.
 
 ### Range<Int32>
 

@@ -233,6 +233,12 @@ but Layout IR gives it a dedicated internal descriptor with `start` and `end`
 surface while giving later lowering and optimization passes the concrete
 two-endpoint shape instead of an empty generic record descriptor.
 
+Sum descriptors for `Option` and `Result` retain logical tags and continue to
+use `TaggedPayload` as the concrete layout strategy. They may also carry
+advisory optimization candidates such as null niches and scalar tag-payload
+pairs. Those candidates are facts for future lowering decisions, not permission
+for the current shadow IR builder or WAT generator to change representation.
+
 ## Wasm MIR
 
 Wasm MIR is deliberately lower level than Checked IR. It is where semantic

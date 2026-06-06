@@ -1686,6 +1686,39 @@ fun main: () -> Range<Int32> = {
     }
 
     #[test]
+    fn builder_keeps_scalar_sum_layouts_internal_only_for_host_abi() {
+        let ir = checked_ir(
+            r#"
+fun keep_option: (value: Option<Int32>) -> Option<Int32> = {
+    value
+}
+
+fun keep_result: (value: Result<Int32, Int32>) -> Result<Int32, Int32> = {
+    value
+}
+"#,
+        );
+
+        let composite = InternalOnlyReason::CompositeHostAbiUnstable;
+        for function in &ir.functions {
+            assert!(
+                !function.lowering.readiness.v001_host_abi_eligible,
+                "{} should not become host ABI eligible from scalar sum candidates",
+                function.name
+            );
+            assert!(function.lowering.readiness.internal_layout_ready);
+            assert_eq!(
+                function.lowering.param_host_abis,
+                vec![HostAbi::InternalOnly(composite.clone())]
+            );
+            assert_eq!(
+                function.lowering.return_host_abi,
+                HostAbi::InternalOnly(composite.clone())
+            );
+        }
+    }
+
+    #[test]
     fn builder_records_body_result_producer_for_lowering() {
         let ir = checked_ir(
             r#"

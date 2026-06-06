@@ -81,40 +81,46 @@ impl LayoutTable {
             }
             TypedType::Option(inner) => {
                 let payload = self.element_layout(inner);
+                let variants = vec![
+                    SumVariantLayout {
+                        tag: 0,
+                        name: "None".to_string(),
+                        payload: None,
+                    },
+                    SumVariantLayout {
+                        tag: 1,
+                        name: "Some".to_string(),
+                        payload: Some(payload),
+                    },
+                ];
+                let optimization_candidates = sum_optimization_candidates(&variants);
                 let id = self.insert(LayoutKind::Sum(SumLayout {
-                    variants: vec![
-                        SumVariantLayout {
-                            tag: 0,
-                            name: "None".to_string(),
-                            payload: None,
-                        },
-                        SumVariantLayout {
-                            tag: 1,
-                            name: "Some".to_string(),
-                            payload: Some(payload),
-                        },
-                    ],
+                    variants,
                     strategy: SumStrategy::TaggedPayload,
+                    optimization_candidates,
                 }));
                 ValueRepr::Ref(id)
             }
             TypedType::Result(ok, err) => {
                 let ok_payload = self.element_layout(ok);
                 let err_payload = self.element_layout(err);
+                let variants = vec![
+                    SumVariantLayout {
+                        tag: 0,
+                        name: "Err".to_string(),
+                        payload: Some(err_payload),
+                    },
+                    SumVariantLayout {
+                        tag: 1,
+                        name: "Ok".to_string(),
+                        payload: Some(ok_payload),
+                    },
+                ];
+                let optimization_candidates = sum_optimization_candidates(&variants);
                 let id = self.insert(LayoutKind::Sum(SumLayout {
-                    variants: vec![
-                        SumVariantLayout {
-                            tag: 0,
-                            name: "Err".to_string(),
-                            payload: Some(err_payload),
-                        },
-                        SumVariantLayout {
-                            tag: 1,
-                            name: "Ok".to_string(),
-                            payload: Some(ok_payload),
-                        },
-                    ],
+                    variants,
                     strategy: SumStrategy::TaggedPayload,
+                    optimization_candidates,
                 }));
                 ValueRepr::Ref(id)
             }
@@ -217,6 +223,50 @@ fn range_int32_layout() -> RangeLayout {
     }
 }
 
+fn sum_optimization_candidates(variants: &[SumVariantLayout]) -> Vec<SumOptimizationCandidate> {
+    let mut candidates = Vec::new();
+
+    let payload_variants = variants
+        .iter()
+        .filter_map(|variant| variant.payload.as_ref().map(|payload| (variant, payload)))
+        .collect::<Vec<_>>();
+
+    if let Some((variant, _)) = payload_variants
+        .iter()
+        .find(|(_, payload)| matches!(payload.repr, ValueRepr::Ref(_)))
+    {
+        if variants.iter().any(|variant| variant.payload.is_none()) {
+            candidates.push(SumOptimizationCandidate::NullNiche {
+                payload_variant: variant_identity(variant),
+            });
+        }
+    }
+
+    if !payload_variants.is_empty()
+        && payload_variants
+            .iter()
+            .all(|(_, payload)| payload.repr.is_copy_scalar())
+    {
+        let payload_variants = payload_variants
+            .into_iter()
+            .map(|(variant, _)| variant_identity(variant))
+            .collect::<Vec<_>>();
+        candidates.push(SumOptimizationCandidate::ScalarPair {
+            payload_variants: payload_variants.clone(),
+        });
+        candidates.push(SumOptimizationCandidate::ScalarLocal { payload_variants });
+    }
+
+    candidates
+}
+
+fn variant_identity(variant: &SumVariantLayout) -> SumVariantIdentity {
+    SumVariantIdentity {
+        tag: variant.tag,
+        name: variant.name.clone(),
+    }
+}
+
 fn size_of_repr(repr: ValueRepr) -> u32 {
     match repr {
         ValueRepr::Unit => 0,
@@ -314,6 +364,7 @@ pub enum RecordStrategy {
 pub struct SumLayout {
     pub variants: Vec<SumVariantLayout>,
     pub strategy: SumStrategy,
+    pub optimization_candidates: Vec<SumOptimizationCandidate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -326,8 +377,25 @@ pub struct SumVariantLayout {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SumStrategy {
     TaggedPayload,
-    NicheCandidate,
-    ScalarPairCandidate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SumVariantIdentity {
+    pub tag: u32,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SumOptimizationCandidate {
+    NullNiche {
+        payload_variant: SumVariantIdentity,
+    },
+    ScalarPair {
+        payload_variants: Vec<SumVariantIdentity>,
+    },
+    ScalarLocal {
+        payload_variants: Vec<SumVariantIdentity>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -353,6 +421,13 @@ pub enum OpaqueReason {
 mod tests {
     use super::*;
     use crate::type_checker::TypedType;
+
+    fn sum_variant(tag: u32, name: &str) -> SumVariantIdentity {
+        SumVariantIdentity {
+            tag,
+            name: name.to_string(),
+        }
+    }
 
     #[test]
     fn list_layout_records_element_size_and_alignment() {
@@ -389,6 +464,17 @@ mod tests {
         assert_eq!(layout.variants[0].tag, 0);
         assert_eq!(layout.variants[1].name, "Some");
         assert_eq!(layout.variants[1].tag, 1);
+        assert_eq!(layout.strategy, SumStrategy::TaggedPayload);
+        assert!(layout
+            .optimization_candidates
+            .contains(&SumOptimizationCandidate::ScalarPair {
+                payload_variants: vec![sum_variant(1, "Some")]
+            }));
+        assert!(layout
+            .optimization_candidates
+            .contains(&SumOptimizationCandidate::ScalarLocal {
+                payload_variants: vec![sum_variant(1, "Some")]
+            }));
     }
 
     #[test]
@@ -409,6 +495,54 @@ mod tests {
             panic!("expected Array layout");
         };
         assert_eq!(layout.length, ArrayLength::Known(3));
+    }
+
+    #[test]
+    fn option_ref_layout_records_null_niche_candidate_without_changing_strategy() {
+        let final_type = FinalType::new(TypedType::Option(Box::new(TypedType::String))).unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type(&final_type);
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("Option should lower to a typed ref initially");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Sum(layout) = &descriptor.kind else {
+            panic!("expected Sum layout");
+        };
+
+        assert_eq!(layout.strategy, SumStrategy::TaggedPayload);
+        assert!(layout
+            .optimization_candidates
+            .contains(&SumOptimizationCandidate::NullNiche {
+                payload_variant: sum_variant(1, "Some")
+            }));
+        assert!(!layout
+            .optimization_candidates
+            .iter()
+            .any(|candidate| matches!(candidate, SumOptimizationCandidate::ScalarPair { .. })));
+    }
+
+    #[test]
+    fn option_function_layout_does_not_claim_null_niche_candidate() {
+        let final_type = FinalType::new(TypedType::Option(Box::new(TypedType::Function {
+            params: vec![TypedType::Int32],
+            return_type: Box::new(TypedType::Int32),
+        })))
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type(&final_type);
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("Option should lower to a typed ref initially");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Sum(layout) = &descriptor.kind else {
+            panic!("expected Sum layout");
+        };
+
+        assert_eq!(layout.strategy, SumStrategy::TaggedPayload);
+        assert!(layout.optimization_candidates.is_empty());
     }
 
     #[test]
@@ -462,6 +596,64 @@ mod tests {
         assert_eq!(layout.variants[0].tag, 0);
         assert_eq!(layout.variants[1].name, "Ok");
         assert_eq!(layout.variants[1].tag, 1);
+        assert_eq!(layout.strategy, SumStrategy::TaggedPayload);
+    }
+
+    #[test]
+    fn result_scalar_layout_records_scalar_pair_candidate_without_changing_strategy() {
+        let final_type = FinalType::new(TypedType::Result(
+            Box::new(TypedType::Int32),
+            Box::new(TypedType::Boolean),
+        ))
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type(&final_type);
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("Result should lower to a typed ref initially");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Sum(layout) = &descriptor.kind else {
+            panic!("expected Sum layout");
+        };
+
+        assert_eq!(layout.strategy, SumStrategy::TaggedPayload);
+        assert!(layout
+            .optimization_candidates
+            .contains(&SumOptimizationCandidate::ScalarPair {
+                payload_variants: vec![sum_variant(0, "Err"), sum_variant(1, "Ok")]
+            }));
+        assert!(layout
+            .optimization_candidates
+            .contains(&SumOptimizationCandidate::ScalarLocal {
+                payload_variants: vec![sum_variant(0, "Err"), sum_variant(1, "Ok")]
+            }));
+        assert!(!layout
+            .optimization_candidates
+            .iter()
+            .any(|candidate| matches!(candidate, SumOptimizationCandidate::NullNiche { .. })));
+    }
+
+    #[test]
+    fn result_ref_and_scalar_layout_does_not_claim_null_niche_candidate() {
+        let final_type = FinalType::new(TypedType::Result(
+            Box::new(TypedType::String),
+            Box::new(TypedType::Int32),
+        ))
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type(&final_type);
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("Result should lower to a typed ref initially");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Sum(layout) = &descriptor.kind else {
+            panic!("expected Sum layout");
+        };
+
+        assert_eq!(layout.strategy, SumStrategy::TaggedPayload);
+        assert!(layout.optimization_candidates.is_empty());
     }
 
     #[test]

@@ -47,6 +47,14 @@ This is intentionally not identical to raw Wasm locals. `Ref(LayoutId)` means
 "an internal typed pointer whose layout is known to the compiler", not "a stable
 host pointer".
 
+`LayoutTable` interns lowerable descriptor shapes within one checked IR build.
+Repeated uses of the same finalized internal shape should therefore reuse the
+same `LayoutId`, giving later lowering and optimization passes one canonical
+handle for facts such as element size, alignment, sum tags, and closure ABI
+metadata. Opaque unlowered generic descriptors are not interned until they carry
+enough provenance to preserve diagnostics. All layout IDs remain compiler-local
+metadata and are not stable across builds or observable through the host ABI.
+
 ## Scalar Values
 
 | Restrict type | Internal repr | v0.0.1 host ABI |

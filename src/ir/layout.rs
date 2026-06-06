@@ -1,5 +1,7 @@
 //! Compile-time value layout descriptors for the Restrict IR.
 
+use std::collections::HashMap;
+
 use crate::type_checker::{ArrayLength, TypedType};
 
 use super::{AbiId, FinalType, ScalarRepr, ValueRepr};
@@ -10,16 +12,32 @@ pub struct LayoutId(pub u32);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutTable {
     layouts: Vec<LayoutDescriptor>,
+    canonical: HashMap<LayoutKind, LayoutId>,
 }
 
 impl LayoutTable {
     pub fn new() -> Self {
         Self {
             layouts: Vec::new(),
+            canonical: HashMap::new(),
         }
     }
 
     pub fn insert(&mut self, kind: LayoutKind) -> LayoutId {
+        if matches!(kind, LayoutKind::Opaque(_)) {
+            return self.push_descriptor(kind);
+        }
+
+        if let Some(id) = self.canonical.get(&kind) {
+            return *id;
+        }
+
+        let id = self.push_descriptor(kind.clone());
+        self.canonical.insert(kind, id);
+        id
+    }
+
+    fn push_descriptor(&mut self, kind: LayoutKind) -> LayoutId {
         let id = LayoutId(self.layouts.len() as u32);
         self.layouts.push(LayoutDescriptor { id, kind });
         id
@@ -191,13 +209,13 @@ fn align_of_repr(repr: ValueRepr) -> u32 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LayoutDescriptor {
     pub id: LayoutId,
     pub kind: LayoutKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LayoutKind {
     String(StringLayout),
     List(ListLayout),
@@ -208,36 +226,36 @@ pub enum LayoutKind {
     Opaque(OpaqueLayout),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StringLayout {
     pub encoding: StringEncoding,
     pub header_words: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StringEncoding {
     Utf8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ElementLayout {
     pub repr: ValueRepr,
     pub size: u32,
     pub align: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ListLayout {
     pub element: ElementLayout,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ArrayLayout {
     pub element: ElementLayout,
     pub length: ArrayLength,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RecordLayout {
     pub name: String,
     pub type_args: Vec<String>,
@@ -245,40 +263,40 @@ pub struct RecordLayout {
     pub strategy: RecordStrategy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FieldLayout {
     pub name: String,
     pub offset: u32,
     pub element: ElementLayout,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RecordStrategy {
     DescriptorManaged,
     FieldsOnly,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SumLayout {
     pub variants: Vec<SumVariantLayout>,
     pub strategy: SumStrategy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SumVariantLayout {
     pub tag: u32,
     pub name: String,
     pub payload: Option<ElementLayout>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SumStrategy {
     TaggedPayload,
     NicheCandidate,
     ScalarPairCandidate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClosureLayout {
     pub abi: AbiId,
     pub params: Vec<ElementLayout>,
@@ -286,12 +304,12 @@ pub struct ClosureLayout {
     pub captures: Vec<ElementLayout>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueLayout {
     pub reason: OpaqueReason,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OpaqueReason {
     UnfinalizedType,
     UnloweredGeneric,
@@ -381,5 +399,131 @@ mod tests {
         assert_eq!(layout.variants[0].tag, 0);
         assert_eq!(layout.variants[1].name, "Ok");
         assert_eq!(layout.variants[1].tag, 1);
+    }
+
+    #[test]
+    fn layout_table_reuses_identical_list_layouts() {
+        let final_type = FinalType::new(TypedType::List(Box::new(TypedType::Int32))).unwrap();
+        let mut table = LayoutTable::new();
+
+        let first = table.value_repr_for_type(&final_type);
+        let second = table.value_repr_for_type(&final_type);
+
+        assert_eq!(first, second);
+        assert_eq!(table.descriptors().len(), 1);
+    }
+
+    #[test]
+    fn layout_table_reuses_nested_composite_layouts() {
+        let final_type = FinalType::new(TypedType::List(Box::new(TypedType::String))).unwrap();
+        let mut table = LayoutTable::new();
+
+        let first = table.value_repr_for_type(&final_type);
+        let second = table.value_repr_for_type(&final_type);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            table
+                .descriptors()
+                .iter()
+                .filter(|descriptor| matches!(descriptor.kind, LayoutKind::String(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            table
+                .descriptors()
+                .iter()
+                .filter(|descriptor| matches!(descriptor.kind, LayoutKind::List(_)))
+                .count(),
+            1
+        );
+        assert_eq!(table.descriptors().len(), 2);
+    }
+
+    #[test]
+    fn layout_table_reuses_closure_layouts() {
+        let final_type = FinalType::new(TypedType::Function {
+            params: vec![TypedType::String],
+            return_type: Box::new(TypedType::List(Box::new(TypedType::Int32))),
+        })
+        .unwrap();
+        let mut table = LayoutTable::new();
+
+        let first = table.value_repr_for_type(&final_type);
+        let second = table.value_repr_for_type(&final_type);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            table
+                .descriptors()
+                .iter()
+                .filter(|descriptor| matches!(descriptor.kind, LayoutKind::Closure(_)))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn layout_table_keeps_distinct_array_lengths() {
+        let mut table = LayoutTable::new();
+        let array_three = FinalType::new(TypedType::Array(
+            Box::new(TypedType::Int32),
+            ArrayLength::Known(3),
+        ))
+        .unwrap();
+        let array_four = FinalType::new(TypedType::Array(
+            Box::new(TypedType::Int32),
+            ArrayLength::Known(4),
+        ))
+        .unwrap();
+
+        let three_first = table.value_repr_for_type(&array_three);
+        let three_second = table.value_repr_for_type(&array_three);
+        let four = table.value_repr_for_type(&array_four);
+
+        assert_eq!(three_first, three_second);
+        assert_ne!(three_first, four);
+    }
+
+    #[test]
+    fn layout_table_keeps_result_variant_roles_distinct() {
+        let mut table = LayoutTable::new();
+        let int_or_string = FinalType::new(TypedType::Result(
+            Box::new(TypedType::Int32),
+            Box::new(TypedType::String),
+        ))
+        .unwrap();
+        let string_or_int = FinalType::new(TypedType::Result(
+            Box::new(TypedType::String),
+            Box::new(TypedType::Int32),
+        ))
+        .unwrap();
+
+        let first = table.value_repr_for_type(&int_or_string);
+        let second = table.value_repr_for_type(&int_or_string);
+        let swapped = table.value_repr_for_type(&string_or_int);
+
+        assert_eq!(first, second);
+        assert_ne!(first, swapped);
+    }
+
+    #[test]
+    fn opaque_layouts_are_not_canonical_without_provenance() {
+        let mut table = LayoutTable::new();
+        let generic = FinalType::new(TypedType::TypeParam("T".to_string())).unwrap();
+
+        let first = table.value_repr_for_type(&generic);
+        let second = table.value_repr_for_type(&generic);
+
+        assert_ne!(first, second);
+        assert_eq!(
+            table
+                .descriptors()
+                .iter()
+                .filter(|descriptor| matches!(descriptor.kind, LayoutKind::Opaque(_)))
+                .count(),
+            2
+        );
     }
 }

@@ -95,14 +95,14 @@ fn contains_type_param(ty: &TypedType) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScalarRepr {
     I32,
     I64,
     F64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ValueRepr {
     Unit,
     Scalar(ScalarRepr),

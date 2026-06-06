@@ -1181,6 +1181,17 @@ fun keep_scores: (items: List<Int32>) -> List<Int32> = {
         assert!(!function.lowering.readiness.v001_host_abi_eligible);
         assert!(function.lowering.readiness.internal_layout_ready);
         assert!(!function.lowering.required_layouts.is_empty());
+        assert_eq!(function.params[0].repr, function.return_repr);
+        let body_result = function
+            .lowering
+            .body_result
+            .expect("composite function should record a body result");
+        let body_producer = function
+            .typed_exprs
+            .iter()
+            .find(|expr| expr.flow.produced().contains(&body_result))
+            .expect("body result should have a typed producer");
+        assert_eq!(body_producer.repr, function.return_repr);
         assert_eq!(
             function.lowering.param_host_abis,
             vec![HostAbi::InternalOnly(composite.clone())]

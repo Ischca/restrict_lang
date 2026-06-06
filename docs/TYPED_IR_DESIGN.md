@@ -200,6 +200,14 @@ Region
 The key rule is separation: `HostAbi` is the export contract, while
 `LayoutDescriptor` is compiler-owned internal machinery.
 
+Within one checked IR build, `LayoutTable` canonicalizes identical lowerable
+descriptor shapes so repeated values of the same internal shape share a
+`LayoutId`. This keeps later optimization facts attached to one handle instead
+of scattering them across duplicate descriptors. Opaque unlowered generic
+descriptors are intentionally not canonicalized until they carry enough
+provenance to preserve diagnostics. The IDs are still build-local compiler
+metadata, not source-visible names or host ABI handles.
+
 ## Wasm MIR
 
 Wasm MIR is deliberately lower level than Checked IR. It is where semantic

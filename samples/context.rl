@@ -5,22 +5,15 @@
 // A function declares required contexts with 'with',
 // and the caller provides them via 'with ContextName { ... } { body }'.
 
-record Connection { id: Int }
+record QueryRequest { id: Int32 }
 
 context Database {
-    val conn: Connection
+    connection_id: Int32
 }
 
-fun query: (sql: String) -> String with Database = {
-    sql
-}
-
-fun main = {
-    with Arena {
-        val conn = Connection { id = 42 }
-
-        with Database { conn = conn } {
-            "SELECT * FROM users" query |> println
-        }
+fun main: () -> Int32 = {
+    with Database { connection_id: 100 } {
+        val request = QueryRequest { id: 7 }
+        request.id + connection_id
     }
 }

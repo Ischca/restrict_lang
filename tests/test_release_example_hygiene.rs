@@ -106,6 +106,14 @@ const KNOWN_EXPERIMENTAL_OR_STALE_EXAMPLES: &[NonReleaseExample] = &[
         reason: "parser/type-checker sketch for field-access variants",
     },
     NonReleaseExample {
+        path: "examples/form_container.rl",
+        reason: "form/takes design document outside the v0.0.1 default gate",
+    },
+    NonReleaseExample {
+        path: "examples/option_example.rl",
+        reason: "legacy option sketch that has not been promoted to the release example surface",
+    },
+    NonReleaseExample {
         path: "examples/tat_cleanup_demo.rl",
         reason: "temporal affine type demo outside the v0.0.1 default gate",
     },
@@ -127,52 +135,16 @@ const KNOWN_EXPERIMENTAL_OR_STALE_EXAMPLES: &[NonReleaseExample] = &[
             "v0.0.1 design gap: exported generic functions type-check but lack a concrete WASM ABI",
     },
     NonReleaseExample {
-        path: "linear_threading_demo.rl",
-        reason: "root-level linear-threading design sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "real_world_examples.rl",
-        reason: "root-level linear-threading design sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_factorial.rl",
-        reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
         path: "test_input.rl",
         reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
     },
     NonReleaseExample {
-        path: "test_method.rl",
+        path: "test_main.rl",
         reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
     },
     NonReleaseExample {
-        path: "test_pattern_complete.rl",
-        reason: "legacy root-level pattern sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_pattern_exhaustiveness_example.rl",
-        reason: "legacy root-level pattern sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_pattern_simple.rl",
-        reason: "legacy root-level pattern sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_string.rl",
-        reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_string_complex.rl",
-        reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_tat_basic.rl",
-        reason: "root-level TAT smoke sketch outside the v0.0.1 default gate",
-    },
-    NonReleaseExample {
-        path: "test_tat_simple.rl",
-        reason: "root-level TAT smoke sketch outside the v0.0.1 default gate",
+        path: "test_unit_return.rl",
+        reason: "legacy root-level Unit-return smoke fixture outside the v0.0.1 release surface",
     },
 ];
 

@@ -8,12 +8,12 @@ fun greet: (name: String) -> String = {
     name
 }
 
-fun main = {
+fun main: () -> () = {
     val message = "World"
 
     // First use — OK, this consumes 'message'
-    message greet |> println
+    message |> greet |> println
 
     // Uncommenting the next line would cause a compile error:
-    // message greet |> println  // Error: 'message' already consumed
+    // message |> greet |> println  // Error: 'message' already consumed
 }

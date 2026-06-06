@@ -24,7 +24,7 @@
     {
       "id": "mutable",
       "title": "Mutable & Loops",
-      "description": "Mutable variables, while loops, and FizzBuzz",
+      "description": "Mutable variables and while loops",
       "feature": "mutability",
       "file": "mutable.rl"
     },

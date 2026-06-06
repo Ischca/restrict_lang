@@ -377,8 +377,14 @@ WebAssembly Runtime (wasmtime, browser, etc.)
 ## 🧪 Testing
 
 ```bash
-# Run all tests
-mise exec -- cargo test
+# Run fast local checks while developing
+mise run test-fast
+
+# Run default tests
+mise run test
+
+# Run slow release example CLI gates
+mise run check
 
 # Run specific test suites
 mise exec -- cargo test lambda        # Lambda expression tests

@@ -190,6 +190,7 @@ fn release_examples_use_current_syntax() {
 }
 
 #[test]
+#[ignore = "slow CLI release gate; run with `mise run check`"]
 fn standalone_release_examples_compile_through_cli() {
     assert_unique("release example", RELEASE_EXAMPLES);
     assert_all_exist("release example", RELEASE_EXAMPLES);
@@ -225,8 +226,12 @@ fn mise_check_task_matches_standalone_release_examples() {
     let task_body = mise_check_task_body(&mise);
     let task_examples = mise_check_examples(task_body);
     assert!(
-        task_body.contains("cargo test --test test_release_example_hygiene standalone_release_examples_compile_through_cli -- --exact"),
-        ".mise.toml tasks.check should delegate to the single release example manifest test"
+        task_body.contains("cargo test --test test_release_example_hygiene standalone_release_examples_compile_through_cli -- --ignored --exact"),
+        ".mise.toml tasks.check should delegate to the ignored release example CLI gate"
+    );
+    assert!(
+        task_body.contains("cargo test --test test_release_example_hygiene vscode_release_examples_compile_through_cli -- --ignored --exact"),
+        ".mise.toml tasks.check should include the ignored VS Code release example CLI gate"
     );
 
     let exceptions: HashSet<_> = RELEASE_EXAMPLE_CLI_EXCEPTIONS
@@ -394,6 +399,7 @@ fn vscode_release_examples_use_current_syntax() {
 }
 
 #[test]
+#[ignore = "slow CLI release gate; run with `mise run check`"]
 fn vscode_release_examples_compile_through_cli() {
     assert_unique("VS Code release example", VSCODE_RELEASE_EXAMPLE_FILES);
     assert_all_exist("VS Code release example", VSCODE_RELEASE_EXAMPLE_FILES);

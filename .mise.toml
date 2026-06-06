@@ -7,12 +7,31 @@ WASM_PACK_VERSION = "0.15.0"
 rust = "latest"
 
 [tasks.test]
-description = "Run all tests"
+description = "Run default tests"
 run = ["cargo test -- --nocapture", "cd warder && cargo test -- --nocapture"]
 
 [tasks.test-quiet]
-description = "Run all tests (quiet)"
+description = "Run default tests (quiet)"
 run = ["cargo test", "cd warder && cargo test"]
+
+[tasks.test-fast]
+description = "Run fast local checks for active compiler work"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo test --lib ir:: --quiet",
+  "cargo test --lib type_checker::tests:: --quiet",
+  "cargo test --test test_samples --quiet",
+  "cargo test --test test_generics --quiet",
+  "cargo test --test test_docs_hygiene --quiet",
+  "cargo test --test test_release_surface_matrix --quiet",
+]
+
+[tasks.test-full]
+description = "Run all tests, including slow release gates"
+run = [
+  "mise run test",
+  "mise run check",
+]
 
 [tasks.test-root]
 description = "Run only root crate tests"
@@ -51,8 +70,11 @@ cargo run --bin restrict_lang -- --ast "$FILE"
 """
 
 [tasks.check]
-description = "Check release example entrypoints"
-run = "cargo test --test test_release_example_hygiene standalone_release_examples_compile_through_cli -- --exact"
+description = "Check slow release example entrypoints"
+run = [
+  "cargo test --test test_release_example_hygiene standalone_release_examples_compile_through_cli -- --ignored --exact",
+  "cargo test --test test_release_example_hygiene vscode_release_examples_compile_through_cli -- --ignored --exact",
+]
 
 [tasks.prop-test]
 description = "Property-based testing"
@@ -134,9 +156,8 @@ description = "Run full CI pipeline locally"
 run = [
   "mise run fmt",
   "mise run lint",
-  "mise run test",
+  "mise run test-full",
   "mise run prop-test",
-  "mise run check",
   "mise run build-release",
 ]
 

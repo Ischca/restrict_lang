@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 
-use super::builder::{CheckedBindingIr, CheckedFunctionIr, CheckedProgramIr};
+use super::binding_graph::{build_function_binding_graph, FunctionBindingGraph};
+use super::builder::{CheckedFunctionIr, CheckedProgramIr};
 use super::layout::{
     LayoutId, LayoutKind, LayoutTable, RecordStrategy, SumOptimizationCandidate, SumStrategy,
 };
@@ -106,7 +107,10 @@ pub struct AffineForwardingCandidate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForwardingRewriteBlocker {
-    StableBindingGraphRequired,
+    /// A validated binding def-use graph now backs each candidate, but
+    /// builder-local `BindingId`s are still not stable across builds nor a
+    /// codegen authority, so the move may not yet be rewritten.
+    AuthoritativeBindingIdentityRequired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,11 +296,6 @@ pub fn summarize_checked_function_value_uses(
     let mut value_indexes = HashMap::new();
     let body_result = function.lowering.body_result;
     let mut applies_by_expr = HashMap::new();
-    let bindings_by_id = function
-        .bindings
-        .iter()
-        .map(|binding| (binding.id, binding))
-        .collect::<HashMap<_, _>>();
 
     for expr in &function.typed_exprs {
         if let TypedExprKind::Apply(apply) = &expr.kind {
@@ -335,8 +334,9 @@ pub fn summarize_checked_function_value_uses(
             findings.push(finding);
         }
     }
-    let forwarding_candidates =
-        forwarding_candidates_for_values(&values, &applies_by_expr, &bindings_by_id);
+    let binding_graph = build_function_binding_graph(function)
+        .expect("validated checked IR must yield a consistent binding graph");
+    let forwarding_candidates = forwarding_candidates_from_graph(&binding_graph, &applies_by_expr);
 
     FunctionValueUseSummary {
         name: function.name.clone(),
@@ -451,54 +451,51 @@ fn finding_for_value(value: &ValueUseSummary) -> Option<ValueUseFinding> {
     }
 }
 
-fn forwarding_candidates_for_values(
-    values: &[ValueUseSummary],
+fn forwarding_candidates_from_graph(
+    graph: &FunctionBindingGraph,
     applies_by_expr: &HashMap<ExprId, &super::ApplyIr>,
-    bindings_by_id: &HashMap<BindingId, &CheckedBindingIr>,
 ) -> Vec<AffineForwardingCandidate> {
     let mut candidates = Vec::new();
 
-    for value in values {
-        if value.classification != ValueUseClassification::SingleMove {
+    for binding in &graph.bindings {
+        if binding.mutable {
             continue;
         }
-        if value.producer_kind != ValueProducerKind::Binding {
-            continue;
-        }
-        if !value.repr.is_runtime_reference() {
-            continue;
-        }
-        let Some(binding) = value.binding else {
-            continue;
-        };
-        let Some(binding_info) = bindings_by_id.get(&binding) else {
-            continue;
-        };
-        if binding_info.mutable {
+        if !binding.repr.is_runtime_reference() {
             continue;
         }
 
-        let Some(event) = value.uses.first() else {
-            continue;
-        };
-        let Some(apply) = applies_by_expr.get(&event.at) else {
-            continue;
-        };
-        let Some(arg_index) = apply.args.iter().position(|arg| *arg == value.value) else {
-            continue;
-        };
+        // A forwarding candidate is a runtime-reference binding read that is
+        // consumed exactly once, as a move directly into an apply argument. The
+        // binding def-use graph supplies the binding -> read -> use linking that
+        // was previously reconstructed from the flat value list.
+        for read in &binding.reads {
+            if read.uses.len() != 1 {
+                continue;
+            }
+            let event = read.uses[0];
+            if event.kind != UseKind::Move {
+                continue;
+            }
+            let Some(apply) = applies_by_expr.get(&event.at) else {
+                continue;
+            };
+            let Some(arg_index) = apply.args.iter().position(|arg| *arg == read.value) else {
+                continue;
+            };
 
-        candidates.push(AffineForwardingCandidate {
-            value: value.value,
-            binding,
-            binding_name: binding_info.name.clone(),
-            producer: value.producer,
-            apply_expr: event.at,
-            apply_flavor: apply.flavor,
-            arg_index,
-            repr: value.repr,
-            rewrite_blocker: ForwardingRewriteBlocker::StableBindingGraphRequired,
-        });
+            candidates.push(AffineForwardingCandidate {
+                value: read.value,
+                binding: binding.id,
+                binding_name: binding.name.clone(),
+                producer: read.at,
+                apply_expr: event.at,
+                apply_flavor: apply.flavor,
+                arg_index,
+                repr: binding.repr,
+                rewrite_blocker: ForwardingRewriteBlocker::AuthoritativeBindingIdentityRequired,
+            });
+        }
     }
 
     candidates
@@ -1083,7 +1080,7 @@ fun main: (items: List<Int32>) -> List<Int32> = {
         assert_eq!(candidate.arg_index, 0);
         assert_eq!(
             candidate.rewrite_blocker,
-            ForwardingRewriteBlocker::StableBindingGraphRequired
+            ForwardingRewriteBlocker::AuthoritativeBindingIdentityRequired
         );
         assert!(candidate.repr.is_runtime_reference());
     }
@@ -1120,7 +1117,7 @@ fun main: (items: List<Int32>) -> List<Int32> = {
         assert_eq!(candidate.apply_flavor, ApplyFlavor::Pipe);
         assert_eq!(
             candidate.rewrite_blocker,
-            ForwardingRewriteBlocker::StableBindingGraphRequired
+            ForwardingRewriteBlocker::AuthoritativeBindingIdentityRequired
         );
     }
 

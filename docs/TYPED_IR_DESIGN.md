@@ -369,7 +369,13 @@ introducing hidden clone/copy behavior.
    affine state during IR construction.
 3. Introduce authoritative stable `ExprId` / `BindingId` assignment and replace
    temporary AST-instance pointer keys. Builder-local `ExprId`s already link
-   normalized apply metadata to matching shadow `TypedExpr` entries.
+   normalized apply metadata to matching shadow `TypedExpr` entries. A
+   determinism test now pins the foundation of this step: although the
+   `TypeChecker` bridge still keys facts by AST pointer identity, the built
+   Checked IR is verified to be address-independent — two independent parses of
+   the same source produce byte-identical IR despite disjoint AST pointer keys,
+   and `ExprId`/`BindingId` spaces densely cover `[0, N)`. Removing the pointer
+   keys from the bridge itself remains the open part of this step.
 4. Build read-only Checked IR from AST while existing codegen remains active.
    The current builder covers function signatures, normalized Apply sites, and
    a flat `TypedExpr` skeleton from checked facts.

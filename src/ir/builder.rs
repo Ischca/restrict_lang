@@ -2363,4 +2363,82 @@ fun main: () -> List<Int32> = {
         assert!(matches!(list_expr.repr, ValueRepr::Ref(_)));
         assert!(list_expr.validate_for_codegen().is_ok());
     }
+
+    #[test]
+    fn checked_ir_identity_is_address_stable() {
+        // Step 3 prerequisite. The shadow builder still keys finalized type facts
+        // by AST pointer identity (TypeChecker::expr_key), which is valid only for
+        // one in-memory AST instance. The Checked IR it produces, however, must be
+        // a deterministic function of program *structure*, never of memory
+        // addresses. Parsing the same source twice allocates two disjoint ASTs:
+        // their checked-fact pointer keys are disjoint, yet the built IR - every
+        // ExprId/BindingId/ValueId, layout, and flow fact - must be identical.
+        let source = r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: (items: List<Int32>) -> List<Int32> = {
+    val alias = items
+    alias |> keep
+}
+"#;
+
+        let (_, program_a) = parse_program(source).expect("source should parse");
+        let (_, program_b) = parse_program(source).expect("source should parse");
+
+        let mut checker_a = TypeChecker::new();
+        checker_a
+            .check_program(&program_a)
+            .expect("source should type-check");
+        let mut checker_b = TypeChecker::new();
+        checker_b
+            .check_program(&program_b)
+            .expect("source should type-check");
+
+        // Distinct AST instances use disjoint pointer keys in the two checkers.
+        let keys_a: std::collections::HashSet<_> = checker_a.expr_types().into_keys().collect();
+        let keys_b: std::collections::HashSet<_> = checker_b.expr_types().into_keys().collect();
+        assert!(!keys_a.is_empty());
+        assert!(
+            keys_a.is_disjoint(&keys_b),
+            "independent parses must use distinct AST addresses"
+        );
+
+        let ir_a = build_checked_ir(&program_a, &checker_a).expect("checked IR should build");
+        let ir_b = build_checked_ir(&program_b, &checker_b).expect("checked IR should build");
+
+        // ...yet the structural IR is identical: no address leaks into identity.
+        assert_eq!(ir_a, ir_b);
+
+        // Identity spaces are densely and deterministically assigned: ExprIds and
+        // BindingIds each cover [0, N) exactly once across the whole program.
+        assert_dense_identity_space(&ir_a);
+    }
+
+    fn assert_dense_identity_space(ir: &CheckedProgramIr) {
+        let mut expr_ids = ir
+            .functions
+            .iter()
+            .flat_map(|function| function.typed_exprs.iter().map(|expr| expr.id.0))
+            .collect::<Vec<_>>();
+        expr_ids.sort_unstable();
+        assert_eq!(
+            expr_ids,
+            (0..expr_ids.len() as u32).collect::<Vec<_>>(),
+            "ExprIds must densely cover [0, N) with no gaps or duplicates"
+        );
+
+        let mut binding_ids = ir
+            .functions
+            .iter()
+            .flat_map(|function| function.bindings.iter().map(|binding| binding.id.0))
+            .collect::<Vec<_>>();
+        binding_ids.sort_unstable();
+        assert_eq!(
+            binding_ids,
+            (0..binding_ids.len() as u32).collect::<Vec<_>>(),
+            "BindingIds must densely cover [0, N) with no gaps or duplicates"
+        );
+    }
 }

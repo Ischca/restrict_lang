@@ -4,6 +4,7 @@
 //! the boundary we want between finalized type inference, affine flow checking,
 //! layout selection, and later WebAssembly lowering.
 
+pub mod binding_graph;
 pub mod builder;
 pub mod layout;
 pub mod optimize;

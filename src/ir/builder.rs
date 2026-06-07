@@ -106,6 +106,21 @@ impl CheckedFunctionIr {
             }
         }
 
+        // Every binding-read expression must resolve to a binding that this
+        // function actually declares. Builder-local BindingIds are not yet stable
+        // symbol identities, so the shadow graph at least guarantees that no read
+        // dangles past the bindings it was resolved against.
+        for expr in &self.typed_exprs {
+            if let TypedExprKind::Binding(binding) = &expr.kind {
+                if !bindings_by_id.contains_key(binding) {
+                    return Err(shadow_invariant_violation(format!(
+                        "binding expression {:?} in {} references missing binding {:?}",
+                        expr.id, self.name, binding
+                    )));
+                }
+            }
+        }
+
         let apply_expr_count = self
             .typed_exprs
             .iter()
@@ -2171,6 +2186,35 @@ fun main: () -> Int32 = {
             monomorphic: true,
             lowering: scalar_test_lowering_summary(),
         };
+
+        assert!(matches!(
+            function.validate_shadow_invariants(),
+            Err(IrBuildError::ShadowInvariantViolation(_))
+        ));
+    }
+
+    #[test]
+    fn builder_rejects_binding_expr_referencing_missing_binding() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+"#,
+        );
+
+        let mut function = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "keep")
+            .expect("keep IR should be present")
+            .clone();
+        let binding_expr = function
+            .typed_exprs
+            .iter_mut()
+            .find(|expr| matches!(expr.kind, TypedExprKind::Binding(_)))
+            .expect("keep should read its parameter binding");
+        binding_expr.kind = TypedExprKind::Binding(BindingId(999));
 
         assert!(matches!(
             function.validate_shadow_invariants(),

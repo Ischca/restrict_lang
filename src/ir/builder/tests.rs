@@ -960,14 +960,13 @@ fun main: (items: List<Int32>) -> List<Int32> = {
         .expect("source should type-check");
 
     // Two independently parsed, distinct AST allocations for which the checkers
-    // record the same number of facts. We deliberately do not assert raw-address
-    // disjointness of the checker keys: pipe desugaring records freed
-    // transient-clone Expr addresses, which an allocator may reuse across the two
-    // checks, so key disjointness is not guaranteed. The real address-independence
-    // property is the identical IR asserted below.
+    // record the same number of facts. We compare the fact count rather than the
+    // raw pointer keys: those keys leak freed transient-clone Expr addresses from
+    // pipe desugaring, which an allocator may reuse across the two checks. The
+    // real address-independence property is the identical IR asserted below.
     assert!(!std::ptr::eq(&program_a, &program_b));
-    let fact_count_a = checker_a.expr_types().len();
-    let fact_count_b = checker_b.expr_types().len();
+    let fact_count_a = checker_a.checked_expr_type_count();
+    let fact_count_b = checker_b.checked_expr_type_count();
     assert!(fact_count_a > 0);
     assert_eq!(fact_count_a, fact_count_b);
 

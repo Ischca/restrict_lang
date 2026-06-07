@@ -798,17 +798,6 @@ impl TypeChecker {
         self.checked_expr_types.len()
     }
 
-    /// Expose checked expression types for the legacy AST-driven codegen path.
-    ///
-    /// This is a temporary migration bridge. New IR work should prefer
-    /// `checked_expr_type` and replace pointer keys with stable `ExprId`s.
-    pub fn expr_types(&self) -> HashMap<*const Expr, String> {
-        self.checked_expr_types
-            .iter()
-            .map(|(key, ty)| (*key as *const Expr, format_typed_type(ty)))
-            .collect()
-    }
-
     pub fn checked_variable_type(&self, name: &str) -> Option<TypedType> {
         self.peek_var_type(name)
     }

@@ -122,8 +122,6 @@ pub struct WasmCodeGen {
     current_function: Option<String>,
     /// Generated WAT code output
     output: String,
-    /// Type information for expressions (from type checker)
-    pub expr_types: HashMap<*const Expr, String>,
     /// Arena management for temporary allocations
     arena_stack: Vec<u32>,
     /// Next available arena address
@@ -236,7 +234,6 @@ impl WasmCodeGen {
             next_mem_offset: 1024, // Start at 1024 to leave room for other data
             current_function: None,
             output: String::new(),
-            expr_types: HashMap::new(),
             arena_stack: Vec::new(),
             next_arena_addr: 0x8000, // Arena starts at 32KB
             default_arena: None,
@@ -259,10 +256,6 @@ impl WasmCodeGen {
             with_arena_depth: 0,
             lambda_abi_stack: Vec::new(),
         }
-    }
-
-    pub fn set_expr_types(&mut self, expr_types: HashMap<*const Expr, String>) {
-        self.expr_types = expr_types;
     }
 
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
@@ -7348,22 +7341,6 @@ impl WasmCodeGen {
                             var_name
                         ))
                     })?
-                } else if let Some(obj_type) =
-                    self.expr_types.get(&(obj_expr.as_ref() as *const Expr))
-                {
-                    // Fallback to expr_types if available
-                    if let Some(name) = obj_type.strip_suffix(&format!("<~{}>", field)) {
-                        name.to_string()
-                    } else if obj_type.contains('<') {
-                        // Handle generic types like Point<~p>
-                        if let Some(idx) = obj_type.find('<') {
-                            obj_type[..idx].to_string()
-                        } else {
-                            obj_type.clone()
-                        }
-                    } else {
-                        obj_type.clone()
-                    }
                 } else if let ExprKind::RecordLit(record_lit) = &obj_expr.kind {
                     // Direct record literal
                     record_lit.name.clone()
@@ -15162,12 +15139,6 @@ impl WasmCodeGen {
     }
 
     fn get_expr_type(&self, expr: &Expr) -> Option<String> {
-        // First check the expr_types map (filled by type checker)
-        if let Some(ty) = self.expr_types.get(&(expr as *const Expr)) {
-            return Some(ty.clone());
-        }
-
-        // Fall back to simple inference
         match &expr.kind {
             ExprKind::RecordLit(record) => {
                 // Try to infer from record name if available

@@ -1,7 +1,8 @@
 use crate::ast::{
-    AssignStmt, BindDecl, BlockExpr, CallExpr, CloneExpr, Expr, FieldInit, FunDecl, ImplBlock,
-    ImportItems, MatchArm, MatchExpr, Pattern, PipeExpr, PipeTarget, Program, PrototypeCloneExpr,
-    RecordDecl, RecordLit, Stmt, ThenExpr, TopDecl, Type, WhileExpr, WithExpr, WithLifetimeExpr,
+    AssignStmt, BindDecl, BlockExpr, CallExpr, CloneExpr, Expr, ExprKind, FieldInit, FunDecl,
+    ImplBlock, ImportItems, MatchArm, MatchExpr, Pattern, PipeExpr, PipeTarget, Program,
+    PrototypeCloneExpr, RecordDecl, RecordLit, Stmt, ThenExpr, TopDecl, Type, WhileExpr, WithExpr,
+    WithLifetimeExpr,
 };
 use crate::diagnostics::format_parse_error;
 use crate::parser::parse_program;
@@ -648,98 +649,127 @@ fn rename_expr(
     type_params: &HashSet<String>,
     bound: &HashSet<String>,
 ) -> Expr {
-    match expr {
-        Expr::Ident(name) if bound.contains(&name) => Expr::Ident(name),
-        Expr::Ident(name) => Expr::Ident(rename_name(name, rename_map)),
-        Expr::RecordLit(record) => {
-            Expr::RecordLit(rename_record_lit(record, rename_map, type_params, bound))
-        }
-        Expr::Clone(clone_expr) => Expr::Clone(rename_clone_expr(
+    match expr.kind {
+        ExprKind::Ident(name) if bound.contains(&name) => Expr::new(ExprKind::Ident(name)),
+        ExprKind::Ident(name) => Expr::new(ExprKind::Ident(rename_name(name, rename_map))),
+        ExprKind::RecordLit(record) => Expr::new(ExprKind::RecordLit(rename_record_lit(
+            record,
+            rename_map,
+            type_params,
+            bound,
+        ))),
+        ExprKind::Clone(clone_expr) => Expr::new(ExprKind::Clone(rename_clone_expr(
             clone_expr,
             rename_map,
             type_params,
             bound,
-        )),
-        Expr::Freeze(expr) => {
-            Expr::Freeze(Box::new(rename_expr(*expr, rename_map, type_params, bound)))
-        }
-        Expr::PrototypeClone(proto) => Expr::PrototypeClone(rename_prototype_clone_expr(
-            proto,
+        ))),
+        ExprKind::Freeze(expr) => Expr::new(ExprKind::Freeze(Box::new(rename_expr(
+            *expr,
             rename_map,
             type_params,
             bound,
+        )))),
+        ExprKind::PrototypeClone(proto) => Expr::new(ExprKind::PrototypeClone(
+            rename_prototype_clone_expr(proto, rename_map, type_params, bound),
         )),
-        Expr::Then(then_expr) => {
-            Expr::Then(rename_then_expr(then_expr, rename_map, type_params, bound))
-        }
-        Expr::While(while_expr) => Expr::While(rename_while_expr(
+        ExprKind::Then(then_expr) => Expr::new(ExprKind::Then(rename_then_expr(
+            then_expr,
+            rename_map,
+            type_params,
+            bound,
+        ))),
+        ExprKind::While(while_expr) => Expr::new(ExprKind::While(rename_while_expr(
             while_expr,
             rename_map,
             type_params,
             bound,
-        )),
-        Expr::Match(match_expr) => Expr::Match(rename_match_expr(
+        ))),
+        ExprKind::Match(match_expr) => Expr::new(ExprKind::Match(rename_match_expr(
             match_expr,
             rename_map,
             type_params,
             bound,
-        )),
-        Expr::Call(call) => Expr::Call(rename_call_expr(call, rename_map, type_params, bound)),
-        Expr::Binary(binary) => Expr::Binary(crate::ast::BinaryExpr {
-            left: Box::new(rename_expr(*binary.left, rename_map, type_params, bound)),
-            op: binary.op,
-            right: Box::new(rename_expr(*binary.right, rename_map, type_params, bound)),
-        }),
-        Expr::Unary(unary) => Expr::Unary(crate::ast::UnaryExpr {
-            op: unary.op,
-            expr: Box::new(rename_expr(*unary.expr, rename_map, type_params, bound)),
-        }),
-        Expr::Pipe(pipe) => Expr::Pipe(rename_pipe_expr(pipe, rename_map, type_params, bound)),
-        Expr::With(with_expr) => {
-            Expr::With(rename_with_expr(with_expr, rename_map, type_params, bound))
-        }
-        Expr::WithLifetime(with_lifetime) => Expr::WithLifetime(rename_with_lifetime_expr(
-            with_lifetime,
+        ))),
+        ExprKind::Call(call) => Expr::new(ExprKind::Call(rename_call_expr(
+            call,
             rename_map,
             type_params,
             bound,
+        ))),
+        ExprKind::Binary(binary) => Expr::new(ExprKind::Binary(crate::ast::BinaryExpr {
+            left: Box::new(rename_expr(*binary.left, rename_map, type_params, bound)),
+            op: binary.op,
+            right: Box::new(rename_expr(*binary.right, rename_map, type_params, bound)),
+        })),
+        ExprKind::Unary(unary) => Expr::new(ExprKind::Unary(crate::ast::UnaryExpr {
+            op: unary.op,
+            expr: Box::new(rename_expr(*unary.expr, rename_map, type_params, bound)),
+        })),
+        ExprKind::Pipe(pipe) => Expr::new(ExprKind::Pipe(rename_pipe_expr(
+            pipe,
+            rename_map,
+            type_params,
+            bound,
+        ))),
+        ExprKind::With(with_expr) => Expr::new(ExprKind::With(rename_with_expr(
+            with_expr,
+            rename_map,
+            type_params,
+            bound,
+        ))),
+        ExprKind::WithLifetime(with_lifetime) => Expr::new(ExprKind::WithLifetime(
+            rename_with_lifetime_expr(with_lifetime, rename_map, type_params, bound),
         )),
-        Expr::Block(block) => {
+        ExprKind::Block(block) => {
             let mut block_bound = bound.clone();
-            Expr::Block(rename_block_expr(
+            Expr::new(ExprKind::Block(rename_block_expr(
                 block,
                 rename_map,
                 type_params,
                 &mut block_bound,
-            ))
+            )))
         }
-        Expr::FieldAccess(expr, field) => Expr::FieldAccess(
+        ExprKind::FieldAccess(expr, field) => Expr::new(ExprKind::FieldAccess(
             Box::new(rename_expr(*expr, rename_map, type_params, bound)),
             field,
-        ),
-        Expr::ListLit(elements) => Expr::ListLit(
+        )),
+        ExprKind::ListLit(elements) => Expr::new(ExprKind::ListLit(
             elements
                 .into_iter()
                 .map(|expr| Box::new(rename_expr(*expr, rename_map, type_params, bound)))
                 .collect(),
-        ),
-        Expr::ArrayLit(elements) => Expr::ArrayLit(
+        )),
+        ExprKind::ArrayLit(elements) => Expr::new(ExprKind::ArrayLit(
             elements
                 .into_iter()
                 .map(|expr| Box::new(rename_expr(*expr, rename_map, type_params, bound)))
                 .collect(),
-        ),
-        Expr::Some(expr) => {
-            Expr::Some(Box::new(rename_expr(*expr, rename_map, type_params, bound)))
-        }
-        Expr::Ok(expr) => Expr::Ok(Box::new(rename_expr(*expr, rename_map, type_params, bound))),
-        Expr::Err(expr) => Expr::Err(Box::new(rename_expr(*expr, rename_map, type_params, bound))),
-        Expr::Lambda(lambda) => {
+        )),
+        ExprKind::Some(expr) => Expr::new(ExprKind::Some(Box::new(rename_expr(
+            *expr,
+            rename_map,
+            type_params,
+            bound,
+        )))),
+        ExprKind::Ok(expr) => Expr::new(ExprKind::Ok(Box::new(rename_expr(
+            *expr,
+            rename_map,
+            type_params,
+            bound,
+        )))),
+        ExprKind::Err(expr) => Expr::new(ExprKind::Err(Box::new(rename_expr(
+            *expr,
+            rename_map,
+            type_params,
+            bound,
+        )))),
+        ExprKind::Lambda(lambda) => {
             let mut lambda_bound = bound.clone();
             for param in &lambda.params {
                 lambda_bound.insert(param.name.clone());
             }
-            Expr::Lambda(crate::ast::LambdaExpr {
+            Expr::new(ExprKind::Lambda(crate::ast::LambdaExpr {
                 params: lambda.params,
                 body: Box::new(rename_expr(
                     *lambda.body,
@@ -747,15 +777,21 @@ fn rename_expr(
                     type_params,
                     &lambda_bound,
                 )),
-            })
+            }))
         }
-        Expr::Await(expr) => {
-            Expr::Await(Box::new(rename_expr(*expr, rename_map, type_params, bound)))
-        }
-        Expr::Spawn(expr) => {
-            Expr::Spawn(Box::new(rename_expr(*expr, rename_map, type_params, bound)))
-        }
-        literal => literal,
+        ExprKind::Await(expr) => Expr::new(ExprKind::Await(Box::new(rename_expr(
+            *expr,
+            rename_map,
+            type_params,
+            bound,
+        )))),
+        ExprKind::Spawn(expr) => Expr::new(ExprKind::Spawn(Box::new(rename_expr(
+            *expr,
+            rename_map,
+            type_params,
+            bound,
+        )))),
+        literal => Expr::new(literal),
     }
 }
 

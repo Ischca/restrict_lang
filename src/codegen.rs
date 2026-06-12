@@ -3917,36 +3917,36 @@ impl WasmCodeGen {
     }
 
     fn collect_strings_from_expr(&mut self, expr: &Expr) -> Result<(), CodeGenError> {
-        match expr {
-            Expr::StringLit(s) => {
+        match &expr.kind {
+            ExprKind::StringLit(s) => {
                 self.intern_string_literal(s);
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.collect_strings_from_block(block)?;
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 self.collect_strings_from_expr(&call.function)?;
                 for arg in &call.args {
                     self.collect_strings_from_expr(arg)?;
                 }
             }
-            Expr::Binary(binary) => {
+            ExprKind::Binary(binary) => {
                 self.collect_strings_from_expr(&binary.left)?;
                 self.collect_strings_from_expr(&binary.right)?;
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 self.collect_strings_from_expr(&unary.expr)?;
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 self.collect_strings_from_expr(&cast.expr)?;
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 self.collect_strings_from_expr(&pipe.expr)?;
                 if let PipeTarget::Expr(target) = &pipe.target {
                     self.collect_strings_from_expr(target)?;
                 }
             }
-            Expr::RecordLit(record) => {
+            ExprKind::RecordLit(record) => {
                 for field in &record.fields {
                     match field {
                         FieldInit::Field { value, .. } => {
@@ -3958,31 +3958,31 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::FieldAccess(expr, _) => {
+            ExprKind::FieldAccess(expr, _) => {
                 self.collect_strings_from_expr(expr)?;
             }
-            Expr::ListLit(items) => {
+            ExprKind::ListLit(items) => {
                 for item in items {
                     self.collect_strings_from_expr(item)?;
                 }
             }
-            Expr::ArrayLit(items) => {
+            ExprKind::ArrayLit(items) => {
                 for item in items {
                     self.collect_strings_from_expr(item)?;
                 }
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 self.collect_strings_from_expr(&range.start)?;
                 self.collect_strings_from_expr(&range.end)?;
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 self.collect_strings_from_expr(&match_expr.expr)?;
                 for arm in &match_expr.arms {
                     self.collect_strings_from_pattern(&arm.pattern)?;
                     self.collect_strings_from_block(&arm.body)?;
                 }
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 self.collect_strings_from_expr(&then.condition)?;
                 self.collect_strings_from_block(&then.then_block)?;
                 for (cond, block) in &then.else_ifs {
@@ -3993,11 +3993,11 @@ impl WasmCodeGen {
                     self.collect_strings_from_block(block)?;
                 }
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 self.collect_strings_from_expr(&while_expr.condition)?;
                 self.collect_strings_from_block(&while_expr.body)?;
             }
-            Expr::With(with) => {
+            ExprKind::With(with) => {
                 for binding in &with.bindings {
                     match binding {
                         FieldInit::Field { value, .. } => {
@@ -4010,13 +4010,13 @@ impl WasmCodeGen {
                 }
                 self.collect_strings_from_block(&with.body)?;
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 self.collect_strings_from_block(&with_lifetime.body)?;
             }
-            Expr::Await(_) | Expr::Spawn(_) => {
+            ExprKind::Await(_) | ExprKind::Spawn(_) => {
                 // No strings in await/spawn expressions themselves
             }
-            Expr::Clone(clone) => {
+            ExprKind::Clone(clone) => {
                 self.collect_strings_from_expr(&clone.base)?;
                 for field in &clone.updates.fields {
                     match field {
@@ -4029,13 +4029,13 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Freeze(expr) => {
+            ExprKind::Freeze(expr) => {
                 self.collect_strings_from_expr(expr)?;
             }
-            Expr::Some(expr) | Expr::Ok(expr) | Expr::Err(expr) => {
+            ExprKind::Some(expr) | ExprKind::Ok(expr) | ExprKind::Err(expr) => {
                 self.collect_strings_from_expr(expr)?;
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 self.collect_strings_from_expr(&lambda.body)?;
             }
             _ => {}
@@ -4165,14 +4165,14 @@ impl WasmCodeGen {
     }
 
     fn infer_expr_source_type_for_signature(&mut self, expr: &Expr) -> Option<Type> {
-        match expr {
-            Expr::Block(block) => {
+        match &expr.kind {
+            ExprKind::Block(block) => {
                 self.local_source_types.push(HashMap::new());
                 let ty = self.infer_block_source_type_for_signature(block);
                 self.local_source_types.pop();
                 ty
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 let mut ty = None;
 
                 self.local_source_types.push(HashMap::new());
@@ -4202,7 +4202,7 @@ impl WasmCodeGen {
 
                 ty
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 let scrutinee_ty = self.infer_expr_source_type_for_signature(&match_expr.expr);
                 let mut ty = None;
 
@@ -4221,7 +4221,7 @@ impl WasmCodeGen {
 
                 ty
             }
-            Expr::With(with) => {
+            ExprKind::With(with) => {
                 let bindings = self.context_source_bindings(with, &HashMap::new());
                 self.local_source_types.push(bindings);
                 let ty = self.infer_block_source_type_for_signature(&with.body);
@@ -4528,31 +4528,31 @@ impl WasmCodeGen {
     }
 
     fn global_const_expr(&self, expr: &Expr, source_ty: &Type) -> Result<String, CodeGenError> {
-        match (expr, source_ty) {
-            (Expr::IntLit(value), Type::Named(name)) if name == "Int32" => {
+        match (&expr.kind, source_ty) {
+            (ExprKind::IntLit(value), Type::Named(name)) if name == "Int32" => {
                 Ok(format!("i32.const {}", value))
             }
-            (Expr::IntLit(value), Type::Named(name)) if name == "Int64" => {
+            (ExprKind::IntLit(value), Type::Named(name)) if name == "Int64" => {
                 Ok(format!("i64.const {}", value))
             }
-            (Expr::FloatLit(value), Type::Named(name)) if name == "Float64" => {
+            (ExprKind::FloatLit(value), Type::Named(name)) if name == "Float64" => {
                 Ok(format!("f64.const {}", value))
             }
-            (Expr::BoolLit(value), Type::Named(name)) if name == "Boolean" => {
+            (ExprKind::BoolLit(value), Type::Named(name)) if name == "Boolean" => {
                 Ok(format!("i32.const {}", if *value { 1 } else { 0 }))
             }
-            (Expr::CharLit(value), Type::Named(name)) if name == "Char" => {
+            (ExprKind::CharLit(value), Type::Named(name)) if name == "Char" => {
                 Ok(format!("i32.const {}", *value as u32))
             }
-            (Expr::StringLit(value), Type::Named(name)) if name == "String" => {
+            (ExprKind::StringLit(value), Type::Named(name)) if name == "String" => {
                 let offset = self.string_offsets.get(value).ok_or_else(|| {
                     CodeGenError::NotImplemented("string literal not in pool".to_string())
                 })?;
                 Ok(format!("i32.const {}", offset))
             }
-            (Expr::Unit, Type::Named(name)) if name == "Unit" => Ok("i32.const 0".to_string()),
-            (Expr::Unary(unary), Type::Named(name)) if name == "Int32" => {
-                if let (UnaryOp::Neg, Expr::IntLit(value)) = (&unary.op, unary.expr.as_ref()) {
+            (ExprKind::Unit, Type::Named(name)) if name == "Unit" => Ok("i32.const 0".to_string()),
+            (ExprKind::Unary(unary), Type::Named(name)) if name == "Int32" => {
+                if let (UnaryOp::Neg, ExprKind::IntLit(value)) = (&unary.op, &unary.expr.kind) {
                     Ok(format!("i32.const {}", -value))
                 } else {
                     Err(CodeGenError::UnsupportedFeature(
@@ -4560,8 +4560,8 @@ impl WasmCodeGen {
                     ))
                 }
             }
-            (Expr::Unary(unary), Type::Named(name)) if name == "Int64" => {
-                if let (UnaryOp::Neg, Expr::IntLit(value)) = (&unary.op, unary.expr.as_ref()) {
+            (ExprKind::Unary(unary), Type::Named(name)) if name == "Int64" => {
+                if let (UnaryOp::Neg, ExprKind::IntLit(value)) = (&unary.op, &unary.expr.kind) {
                     Ok(format!("i64.const {}", -value))
                 } else {
                     Err(CodeGenError::UnsupportedFeature(
@@ -4569,8 +4569,8 @@ impl WasmCodeGen {
                     ))
                 }
             }
-            (Expr::Unary(unary), Type::Named(name)) if name == "Float64" => {
-                if let (UnaryOp::Neg, Expr::FloatLit(value)) = (&unary.op, unary.expr.as_ref()) {
+            (ExprKind::Unary(unary), Type::Named(name)) if name == "Float64" => {
+                if let (UnaryOp::Neg, ExprKind::FloatLit(value)) = (&unary.op, &unary.expr.kind) {
                     Ok(format!("f64.const {}", -value))
                 } else {
                     Err(CodeGenError::UnsupportedFeature(
@@ -5123,10 +5123,12 @@ impl WasmCodeGen {
             return_type: Some(Type::Named("Unit".to_string())),
             body: BlockExpr {
                 statements: vec![],
-                expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("println".to_string())), // Call built-in println
-                    args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
-                }))),
+                expr: Some(Box::new(Expr::new(ExprKind::Call(CallExpr {
+                    function: Box::new(Expr::new(ExprKind::Ident("println".to_string()))), // Call built-in println
+                    args: vec![Box::new(Expr::new(ExprKind::Ident(
+                        func.params[0].name.clone(),
+                    )))],
+                })))),
             },
             is_async: false,
         };
@@ -5144,10 +5146,12 @@ impl WasmCodeGen {
             return_type: Some(Type::Named("Unit".to_string())),
             body: BlockExpr {
                 statements: vec![],
-                expr: Some(Box::new(Expr::Call(CallExpr {
-                    function: Box::new(Expr::Ident("print_int".to_string())), // Call built-in print_int
-                    args: vec![Box::new(Expr::Ident(func.params[0].name.clone()))],
-                }))),
+                expr: Some(Box::new(Expr::new(ExprKind::Call(CallExpr {
+                    function: Box::new(Expr::new(ExprKind::Ident("print_int".to_string()))), // Call built-in print_int
+                    args: vec![Box::new(Expr::new(ExprKind::Ident(
+                        func.params[0].name.clone(),
+                    )))],
+                })))),
             },
             is_async: false,
         };
@@ -5651,8 +5655,8 @@ impl WasmCodeGen {
         final_expr: Option<&Expr>,
         expected_source: Option<&Type>,
     ) -> Option<Type> {
-        match (final_expr, expected_source) {
-            (Some(Expr::Ident(returned_name)), Some(source_ty)) if returned_name == name => {
+        match (final_expr.map(|e| &e.kind), expected_source) {
+            (Some(ExprKind::Ident(returned_name)), Some(source_ty)) if returned_name == name => {
                 Some(source_ty.clone())
             }
             _ => None,
@@ -5702,9 +5706,9 @@ impl WasmCodeGen {
         later_statements: &[Stmt],
         final_expr: Option<&Expr>,
     ) -> Option<Type> {
-        let container_name = match value {
-            Expr::ListLit(_) => "List",
-            Expr::None | Expr::Some(_) => "Option",
+        let container_name = match &value.kind {
+            ExprKind::ListLit(_) => "List",
+            ExprKind::None | ExprKind::Some(_) => "Option",
             _ => return None,
         };
 
@@ -5763,10 +5767,10 @@ impl WasmCodeGen {
         container_name: &str,
         expr: &Expr,
     ) -> Option<Type> {
-        match expr {
-            Expr::Call(call) => {
+        match &expr.kind {
+            ExprKind::Call(call) => {
                 if self.call_first_arg_is_ident(call, name) {
-                    if let Expr::Ident(function_name) = call.function.as_ref() {
+                    if let ExprKind::Ident(function_name) = &call.function.kind {
                         if let Some(item_ty) = self.iteration_item_context_from_call(
                             function_name,
                             container_name,
@@ -5794,7 +5798,7 @@ impl WasmCodeGen {
                         )
                     })
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 if Self::expr_is_ident(&pipe.expr, name) {
                     if let Some(item_ty) =
                         self.iteration_item_context_from_pipe_target(container_name, &pipe.target)
@@ -5814,10 +5818,10 @@ impl WasmCodeGen {
                         PipeTarget::Ident(_) => None,
                     })
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.find_iteration_item_context_for_ident_in_block(name, container_name, block)
             }
-            Expr::Then(then) => self
+            ExprKind::Then(then) => self
                 .find_iteration_item_context_for_ident_in_block(
                     name,
                     container_name,
@@ -5841,7 +5845,7 @@ impl WasmCodeGen {
                         )
                     })
                 }),
-            Expr::Match(match_expr) => self
+            ExprKind::Match(match_expr) => self
                 .find_iteration_item_context_for_ident_in_expr(
                     name,
                     container_name,
@@ -5856,18 +5860,21 @@ impl WasmCodeGen {
                         )
                     })
                 }),
-            Expr::FieldAccess(object, _) => {
+            ExprKind::FieldAccess(object, _) => {
                 self.find_iteration_item_context_for_ident_in_expr(name, container_name, object)
             }
-            Expr::Some(inner) | Expr::Ok(inner) | Expr::Err(inner) | Expr::Freeze(inner) => {
+            ExprKind::Some(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner)
+            | ExprKind::Freeze(inner) => {
                 self.find_iteration_item_context_for_ident_in_expr(name, container_name, inner)
             }
-            Expr::Unary(unary) => self.find_iteration_item_context_for_ident_in_expr(
+            ExprKind::Unary(unary) => self.find_iteration_item_context_for_ident_in_expr(
                 name,
                 container_name,
                 &unary.expr,
             ),
-            Expr::Binary(binary) => self
+            ExprKind::Binary(binary) => self
                 .find_iteration_item_context_for_ident_in_expr(name, container_name, &binary.left)
                 .or_else(|| {
                     self.find_iteration_item_context_for_ident_in_expr(
@@ -5876,10 +5883,10 @@ impl WasmCodeGen {
                         &binary.right,
                     )
                 }),
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 self.find_iteration_item_context_for_ident_in_expr(name, container_name, &cast.expr)
             }
-            Expr::ListLit(items) | Expr::ArrayLit(items) => items.iter().find_map(|item| {
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => items.iter().find_map(|item| {
                 self.find_iteration_item_context_for_ident_in_expr(name, container_name, item)
             }),
             _ => None,
@@ -5920,11 +5927,11 @@ impl WasmCodeGen {
             PipeTarget::Ident(function_name) => {
                 self.iteration_item_context_from_call(function_name, container_name, &[])
             }
-            PipeTarget::Expr(expr) => match expr.as_ref() {
-                Expr::Ident(function_name) => {
+            PipeTarget::Expr(expr) => match &expr.kind {
+                ExprKind::Ident(function_name) => {
                     self.iteration_item_context_from_call(function_name, container_name, &[])
                 }
-                Expr::FieldAccess(_, _) => self
+                ExprKind::FieldAccess(_, _) => self
                     .infer_expr_source_type(expr)
                     .and_then(|source_ty| match source_ty {
                         Type::Function(params, _) => params.first().cloned(),
@@ -5954,8 +5961,8 @@ impl WasmCodeGen {
     }
 
     fn callable_param_source_type(&self, callable: &Expr, index: usize) -> Option<Type> {
-        match callable {
-            Expr::Ident(name) => {
+        match &callable.kind {
+            ExprKind::Ident(name) => {
                 if let Some(Type::Function(params, _)) = self.lookup_local_source_type(name) {
                     return params.get(index).cloned();
                 }
@@ -5973,7 +5980,7 @@ impl WasmCodeGen {
                         }
                     })
             }
-            Expr::Lambda(lambda) => lambda.params.get(index).and_then(|param| {
+            ExprKind::Lambda(lambda) => lambda.params.get(index).and_then(|param| {
                 param
                     .type_annotation
                     .clone()
@@ -5997,8 +6004,8 @@ impl WasmCodeGen {
     }
 
     fn infer_ident_source_type_from_expr_usage(&self, name: &str, expr: &Expr) -> Option<Type> {
-        match expr {
-            Expr::Binary(binary) => {
+        match &expr.kind {
+            ExprKind::Binary(binary) => {
                 if Self::expr_is_ident(&binary.left, name) {
                     if let Some(other_ty) = self.infer_expr_source_type(&binary.right) {
                         if let Some(ty) =
@@ -6021,7 +6028,7 @@ impl WasmCodeGen {
                 self.infer_ident_source_type_from_expr_usage(name, &binary.left)
                     .or_else(|| self.infer_ident_source_type_from_expr_usage(name, &binary.right))
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 if Self::expr_is_ident(&unary.expr, name) {
                     return match unary.op {
                         UnaryOp::Not => Some(Type::Named("Boolean".to_string())),
@@ -6030,14 +6037,14 @@ impl WasmCodeGen {
                 }
                 self.infer_ident_source_type_from_expr_usage(name, &unary.expr)
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 if Self::expr_is_ident(&cast.expr, name) {
                     Some(cast.target.clone())
                 } else {
                     self.infer_ident_source_type_from_expr_usage(name, &cast.expr)
                 }
             }
-            Expr::Call(call) => self
+            ExprKind::Call(call) => self
                 .expected_source_for_ident_in_expr(name, expr, None)
                 .or_else(|| {
                     call.args
@@ -6045,7 +6052,7 @@ impl WasmCodeGen {
                         .find_map(|arg| self.infer_ident_source_type_from_expr_usage(name, arg))
                 })
                 .or_else(|| self.infer_ident_source_type_from_expr_usage(name, &call.function)),
-            Expr::Pipe(pipe) => self
+            ExprKind::Pipe(pipe) => self
                 .expected_source_for_ident_in_expr(name, expr, None)
                 .or_else(|| self.infer_ident_source_type_from_expr_usage(name, &pipe.expr))
                 .or_else(|| match &pipe.target {
@@ -6054,8 +6061,8 @@ impl WasmCodeGen {
                     }
                     PipeTarget::Ident(_) => None,
                 }),
-            Expr::Block(block) => self.infer_ident_source_type_from_block_usage(name, block),
-            Expr::Then(then) => self
+            ExprKind::Block(block) => self.infer_ident_source_type_from_block_usage(name, block),
+            ExprKind::Then(then) => self
                 .infer_ident_source_type_from_expr_usage(name, &then.condition)
                 .or_else(|| self.infer_ident_source_type_from_block_usage(name, &then.then_block))
                 .or_else(|| {
@@ -6069,10 +6076,10 @@ impl WasmCodeGen {
                         self.infer_ident_source_type_from_block_usage(name, block)
                     })
                 }),
-            Expr::While(while_expr) => self
+            ExprKind::While(while_expr) => self
                 .infer_ident_source_type_from_expr_usage(name, &while_expr.condition)
                 .or_else(|| self.infer_ident_source_type_from_block_usage(name, &while_expr.body)),
-            Expr::Match(match_expr) => self
+            ExprKind::Match(match_expr) => self
                 .infer_ident_source_type_from_expr_usage(name, &match_expr.expr)
                 .or_else(|| {
                     match_expr.arms.iter().find_map(|arm| {
@@ -6083,7 +6090,7 @@ impl WasmCodeGen {
                         }
                     })
                 }),
-            Expr::With(with_expr) => {
+            ExprKind::With(with_expr) => {
                 for binding in &with_expr.bindings {
                     match binding {
                         FieldInit::Field {
@@ -6110,31 +6117,31 @@ impl WasmCodeGen {
                 }
                 self.infer_ident_source_type_from_block_usage(name, &with_expr.body)
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 self.infer_ident_source_type_from_block_usage(name, &with_lifetime.body)
             }
-            Expr::FieldAccess(object, _) => {
+            ExprKind::FieldAccess(object, _) => {
                 self.infer_ident_source_type_from_expr_usage(name, object)
             }
-            Expr::Freeze(inner)
-            | Expr::Some(inner)
-            | Expr::Ok(inner)
-            | Expr::Err(inner)
-            | Expr::Await(inner)
-            | Expr::Spawn(inner) => self.infer_ident_source_type_from_expr_usage(name, inner),
-            Expr::ListLit(items) | Expr::ArrayLit(items) => items
+            ExprKind::Freeze(inner)
+            | ExprKind::Some(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner)
+            | ExprKind::Await(inner)
+            | ExprKind::Spawn(inner) => self.infer_ident_source_type_from_expr_usage(name, inner),
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => items
                 .iter()
                 .find_map(|item| self.infer_ident_source_type_from_expr_usage(name, item)),
-            Expr::RangeLit(range) => self
+            ExprKind::RangeLit(range) => self
                 .infer_ident_source_type_from_expr_usage(name, &range.start)
                 .or_else(|| self.infer_ident_source_type_from_expr_usage(name, &range.end)),
-            Expr::RecordLit(record) => record.fields.iter().find_map(|field| {
+            ExprKind::RecordLit(record) => record.fields.iter().find_map(|field| {
                 let value = match field {
                     FieldInit::Field { value, .. } | FieldInit::Spread(value) => value,
                 };
                 self.infer_ident_source_type_from_expr_usage(name, value)
             }),
-            Expr::Clone(clone) => self
+            ExprKind::Clone(clone) => self
                 .infer_ident_source_type_from_expr_usage(name, &clone.base)
                 .or_else(|| {
                     clone.updates.fields.iter().find_map(|field| {
@@ -6144,7 +6151,7 @@ impl WasmCodeGen {
                         self.infer_ident_source_type_from_expr_usage(name, value)
                     })
                 }),
-            Expr::PrototypeClone(proto_clone) => {
+            ExprKind::PrototypeClone(proto_clone) => {
                 proto_clone.updates.fields.iter().find_map(|field| {
                     let value = match field {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => value,
@@ -6152,21 +6159,21 @@ impl WasmCodeGen {
                     self.infer_ident_source_type_from_expr_usage(name, value)
                 })
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 if lambda.params.iter().any(|param| param.name == name) {
                     None
                 } else {
                     self.infer_ident_source_type_from_expr_usage(name, &lambda.body)
                 }
             }
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::Ident(_)
-            | Expr::None => None,
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::Ident(_)
+            | ExprKind::None => None,
         }
     }
 
@@ -6246,7 +6253,7 @@ impl WasmCodeGen {
         final_expr: Option<&Expr>,
         expected_source: Option<&Type>,
     ) -> Option<Type> {
-        let Expr::RecordLit(record_lit) = value else {
+        let ExprKind::RecordLit(record_lit) = &value.kind else {
             return None;
         };
 
@@ -6313,8 +6320,8 @@ impl WasmCodeGen {
         type_params: &[String],
         substitution: &mut HashMap<String, Type>,
     ) {
-        match expr {
-            Expr::FieldAccess(object, field) => {
+        match &expr.kind {
+            ExprKind::FieldAccess(object, field) => {
                 if Self::expr_is_ident(object, binding_name) {
                     if let Some(field_ty) = expected_source {
                         self.bind_record_binding_field_context(
@@ -6327,8 +6334,8 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Match(match_expr) => {
-                if let Expr::FieldAccess(object, field) = match_expr.expr.as_ref() {
+            ExprKind::Match(match_expr) => {
+                if let ExprKind::FieldAccess(object, field) = &match_expr.expr.kind {
                     if Self::expr_is_ident(object, binding_name) {
                         self.bind_record_binding_field_match_context(
                             record_name,
@@ -6341,8 +6348,8 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Call(call) => {
-                if let Expr::FieldAccess(object, field) = call.function.as_ref() {
+            ExprKind::Call(call) => {
+                if let ExprKind::FieldAccess(object, field) = &call.function.kind {
                     if Self::expr_is_ident(object, binding_name) {
                         self.bind_record_binding_field_callable_call_context(
                             record_name,
@@ -6375,7 +6382,7 @@ impl WasmCodeGen {
                     substitution,
                 );
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 self.bind_record_binding_type_params_from_block(
                     binding_name,
                     record_name,
@@ -6405,9 +6412,9 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 if let PipeTarget::Expr(target) = &pipe.target {
-                    if let Expr::FieldAccess(object, field) = target.as_ref() {
+                    if let ExprKind::FieldAccess(object, field) = &target.kind {
                         if Self::expr_is_ident(object, binding_name) {
                             self.bind_record_binding_field_callable_pipe_context(
                                 record_name,
@@ -6441,7 +6448,7 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.bind_record_binding_type_params_from_block(
                     binding_name,
                     record_name,
@@ -6649,7 +6656,7 @@ impl WasmCodeGen {
     }
 
     fn expr_is_ident(expr: &Expr, name: &str) -> bool {
-        matches!(expr, Expr::Ident(candidate) if candidate == name)
+        matches!(&expr.kind, ExprKind::Ident(candidate) if candidate == name)
     }
 
     fn expected_source_for_ident_in_block(
@@ -6680,11 +6687,11 @@ impl WasmCodeGen {
             return expected_source.cloned();
         }
 
-        match expr {
-            Expr::Pipe(pipe) if Self::expr_is_ident(&pipe.expr, name) => {
+        match &expr.kind {
+            ExprKind::Pipe(pipe) if Self::expr_is_ident(&pipe.expr, name) => {
                 self.expected_source_for_pipe_target_first_arg(&pipe.target)
             }
-            Expr::Pipe(pipe) => match &pipe.target {
+            ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(target_name) if target_name == name => {
                     let arg_ty = self.infer_expr_source_type(&pipe.expr)?;
                     let return_ty = expected_source.cloned().or_else(|| {
@@ -6704,8 +6711,8 @@ impl WasmCodeGen {
                 }
                 PipeTarget::Ident(_) => None,
             },
-            Expr::Call(call) => {
-                if let Expr::Ident(func_name) = call.function.as_ref() {
+            ExprKind::Call(call) => {
+                if let ExprKind::Ident(func_name) = &call.function.kind {
                     if func_name == name {
                         let arg_tys = call
                             .args
@@ -6726,10 +6733,10 @@ impl WasmCodeGen {
                 }
                 None
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.expected_source_for_ident_in_block(name, block, expected_source)
             }
-            Expr::Then(then) => self
+            ExprKind::Then(then) => self
                 .expected_source_for_ident_in_block(name, &then.then_block, expected_source)
                 .or_else(|| {
                     then.else_ifs.iter().find_map(|(_, block)| {
@@ -6748,8 +6755,10 @@ impl WasmCodeGen {
     fn expected_source_for_pipe_target_first_arg(&self, target: &PipeTarget) -> Option<Type> {
         match target {
             PipeTarget::Ident(func_name) => self.expected_function_param_source_type(func_name, 0),
-            PipeTarget::Expr(expr) => match expr.as_ref() {
-                Expr::Ident(func_name) => self.expected_function_param_source_type(func_name, 0),
+            PipeTarget::Expr(expr) => match &expr.kind {
+                ExprKind::Ident(func_name) => {
+                    self.expected_function_param_source_type(func_name, 0)
+                }
                 _ => None,
             },
         }
@@ -7254,8 +7263,8 @@ impl WasmCodeGen {
     }
 
     fn generate_expr(&mut self, expr: &Expr) -> Result<(), CodeGenError> {
-        match expr {
-            Expr::IntLit(n) => {
+        match &expr.kind {
+            ExprKind::IntLit(n) => {
                 let wasm_ty = Self::int_literal_wasm_type(*n);
                 self.output.push_str(&format!(
                     "    {}.const {}\n",
@@ -7263,17 +7272,17 @@ impl WasmCodeGen {
                     n
                 ));
             }
-            Expr::FloatLit(f) => {
+            ExprKind::FloatLit(f) => {
                 self.output.push_str(&format!("    f64.const {}\n", f));
             }
-            Expr::BoolLit(b) => {
+            ExprKind::BoolLit(b) => {
                 self.output
                     .push_str(&format!("    i32.const {}\n", if *b { 1 } else { 0 }));
             }
-            Expr::Unit => {
+            ExprKind::Unit => {
                 self.output.push_str("    i32.const 0\n");
             }
-            Expr::Ident(name) => {
+            ExprKind::Ident(name) => {
                 // Check if it's a captured variable in a lambda
                 if self.in_lambda_with_captures && self.captured_vars.contains(name) {
                     self.emit_local_get(name);
@@ -7298,28 +7307,28 @@ impl WasmCodeGen {
                     return Err(CodeGenError::UndefinedVariable(name.clone()));
                 }
             }
-            Expr::Binary(binary) => {
+            ExprKind::Binary(binary) => {
                 self.generate_binary_expr(binary)?;
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 self.generate_unary_expr(unary)?;
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 self.generate_cast_expr(cast)?;
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 self.generate_call_expr(call)?;
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.generate_block(block)?;
             }
-            Expr::RecordLit(record_lit) => {
+            ExprKind::RecordLit(record_lit) => {
                 let record_source_ty = self
                     .infer_record_lit_source_type(record_lit)
                     .unwrap_or_else(|| Type::Named(record_lit.name.clone()));
                 self.generate_record_literal_with_source_type(record_lit, &record_source_ty)?;
             }
-            Expr::FieldAccess(obj_expr, field) => {
+            ExprKind::FieldAccess(obj_expr, field) => {
                 // Generate object expression
                 self.generate_expr(obj_expr)?;
 
@@ -7331,7 +7340,7 @@ impl WasmCodeGen {
                         .ok_or_else(|| {
                             CodeGenError::NotImplemented(format!("field access for {}", field))
                         })?
-                } else if let Expr::Ident(var_name) = obj_expr.as_ref() {
+                } else if let ExprKind::Ident(var_name) = &obj_expr.kind {
                     // For identifiers, look up the record type from variable tracking.
                     self.var_types.get(var_name).cloned().ok_or_else(|| {
                         CodeGenError::NotImplemented(format!(
@@ -7355,7 +7364,7 @@ impl WasmCodeGen {
                     } else {
                         obj_type.clone()
                     }
-                } else if let Expr::RecordLit(record_lit) = obj_expr.as_ref() {
+                } else if let ExprKind::RecordLit(record_lit) = &obj_expr.kind {
                     // Direct record literal
                     record_lit.name.clone()
                 } else {
@@ -7384,7 +7393,7 @@ impl WasmCodeGen {
                     self.wasm_load_op_for_type(field_type.as_ref())
                 ));
             }
-            Expr::StringLit(s) => {
+            ExprKind::StringLit(s) => {
                 if let Some(offset) = self.string_offsets.get(s) {
                     self.output.push_str(&format!("    i32.const {}\n", offset));
                 } else {
@@ -7393,50 +7402,50 @@ impl WasmCodeGen {
                     ));
                 }
             }
-            Expr::CharLit(c) => {
+            ExprKind::CharLit(c) => {
                 self.output
                     .push_str(&format!("    i32.const {}\n", *c as u32));
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 self.generate_pipe_expr(pipe)?;
             }
-            Expr::ListLit(items) => {
+            ExprKind::ListLit(items) => {
                 self.generate_list_literal(items)?;
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 self.generate_range_literal(range)?;
             }
-            Expr::ArrayLit(items) => {
+            ExprKind::ArrayLit(items) => {
                 self.generate_array_literal(items)?;
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 self.generate_match_expr(match_expr)?;
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 self.generate_then_expr(then)?;
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 self.generate_while_expr(while_expr)?;
             }
-            Expr::With(with_expr) => {
+            ExprKind::With(with_expr) => {
                 self.generate_with_expr(with_expr)?;
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 self.generate_temporal_scope(&with_lifetime.lifetime, &with_lifetime.body)?;
             }
-            Expr::Await(_) | Expr::Spawn(_) => {
+            ExprKind::Await(_) | ExprKind::Spawn(_) => {
                 return Err(CodeGenError::UnsupportedFeature(
                     "async await/spawn operations are experimental and outside the v0.0.1 codegen surface"
                         .to_string(),
                 ));
             }
-            Expr::Clone(clone) => {
+            ExprKind::Clone(clone) => {
                 self.generate_clone_expr(clone)?;
             }
-            Expr::Freeze(expr) => {
+            ExprKind::Freeze(expr) => {
                 self.generate_freeze_expr(expr)?;
             }
-            Expr::None => {
+            ExprKind::None => {
                 // Tagged union: allocate 8 bytes (4 for tag, 4 for padding)
                 self.output.push_str("    ;; None literal\n");
                 self.output.push_str("    i32.const 8\n");
@@ -7450,19 +7459,19 @@ impl WasmCodeGen {
                 // Leave pointer on stack
                 self.output.push_str("    local.get $match_tmp\n");
             }
-            Expr::Some(inner) => {
+            ExprKind::Some(inner) => {
                 self.generate_variant_constructor("Some", 1, inner)?;
             }
-            Expr::Ok(inner) => {
+            ExprKind::Ok(inner) => {
                 self.generate_variant_constructor("Ok", 1, inner)?;
             }
-            Expr::Err(inner) => {
+            ExprKind::Err(inner) => {
                 self.generate_variant_constructor("Err", 0, inner)?;
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 self.generate_lambda_expr(lambda)?;
             }
-            Expr::PrototypeClone(proto_clone) => {
+            ExprKind::PrototypeClone(proto_clone) => {
                 self.generate_prototype_clone_expr(proto_clone)?;
             }
         }
@@ -7799,25 +7808,25 @@ impl WasmCodeGen {
         seen: &mut HashSet<String>,
         free_vars: &mut Vec<(String, WasmType)>,
     ) -> Result<(), CodeGenError> {
-        match expr {
-            Expr::Ident(name) => self.capture_if_free(name, bound, seen, free_vars)?,
-            Expr::Binary(binary) => {
+        match &expr.kind {
+            ExprKind::Ident(name) => self.capture_if_free(name, bound, seen, free_vars)?,
+            ExprKind::Binary(binary) => {
                 self.collect_free_variables_for_codegen(&binary.left, bound, seen, free_vars)?;
                 self.collect_free_variables_for_codegen(&binary.right, bound, seen, free_vars)?;
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 self.collect_free_variables_for_codegen(&unary.expr, bound, seen, free_vars)?;
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 self.collect_free_variables_for_codegen(&cast.expr, bound, seen, free_vars)?;
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 self.collect_free_variables_for_codegen(&call.function, bound, seen, free_vars)?;
                 for arg in &call.args {
                     self.collect_free_variables_for_codegen(arg, bound, seen, free_vars)?;
                 }
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 self.collect_free_variables_for_codegen(&pipe.expr, bound, seen, free_vars)?;
                 match &pipe.target {
                     PipeTarget::Ident(name) => {
@@ -7830,10 +7839,10 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::FieldAccess(object, _) => {
+            ExprKind::FieldAccess(object, _) => {
                 self.collect_free_variables_for_codegen(object, bound, seen, free_vars)?;
             }
-            Expr::RecordLit(record) => {
+            ExprKind::RecordLit(record) => {
                 for field in &record.fields {
                     match field {
                         FieldInit::Field { value, .. } => {
@@ -7845,7 +7854,7 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Clone(clone) => {
+            ExprKind::Clone(clone) => {
                 self.collect_free_variables_for_codegen(&clone.base, bound, seen, free_vars)?;
                 for field in &clone.updates.fields {
                     match field {
@@ -7858,10 +7867,10 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Freeze(value) | Expr::Await(value) | Expr::Spawn(value) => {
+            ExprKind::Freeze(value) | ExprKind::Await(value) | ExprKind::Spawn(value) => {
                 self.collect_free_variables_for_codegen(value, bound, seen, free_vars)?;
             }
-            Expr::PrototypeClone(proto) => {
+            ExprKind::PrototypeClone(proto) => {
                 for field in &proto.updates.fields {
                     match field {
                         FieldInit::Field { value, .. } => {
@@ -7873,7 +7882,7 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 self.collect_free_variables_for_codegen(&then.condition, bound, seen, free_vars)?;
                 self.collect_free_variables_in_block_for_codegen(
                     &then.then_block,
@@ -7893,7 +7902,7 @@ impl WasmCodeGen {
                     )?;
                 }
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 self.collect_free_variables_for_codegen(
                     &while_expr.condition,
                     bound,
@@ -7907,7 +7916,7 @@ impl WasmCodeGen {
                     free_vars,
                 )?;
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 self.collect_free_variables_for_codegen(&match_expr.expr, bound, seen, free_vars)?;
                 for arm in &match_expr.arms {
                     let mut arm_bound = bound.clone();
@@ -7920,7 +7929,7 @@ impl WasmCodeGen {
                     )?;
                 }
             }
-            Expr::With(with_expr) => {
+            ExprKind::With(with_expr) => {
                 let mut body_bound = bound.clone();
                 for binding in &with_expr.bindings {
                     match binding {
@@ -7940,7 +7949,7 @@ impl WasmCodeGen {
                     free_vars,
                 )?;
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 self.collect_free_variables_in_block_for_codegen(
                     &with_lifetime.body,
                     bound,
@@ -7948,25 +7957,25 @@ impl WasmCodeGen {
                     free_vars,
                 )?;
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.collect_free_variables_in_block_for_codegen(block, bound, seen, free_vars)?;
             }
-            Expr::ListLit(items) | Expr::ArrayLit(items) => {
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
                 for item in items {
                     self.collect_free_variables_for_codegen(item, bound, seen, free_vars)?;
                 }
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 self.collect_free_variables_for_codegen(&range.start, bound, seen, free_vars)?;
                 self.collect_free_variables_for_codegen(&range.end, bound, seen, free_vars)?;
             }
-            Expr::Some(value) => {
+            ExprKind::Some(value) => {
                 self.collect_free_variables_for_codegen(value, bound, seen, free_vars)?;
             }
-            Expr::Ok(value) | Expr::Err(value) => {
+            ExprKind::Ok(value) | ExprKind::Err(value) => {
                 self.collect_free_variables_for_codegen(value, bound, seen, free_vars)?;
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 let mut lambda_bound = bound.clone();
                 for param in &lambda.params {
                     lambda_bound.insert(param.name.clone());
@@ -7978,13 +7987,13 @@ impl WasmCodeGen {
                     free_vars,
                 )?;
             }
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::None => {}
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::None => {}
         }
 
         Ok(())
@@ -8280,34 +8289,34 @@ impl WasmCodeGen {
         expr: &Expr,
         expected_type: WasmType,
     ) -> Result<(), CodeGenError> {
-        match (expected_type, expr) {
-            (WasmType::I64, Expr::IntLit(value)) => {
+        match (expected_type, &expr.kind) {
+            (WasmType::I64, ExprKind::IntLit(value)) => {
                 self.output.push_str(&format!("    i64.const {}\n", value));
                 Ok(())
             }
-            (WasmType::I32, Expr::IntLit(value)) => {
+            (WasmType::I32, ExprKind::IntLit(value)) => {
                 self.output.push_str(&format!("    i32.const {}\n", value));
                 Ok(())
             }
-            (WasmType::I64, Expr::Unary(unary)) if unary.op == UnaryOp::Neg => {
+            (WasmType::I64, ExprKind::Unary(unary)) if unary.op == UnaryOp::Neg => {
                 self.generate_expr_with_wasm_type(&unary.expr, WasmType::I64)?;
                 self.output.push_str("    i64.const -1\n");
                 self.output.push_str("    i64.mul\n");
                 Ok(())
             }
-            (WasmType::I32, Expr::Unary(unary)) if unary.op == UnaryOp::Neg => {
+            (WasmType::I32, ExprKind::Unary(unary)) if unary.op == UnaryOp::Neg => {
                 self.generate_expr_with_wasm_type(&unary.expr, WasmType::I32)?;
                 self.output.push_str("    i32.const -1\n");
                 self.output.push_str("    i32.mul\n");
                 Ok(())
             }
-            (WasmType::I64, Expr::Binary(binary)) if Self::is_arithmetic_op(&binary.op) => {
+            (WasmType::I64, ExprKind::Binary(binary)) if Self::is_arithmetic_op(&binary.op) => {
                 self.generate_binary_expr_with_operand_type(binary, WasmType::I64)
             }
-            (WasmType::F64, Expr::Binary(binary)) if Self::is_arithmetic_op(&binary.op) => {
+            (WasmType::F64, ExprKind::Binary(binary)) if Self::is_arithmetic_op(&binary.op) => {
                 self.generate_binary_expr_with_operand_type(binary, WasmType::F64)
             }
-            (WasmType::I32, Expr::Binary(binary)) if Self::is_arithmetic_op(&binary.op) => {
+            (WasmType::I32, ExprKind::Binary(binary)) if Self::is_arithmetic_op(&binary.op) => {
                 self.generate_binary_expr_with_operand_type(binary, WasmType::I32)
             }
             _ => self.generate_expr(expr),
@@ -8451,7 +8460,7 @@ impl WasmCodeGen {
     }
 
     fn generate_call_expr(&mut self, call: &CallExpr) -> Result<(), CodeGenError> {
-        if let Expr::Ident(func_name) = &*call.function {
+        if let ExprKind::Ident(func_name) = &call.function.kind {
             if let Some(target_name) = self.lookup_generic_function_alias(func_name) {
                 match target_name.as_str() {
                     "map" => return self.generate_map_call(call),
@@ -8478,7 +8487,7 @@ impl WasmCodeGen {
             }
         }
 
-        if let Expr::Ident(func_name) = &*call.function {
+        if let ExprKind::Ident(func_name) = &call.function.kind {
             if self.functions.contains_key(func_name) {
                 let target_name = self.resolve_named_function_call_target(func_name, &call.args)?;
                 if let Some(source_params) =
@@ -8503,7 +8512,7 @@ impl WasmCodeGen {
             }
         }
 
-        if let Expr::Ident(func_name) = &*call.function {
+        if let ExprKind::Ident(func_name) = &call.function.kind {
             if !self.functions.contains_key(func_name) && self.lookup_local(func_name).is_none() {
                 if let Some(target_name) = self.resolve_method_call_target(func_name, &call.args)? {
                     let target_name =
@@ -8523,7 +8532,7 @@ impl WasmCodeGen {
         }
 
         // Handle function call
-        if let Expr::Ident(func_name) = &*call.function {
+        if let ExprKind::Ident(func_name) = &call.function.kind {
             if func_name == "identity" {
                 if call.args.len() != 1 {
                     return Err(CodeGenError::UnsupportedFeature(
@@ -8793,8 +8802,8 @@ impl WasmCodeGen {
         expr: &Expr,
         expected_source: &Type,
     ) -> Result<(), CodeGenError> {
-        if let Expr::Call(call) = expr {
-            if let Expr::Ident(func_name) = call.function.as_ref() {
+        if let ExprKind::Call(call) = &expr.kind {
+            if let ExprKind::Ident(func_name) = &call.function.kind {
                 if let Some(target_name) = self.lookup_generic_function_alias(func_name) {
                     match target_name.as_str() {
                         "map" => return self.generate_map_call(call),
@@ -8815,11 +8824,11 @@ impl WasmCodeGen {
             }
         }
 
-        if let Expr::Pipe(pipe) = expr {
+        if let ExprKind::Pipe(pipe) = &expr.kind {
             let is_identity_target = match &pipe.target {
                 PipeTarget::Ident(name) => name == "identity",
                 PipeTarget::Expr(target) => {
-                    matches!(target.as_ref(), Expr::Ident(name) if name == "identity")
+                    matches!(&target.kind, ExprKind::Ident(name) if name == "identity")
                 }
             };
             if is_identity_target {
@@ -8827,8 +8836,8 @@ impl WasmCodeGen {
             }
         }
 
-        if let Expr::Call(call) = expr {
-            if let Expr::Ident(func_name) = call.function.as_ref() {
+        if let ExprKind::Call(call) = &expr.kind {
+            if let ExprKind::Ident(func_name) = &call.function.kind {
                 if !matches!(func_name.as_str(), "map" | "filter" | "fold")
                     && self.functions.contains_key(func_name)
                 {
@@ -8907,8 +8916,8 @@ impl WasmCodeGen {
             }
 
             if !matches!(
-                call.function.as_ref(),
-                Expr::Ident(func_name)
+                &call.function.kind,
+                ExprKind::Ident(func_name)
                     if matches!(func_name.as_str(), "map" | "filter" | "fold")
                         || self.functions.contains_key(func_name)
             ) {
@@ -8931,25 +8940,25 @@ impl WasmCodeGen {
             }
         }
 
-        match expr {
-            Expr::Match(match_expr) => {
+        match &expr.kind {
+            ExprKind::Match(match_expr) => {
                 return self
                     .generate_match_expr_with_expected_source(match_expr, Some(expected_source));
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 return self.generate_then_expr_with_expected_source(then, Some(expected_source));
             }
-            Expr::With(with_expr) => {
+            ExprKind::With(with_expr) => {
                 return self
                     .generate_with_expr_with_expected_source(with_expr, Some(expected_source));
             }
-            Expr::RecordLit(record_lit) => {
+            ExprKind::RecordLit(record_lit) => {
                 if self.source_record_name(expected_source) == Some(record_lit.name.as_str()) {
                     return self
                         .generate_record_literal_with_source_type(record_lit, expected_source);
                 }
             }
-            Expr::Some(inner) => {
+            ExprKind::Some(inner) => {
                 if let Type::Generic(name, args) = expected_source {
                     if name == "Option" {
                         let payload_source = args.first().ok_or_else(|| {
@@ -8963,7 +8972,7 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Ok(inner) => {
+            ExprKind::Ok(inner) => {
                 if let Type::Generic(name, args) = expected_source {
                     if name == "Result" {
                         let payload_source = args.first().ok_or_else(|| {
@@ -8977,7 +8986,7 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Err(inner) => {
+            ExprKind::Err(inner) => {
                 if let Type::Generic(name, args) = expected_source {
                     if name == "Result" {
                         let payload_source = args.get(1).ok_or_else(|| {
@@ -8991,7 +9000,7 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::ListLit(items) => {
+            ExprKind::ListLit(items) => {
                 if let Type::Generic(name, args) = expected_source {
                     if name == "Array" {
                         return self.generate_array_literal_with_expected(items, args.first());
@@ -9001,14 +9010,14 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::ArrayLit(items) => {
+            ExprKind::ArrayLit(items) => {
                 if let Type::Generic(name, args) = expected_source {
                     if name == "Array" {
                         return self.generate_array_literal_with_expected(items, args.first());
                     }
                 }
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 if let Type::Generic(name, args) = expected_source {
                     if name == "Range"
                         && matches!(args.first(), Some(Type::Named(elem)) if elem == "Int32")
@@ -9028,7 +9037,7 @@ impl WasmCodeGen {
         if let Type::Function(params, return_type) = expected_source {
             let abi = self.source_function_abi(params, return_type)?;
             self.generate_callable_value_with_abi(expr, &abi)
-        } else if let Expr::Block(block) = expr {
+        } else if let ExprKind::Block(block) = &expr.kind {
             self.generate_block_internal(block, true, Some(expected_source))
         } else if let Type::Named(name) = expected_source {
             match name.as_str() {
@@ -9600,7 +9609,7 @@ impl WasmCodeGen {
         arg_source_tys: &[Type],
         expected_result_source: Option<&Type>,
     ) -> Result<LambdaAbiContext, CodeGenError> {
-        if let Expr::Ident(name) = callable {
+        if let ExprKind::Ident(name) = &callable.kind {
             if name == "identity" && arg_source_tys.len() == 1 {
                 return self.source_function_abi(arg_source_tys, &arg_source_tys[0]);
             }
@@ -9653,7 +9662,10 @@ impl WasmCodeGen {
             }
         }
 
-        if matches!(callable, Expr::Lambda(_) | Expr::Then(_) | Expr::Match(_)) {
+        if matches!(
+            &callable.kind,
+            ExprKind::Lambda(_) | ExprKind::Then(_) | ExprKind::Match(_)
+        ) {
             let result_source = self
                 .infer_callable_return_source_type(callable, arg_source_tys)
                 .or_else(|| expected_result_source.cloned())
@@ -9688,7 +9700,7 @@ impl WasmCodeGen {
         callable: &Expr,
         abi: &LambdaAbiContext,
     ) -> Result<(), CodeGenError> {
-        if let Expr::Ident(name) = callable {
+        if let ExprKind::Ident(name) = &callable.kind {
             if let Some(function_name) = self.lookup_generic_function_alias(name) {
                 if function_name == "identity" {
                     return self.generate_identity_function_reference_with_abi(abi);
@@ -9711,11 +9723,11 @@ impl WasmCodeGen {
             }
         }
 
-        if matches!(callable, Expr::Ident(name) if name == "identity") {
+        if matches!(&callable.kind, ExprKind::Ident(name) if name == "identity") {
             return self.generate_identity_function_reference_with_abi(abi);
         }
 
-        if matches!(callable, Expr::Lambda(_)) {
+        if matches!(&callable.kind, ExprKind::Lambda(_)) {
             return self.generate_lambda_argument(
                 callable,
                 abi.params.clone(),
@@ -9730,7 +9742,7 @@ impl WasmCodeGen {
             abi.source_params.clone(),
             Box::new(abi.source_result.clone()),
         );
-        let result = if matches!(callable, Expr::Then(_) | Expr::Match(_)) {
+        let result = if matches!(&callable.kind, ExprKind::Then(_) | ExprKind::Match(_)) {
             self.generate_expr_with_expected_source(callable, &expected_source)
         } else {
             self.generate_expr(callable)
@@ -9969,7 +9981,7 @@ impl WasmCodeGen {
         source_params: Vec<Type>,
         source_result: Type,
     ) -> Result<(), CodeGenError> {
-        if let Expr::Ident(name) = lambda_expr {
+        if let ExprKind::Ident(name) = &lambda_expr.kind {
             if let Some(function_name) = self.lookup_generic_function_alias(name) {
                 if function_name == "identity" {
                     let abi = LambdaAbiContext {
@@ -10010,7 +10022,7 @@ impl WasmCodeGen {
             }
         }
 
-        if matches!(lambda_expr, Expr::Ident(name) if name == "identity") {
+        if matches!(&lambda_expr.kind, ExprKind::Ident(name) if name == "identity") {
             let abi = LambdaAbiContext {
                 params,
                 result,
@@ -10028,7 +10040,7 @@ impl WasmCodeGen {
             source_params,
             source_result,
         });
-        let result = if matches!(lambda_expr, Expr::Then(_) | Expr::Match(_)) {
+        let result = if matches!(&lambda_expr.kind, ExprKind::Then(_) | ExprKind::Match(_)) {
             self.generate_expr_with_expected_source(lambda_expr, &expected_source)
         } else {
             self.generate_expr(lambda_expr)
@@ -10581,12 +10593,12 @@ impl WasmCodeGen {
     }
 
     fn infer_expr_type(&self, expr: &Expr) -> Result<WasmType, CodeGenError> {
-        match expr {
-            Expr::IntLit(value) => Ok(Self::int_literal_wasm_type(*value)),
-            Expr::FloatLit(_) => Ok(WasmType::F64),
-            Expr::BoolLit(_) => Ok(WasmType::I32),
-            Expr::Unit => Ok(WasmType::I32),
-            Expr::Ident(name) => {
+        match &expr.kind {
+            ExprKind::IntLit(value) => Ok(Self::int_literal_wasm_type(*value)),
+            ExprKind::FloatLit(_) => Ok(WasmType::F64),
+            ExprKind::BoolLit(_) => Ok(WasmType::I32),
+            ExprKind::Unit => Ok(WasmType::I32),
+            ExprKind::Ident(name) => {
                 if let Some(ty) = self.lookup_local_abi_type(name)? {
                     Ok(ty)
                 } else if self.lookup_local(name).is_some() {
@@ -10598,35 +10610,35 @@ impl WasmCodeGen {
                     Ok(WasmType::I32)
                 }
             }
-            Expr::FieldAccess(object, field) => self.infer_field_access_type(object, field),
-            Expr::Binary(binary) => self.infer_binary_expr_type(binary),
-            Expr::Unary(unary) => self.infer_unary_expr_type(unary),
-            Expr::Cast(cast) => self.convert_type(&cast.target),
-            Expr::Then(then) => self.infer_then_result_type(then),
-            Expr::Match(match_expr) => match match_expr.arms.first() {
+            ExprKind::FieldAccess(object, field) => self.infer_field_access_type(object, field),
+            ExprKind::Binary(binary) => self.infer_binary_expr_type(binary),
+            ExprKind::Unary(unary) => self.infer_unary_expr_type(unary),
+            ExprKind::Cast(cast) => self.convert_type(&cast.target),
+            ExprKind::Then(then) => self.infer_then_result_type(then),
+            ExprKind::Match(match_expr) => match match_expr.arms.first() {
                 Some(arm) => self.infer_block_result_type(&arm.body),
                 None => Ok(WasmType::I32),
             },
-            Expr::Block(block) => self.infer_block_result_type(block),
-            Expr::With(with) => {
+            ExprKind::Block(block) => self.infer_block_result_type(block),
+            ExprKind::With(with) => {
                 if let Some(source_ty) = self.infer_expr_source_type(expr) {
                     return self.convert_type(&source_ty);
                 }
                 self.infer_block_result_type(&with.body)
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 if let Some(source_ty) = self.infer_expr_source_type(expr) {
                     return self.convert_type(&source_ty);
                 }
 
-                if let Expr::Ident(name) = call.function.as_ref() {
+                if let ExprKind::Ident(name) = &call.function.kind {
                     if let Some(sig) = self.functions.get(name) {
                         return Ok(sig.result.unwrap_or(WasmType::I32));
                     }
                 }
                 Ok(WasmType::I32)
             }
-            Expr::Pipe(pipe) => match &pipe.target {
+            ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(name) => {
                     if let Some(source_ty) = self.infer_expr_source_type(expr) {
                         return self.convert_type(&source_ty);
@@ -10643,7 +10655,7 @@ impl WasmCodeGen {
                         return self.convert_type(&source_ty);
                     }
 
-                    if let Expr::Ident(name) = target.as_ref() {
+                    if let ExprKind::Ident(name) = &target.kind {
                         if let Some(sig) = self.functions.get(name) {
                             return Ok(sig.result.unwrap_or(WasmType::I32));
                         }
@@ -10669,27 +10681,27 @@ impl WasmCodeGen {
     }
 
     fn infer_expr_source_type(&self, expr: &Expr) -> Option<Type> {
-        match expr {
-            Expr::IntLit(value) => Some(Self::int_literal_source_type(*value)),
-            Expr::FloatLit(_) => Some(Type::Named("Float64".to_string())),
-            Expr::BoolLit(_) => Some(Type::Named("Boolean".to_string())),
-            Expr::CharLit(_) => Some(Type::Named("Char".to_string())),
-            Expr::StringLit(_) => Some(Type::Named("String".to_string())),
-            Expr::Unit => Some(Type::Named("Unit".to_string())),
-            Expr::Ident(name) => self.lookup_local_source_type(name).or_else(|| {
+        match &expr.kind {
+            ExprKind::IntLit(value) => Some(Self::int_literal_source_type(*value)),
+            ExprKind::FloatLit(_) => Some(Type::Named("Float64".to_string())),
+            ExprKind::BoolLit(_) => Some(Type::Named("Boolean".to_string())),
+            ExprKind::CharLit(_) => Some(Type::Named("Char".to_string())),
+            ExprKind::StringLit(_) => Some(Type::Named("String".to_string())),
+            ExprKind::Unit => Some(Type::Named("Unit".to_string())),
+            ExprKind::Ident(name) => self.lookup_local_source_type(name).or_else(|| {
                 if self.lookup_local(name).is_none() {
                     self.named_function_source_type(name)
                 } else {
                     None
                 }
             }),
-            Expr::RecordLit(record) => self.infer_record_lit_source_type(record),
-            Expr::Clone(clone) => self.infer_expr_source_type(&clone.base),
-            Expr::Freeze(inner) => self.infer_expr_source_type(inner),
-            Expr::Some(inner) => self
+            ExprKind::RecordLit(record) => self.infer_record_lit_source_type(record),
+            ExprKind::Clone(clone) => self.infer_expr_source_type(&clone.base),
+            ExprKind::Freeze(inner) => self.infer_expr_source_type(inner),
+            ExprKind::Some(inner) => self
                 .infer_expr_source_type(inner)
                 .map(|ty| Type::Generic("Option".to_string(), vec![ty])),
-            Expr::Binary(binary) => match binary.op {
+            ExprKind::Binary(binary) => match binary.op {
                 BinaryOp::Eq
                 | BinaryOp::Ne
                 | BinaryOp::Lt
@@ -10711,32 +10723,34 @@ impl WasmCodeGen {
                     }
                 }
             },
-            Expr::Unary(unary) => match unary.op {
+            ExprKind::Unary(unary) => match unary.op {
                 UnaryOp::Not => Some(Type::Named("Boolean".to_string())),
                 UnaryOp::Neg => self.infer_expr_source_type(&unary.expr),
             },
-            Expr::Cast(cast) => Some(cast.target.clone()),
-            Expr::FieldAccess(object, field) => self.infer_field_access_source_type(object, field),
-            Expr::ListLit(items) => self
+            ExprKind::Cast(cast) => Some(cast.target.clone()),
+            ExprKind::FieldAccess(object, field) => {
+                self.infer_field_access_source_type(object, field)
+            }
+            ExprKind::ListLit(items) => self
                 .infer_collection_element_source_type(items)
                 .map(|ty| Type::Generic("List".to_string(), vec![ty])),
-            Expr::RangeLit(_) => Some(Type::Generic(
+            ExprKind::RangeLit(_) => Some(Type::Generic(
                 "Range".to_string(),
                 vec![Type::Named("Int32".to_string())],
             )),
-            Expr::ArrayLit(items) => self
+            ExprKind::ArrayLit(items) => self
                 .infer_collection_element_source_type(items)
                 .map(|ty| Type::Generic("Array".to_string(), vec![ty])),
-            Expr::Then(then) => self.infer_then_source_type(then),
-            Expr::Match(match_expr) => {
+            ExprKind::Then(then) => self.infer_then_source_type(then),
+            ExprKind::Match(match_expr) => {
                 self.infer_match_source_type_with_bindings(match_expr, &HashMap::new())
             }
-            Expr::Block(block) => self.infer_block_source_type(block),
-            Expr::With(with) => {
+            ExprKind::Block(block) => self.infer_block_source_type(block),
+            ExprKind::With(with) => {
                 let bindings = self.context_source_bindings(with, &HashMap::new());
                 self.infer_block_source_type_with_bindings(&with.body, &bindings)
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 let params = lambda
                     .params
                     .iter()
@@ -10752,8 +10766,8 @@ impl WasmCodeGen {
                     self.infer_expr_source_type_with_bindings(&lambda.body, &bindings)?;
                 Some(Type::Function(params, Box::new(return_ty)))
             }
-            Expr::Call(call) => {
-                if let Expr::Ident(name) = call.function.as_ref() {
+            ExprKind::Call(call) => {
+                if let ExprKind::Ident(name) = &call.function.kind {
                     let arg_exprs = call.args.iter().map(|arg| arg.as_ref()).collect::<Vec<_>>();
                     if self.can_infer_named_function_call_source_type(name, false) {
                         if let Some(return_ty) =
@@ -10783,7 +10797,7 @@ impl WasmCodeGen {
 
                 None
             }
-            Expr::Pipe(pipe) => match &pipe.target {
+            ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(name) => {
                     if self.functions.contains_key(name) {
                         let args = [pipe.expr.as_ref()];
@@ -10801,7 +10815,7 @@ impl WasmCodeGen {
                     }
                 }
                 PipeTarget::Expr(target) => {
-                    if let Expr::Ident(name) = target.as_ref() {
+                    if let ExprKind::Ident(name) = &target.kind {
                         if self.functions.contains_key(name) {
                             let args = [pipe.expr.as_ref()];
                             self.infer_function_call_source_type(name, &args)
@@ -10988,8 +11002,8 @@ impl WasmCodeGen {
         arg_tys: &[Type],
         bindings: &HashMap<String, Type>,
     ) -> Option<Type> {
-        match callable {
-            Expr::Lambda(lambda) => {
+        match &callable.kind {
+            ExprKind::Lambda(lambda) => {
                 if lambda.params.len() != arg_tys.len() {
                     return None;
                 }
@@ -11010,13 +11024,14 @@ impl WasmCodeGen {
                     });
                 self.infer_expr_source_type_with_bindings(&lambda.body, &lambda_bindings)
             }
-            Expr::Ident(name) => self.infer_named_callable_return_source_type(name, arg_tys),
-            Expr::Then(then) => {
+            ExprKind::Ident(name) => self.infer_named_callable_return_source_type(name, arg_tys),
+            ExprKind::Then(then) => {
                 self.infer_then_callable_return_source_type_with_bindings(then, arg_tys, bindings)
             }
-            Expr::Match(match_expr) => self.infer_match_callable_return_source_type_with_bindings(
-                match_expr, arg_tys, bindings,
-            ),
+            ExprKind::Match(match_expr) => self
+                .infer_match_callable_return_source_type_with_bindings(
+                    match_expr, arg_tys, bindings,
+                ),
             _ => match self.infer_expr_source_type_with_bindings(callable, bindings) {
                 Some(Type::Function(params, return_ty)) if params.len() == arg_tys.len() => {
                     Some(*return_ty)
@@ -11174,8 +11189,8 @@ impl WasmCodeGen {
         expr: &Expr,
         bindings: &HashMap<String, Type>,
     ) -> Option<Type> {
-        match expr {
-            Expr::Ident(name) => bindings
+        match &expr.kind {
+            ExprKind::Ident(name) => bindings
                 .get(name)
                 .cloned()
                 .or_else(|| self.lookup_local_source_type(name))
@@ -11186,23 +11201,25 @@ impl WasmCodeGen {
                         None
                     }
                 }),
-            Expr::IntLit(value) => Some(Self::int_literal_source_type(*value)),
-            Expr::FloatLit(_) => Some(Type::Named("Float64".to_string())),
-            Expr::BoolLit(_) => Some(Type::Named("Boolean".to_string())),
-            Expr::CharLit(_) => Some(Type::Named("Char".to_string())),
-            Expr::StringLit(_) => Some(Type::Named("String".to_string())),
-            Expr::Unit => Some(Type::Named("Unit".to_string())),
-            Expr::Some(inner) => self
+            ExprKind::IntLit(value) => Some(Self::int_literal_source_type(*value)),
+            ExprKind::FloatLit(_) => Some(Type::Named("Float64".to_string())),
+            ExprKind::BoolLit(_) => Some(Type::Named("Boolean".to_string())),
+            ExprKind::CharLit(_) => Some(Type::Named("Char".to_string())),
+            ExprKind::StringLit(_) => Some(Type::Named("String".to_string())),
+            ExprKind::Unit => Some(Type::Named("Unit".to_string())),
+            ExprKind::Some(inner) => self
                 .infer_expr_source_type_with_bindings(inner, bindings)
                 .map(|ty| Type::Generic("Option".to_string(), vec![ty])),
-            Expr::Unary(unary) => match unary.op {
+            ExprKind::Unary(unary) => match unary.op {
                 UnaryOp::Not => Some(Type::Named("Boolean".to_string())),
                 UnaryOp::Neg => self.infer_expr_source_type_with_bindings(&unary.expr, bindings),
             },
-            Expr::Cast(cast) => Some(cast.target.clone()),
-            Expr::Binary(binary) => self.infer_binary_source_type_with_bindings(binary, bindings),
-            Expr::Call(call) => {
-                if let Expr::Ident(name) = call.function.as_ref() {
+            ExprKind::Cast(cast) => Some(cast.target.clone()),
+            ExprKind::Binary(binary) => {
+                self.infer_binary_source_type_with_bindings(binary, bindings)
+            }
+            ExprKind::Call(call) => {
+                if let ExprKind::Ident(name) = &call.function.kind {
                     let arg_exprs = call.args.iter().map(|arg| arg.as_ref()).collect::<Vec<_>>();
                     if self.can_infer_named_function_call_source_type(
                         name,
@@ -11225,14 +11242,14 @@ impl WasmCodeGen {
                     None
                 }
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 let arg_ty = self.infer_expr_source_type_with_bindings(&pipe.expr, bindings)?;
                 match &pipe.target {
                     PipeTarget::Ident(name) => {
                         self.infer_named_callable_return_source_type(name, &[arg_ty])
                     }
                     PipeTarget::Expr(target) => {
-                        if let Expr::Ident(name) = target.as_ref() {
+                        if let ExprKind::Ident(name) = &target.kind {
                             self.infer_named_callable_return_source_type(name, &[arg_ty])
                         } else {
                             None
@@ -11240,12 +11257,12 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Then(then) => self.infer_then_source_type_with_bindings(then, bindings),
-            Expr::Match(match_expr) => {
+            ExprKind::Then(then) => self.infer_then_source_type_with_bindings(then, bindings),
+            ExprKind::Match(match_expr) => {
                 self.infer_match_source_type_with_bindings(match_expr, bindings)
             }
-            Expr::Block(block) => self.infer_block_source_type_with_bindings(block, bindings),
-            Expr::With(with) => {
+            ExprKind::Block(block) => self.infer_block_source_type_with_bindings(block, bindings),
+            ExprKind::With(with) => {
                 let nested_bindings = self.context_source_bindings(with, bindings);
                 self.infer_block_source_type_with_bindings(&with.body, &nested_bindings)
             }
@@ -11625,9 +11642,9 @@ impl WasmCodeGen {
             return self.convert_type(&source_ty);
         }
 
-        let record_name = match object {
-            Expr::Ident(name) => self.var_types.get(name),
-            Expr::RecordLit(record) => Some(&record.name),
+        let record_name = match &object.kind {
+            ExprKind::Ident(name) => self.var_types.get(name),
+            ExprKind::RecordLit(record) => Some(&record.name),
             _ => None,
         };
 
@@ -11914,9 +11931,9 @@ impl WasmCodeGen {
     }
 
     fn is_deferred_callable_expr(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Lambda(_) => true,
-            Expr::Then(then) => {
+        match &expr.kind {
+            ExprKind::Lambda(_) => true,
+            ExprKind::Then(then) => {
                 self.expr_is_replay_safe_for_deferred_callable(&then.condition)
                     && then.else_ifs.iter().all(|(condition, block)| {
                         self.expr_is_replay_safe_for_deferred_callable(condition)
@@ -11933,7 +11950,7 @@ impl WasmCodeGen {
                         self.block_result_is_deferred_callable_with_bindings(block, &HashMap::new())
                     })
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 let scrutinee_ty = self.infer_expr_source_type(&match_expr.expr);
                 self.expr_is_replay_safe_for_deferred_callable(&match_expr.expr)
                     && !match_expr.arms.is_empty()
@@ -12008,13 +12025,13 @@ impl WasmCodeGen {
     }
 
     fn block_terminal_lambda<'a>(&self, block: &'a BlockExpr) -> Option<&'a LambdaExpr> {
-        if let Some(Expr::Lambda(lambda)) = block.expr.as_deref() {
+        if let Some(ExprKind::Lambda(lambda)) = block.expr.as_deref().map(|e| &e.kind) {
             return Some(lambda);
         }
 
         match block.statements.last() {
-            Some(Stmt::Expr(expr)) => match expr.as_ref() {
-                Expr::Lambda(lambda) => Some(lambda),
+            Some(Stmt::Expr(expr)) => match &expr.kind {
+                ExprKind::Lambda(lambda) => Some(lambda),
                 _ => None,
             },
             _ => None,
@@ -12024,7 +12041,7 @@ impl WasmCodeGen {
     fn deferred_callable_prefix_statements<'a>(&self, block: &'a BlockExpr) -> &'a [Stmt] {
         if block.expr.is_some() {
             &block.statements
-        } else if matches!(block.statements.last(), Some(Stmt::Expr(expr)) if matches!(expr.as_ref(), Expr::Lambda(_)))
+        } else if matches!(block.statements.last(), Some(Stmt::Expr(expr)) if matches!(&expr.kind, ExprKind::Lambda(_)))
         {
             &block.statements[..block.statements.len() - 1]
         } else {
@@ -12041,40 +12058,42 @@ impl WasmCodeGen {
         expr: &Expr,
         bindings: &HashMap<String, Type>,
     ) -> bool {
-        match expr {
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::None => true,
-            Expr::Ident(name) => bindings
+        match &expr.kind {
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::None => true,
+            ExprKind::Ident(name) => bindings
                 .get(name)
                 .cloned()
                 .or_else(|| self.lookup_local_source_type(name))
                 .as_ref()
                 .is_some_and(Self::is_copyable_source_type),
-            Expr::Binary(binary) => {
+            ExprKind::Binary(binary) => {
                 self.expr_is_replay_safe_for_deferred_callable_with_bindings(&binary.left, bindings)
                     && self.expr_is_replay_safe_for_deferred_callable_with_bindings(
                         &binary.right,
                         bindings,
                     )
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 self.expr_is_replay_safe_for_deferred_callable_with_bindings(&unary.expr, bindings)
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 self.expr_is_replay_safe_for_deferred_callable_with_bindings(&cast.expr, bindings)
             }
-            Expr::Some(inner) | Expr::Ok(inner) | Expr::Err(inner) => {
+            ExprKind::Some(inner) | ExprKind::Ok(inner) | ExprKind::Err(inner) => {
                 self.expr_is_replay_safe_for_deferred_callable_with_bindings(inner, bindings)
             }
-            Expr::ListLit(elements) | Expr::ArrayLit(elements) => elements.iter().all(|element| {
-                self.expr_is_replay_safe_for_deferred_callable_with_bindings(element, bindings)
-            }),
-            Expr::RangeLit(range) => {
+            ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
+                elements.iter().all(|element| {
+                    self.expr_is_replay_safe_for_deferred_callable_with_bindings(element, bindings)
+                })
+            }
+            ExprKind::RangeLit(range) => {
                 self.expr_is_replay_safe_for_deferred_callable_with_bindings(&range.start, bindings)
                     && self.expr_is_replay_safe_for_deferred_callable_with_bindings(
                         &range.end, bindings,
@@ -12106,7 +12125,7 @@ impl WasmCodeGen {
     }
 
     fn generic_function_alias_target(&self, expr: &Expr) -> Option<String> {
-        let Expr::Ident(name) = expr else {
+        let ExprKind::Ident(name) = &expr.kind else {
             return None;
         };
 
@@ -12267,7 +12286,7 @@ impl WasmCodeGen {
         later_statements: &[Stmt],
         final_expr: Option<&Expr>,
     ) -> Option<Type> {
-        let Expr::ListLit(items) = value else {
+        let ExprKind::ListLit(items) = &value.kind else {
             return None;
         };
 
@@ -12367,7 +12386,7 @@ impl WasmCodeGen {
         let mut found_array_use = false;
         let mut elem_ty = None;
 
-        if let Expr::Call(call) = expr {
+        if let ExprKind::Call(call) = &expr.kind {
             Self::merge_array_use(
                 &mut found_array_use,
                 &mut elem_ty,
@@ -12375,8 +12394,8 @@ impl WasmCodeGen {
             );
         }
 
-        match expr {
-            Expr::Call(call) => {
+        match &expr.kind {
+            ExprKind::Call(call) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12390,7 +12409,7 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::Binary(binary) => {
+            ExprKind::Binary(binary) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12402,21 +12421,21 @@ impl WasmCodeGen {
                     self.find_array_use_for_ident_in_expr(name, &binary.right),
                 );
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
                     self.find_array_use_for_ident_in_expr(name, &unary.expr),
                 );
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
                     self.find_array_use_for_ident_in_expr(name, &cast.expr),
                 );
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12430,14 +12449,14 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
                     self.find_array_use_for_ident_in_block(name, block),
                 );
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12468,7 +12487,7 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12480,7 +12499,7 @@ impl WasmCodeGen {
                     self.find_array_use_for_ident_in_block(name, &while_expr.body),
                 );
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12496,7 +12515,7 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::With(with_expr) => {
+            ExprKind::With(with_expr) => {
                 let mut shadows_body = false;
                 for binding in &with_expr.bindings {
                     match binding {
@@ -12528,14 +12547,14 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
                     self.find_array_use_for_ident_in_block(name, &with_lifetime.body),
                 );
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 if !lambda.params.iter().any(|param| param.name == name) {
                     Self::merge_array_use(
                         &mut found_array_use,
@@ -12544,7 +12563,7 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::RecordLit(record) => {
+            ExprKind::RecordLit(record) => {
                 for field in &record.fields {
                     let value = match field {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => value,
@@ -12556,7 +12575,7 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::Clone(clone) => {
+            ExprKind::Clone(clone) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12573,7 +12592,7 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::PrototypeClone(prototype) => {
+            ExprKind::PrototypeClone(prototype) => {
                 for field in &prototype.updates.fields {
                     let value = match field {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => value,
@@ -12585,20 +12604,20 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::Freeze(inner)
-            | Expr::Some(inner)
-            | Expr::Ok(inner)
-            | Expr::Err(inner)
-            | Expr::Await(inner)
-            | Expr::Spawn(inner)
-            | Expr::FieldAccess(inner, _) => {
+            ExprKind::Freeze(inner)
+            | ExprKind::Some(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner)
+            | ExprKind::Await(inner)
+            | ExprKind::Spawn(inner)
+            | ExprKind::FieldAccess(inner, _) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
                     self.find_array_use_for_ident_in_expr(name, inner),
                 );
             }
-            Expr::ListLit(elements) | Expr::ArrayLit(elements) => {
+            ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
                 for element in elements {
                     Self::merge_array_use(
                         &mut found_array_use,
@@ -12607,7 +12626,7 @@ impl WasmCodeGen {
                     );
                 }
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -12619,27 +12638,27 @@ impl WasmCodeGen {
                     self.find_array_use_for_ident_in_expr(name, &range.end),
                 );
             }
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::Ident(_)
-            | Expr::None => {}
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::Ident(_)
+            | ExprKind::None => {}
         }
 
         (found_array_use, elem_ty)
     }
 
     fn direct_array_use_for_ident(&self, name: &str, call: &CallExpr) -> (bool, Option<Type>) {
-        let Expr::Ident(func_name) = call.function.as_ref() else {
+        let ExprKind::Ident(func_name) = &call.function.kind else {
             return (false, None);
         };
         if !matches!(func_name.as_str(), "array_get" | "array_set") {
             return (false, None);
         }
-        let Some(Expr::Ident(arg_name)) = call.args.first().map(|arg| arg.as_ref()) else {
+        let Some(ExprKind::Ident(arg_name)) = call.args.first().map(|arg| &arg.kind) else {
             return (false, None);
         };
         if arg_name != name {
@@ -12776,8 +12795,8 @@ impl WasmCodeGen {
     }
 
     fn expr_leaves_value(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Pipe(pipe) => {
+        match &expr.kind {
+            ExprKind::Pipe(pipe) => {
                 match &pipe.target {
                     PipeTarget::Ident(name) => {
                         if name == "println" && self.current_function == Some("main".to_string()) {
@@ -12793,7 +12812,7 @@ impl WasmCodeGen {
                         }
                     }
                     PipeTarget::Expr(target_expr) => {
-                        if let Expr::Ident(func_name) = &**target_expr {
+                        if let ExprKind::Ident(func_name) = &target_expr.kind {
                             if let Some(sig) = self.functions.get(func_name) {
                                 sig.result.is_some()
                                     || self.current_function != Some("main".to_string())
@@ -12806,8 +12825,8 @@ impl WasmCodeGen {
                     }
                 }
             }
-            Expr::Call(call) => {
-                if let Expr::Ident(func_name) = &*call.function {
+            ExprKind::Call(call) => {
+                if let ExprKind::Ident(func_name) = &call.function.kind {
                     if let Some(sig) = self.functions.get(func_name) {
                         sig.result.is_some()
                     } else {
@@ -12831,9 +12850,9 @@ impl WasmCodeGen {
             return false;
         }
 
-        match expr {
-            Expr::Call(call) => {
-                if let Expr::Ident(func_name) = call.function.as_ref() {
+        match &expr.kind {
+            ExprKind::Call(call) => {
+                if let ExprKind::Ident(func_name) = &call.function.kind {
                     if self.functions.contains_key(func_name) {
                         let target_name = self.resolve_builtin_abi_function(func_name, &call.args);
                         return self
@@ -12848,13 +12867,13 @@ impl WasmCodeGen {
                 }
                 false
             }
-            Expr::Pipe(pipe) => match &pipe.target {
+            ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(name) => self
                     .functions
                     .get(name)
                     .is_some_and(|sig| sig.result.is_none()),
                 PipeTarget::Expr(target) => {
-                    if let Expr::Ident(name) = target.as_ref() {
+                    if let ExprKind::Ident(name) = &target.kind {
                         self.functions
                             .get(name)
                             .is_some_and(|sig| sig.result.is_none())
@@ -12892,8 +12911,8 @@ impl WasmCodeGen {
     }
 
     fn max_record_tmp_depth_in_expr(expr: &Expr) -> usize {
-        match expr {
-            Expr::RecordLit(record) => {
+        match &expr.kind {
+            ExprKind::RecordLit(record) => {
                 1 + record
                     .fields
                     .iter()
@@ -12901,15 +12920,15 @@ impl WasmCodeGen {
                     .max()
                     .unwrap_or(0)
             }
-            Expr::Clone(clone) => Self::max_record_tmp_depth_in_expr(&clone.base)
+            ExprKind::Clone(clone) => Self::max_record_tmp_depth_in_expr(&clone.base)
                 .max(Self::max_record_tmp_depth_in_record_lit(&clone.updates)),
-            Expr::Freeze(inner)
-            | Expr::Await(inner)
-            | Expr::Spawn(inner)
-            | Expr::Some(inner)
-            | Expr::Ok(inner)
-            | Expr::Err(inner) => Self::max_record_tmp_depth_in_expr(inner),
-            Expr::Then(then) => {
+            ExprKind::Freeze(inner)
+            | ExprKind::Await(inner)
+            | ExprKind::Spawn(inner)
+            | ExprKind::Some(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner) => Self::max_record_tmp_depth_in_expr(inner),
+            ExprKind::Then(then) => {
                 let else_if_depth = then
                     .else_ifs
                     .iter()
@@ -12929,9 +12948,11 @@ impl WasmCodeGen {
                             .unwrap_or(0),
                     )
             }
-            Expr::While(while_expr) => Self::max_record_tmp_depth_in_expr(&while_expr.condition)
-                .max(Self::max_record_tmp_depth_in_block(&while_expr.body)),
-            Expr::Match(match_expr) => {
+            ExprKind::While(while_expr) => {
+                Self::max_record_tmp_depth_in_expr(&while_expr.condition)
+                    .max(Self::max_record_tmp_depth_in_block(&while_expr.body))
+            }
+            ExprKind::Match(match_expr) => {
                 let arm_depth = match_expr
                     .arms
                     .iter()
@@ -12943,7 +12964,7 @@ impl WasmCodeGen {
                     .unwrap_or(0);
                 Self::max_record_tmp_depth_in_expr(&match_expr.expr).max(arm_depth)
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 let arg_depth = call
                     .args
                     .iter()
@@ -12952,18 +12973,18 @@ impl WasmCodeGen {
                     .unwrap_or(0);
                 Self::max_record_tmp_depth_in_expr(&call.function).max(arg_depth)
             }
-            Expr::Binary(binary) => Self::max_record_tmp_depth_in_expr(&binary.left)
+            ExprKind::Binary(binary) => Self::max_record_tmp_depth_in_expr(&binary.left)
                 .max(Self::max_record_tmp_depth_in_expr(&binary.right)),
-            Expr::Unary(unary) => Self::max_record_tmp_depth_in_expr(&unary.expr),
-            Expr::Cast(cast) => Self::max_record_tmp_depth_in_expr(&cast.expr),
-            Expr::Pipe(pipe) => {
+            ExprKind::Unary(unary) => Self::max_record_tmp_depth_in_expr(&unary.expr),
+            ExprKind::Cast(cast) => Self::max_record_tmp_depth_in_expr(&cast.expr),
+            ExprKind::Pipe(pipe) => {
                 let target_depth = match &pipe.target {
                     PipeTarget::Ident(_) => 0,
                     PipeTarget::Expr(target) => Self::max_record_tmp_depth_in_expr(target),
                 };
                 Self::max_record_tmp_depth_in_expr(&pipe.expr).max(target_depth)
             }
-            Expr::With(with) => {
+            ExprKind::With(with) => {
                 let binding_depth = with
                     .bindings
                     .iter()
@@ -12972,30 +12993,30 @@ impl WasmCodeGen {
                     .unwrap_or(0);
                 binding_depth.max(Self::max_record_tmp_depth_in_block(&with.body))
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 Self::max_record_tmp_depth_in_block(&with_lifetime.body)
             }
-            Expr::Block(block) => Self::max_record_tmp_depth_in_block(block),
-            Expr::FieldAccess(object, _) => Self::max_record_tmp_depth_in_expr(object),
-            Expr::ListLit(items) | Expr::ArrayLit(items) => items
+            ExprKind::Block(block) => Self::max_record_tmp_depth_in_block(block),
+            ExprKind::FieldAccess(object, _) => Self::max_record_tmp_depth_in_expr(object),
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => items
                 .iter()
                 .map(|item| Self::max_record_tmp_depth_in_expr(item))
                 .max()
                 .unwrap_or(0),
-            Expr::RangeLit(range) => Self::max_record_tmp_depth_in_expr(&range.start)
+            ExprKind::RangeLit(range) => Self::max_record_tmp_depth_in_expr(&range.start)
                 .max(Self::max_record_tmp_depth_in_expr(&range.end)),
-            Expr::Lambda(lambda) => Self::max_record_tmp_depth_in_expr(&lambda.body),
-            Expr::PrototypeClone(proto_clone) => {
+            ExprKind::Lambda(lambda) => Self::max_record_tmp_depth_in_expr(&lambda.body),
+            ExprKind::PrototypeClone(proto_clone) => {
                 Self::max_record_tmp_depth_in_record_lit(&proto_clone.updates)
             }
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::Ident(_)
-            | Expr::None => 0,
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::Ident(_)
+            | ExprKind::None => 0,
         }
     }
 
@@ -13229,11 +13250,11 @@ impl WasmCodeGen {
         locals: &mut Vec<(String, WasmType)>,
         expected_source: Option<&Type>,
     ) -> Result<(), CodeGenError> {
-        match expr {
-            Expr::Block(block) => {
+        match &expr.kind {
+            ExprKind::Block(block) => {
                 self.collect_locals_from_block_with_expected(block, locals, expected_source)?;
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 let scrutinee_source_ty = self.infer_expr_source_type(&match_expr.expr);
                 let scrutinee_wasm_ty = if let Some(source_ty) = &scrutinee_source_ty {
                     self.convert_type(source_ty)?
@@ -13279,7 +13300,7 @@ impl WasmCodeGen {
                     self.pop_scope();
                 }
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 self.collect_locals_from_block_with_expected(
                     &then.then_block,
                     locals,
@@ -13292,10 +13313,10 @@ impl WasmCodeGen {
                     self.collect_locals_from_block_with_expected(block, locals, expected_source)?;
                 }
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 self.collect_locals_from_block(&while_expr.body, locals)?;
             }
-            Expr::With(with) => {
+            ExprKind::With(with) => {
                 let mut scoped_bindings = Vec::new();
                 for binding in &with.bindings {
                     match binding {
@@ -13335,14 +13356,14 @@ impl WasmCodeGen {
                 self.pop_scope();
                 result?;
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 self.collect_locals_from_block(&with_lifetime.body, locals)?;
             }
-            Expr::Lambda(_) => {
+            ExprKind::Lambda(_) => {
                 // Lambda bodies are emitted as separate functions, so their locals
                 // must not leak into the enclosing function's declaration list.
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 for arg in &call.args {
                     self.collect_locals_from_expr(arg, locals)?;
                 }
@@ -13367,7 +13388,7 @@ impl WasmCodeGen {
                     expected_function_source.as_ref(),
                 )?;
             }
-            Expr::Pipe(pipe) => match &pipe.target {
+            ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(name) => {
                     let source_param = if name == "identity" {
                         None
@@ -13384,7 +13405,7 @@ impl WasmCodeGen {
                                 .cloned()
                         })
                     } else if self.lookup_local(name).is_some() {
-                        let target = Expr::Ident(name.clone());
+                        let target = Expr::new(ExprKind::Ident(name.clone()));
                         self.infer_expr_source_type_for_abi(&pipe.expr)
                             .ok()
                             .and_then(|arg_source_ty| {
@@ -13432,17 +13453,17 @@ impl WasmCodeGen {
                     )?;
                 }
             },
-            Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
+            ExprKind::Ok(inner) | ExprKind::Err(inner) | ExprKind::Some(inner) => {
                 self.collect_locals_from_expr(inner, locals)?;
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 self.collect_locals_from_expr(&range.start, locals)?;
                 self.collect_locals_from_expr(&range.end, locals)?;
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 self.collect_locals_from_expr(&unary.expr, locals)?;
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 self.collect_locals_from_expr(&cast.expr, locals)?;
             }
             _ => {}
@@ -13496,7 +13517,7 @@ impl WasmCodeGen {
                     }
                 } else if self.lookup_local(name).is_some() {
                     // Function value stored in a local: expr |> f
-                    let target = Expr::Ident(name.clone());
+                    let target = Expr::new(ExprKind::Ident(name.clone()));
                     let arg_source_ty = self.infer_expr_source_type_for_abi(&pipe.expr)?;
                     let abi = self.callable_abi_for_arg_sources(&target, &[arg_source_ty])?;
                     let source_param = abi.source_params.first().ok_or_else(|| {
@@ -13518,8 +13539,8 @@ impl WasmCodeGen {
             }
             PipeTarget::Expr(target_expr) => {
                 // This is a complex expression
-                match &**target_expr {
-                    Expr::Ident(func_name) => {
+                match &target_expr.kind {
+                    ExprKind::Ident(func_name) => {
                         // Single argument function call
                         if func_name == "identity" {
                             // identity is a no-op in the value pipeline.
@@ -13551,7 +13572,7 @@ impl WasmCodeGen {
                                 }
                             }
                         } else if self.lookup_local(func_name).is_some() {
-                            let target = Expr::Ident(func_name.clone());
+                            let target = Expr::new(ExprKind::Ident(func_name.clone()));
                             let arg_source_ty = self.infer_expr_source_type_for_abi(&pipe.expr)?;
                             let abi =
                                 self.callable_abi_for_arg_sources(&target, &[arg_source_ty])?;
@@ -15147,12 +15168,12 @@ impl WasmCodeGen {
         }
 
         // Fall back to simple inference
-        match expr {
-            Expr::RecordLit(record) => {
+        match &expr.kind {
+            ExprKind::RecordLit(record) => {
                 // Try to infer from record name if available
                 Some(record.name.clone())
             }
-            Expr::Ident(name) => {
+            ExprKind::Ident(name) => {
                 if let Some(Type::Named(type_name)) = self.lookup_local_source_type(name) {
                     if self.records.contains_key(&type_name) {
                         return Some(type_name);

@@ -312,12 +312,56 @@ pub struct BindDecl {
     pub value: Box<Expr>,
 }
 
-/// Expression nodes in the AST.
+/// Stable identity of an expression node within one `Program`.
+///
+/// Ids are assigned as a dense pre-order numbering over the program
+/// structure, so they do not depend on allocation addresses. Cloning an
+/// expression keeps its id: facts recorded for a node therefore stay
+/// valid for clones of the same numbered program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeId(pub u32);
+
+impl NodeId {
+    /// Placeholder for nodes that have not been numbered yet: parser
+    /// output before numbering and nodes synthesized during desugaring.
+    pub const DUMMY: NodeId = NodeId(u32::MAX);
+}
+
+/// Expression node: a stable id plus the expression variant.
+///
+/// Node ids are identity metadata, not structure. `PartialEq` therefore
+/// compares only `kind`, so structural AST comparisons (e.g. parser
+/// tests) are independent of numbering state.
+#[derive(Debug, Clone)]
+pub struct Expr {
+    /// Stable node id (`NodeId::DUMMY` until numbering)
+    pub id: NodeId,
+    /// The expression variant
+    pub kind: ExprKind,
+}
+
+impl Expr {
+    /// Construct an unnumbered expression node.
+    pub fn new(kind: ExprKind) -> Self {
+        Expr {
+            id: NodeId::DUMMY,
+            kind,
+        }
+    }
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+/// Expression variants in the AST.
 ///
 /// Expressions are the core computational elements of Restrict Language.
 /// They follow the affine type system where each value can be used at most once.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub enum ExprKind {
     // Literals
     /// Integer literal (e.g., `42`, `0xFF`, `0b1010`)
     IntLit(i64),

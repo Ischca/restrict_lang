@@ -721,23 +721,23 @@ fn lowering_invariant_violation(message: String) -> IrBuildError {
 
 fn is_literal_expr(expr: &Expr) -> bool {
     matches!(
-        expr,
-        Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::ListLit(_)
-            | Expr::ArrayLit(_)
-            | Expr::None
+        &expr.kind,
+        ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::ListLit(_)
+            | ExprKind::ArrayLit(_)
+            | ExprKind::None
     )
 }
 
 fn callee_hint(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Ident(name) => Some(name.clone()),
-        Expr::FieldAccess(_, field) => Some(field.clone()),
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::FieldAccess(_, field) => Some(field.clone()),
         _ => None,
     }
 }

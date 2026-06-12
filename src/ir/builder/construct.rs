@@ -230,8 +230,8 @@ impl<'a> CheckedIrBuilder<'a> {
     ) -> Result<Option<ValueId>, IrBuildError> {
         let mut apply = None;
 
-        match expr {
-            Expr::Call(call) => {
+        match &expr.kind {
+            ExprKind::Call(call) => {
                 let mut args = Vec::new();
                 for arg in &call.args {
                     let value = self
@@ -247,7 +247,7 @@ impl<'a> CheckedIrBuilder<'a> {
                     apply: self.make_call_apply(call, callee, args)?,
                 });
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 let object = self.push_typed_exprs_from_expr(&pipe.expr, exprs, sites, bindings)?;
                 match &pipe.target {
                     PipeTarget::Expr(target) => {
@@ -273,32 +273,32 @@ impl<'a> CheckedIrBuilder<'a> {
                     }
                 }
             }
-            Expr::RecordLit(record) => {
+            ExprKind::RecordLit(record) => {
                 for field in &record.fields {
                     self.push_typed_exprs_from_field_init(field, exprs, sites, bindings)?;
                 }
             }
-            Expr::Clone(clone) => {
+            ExprKind::Clone(clone) => {
                 self.push_typed_exprs_from_expr(&clone.base, exprs, sites, bindings)?;
                 for field in &clone.updates.fields {
                     self.push_typed_exprs_from_field_init(field, exprs, sites, bindings)?;
                 }
             }
-            Expr::Freeze(inner)
-            | Expr::Await(inner)
-            | Expr::Spawn(inner)
-            | Expr::Some(inner)
-            | Expr::Ok(inner)
-            | Expr::Err(inner)
-            | Expr::FieldAccess(inner, _) => {
+            ExprKind::Freeze(inner)
+            | ExprKind::Await(inner)
+            | ExprKind::Spawn(inner)
+            | ExprKind::Some(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner)
+            | ExprKind::FieldAccess(inner, _) => {
                 self.push_typed_exprs_from_expr(inner, exprs, sites, bindings)?;
             }
-            Expr::PrototypeClone(clone) => {
+            ExprKind::PrototypeClone(clone) => {
                 for field in &clone.updates.fields {
                     self.push_typed_exprs_from_field_init(field, exprs, sites, bindings)?;
                 }
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 self.push_typed_exprs_from_expr(&then.condition, exprs, sites, bindings)?;
                 self.push_typed_exprs_from_block(&then.then_block, exprs, sites, bindings)?;
                 for (condition, block) in &then.else_ifs {
@@ -309,58 +309,58 @@ impl<'a> CheckedIrBuilder<'a> {
                     self.push_typed_exprs_from_block(block, exprs, sites, bindings)?;
                 }
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 self.push_typed_exprs_from_expr(&while_expr.condition, exprs, sites, bindings)?;
                 self.push_typed_exprs_from_block(&while_expr.body, exprs, sites, bindings)?;
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 self.push_typed_exprs_from_expr(&match_expr.expr, exprs, sites, bindings)?;
                 for arm in &match_expr.arms {
                     self.push_typed_exprs_from_block(&arm.body, exprs, sites, bindings)?;
                 }
             }
-            Expr::Binary(binary) => {
+            ExprKind::Binary(binary) => {
                 self.push_typed_exprs_from_expr(&binary.left, exprs, sites, bindings)?;
                 self.push_typed_exprs_from_expr(&binary.right, exprs, sites, bindings)?;
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 self.push_typed_exprs_from_expr(&unary.expr, exprs, sites, bindings)?;
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 self.push_typed_exprs_from_expr(&cast.expr, exprs, sites, bindings)?;
             }
-            Expr::With(with) => {
+            ExprKind::With(with) => {
                 for binding in &with.bindings {
                     self.push_typed_exprs_from_field_init(binding, exprs, sites, bindings)?;
                 }
                 self.push_typed_exprs_from_block(&with.body, exprs, sites, bindings)?;
             }
-            Expr::WithLifetime(with) => {
+            ExprKind::WithLifetime(with) => {
                 self.push_typed_exprs_from_block(&with.body, exprs, sites, bindings)?;
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.push_typed_exprs_from_block(block, exprs, sites, bindings)?;
             }
-            Expr::ListLit(items) | Expr::ArrayLit(items) => {
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
                 for item in items {
                     self.push_typed_exprs_from_expr(item, exprs, sites, bindings)?;
                 }
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 self.push_typed_exprs_from_expr(&range.start, exprs, sites, bindings)?;
                 self.push_typed_exprs_from_expr(&range.end, exprs, sites, bindings)?;
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 self.push_typed_exprs_from_expr(&lambda.body, exprs, sites, bindings)?;
             }
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::Ident(_)
-            | Expr::None => {}
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::Ident(_)
+            | ExprKind::None => {}
         }
 
         if let Some(typed_expr) = self.build_typed_expr_skeleton(expr, apply, sites)? {
@@ -425,7 +425,7 @@ impl<'a> CheckedIrBuilder<'a> {
                 let value = self.next_value();
                 let kind = if is_literal_expr(expr) {
                     TypedExprKind::Literal
-                } else if let Expr::Ident(name) = expr {
+                } else if let ExprKind::Ident(name) = &expr.kind {
                     self.lookup_binding(name)
                         .map(TypedExprKind::Binding)
                         .unwrap_or(TypedExprKind::Value(value))
@@ -472,11 +472,11 @@ impl<'a> CheckedIrBuilder<'a> {
         callee: ValueId,
         args: Vec<ValueId>,
     ) -> Result<ApplyIr, IrBuildError> {
-        let flavor = match call.function.as_ref() {
-            Expr::Lambda(_) => ApplyFlavor::ImmediateLambda,
-            Expr::FieldAccess(_, _) => ApplyFlavor::MethodResolution,
-            Expr::Ident(_) if call.args.is_empty() => ApplyFlavor::UnitCall,
-            Expr::Ident(_) => ApplyFlavor::TupleCall,
+        let flavor = match &call.function.kind {
+            ExprKind::Lambda(_) => ApplyFlavor::ImmediateLambda,
+            ExprKind::FieldAccess(_, _) => ApplyFlavor::MethodResolution,
+            ExprKind::Ident(_) if call.args.is_empty() => ApplyFlavor::UnitCall,
+            ExprKind::Ident(_) => ApplyFlavor::TupleCall,
             _ => ApplyFlavor::FunctionValue,
         };
         let callee_provenance = self.callee_provenance_for_expr(call.function.as_ref())?;
@@ -534,8 +534,8 @@ impl<'a> CheckedIrBuilder<'a> {
         &mut self,
         expr: &Expr,
     ) -> Result<CalleeProvenance, IrBuildError> {
-        match expr {
-            Expr::Ident(name) => Ok(self
+        match &expr.kind {
+            ExprKind::Ident(name) => Ok(self
                 .top_level_callee_provenance(name)?
                 .unwrap_or(CalleeProvenance::Value)),
             _ => Ok(CalleeProvenance::Value),
@@ -693,7 +693,7 @@ mod tests {
             mutable: false,
             pattern: Pattern::Some(Box::new(Pattern::Ident("alias".to_string()))),
             type_annotation: None,
-            value: Box::new(Expr::None),
+            value: Box::new(Expr::new(ExprKind::None)),
         };
         builder
             .register_local_binding(&binding, None, &[], &mut bindings)

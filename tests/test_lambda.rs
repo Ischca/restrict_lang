@@ -27,15 +27,15 @@ fn test_simple_lambda() {
                 panic!("Expected simple identifier pattern");
             }
             assert!(!bind.mutable);
-            match &*bind.value {
-                Expr::Lambda(lambda) => {
+            match &bind.value.kind {
+                ExprKind::Lambda(lambda) => {
                     assert_lambda_params(lambda, &["x"]);
                     // Check body is x + 1
-                    match &*lambda.body {
-                        Expr::Binary(bin) => {
-                            assert!(matches!(&*bin.left, Expr::Ident(s) if s == "x"));
+                    match &lambda.body.kind {
+                        ExprKind::Binary(bin) => {
+                            assert!(matches!(&bin.left.kind, ExprKind::Ident(s) if s == "x"));
                             assert!(matches!(bin.op, BinaryOp::Add));
-                            assert!(matches!(&*bin.right, Expr::IntLit(1)));
+                            assert!(matches!(&bin.right.kind, ExprKind::IntLit(1)));
                         }
                         _ => panic!("Expected binary expression in lambda body"),
                     }
@@ -53,8 +53,8 @@ fn test_lambda_multiple_params() {
     let (_, program) = parse_program(input).unwrap();
 
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => match &*bind.value {
-            Expr::Lambda(lambda) => {
+        TopDecl::Binding(bind) => match &bind.value.kind {
+            ExprKind::Lambda(lambda) => {
                 assert_lambda_params(lambda, &["x", "y"]);
             }
             _ => panic!("Expected lambda expression"),
@@ -69,10 +69,10 @@ fn test_lambda_no_params() {
     let (_, program) = parse_program(input).unwrap();
 
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => match &*bind.value {
-            Expr::Lambda(lambda) => {
+        TopDecl::Binding(bind) => match &bind.value.kind {
+            ExprKind::Lambda(lambda) => {
                 assert_eq!(lambda.params.len(), 0);
-                assert!(matches!(&*lambda.body, Expr::IntLit(42)));
+                assert!(matches!(&lambda.body.kind, ExprKind::IntLit(42)));
             }
             _ => panic!("Expected lambda expression"),
         },
@@ -86,11 +86,11 @@ fn test_nested_lambda() {
     let (_, program) = parse_program(input).unwrap();
 
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => match &*bind.value {
-            Expr::Lambda(outer) => {
+        TopDecl::Binding(bind) => match &bind.value.kind {
+            ExprKind::Lambda(outer) => {
                 assert_lambda_params(outer, &["x"]);
-                match &*outer.body {
-                    Expr::Lambda(inner) => {
+                match &outer.body.kind {
+                    ExprKind::Lambda(inner) => {
                         assert_lambda_params(inner, &["y"]);
                     }
                     _ => panic!("Expected nested lambda"),
@@ -112,10 +112,10 @@ fn test_lambda_with_block_body() {
     let (_, program) = parse_program(input).unwrap();
 
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => match &*bind.value {
-            Expr::Lambda(lambda) => {
+        TopDecl::Binding(bind) => match &bind.value.kind {
+            ExprKind::Lambda(lambda) => {
                 assert_lambda_params(lambda, &["x"]);
-                assert!(matches!(&*lambda.body, Expr::Block(_)));
+                assert!(matches!(&lambda.body.kind, ExprKind::Block(_)));
             }
             _ => panic!("Expected lambda expression"),
         },
@@ -129,8 +129,8 @@ fn test_lambda_typed_param_records_annotation() {
     let (_, program) = parse_program(input).unwrap();
 
     match &program.declarations[0] {
-        TopDecl::Binding(bind) => match &*bind.value {
-            Expr::Lambda(lambda) => {
+        TopDecl::Binding(bind) => match &bind.value.kind {
+            ExprKind::Lambda(lambda) => {
                 assert_eq!(lambda.params.len(), 1);
                 let param = &lambda.params[0];
                 assert_eq!(param.name, "x");
@@ -189,12 +189,12 @@ fn test_lambda_call_osv_syntax() {
 
     match &program.declarations[0] {
         TopDecl::Binding(bind) => {
-            match &*bind.value {
-                Expr::Call(call) => {
+            match &bind.value.kind {
+                ExprKind::Call(call) => {
                     // In OSV syntax, the function is the lambda and 21 is the argument
-                    assert!(matches!(&*call.function, Expr::Lambda(_)));
+                    assert!(matches!(&call.function.kind, ExprKind::Lambda(_)));
                     assert_eq!(call.args.len(), 1);
-                    assert!(matches!(&*call.args[0], Expr::IntLit(21)));
+                    assert!(matches!(&call.args[0].kind, ExprKind::IntLit(21)));
                 }
                 _ => panic!("Expected call expression"),
             }

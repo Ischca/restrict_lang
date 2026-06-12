@@ -681,8 +681,8 @@ pub struct TypeChecker {
     records: HashMap<String, RecordDef>,
     // Function definitions
     functions: HashMap<String, FunctionDef>,
-    // Checked expression types for the current AST instance.
-    checked_expr_types: HashMap<usize, TypedType>,
+    // Checked expression types, keyed by stable AST node id.
+    checked_expr_types: HashMap<NodeId, TypedType>,
     // Method implementations: record_name -> method_name -> function_def
     methods: HashMap<String, HashMap<String, FunctionDef>>,
     // Functions whose signatures were registered with a provisional return type.
@@ -786,12 +786,14 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Return the finalized type recorded while checking this exact AST node.
+    /// Return the finalized type recorded while checking the node with
+    /// this stable id.
     ///
-    /// The current bridge uses expression pointer identity and is therefore
-    /// valid only after a successful check of the same `Program` instance.
+    /// Facts are keyed by `NodeId`, so they remain valid for any AST that
+    /// carries the same numbering as the checked program: the instance
+    /// itself, clones of it, and re-parses of the same source.
     pub fn checked_expr_type(&self, expr: &Expr) -> Option<TypedType> {
-        self.checked_expr_types.get(&Self::expr_key(expr)).cloned()
+        self.checked_expr_types.get(&expr.id).cloned()
     }
 
     pub fn checked_expr_type_count(&self) -> usize {
@@ -802,16 +804,17 @@ impl TypeChecker {
         self.peek_var_type(name)
     }
 
-    fn expr_key(expr: &Expr) -> usize {
-        expr as *const Expr as usize
-    }
-
     fn record_checked_expr_type(&mut self, expr: &Expr, ty: &TypedType) {
+        if expr.id == NodeId::DUMMY {
+            // Synthesized desugar nodes have no stable identity. Source
+            // subexpressions cloned into desugared forms keep their original
+            // ids, so their facts are recorded under the source node.
+            return;
+        }
         if Self::contains_inference_internal_type(ty) {
             return;
         }
-        self.checked_expr_types
-            .insert(Self::expr_key(expr), ty.clone());
+        self.checked_expr_types.insert(expr.id, ty.clone());
     }
 
     fn range_int32_type() -> TypedType {

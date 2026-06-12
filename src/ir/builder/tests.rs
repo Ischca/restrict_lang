@@ -929,12 +929,10 @@ fun main: () -> List<Int32> = {
 
 #[test]
 fn checked_ir_identity_is_address_stable() {
-    // Step 3 prerequisite. The shadow builder still keys finalized type facts
-    // by AST pointer identity (TypeChecker::expr_key), which is valid only for
-    // one in-memory AST instance. The Checked IR it produces, however, must be
-    // a deterministic function of program *structure*, never of memory
-    // addresses. Parsing the same source twice allocates two disjoint ASTs:
-    // their checked-fact pointer keys are disjoint, yet the built IR - every
+    // Step 3 property. Finalized type facts are keyed by stable NodeId, and
+    // the Checked IR must be a deterministic function of program *structure*,
+    // never of memory addresses. Parsing the same source twice allocates two
+    // disjoint ASTs with identical numbering: the built IR - every
     // ExprId/BindingId/ValueId, layout, and flow fact - must be identical.
     let source = r#"
 fun keep: (items: List<Int32>) -> List<Int32> = {
@@ -959,11 +957,8 @@ fun main: (items: List<Int32>) -> List<Int32> = {
         .check_program(&program_b)
         .expect("source should type-check");
 
-    // Two independently parsed, distinct AST allocations for which the checkers
-    // record the same number of facts. We compare the fact count rather than the
-    // raw pointer keys: those keys leak freed transient-clone Expr addresses from
-    // pipe desugaring, which an allocator may reuse across the two checks. The
-    // real address-independence property is the identical IR asserted below.
+    // Two independently parsed, distinct AST allocations record the same
+    // number of facts under identical NodeId keys.
     assert!(!std::ptr::eq(&program_a, &program_b));
     let fact_count_a = checker_a.checked_expr_type_count();
     let fact_count_b = checker_b.checked_expr_type_count();
@@ -973,12 +968,42 @@ fun main: (items: List<Int32>) -> List<Int32> = {
     let ir_a = build_checked_ir(&program_a, &checker_a).expect("checked IR should build");
     let ir_b = build_checked_ir(&program_b, &checker_b).expect("checked IR should build");
 
-    // ...yet the structural IR is identical: no address leaks into identity.
+    // ...and the structural IR is identical: no address leaks into identity.
     assert_eq!(ir_a, ir_b);
 
     // Identity spaces are densely and deterministically assigned: ExprIds and
     // BindingIds each cover [0, N) exactly once across the whole program.
     assert_dense_identity_space(&ir_a);
+}
+
+#[test]
+fn checked_facts_survive_program_clones() {
+    // The step 3 deliverable: facts are keyed by stable NodeId, not by AST
+    // pointer identity. Building IR from a clone of the checked program must
+    // therefore succeed and produce the identical IR. Under pointer keys this
+    // fails, because every lookup for the clone's reallocated nodes misses.
+    let source = r#"
+fun bump: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: () -> Int32 = {
+    val seed = 41
+    seed |> bump
+}
+"#;
+
+    let (_, program) = parse_program(source).expect("source should parse");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .expect("source should type-check");
+
+    let ir_original = build_checked_ir(&program, &checker).expect("checked IR should build");
+    let ir_clone =
+        build_checked_ir(&program.clone(), &checker).expect("checked IR should build from clone");
+
+    assert_eq!(ir_original, ir_clone);
 }
 
 fn assert_dense_identity_space(ir: &CheckedProgramIr) {

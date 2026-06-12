@@ -189,6 +189,11 @@ impl ModuleResolver {
         program.imports.clear();
         program.declarations = declarations;
 
+        // Imported declarations were numbered per source file (and renaming
+        // rebuilds nodes with dummy ids), so renumber the spliced program to
+        // restore one dense, program-wide NodeId space.
+        crate::ast::assign_node_ids(&mut program);
+
         Ok(program)
     }
 

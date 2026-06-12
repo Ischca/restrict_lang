@@ -927,3 +927,356 @@ pub struct TemporalConstraint {
     /// The outer temporal variable (e.g., ~db)
     pub outer: String,
 }
+
+/// Assign dense pre-order node ids to every expression in the program.
+///
+/// The numbering is a deterministic function of program structure: it
+/// visits declarations in order and expression children in AST
+/// struct-field order, covering `[0, N)` with no gaps. Two structurally
+/// identical programs therefore receive identical ids, which is what
+/// lets recorded per-node facts outlive the AST instance they were
+/// recorded against.
+///
+/// Returns the number of expression nodes numbered.
+pub fn assign_node_ids(program: &mut Program) -> u32 {
+    let mut next = 0u32;
+    for decl in &mut program.declarations {
+        number_top_decl(decl, &mut next);
+    }
+    next
+}
+
+fn number_top_decl(decl: &mut TopDecl, next: &mut u32) {
+    match decl {
+        TopDecl::Function(func) => number_block(&mut func.body, next),
+        TopDecl::Binding(binding) => number_expr(&mut binding.value, next),
+        TopDecl::Impl(impl_block) => {
+            for func in &mut impl_block.functions {
+                number_block(&mut func.body, next);
+            }
+        }
+        TopDecl::Export(export) => number_top_decl(&mut export.item, next),
+        TopDecl::Record(_) | TopDecl::Context(_) => {}
+    }
+}
+
+fn number_block(block: &mut BlockExpr, next: &mut u32) {
+    for stmt in &mut block.statements {
+        match stmt {
+            Stmt::Binding(binding) => number_expr(&mut binding.value, next),
+            Stmt::Assignment(assign) => number_expr(&mut assign.value, next),
+            Stmt::Expr(expr) => number_expr(expr, next),
+        }
+    }
+    if let Some(expr) = &mut block.expr {
+        number_expr(expr, next);
+    }
+}
+
+fn number_field_inits(fields: &mut [FieldInit], next: &mut u32) {
+    for field in fields {
+        match field {
+            FieldInit::Field { value, .. } => number_expr(value, next),
+            FieldInit::Spread(expr) => number_expr(expr, next),
+        }
+    }
+}
+
+fn number_expr(expr: &mut Expr, next: &mut u32) {
+    assert!(
+        *next < u32::MAX,
+        "node id space exhausted while numbering program"
+    );
+    expr.id = NodeId(*next);
+    *next += 1;
+    match &mut expr.kind {
+        ExprKind::RecordLit(record) => number_field_inits(&mut record.fields, next),
+        ExprKind::Clone(clone) => {
+            number_expr(&mut clone.base, next);
+            number_field_inits(&mut clone.updates.fields, next);
+        }
+        ExprKind::PrototypeClone(clone) => number_field_inits(&mut clone.updates.fields, next),
+        ExprKind::Then(then) => {
+            number_expr(&mut then.condition, next);
+            number_block(&mut then.then_block, next);
+            for (condition, block) in &mut then.else_ifs {
+                number_expr(condition, next);
+                number_block(block, next);
+            }
+            if let Some(block) = &mut then.else_block {
+                number_block(block, next);
+            }
+        }
+        ExprKind::While(while_expr) => {
+            number_expr(&mut while_expr.condition, next);
+            number_block(&mut while_expr.body, next);
+        }
+        ExprKind::Match(match_expr) => {
+            number_expr(&mut match_expr.expr, next);
+            for arm in &mut match_expr.arms {
+                number_block(&mut arm.body, next);
+            }
+        }
+        ExprKind::Call(call) => {
+            number_expr(&mut call.function, next);
+            for arg in &mut call.args {
+                number_expr(arg, next);
+            }
+        }
+        ExprKind::Binary(binary) => {
+            number_expr(&mut binary.left, next);
+            number_expr(&mut binary.right, next);
+        }
+        ExprKind::Unary(unary) => number_expr(&mut unary.expr, next),
+        ExprKind::Cast(cast) => number_expr(&mut cast.expr, next),
+        ExprKind::Pipe(pipe) => {
+            number_expr(&mut pipe.expr, next);
+            if let PipeTarget::Expr(target) = &mut pipe.target {
+                number_expr(target, next);
+            }
+        }
+        ExprKind::With(with) => {
+            number_field_inits(&mut with.bindings, next);
+            number_block(&mut with.body, next);
+        }
+        ExprKind::WithLifetime(with) => number_block(&mut with.body, next),
+        ExprKind::Block(block) => number_block(block, next),
+        ExprKind::FieldAccess(inner, _) => number_expr(inner, next),
+        ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+            for item in items {
+                number_expr(item, next);
+            }
+        }
+        ExprKind::RangeLit(range) => {
+            number_expr(&mut range.start, next);
+            number_expr(&mut range.end, next);
+        }
+        ExprKind::Some(inner)
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner)
+        | ExprKind::Freeze(inner)
+        | ExprKind::Await(inner)
+        | ExprKind::Spawn(inner) => number_expr(inner, next),
+        ExprKind::Lambda(lambda) => number_expr(&mut lambda.body, next),
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Unit
+        | ExprKind::Ident(_)
+        | ExprKind::None => {}
+    }
+}
+
+/// Collect every node id in the same deterministic order used by
+/// `assign_node_ids`. Intended for tests and validators.
+pub fn collect_node_ids(program: &Program) -> Vec<NodeId> {
+    let mut ids = Vec::new();
+    for decl in &program.declarations {
+        collect_top_decl_ids(decl, &mut ids);
+    }
+    ids
+}
+
+fn collect_top_decl_ids(decl: &TopDecl, ids: &mut Vec<NodeId>) {
+    match decl {
+        TopDecl::Function(func) => collect_block_ids(&func.body, ids),
+        TopDecl::Binding(binding) => collect_expr_ids(&binding.value, ids),
+        TopDecl::Impl(impl_block) => {
+            for func in &impl_block.functions {
+                collect_block_ids(&func.body, ids);
+            }
+        }
+        TopDecl::Export(export) => collect_top_decl_ids(&export.item, ids),
+        TopDecl::Record(_) | TopDecl::Context(_) => {}
+    }
+}
+
+fn collect_block_ids(block: &BlockExpr, ids: &mut Vec<NodeId>) {
+    for stmt in &block.statements {
+        match stmt {
+            Stmt::Binding(binding) => collect_expr_ids(&binding.value, ids),
+            Stmt::Assignment(assign) => collect_expr_ids(&assign.value, ids),
+            Stmt::Expr(expr) => collect_expr_ids(expr, ids),
+        }
+    }
+    if let Some(expr) = &block.expr {
+        collect_expr_ids(expr, ids);
+    }
+}
+
+fn collect_field_init_ids(fields: &[FieldInit], ids: &mut Vec<NodeId>) {
+    for field in fields {
+        match field {
+            FieldInit::Field { value, .. } => collect_expr_ids(value, ids),
+            FieldInit::Spread(expr) => collect_expr_ids(expr, ids),
+        }
+    }
+}
+
+fn collect_expr_ids(expr: &Expr, ids: &mut Vec<NodeId>) {
+    ids.push(expr.id);
+    match &expr.kind {
+        ExprKind::RecordLit(record) => collect_field_init_ids(&record.fields, ids),
+        ExprKind::Clone(clone) => {
+            collect_expr_ids(&clone.base, ids);
+            collect_field_init_ids(&clone.updates.fields, ids);
+        }
+        ExprKind::PrototypeClone(clone) => collect_field_init_ids(&clone.updates.fields, ids),
+        ExprKind::Then(then) => {
+            collect_expr_ids(&then.condition, ids);
+            collect_block_ids(&then.then_block, ids);
+            for (condition, block) in &then.else_ifs {
+                collect_expr_ids(condition, ids);
+                collect_block_ids(block, ids);
+            }
+            if let Some(block) = &then.else_block {
+                collect_block_ids(block, ids);
+            }
+        }
+        ExprKind::While(while_expr) => {
+            collect_expr_ids(&while_expr.condition, ids);
+            collect_block_ids(&while_expr.body, ids);
+        }
+        ExprKind::Match(match_expr) => {
+            collect_expr_ids(&match_expr.expr, ids);
+            for arm in &match_expr.arms {
+                collect_block_ids(&arm.body, ids);
+            }
+        }
+        ExprKind::Call(call) => {
+            collect_expr_ids(&call.function, ids);
+            for arg in &call.args {
+                collect_expr_ids(arg, ids);
+            }
+        }
+        ExprKind::Binary(binary) => {
+            collect_expr_ids(&binary.left, ids);
+            collect_expr_ids(&binary.right, ids);
+        }
+        ExprKind::Unary(unary) => collect_expr_ids(&unary.expr, ids),
+        ExprKind::Cast(cast) => collect_expr_ids(&cast.expr, ids),
+        ExprKind::Pipe(pipe) => {
+            collect_expr_ids(&pipe.expr, ids);
+            if let PipeTarget::Expr(target) = &pipe.target {
+                collect_expr_ids(target, ids);
+            }
+        }
+        ExprKind::With(with) => {
+            collect_field_init_ids(&with.bindings, ids);
+            collect_block_ids(&with.body, ids);
+        }
+        ExprKind::WithLifetime(with) => collect_block_ids(&with.body, ids),
+        ExprKind::Block(block) => collect_block_ids(block, ids),
+        ExprKind::FieldAccess(inner, _) => collect_expr_ids(inner, ids),
+        ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+            for item in items {
+                collect_expr_ids(item, ids);
+            }
+        }
+        ExprKind::RangeLit(range) => {
+            collect_expr_ids(&range.start, ids);
+            collect_expr_ids(&range.end, ids);
+        }
+        ExprKind::Some(inner)
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner)
+        | ExprKind::Freeze(inner)
+        | ExprKind::Await(inner)
+        | ExprKind::Spawn(inner) => collect_expr_ids(inner, ids),
+        ExprKind::Lambda(lambda) => collect_expr_ids(&lambda.body, ids),
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Unit
+        | ExprKind::Ident(_)
+        | ExprKind::None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse_program;
+
+    // Exercises bindings, records, pipes, match, then/else, while,
+    // ranges, lists, lambdas, casts, and binary operators so the
+    // numbering walk is pinned across expression families.
+    const NUMBERING_SOURCE: &str = r#"
+record Point { x: Int32, y: Int32 }
+
+fun pick: (flag: Boolean) -> Int32 = {
+    flag then {
+        1
+    } else {
+        2
+    }
+}
+
+fun classify: (value: Int32) -> Int32 = {
+    value match {
+        0 => { 10 }
+        _ => { 20 }
+    }
+}
+
+fun main: () -> Int32 = {
+    val p = Point { x: 3, y: 4 }
+    val xs = [1, 2, 3]
+    val r = [1..5]
+    val f = |x| x + 1
+    val casted = 7 as Int64
+    mut val count = 0
+    count = count + 1
+    true |> pick |> classify
+}
+"#;
+
+    fn parsed_program() -> Program {
+        let (rest, program) = parse_program(NUMBERING_SOURCE).expect("source should parse");
+        assert!(rest.trim().is_empty(), "parser left input: {rest:?}");
+        program
+    }
+
+    #[test]
+    fn parse_assigns_dense_preorder_node_ids() {
+        let program = parsed_program();
+        let ids = collect_node_ids(&program);
+
+        assert!(!ids.is_empty());
+        let expected = (0..ids.len() as u32).map(NodeId).collect::<Vec<_>>();
+        assert_eq!(
+            ids, expected,
+            "pre-order collection must see exactly 0..N in order"
+        );
+    }
+
+    #[test]
+    fn reparse_assigns_identical_node_ids() {
+        let first = collect_node_ids(&parsed_program());
+        let second = collect_node_ids(&parsed_program());
+        assert_eq!(
+            first, second,
+            "ids must be a function of structure, not of the AST instance"
+        );
+    }
+
+    #[test]
+    fn clone_preserves_node_ids() {
+        let program = parsed_program();
+        let clone = program.clone();
+        assert_eq!(collect_node_ids(&program), collect_node_ids(&clone));
+    }
+
+    #[test]
+    fn renumbering_is_idempotent() {
+        let mut program = parsed_program();
+        let before = collect_node_ids(&program);
+        let count = assign_node_ids(&mut program);
+        assert_eq!(count as usize, before.len());
+        assert_eq!(before, collect_node_ids(&program));
+    }
+}

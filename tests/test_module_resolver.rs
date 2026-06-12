@@ -1202,3 +1202,39 @@ fun score: (value: Int32) -> Int32 = {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn import_resolution_renumbers_node_ids_densely() {
+    let root = parse_complete(
+        r#"
+import release_math.{bump}
+
+fun main: () -> Int32 = {
+    1 |> bump
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "release_math".to_string(),
+        r#"
+export fun bump: (value: Int32) -> Int32 = {
+    value + 1
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("virtual module import should resolve");
+
+    // Imported declarations were numbered per source file; the spliced
+    // program must come back as one dense, program-wide id space.
+    let ids = restrict_lang::ast::collect_node_ids(&resolved);
+    assert!(!ids.is_empty());
+    let expected = (0..ids.len() as u32)
+        .map(restrict_lang::ast::NodeId)
+        .collect::<Vec<_>>();
+    assert_eq!(ids, expected);
+}

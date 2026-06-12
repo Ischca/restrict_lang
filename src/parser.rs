@@ -1833,13 +1833,15 @@ pub fn parse_program(input: &str) -> ParseResult<'_, Program> {
         }
     }
 
-    Ok((
-        remaining,
-        Program {
-            imports,
-            declarations,
-        },
-    ))
+    let mut program = Program {
+        imports,
+        declarations,
+    };
+    // Number expression nodes once the full program structure is known, so
+    // downstream stages can key per-node facts by stable NodeId.
+    assign_node_ids(&mut program);
+
+    Ok((remaining, program))
 }
 
 #[cfg(test)]

@@ -791,7 +791,11 @@ impl TypeChecker {
     ///
     /// Facts are keyed by `NodeId`, so they remain valid for any AST that
     /// carries the same numbering as the checked program: the instance
-    /// itself, clones of it, and re-parses of the same source.
+    /// itself and clones of it. A plain re-parse of the root source is NOT
+    /// sufficient when the program had imports, because import resolution
+    /// splices imported declarations and renumbers the whole program;
+    /// querying with differently-numbered nodes silently returns facts for
+    /// other nodes.
     pub fn checked_expr_type(&self, expr: &Expr) -> Option<TypedType> {
         self.checked_expr_types.get(&expr.id).cloned()
     }
@@ -7467,14 +7471,14 @@ impl TypeChecker {
                 let function_variable =
                     matches!(self.peek_var_type(name), Some(TypedType::Function { .. }));
                 if self.functions.contains_key(name) || function_variable {
-                    // Pipe to function: expr |> function
+                    // Pipe to function: expr |> function. The desugared call
+                    // checks an id-preserving clone of the pipe object, so its
+                    // facts are recorded directly under the source node ids.
                     let call = CallExpr {
                         function: Box::new(Expr::new(ExprKind::Ident(name.clone()))),
                         args: vec![pipe.expr.clone()],
                     };
-                    let result = self.check_call_expr_with_expected(&call, expected)?;
-                    self.copy_pipe_object_checked_fact(pipe, &call);
-                    Ok(result)
+                    self.check_call_expr_with_expected(&call, expected)
                 } else if matches!(name.as_str(), "some" | "none") {
                     Err(lowercase_option_constructor_error(name))
                 } else {
@@ -7485,22 +7489,14 @@ impl TypeChecker {
                 }
             }
             PipeTarget::Expr(target_expr) => {
-                // Pipe to expression: expr |> (func_expr)
+                // Pipe to expression: expr |> (func_expr). As above, the
+                // cloned object and target keep their ids, so checking the
+                // desugared call records facts under the source nodes.
                 let call = CallExpr {
                     function: target_expr.clone(),
                     args: vec![pipe.expr.clone()],
                 };
-                let result = self.check_call_expr_with_expected(&call, expected)?;
-                self.copy_pipe_object_checked_fact(pipe, &call);
-                Ok(result)
-            }
-        }
-    }
-
-    fn copy_pipe_object_checked_fact(&mut self, pipe: &PipeExpr, call: &CallExpr) {
-        if let Some(arg) = call.args.first() {
-            if let Some(ty) = self.checked_expr_type(arg) {
-                self.record_checked_expr_type(&pipe.expr, &ty);
+                self.check_call_expr_with_expected(&call, expected)
             }
         }
     }

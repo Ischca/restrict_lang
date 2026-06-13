@@ -1214,9 +1214,10 @@ mod tests {
     use super::*;
     use crate::parser::parse_program;
 
-    // Exercises bindings, records, pipes, match, then/else, while,
-    // ranges, lists, lambdas, casts, and binary operators so the
-    // numbering walk is pinned across expression families.
+    // Exercises bindings, records, field access, pipes, match, then/else,
+    // while, ranges, lists, lambdas, casts, unary and binary operators,
+    // and Some/None so the dual numbering/collection walks are pinned
+    // across expression families.
     const NUMBERING_SOURCE: &str = r#"
 record Point { x: Int32, y: Int32 }
 
@@ -1235,15 +1236,26 @@ fun classify: (value: Int32) -> Int32 = {
     }
 }
 
+fun countdown: (start: Int32) -> Int32 = {
+    mut val count = start
+    count > 0 while {
+        count = count - 1
+    }
+    count
+}
+
 fun main: () -> Int32 = {
     val p = Point { x: 3, y: 4 }
+    val px = p.x
     val xs = [1, 2, 3]
     val r = [1..5]
     val f = |x| x + 1
     val casted = 7 as Int64
+    val negated = -1
+    val opt = Some(5)
     mut val count = 0
     count = count + 1
-    true |> pick |> classify
+    true |> pick |> classify |> countdown
 }
 "#;
 

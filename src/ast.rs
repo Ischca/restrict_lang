@@ -941,123 +941,135 @@ pub struct TemporalConstraint {
 pub fn assign_node_ids(program: &mut Program) -> u32 {
     let mut next = 0u32;
     for decl in &mut program.declarations {
-        number_top_decl(decl, &mut next);
+        visit_top_decl_exprs_mut(decl, &mut |expr| {
+            assert!(
+                next < u32::MAX,
+                "node id space exhausted while numbering program"
+            );
+            expr.id = NodeId(next);
+            next += 1;
+        });
     }
     next
 }
 
-fn number_top_decl(decl: &mut TopDecl, next: &mut u32) {
+/// Reset every id in this expression subtree to `NodeId::DUMMY`.
+///
+/// Use this when storing a clone whose later re-checks must not record
+/// facts under the source node ids: deferred lambda bodies, for example,
+/// are re-checked per use site under use-site expected types, and those
+/// instantiation-specific facts do not describe the source nodes.
+pub fn strip_expr_ids(expr: &mut Expr) {
+    visit_expr_subtree_mut(expr, &mut |expr| expr.id = NodeId::DUMMY);
+}
+
+fn visit_top_decl_exprs_mut(decl: &mut TopDecl, f: &mut impl FnMut(&mut Expr)) {
     match decl {
-        TopDecl::Function(func) => number_block(&mut func.body, next),
-        TopDecl::Binding(binding) => number_expr(&mut binding.value, next),
+        TopDecl::Function(func) => visit_block_exprs_mut(&mut func.body, f),
+        TopDecl::Binding(binding) => visit_expr_subtree_mut(&mut binding.value, f),
         TopDecl::Impl(impl_block) => {
             for func in &mut impl_block.functions {
-                number_block(&mut func.body, next);
+                visit_block_exprs_mut(&mut func.body, f);
             }
         }
-        TopDecl::Export(export) => number_top_decl(&mut export.item, next),
+        TopDecl::Export(export) => visit_top_decl_exprs_mut(&mut export.item, f),
         TopDecl::Record(_) | TopDecl::Context(_) => {}
     }
 }
 
-fn number_block(block: &mut BlockExpr, next: &mut u32) {
+fn visit_block_exprs_mut(block: &mut BlockExpr, f: &mut impl FnMut(&mut Expr)) {
     for stmt in &mut block.statements {
         match stmt {
-            Stmt::Binding(binding) => number_expr(&mut binding.value, next),
-            Stmt::Assignment(assign) => number_expr(&mut assign.value, next),
-            Stmt::Expr(expr) => number_expr(expr, next),
+            Stmt::Binding(binding) => visit_expr_subtree_mut(&mut binding.value, f),
+            Stmt::Assignment(assign) => visit_expr_subtree_mut(&mut assign.value, f),
+            Stmt::Expr(expr) => visit_expr_subtree_mut(expr, f),
         }
     }
     if let Some(expr) = &mut block.expr {
-        number_expr(expr, next);
+        visit_expr_subtree_mut(expr, f);
     }
 }
 
-fn number_field_inits(fields: &mut [FieldInit], next: &mut u32) {
+fn visit_field_init_exprs_mut(fields: &mut [FieldInit], f: &mut impl FnMut(&mut Expr)) {
     for field in fields {
         match field {
-            FieldInit::Field { value, .. } => number_expr(value, next),
-            FieldInit::Spread(expr) => number_expr(expr, next),
+            FieldInit::Field { value, .. } => visit_expr_subtree_mut(value, f),
+            FieldInit::Spread(expr) => visit_expr_subtree_mut(expr, f),
         }
     }
 }
 
-fn number_expr(expr: &mut Expr, next: &mut u32) {
-    assert!(
-        *next < u32::MAX,
-        "node id space exhausted while numbering program"
-    );
-    expr.id = NodeId(*next);
-    *next += 1;
+fn visit_expr_subtree_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
+    f(expr);
     match &mut expr.kind {
-        ExprKind::RecordLit(record) => number_field_inits(&mut record.fields, next),
+        ExprKind::RecordLit(record) => visit_field_init_exprs_mut(&mut record.fields, f),
         ExprKind::Clone(clone) => {
-            number_expr(&mut clone.base, next);
-            number_field_inits(&mut clone.updates.fields, next);
+            visit_expr_subtree_mut(&mut clone.base, f);
+            visit_field_init_exprs_mut(&mut clone.updates.fields, f);
         }
-        ExprKind::PrototypeClone(clone) => number_field_inits(&mut clone.updates.fields, next),
+        ExprKind::PrototypeClone(clone) => visit_field_init_exprs_mut(&mut clone.updates.fields, f),
         ExprKind::Then(then) => {
-            number_expr(&mut then.condition, next);
-            number_block(&mut then.then_block, next);
+            visit_expr_subtree_mut(&mut then.condition, f);
+            visit_block_exprs_mut(&mut then.then_block, f);
             for (condition, block) in &mut then.else_ifs {
-                number_expr(condition, next);
-                number_block(block, next);
+                visit_expr_subtree_mut(condition, f);
+                visit_block_exprs_mut(block, f);
             }
             if let Some(block) = &mut then.else_block {
-                number_block(block, next);
+                visit_block_exprs_mut(block, f);
             }
         }
         ExprKind::While(while_expr) => {
-            number_expr(&mut while_expr.condition, next);
-            number_block(&mut while_expr.body, next);
+            visit_expr_subtree_mut(&mut while_expr.condition, f);
+            visit_block_exprs_mut(&mut while_expr.body, f);
         }
         ExprKind::Match(match_expr) => {
-            number_expr(&mut match_expr.expr, next);
+            visit_expr_subtree_mut(&mut match_expr.expr, f);
             for arm in &mut match_expr.arms {
-                number_block(&mut arm.body, next);
+                visit_block_exprs_mut(&mut arm.body, f);
             }
         }
         ExprKind::Call(call) => {
-            number_expr(&mut call.function, next);
+            visit_expr_subtree_mut(&mut call.function, f);
             for arg in &mut call.args {
-                number_expr(arg, next);
+                visit_expr_subtree_mut(arg, f);
             }
         }
         ExprKind::Binary(binary) => {
-            number_expr(&mut binary.left, next);
-            number_expr(&mut binary.right, next);
+            visit_expr_subtree_mut(&mut binary.left, f);
+            visit_expr_subtree_mut(&mut binary.right, f);
         }
-        ExprKind::Unary(unary) => number_expr(&mut unary.expr, next),
-        ExprKind::Cast(cast) => number_expr(&mut cast.expr, next),
+        ExprKind::Unary(unary) => visit_expr_subtree_mut(&mut unary.expr, f),
+        ExprKind::Cast(cast) => visit_expr_subtree_mut(&mut cast.expr, f),
         ExprKind::Pipe(pipe) => {
-            number_expr(&mut pipe.expr, next);
+            visit_expr_subtree_mut(&mut pipe.expr, f);
             if let PipeTarget::Expr(target) = &mut pipe.target {
-                number_expr(target, next);
+                visit_expr_subtree_mut(target, f);
             }
         }
         ExprKind::With(with) => {
-            number_field_inits(&mut with.bindings, next);
-            number_block(&mut with.body, next);
+            visit_field_init_exprs_mut(&mut with.bindings, f);
+            visit_block_exprs_mut(&mut with.body, f);
         }
-        ExprKind::WithLifetime(with) => number_block(&mut with.body, next),
-        ExprKind::Block(block) => number_block(block, next),
-        ExprKind::FieldAccess(inner, _) => number_expr(inner, next),
+        ExprKind::WithLifetime(with) => visit_block_exprs_mut(&mut with.body, f),
+        ExprKind::Block(block) => visit_block_exprs_mut(block, f),
+        ExprKind::FieldAccess(inner, _) => visit_expr_subtree_mut(inner, f),
         ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
             for item in items {
-                number_expr(item, next);
+                visit_expr_subtree_mut(item, f);
             }
         }
         ExprKind::RangeLit(range) => {
-            number_expr(&mut range.start, next);
-            number_expr(&mut range.end, next);
+            visit_expr_subtree_mut(&mut range.start, f);
+            visit_expr_subtree_mut(&mut range.end, f);
         }
         ExprKind::Some(inner)
         | ExprKind::Ok(inner)
         | ExprKind::Err(inner)
         | ExprKind::Freeze(inner)
         | ExprKind::Await(inner)
-        | ExprKind::Spawn(inner) => number_expr(inner, next),
-        ExprKind::Lambda(lambda) => number_expr(&mut lambda.body, next),
+        | ExprKind::Spawn(inner) => visit_expr_subtree_mut(inner, f),
+        ExprKind::Lambda(lambda) => visit_expr_subtree_mut(&mut lambda.body, f),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
         | ExprKind::StringLit(_)

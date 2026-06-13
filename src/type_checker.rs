@@ -4022,7 +4022,12 @@ impl TypeChecker {
             params,
             return_type: Box::new(self.type_var_generator.fresh_var()),
         };
-        Ok((func_type, Some(DeferredBinding::Lambda(lambda.clone()))))
+        // The stored clone is re-checked per use site under use-site expected
+        // types; strip ids so those instantiation-specific re-checks cannot
+        // record facts under the source lambda body's node ids.
+        let mut deferred_lambda = lambda.clone();
+        strip_expr_ids(&mut deferred_lambda.body);
+        Ok((func_type, Some(DeferredBinding::Lambda(deferred_lambda))))
     }
 
     fn check_then_expr_as_deferred_callable(
@@ -4262,8 +4267,12 @@ impl TypeChecker {
             }
         }
 
+        // Same id discipline as DeferredBinding::Lambda: per-use-site
+        // re-checks of this clone must not write source-node facts.
+        let mut deferred_lambda = lambda.clone();
+        strip_expr_ids(&mut deferred_lambda.body);
         Ok(DeferredLambdaCandidate {
-            lambda: lambda.clone(),
+            lambda: deferred_lambda,
             captures,
         })
     }
@@ -9034,6 +9043,51 @@ mod tests {
         let (_, program) = parse_program(input).unwrap();
         let mut checker = TypeChecker::new();
         checker.check_program(&program)
+    }
+
+    #[test]
+    fn deferred_lambda_resolution_does_not_overwrite_source_facts() {
+        // A mutable deferred lambda binding escapes affine single-use
+        // marking, so it can be resolved at two different instantiations
+        // in one accepted program. Those per-use-site re-checks happen on
+        // stored clones; with ids stripped from the clones, they must not
+        // record instantiation-specific facts under the source lambda
+        // body's node ids.
+        let source = r#"
+fun main: () -> Int32 = {
+    mut val emit = |x| [];
+    val r = true then {
+        val a: Int32 -> List<Int32> = emit;
+        val xs: List<Int32> = 1 |> a;
+        0
+    } else {
+        0
+    };
+    val b: Boolean -> List<Boolean> = emit;
+    42
+}
+"#;
+        let (_, program) = parse_program(source).unwrap();
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .expect("double resolution of a mutable deferred lambda is accepted");
+
+        let TopDecl::Function(func) = &program.declarations[0] else {
+            panic!("first declaration should be main");
+        };
+        let Stmt::Binding(binding) = &func.body.statements[0] else {
+            panic!("first statement should bind the lambda");
+        };
+        let ExprKind::Lambda(lambda) = &binding.value.kind else {
+            panic!("binding value should be a lambda");
+        };
+
+        assert_eq!(
+            checker.checked_expr_type(&lambda.body),
+            None,
+            "use-site instantiations must not write facts for source lambda body nodes"
+        );
     }
 
     fn test_record_type(name: &str) -> TypedType {

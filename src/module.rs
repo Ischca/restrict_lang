@@ -796,6 +796,14 @@ fn rename_expr(
             type_params,
             bound,
         )))),
+        ExprKind::Cast(cast) => Expr::new(ExprKind::Cast(crate::ast::CastExpr {
+            expr: Box::new(rename_expr(*cast.expr, rename_map, type_params, bound)),
+            target: cast.target,
+        })),
+        ExprKind::RangeLit(range) => Expr::new(ExprKind::RangeLit(crate::ast::RangeLit {
+            start: Box::new(rename_expr(*range.start, rename_map, type_params, bound)),
+            end: Box::new(rename_expr(*range.end, rename_map, type_params, bound)),
+        })),
         literal => Expr::new(literal),
     }
 }

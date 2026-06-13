@@ -1,4 +1,4 @@
-use restrict_lang::ast::{ImportItems, TopDecl, Type};
+use restrict_lang::ast::{ExprKind, ImportItems, PipeTarget, TopDecl, Type};
 #[cfg(not(target_arch = "wasm32"))]
 use restrict_lang::dev_tools::{DevTools, DiagnosticSeverity};
 use restrict_lang::module::{
@@ -1237,4 +1237,102 @@ export fun bump: (value: Int32) -> Int32 = {
         .map(restrict_lang::ast::NodeId)
         .collect::<Vec<_>>();
     assert_eq!(ids, expected);
+}
+
+#[test]
+fn import_renaming_reaches_cast_and_range_subtrees() {
+    let root = parse_complete(
+        r#"
+import release_math.{widen}
+
+fun main: () -> Int64 = {
+    3 |> widen
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "release_math".to_string(),
+        r#"
+fun pad: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun span: (value: Int32) -> Range<Int32> = {
+    [1..(value |> pad)]
+}
+
+export fun widen: (value: Int32) -> Int64 = {
+    (value |> pad) as Int64
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("virtual module import should resolve");
+
+    // Module-local declarations are mangled during splicing. References that
+    // live only inside cast operands or range endpoints must follow that
+    // renaming; a dangling unmangled name is silently rebound by the
+    // pipe-to-binding fallback rather than rejected, so pin the resolved AST
+    // structurally instead of via type checking.
+    let pad_name = resolved
+        .declarations
+        .iter()
+        .find_map(|decl| match decl {
+            TopDecl::Function(func) if func.name != "pad" && func.name.contains("pad") => {
+                Some(func.name.clone())
+            }
+            _ => None,
+        })
+        .expect("module-local pad declaration should be spliced under a mangled name");
+
+    let find_function = |name: &str| {
+        resolved.declarations.iter().find_map(|decl| match decl {
+            TopDecl::Function(func) if func.name.contains(name) => Some(func),
+            _ => None,
+        })
+    };
+
+    let widen = find_function("widen").expect("widen should be spliced");
+    let widen_result = widen
+        .body
+        .expr
+        .as_ref()
+        .expect("widen body should end in an expression");
+    let ExprKind::Cast(cast) = &widen_result.kind else {
+        panic!("widen body should end in a cast");
+    };
+    let ExprKind::Pipe(pipe) = &cast.expr.kind else {
+        panic!("cast operand should be a pipe");
+    };
+    let PipeTarget::Ident(target) = &pipe.target else {
+        panic!("pipe target should be an identifier");
+    };
+    assert_eq!(
+        target, &pad_name,
+        "cast operands must follow module renaming"
+    );
+
+    let span = find_function("span").expect("span should be spliced");
+    let span_result = span
+        .body
+        .expr
+        .as_ref()
+        .expect("span body should end in an expression");
+    let ExprKind::RangeLit(range) = &span_result.kind else {
+        panic!("span body should end in a range literal");
+    };
+    let ExprKind::Pipe(pipe) = &range.end.kind else {
+        panic!("range end should be a pipe");
+    };
+    let PipeTarget::Ident(target) = &pipe.target else {
+        panic!("pipe target should be an identifier");
+    };
+    assert_eq!(
+        target, &pad_name,
+        "range endpoints must follow module renaming"
+    );
 }

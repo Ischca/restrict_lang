@@ -307,3 +307,37 @@ fun main: (flag: Boolean) -> Float64 = {
         .validate_all(&wasm)
         .expect("same-name Result match Wasm should validate");
 }
+
+#[test]
+fn result_match_conflict_locals_are_deterministic_across_compiles() {
+    // Conflict-renamed pattern locals must not leak allocation addresses
+    // into the WAT text: compiling the same source through two independent
+    // parse/check/codegen runs must produce byte-identical output.
+    let source = r#"
+fun main: (flag: Boolean) -> Float64 = {
+    val result: Result<Int32, Float64> = flag then {
+        Ok(42)
+    } else {
+        Err(1.5)
+    };
+
+    result match {
+        Ok(value) => {
+            value as Float64
+        }
+        Err(value) => {
+            value
+        }
+    }
+}
+"#;
+
+    let first = compile_to_wat(source).expect("first compile should succeed");
+    let second = compile_to_wat(source).expect("second compile should succeed");
+
+    assert!(first.contains("__match_"));
+    assert_eq!(
+        first, second,
+        "emitted WAT must be a deterministic function of the source"
+    );
+}

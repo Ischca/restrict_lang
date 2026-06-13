@@ -88,6 +88,11 @@ pub struct WasmCodeGen {
     local_aliases: Vec<HashMap<String, String>>,
     /// Specific binding declarations that must use an emitted Wasm local alias.
     binding_local_aliases: HashMap<usize, String>,
+    /// Per-function dense indices for match expressions that need
+    /// conflict-renamed pattern locals. Keyed by in-run AST identity; only
+    /// the dense index reaches the emitted WAT, so output stays
+    /// deterministic across runs.
+    match_local_ids: HashMap<usize, usize>,
     /// First observed Wasm type for a source local name during local collection.
     collected_local_types: HashMap<String, WasmType>,
     /// Counter for generated local aliases.
@@ -217,6 +222,7 @@ impl WasmCodeGen {
             local_source_types: vec![HashMap::new()],
             local_aliases: vec![HashMap::new()],
             binding_local_aliases: HashMap::new(),
+            match_local_ids: HashMap::new(),
             collected_local_types: HashMap::new(),
             local_alias_counter: 0,
             generic_function_aliases: vec![HashMap::new()],
@@ -5213,6 +5219,7 @@ impl WasmCodeGen {
         let outer_default_arena = self.default_arena;
         let outer_record_tmp_count = self.record_tmp_count;
         self.binding_local_aliases.clear();
+        self.match_local_ids.clear();
         self.collected_local_types.clear();
         self.local_alias_counter = 0;
         self.record_tmp_count =
@@ -13047,14 +13054,20 @@ impl WasmCodeGen {
     }
 
     fn match_pattern_local_name(
+        &mut self,
         match_expr: &MatchExpr,
         arm_index: usize,
         binding_index: usize,
         source_name: &str,
     ) -> String {
-        let match_id = std::ptr::from_ref(match_expr) as usize;
+        // The pointer is only an in-run identity key shared by the local
+        // collection and emission passes; the emitted name carries the dense
+        // per-function index, so the WAT text is deterministic across runs.
+        let key = std::ptr::from_ref(match_expr) as usize;
+        let next = self.match_local_ids.len();
+        let match_id = *self.match_local_ids.entry(key).or_insert(next);
         format!(
-            "__match_{:x}_{}_{}_{}",
+            "__match_{}_{}_{}_{}",
             match_id, arm_index, binding_index, source_name
         )
     }
@@ -13256,7 +13269,7 @@ impl WasmCodeGen {
 
                     for (binding_index, (name, ty)) in pattern_locals.iter().enumerate() {
                         if conflicting_pattern_bindings.contains(name) {
-                            let local_name = Self::match_pattern_local_name(
+                            let local_name = self.match_pattern_local_name(
                                 match_expr,
                                 arm_index,
                                 binding_index,
@@ -13868,7 +13881,7 @@ impl WasmCodeGen {
                     })?;
                 let local_name = if conflicting_pattern_bindings.contains(&name) {
                     let local_name =
-                        Self::match_pattern_local_name(match_expr, i, binding_index, &name);
+                        self.match_pattern_local_name(match_expr, i, binding_index, &name);
                     self.set_local_alias(&name, local_name.clone());
                     local_name
                 } else {

@@ -80,7 +80,7 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
 
     let workflow = read_fixture(root, ".github/workflows/deploy-docs.yml");
     assert!(
-        workflow.contains("actions/configure-pages@v5"),
+        workflow.contains("actions/configure-pages@v6"),
         "Pages workflow should configure GitHub Pages before artifact upload"
     );
     assert!(

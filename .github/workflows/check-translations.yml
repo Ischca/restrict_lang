@@ -10,6 +10,16 @@ on:
     paths:
       - 'docs/**/*.md'
 
+# Comment-on-PR needs pull-requests: write; everything else is read-only.
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel superseded runs so rapid doc edits do not pile up runner-minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check-translations:
     name: Check Translation Synchronization
@@ -17,7 +27,7 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Full history for file comparison
       

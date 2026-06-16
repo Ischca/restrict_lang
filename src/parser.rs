@@ -1346,11 +1346,7 @@ fn binary_expr_min_precedence(
 ) -> ParseResult<'_, Expr> {
     let (mut input, mut left) = call_expr_with_context(input, in_statement)?;
 
-    loop {
-        let Ok((after_op, op)) = binary_op(input) else {
-            break;
-        };
-
+    while let Ok((after_op, op)) = binary_op(input) {
         let precedence = binary_precedence(&op);
         if precedence < min_precedence {
             break;
@@ -1438,15 +1434,15 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
             // The Restrict Language enforces OSV (Object-Subject-Verb) word order.
             // Traditional syntax like func(args) or obj.method(args) is FORBIDDEN.
             // Only OSV syntax is allowed: (args) func, args func, args |> func
+            // Check for a following parenthesized argument list after optional
+            // whitespace. Traditional calls like `func(args)`, `func (args)`,
+            // and `obj.method (args)` are rejected; calls must use OSV order.
             match &first.kind {
-                ExprKind::Ident(_) | ExprKind::FieldAccess(_, _) => {
-                    // Check for a following parenthesized argument list after optional
-                    // whitespace. Traditional calls like `func(args)`, `func (args)`,
-                    // and `obj.method (args)` are rejected; calls must use OSV order.
-                    if input.trim_start().starts_with('(') {
-                        // This is traditional syntax like func() or obj.method() - REJECT IT
-                        return user_syntax_failure(TRADITIONAL_CALL_ERROR);
-                    }
+                ExprKind::Ident(_) | ExprKind::FieldAccess(_, _)
+                    if input.trim_start().starts_with('(') =>
+                {
+                    // This is traditional syntax like func() or obj.method() - REJECT IT
+                    return user_syntax_failure(TRADITIONAL_CALL_ERROR);
                 }
                 _ => {}
             }

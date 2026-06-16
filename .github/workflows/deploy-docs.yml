@@ -35,10 +35,13 @@ jobs:
         with:
           mdbook-version: ${{ env.MDBOOK_VERSION }}
 
+      # wasm-pack moved from rustwasm/ to wasm-bindgen/, which 404s the
+      # abandoned jetli action. taiki-e/install-action tracks the new source
+      # and installs a prebuilt binary.
       - name: Setup wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
+        uses: taiki-e/install-action@v2
         with:
-          version: ${{ env.WASM_PACK_VERSION }}
+          tool: wasm-pack@${{ env.WASM_PACK_VERSION }}
 
       - name: Print documentation tool versions
         run: |

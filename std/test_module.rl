@@ -1,17 +1,10 @@
-// Test module for import testing
-// std/test_module.rl
-
-// Exported function
-export fun double: (x: Int) -> Int = {
-    x * 2
-}
-
-// Exported function
-export fun triple: (x: Int) -> Int = {
-    x * 3
-}
-
-// Not exported (private)
-fun helper: (x: Int) -> Int = {
-    x + 1
-}
+// Standard Library: test module reference surface
+//
+// This file is not the runtime implementation. The current compiler registers
+// std symbols directly in the Rust type checker and WebAssembly codegen.
+// Keep this file as a comment-only compatibility reference for module tests.
+//
+// Current compiler-registered surface:
+// - none
+//
+// Test-only source modules should live outside the v0.0.1 std reference index.

@@ -646,12 +646,12 @@ pub fn bind_decl(input: &str) -> ParseResult<'_, BindDecl> {
 fn literal(input: &str) -> ParseResult<'_, Expr> {
     let (input, token) = lex_token(input)?;
     match token {
-        Token::IntLit(n) => Ok((input, Expr::IntLit(n))),
-        Token::FloatLit(f) => Ok((input, Expr::FloatLit(f))),
-        Token::StringLit(s) => Ok((input, Expr::StringLit(s))),
-        Token::CharLit(c) => Ok((input, Expr::CharLit(c))),
-        Token::True => Ok((input, Expr::BoolLit(true))),
-        Token::False => Ok((input, Expr::BoolLit(false))),
+        Token::IntLit(n) => Ok((input, Expr::new(ExprKind::IntLit(n)))),
+        Token::FloatLit(f) => Ok((input, Expr::new(ExprKind::FloatLit(f)))),
+        Token::StringLit(s) => Ok((input, Expr::new(ExprKind::StringLit(s)))),
+        Token::CharLit(c) => Ok((input, Expr::new(ExprKind::CharLit(c)))),
+        Token::True => Ok((input, Expr::new(ExprKind::BoolLit(true)))),
+        Token::False => Ok((input, Expr::new(ExprKind::BoolLit(false)))),
         Token::Unit => user_syntax_failure(STALE_UNIT_ERROR),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
@@ -718,10 +718,10 @@ fn unary_expr(input: &str) -> ParseResult<'_, Expr> {
             let (input, expr) = unary_expr(input)?;
             Ok((
                 input,
-                Expr::Unary(UnaryExpr {
+                Expr::new(ExprKind::Unary(UnaryExpr {
                     op: UnaryOp::Neg,
                     expr: Box::new(expr),
-                }),
+                })),
             ))
         },
         |input| {
@@ -729,10 +729,10 @@ fn unary_expr(input: &str) -> ParseResult<'_, Expr> {
             let (input, expr) = unary_expr(input)?;
             Ok((
                 input,
-                Expr::Unary(UnaryExpr {
+                Expr::new(ExprKind::Unary(UnaryExpr {
                     op: UnaryOp::Not,
                     expr: Box::new(expr),
-                }),
+                })),
             ))
         },
         postfix_expr,
@@ -749,22 +749,22 @@ fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
         ok_expr,     // Try Ok before ident
         err_expr,    // Try Err before ident
         list_lit,    // Try list literal before record
-        map(record_lit, Expr::RecordLit), // Try record_lit before ident
-        map(ident, Expr::Ident),
+        map(record_lit, |r| Expr::new(ExprKind::RecordLit(r))), // Try record_lit before ident
+        map(ident, |i| Expr::new(ExprKind::Ident(i))),
         delimited(
             expect_token(Token::LParen),
             expression,
             expect_token(Token::RParen),
         ),
         with_expr,
-        map(block_expr, Expr::Block),
+        map(block_expr, |b| Expr::new(ExprKind::Block(b))),
     ))(input)
 }
 
 fn unit_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::LParen)(input)?;
     let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Expr::Unit))
+    Ok((input, Expr::new(ExprKind::Unit)))
 }
 
 fn none_expr(input: &str) -> ParseResult<'_, Expr> {
@@ -773,7 +773,7 @@ fn none_expr(input: &str) -> ParseResult<'_, Expr> {
     if expect_token::<'_>(Token::Lt)(input).is_ok() {
         user_syntax_failure(NONE_TYPE_ARGUMENT_ERROR)
     } else {
-        Ok((input, Expr::None))
+        Ok((input, Expr::new(ExprKind::None)))
     }
 }
 
@@ -782,7 +782,7 @@ fn some_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::LParen)(input)?;
     let (input, expr) = expression(input)?;
     let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Expr::Some(Box::new(expr))))
+    Ok((input, Expr::new(ExprKind::Some(Box::new(expr)))))
 }
 
 fn result_constructor_expr<'a>(input: &'a str, expected: &'static str) -> ParseResult<'a, Expr> {
@@ -799,8 +799,8 @@ fn result_constructor_expr<'a>(input: &'a str, expected: &'static str) -> ParseR
     let (input, _) = expect_token(Token::RParen)(input)?;
 
     match expected {
-        "Ok" => Ok((input, Expr::Ok(Box::new(expr)))),
-        "Err" => Ok((input, Expr::Err(Box::new(expr)))),
+        "Ok" => Ok((input, Expr::new(ExprKind::Ok(Box::new(expr))))),
+        "Err" => Ok((input, Expr::new(ExprKind::Err(Box::new(expr))))),
         _ => unreachable!(),
     }
 }
@@ -817,7 +817,7 @@ fn list_lit(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::LBracket)(input)?;
 
     if let Ok((input, _)) = expect_token::<'_>(Token::RBracket)(input) {
-        return Ok((input, Expr::ListLit(Vec::new())));
+        return Ok((input, Expr::new(ExprKind::ListLit(Vec::new()))));
     }
 
     let (input, first) = expression(input)?;
@@ -826,10 +826,10 @@ fn list_lit(input: &str) -> ParseResult<'_, Expr> {
         let (input, _) = expect_token(Token::RBracket)(input)?;
         return Ok((
             input,
-            Expr::RangeLit(RangeLit {
+            Expr::new(ExprKind::RangeLit(RangeLit {
                 start: Box::new(first),
                 end: Box::new(end),
-            }),
+            })),
         ));
     }
 
@@ -840,7 +840,7 @@ fn list_lit(input: &str) -> ParseResult<'_, Expr> {
     let (input, _) = expect_token(Token::RBracket)(input)?;
     let mut elements = vec![Box::new(first)];
     elements.extend(rest);
-    Ok((input, Expr::ListLit(elements)))
+    Ok((input, Expr::new(ExprKind::ListLit(elements))))
 }
 
 fn lambda_expr(input: &str) -> ParseResult<'_, Expr> {
@@ -848,10 +848,10 @@ fn lambda_expr(input: &str) -> ParseResult<'_, Expr> {
         let (input, body) = expression(input)?;
         return Ok((
             input,
-            Expr::Lambda(LambdaExpr {
+            Expr::new(ExprKind::Lambda(LambdaExpr {
                 params: Vec::new(),
                 body: Box::new(body),
-            }),
+            })),
         ));
     }
 
@@ -861,10 +861,10 @@ fn lambda_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, body) = expression(input)?;
     Ok((
         input,
-        Expr::Lambda(LambdaExpr {
+        Expr::new(ExprKind::Lambda(LambdaExpr {
             params,
             body: Box::new(body),
-        }),
+        })),
     ))
 }
 
@@ -897,11 +897,11 @@ fn with_expr(input: &str) -> ParseResult<'_, Expr> {
         if let Ok((after_body, body)) = block_expr(after_bindings) {
             return Ok((
                 after_body,
-                Expr::With(WithExpr {
+                Expr::new(ExprKind::With(WithExpr {
                     context_name,
                     bindings,
                     body,
-                }),
+                })),
             ));
         }
     }
@@ -919,11 +919,11 @@ fn with_expr(input: &str) -> ParseResult<'_, Expr> {
 
     Ok((
         input,
-        Expr::With(WithExpr {
+        Expr::new(ExprKind::With(WithExpr {
             context_name,
             bindings: Vec::new(),
             body,
-        }),
+        })),
     ))
 }
 
@@ -973,12 +973,12 @@ fn with_lifetime_expr(input: &str) -> ParseResult<'_, Expr> {
 
     Ok((
         input,
-        Expr::WithLifetime(WithLifetimeExpr {
+        Expr::new(ExprKind::WithLifetime(WithLifetimeExpr {
             lifetime,
             anonymous,
             constraints,
             body,
-        }),
+        })),
     ))
 }
 
@@ -1002,13 +1002,13 @@ fn pattern(input: &str) -> ParseResult<'_, Pattern> {
         record_pattern, // Try record patterns before identifiers
         list_pattern,   // Try list patterns before literals
         unit_pattern,
-        map(literal, |expr| match expr {
-            Expr::IntLit(n) => Pattern::Literal(Literal::Int(n)),
-            Expr::FloatLit(f) => Pattern::Literal(Literal::Float(f)),
-            Expr::StringLit(s) => Pattern::Literal(Literal::String(s)),
-            Expr::CharLit(c) => Pattern::Literal(Literal::Char(c)),
-            Expr::BoolLit(b) => Pattern::Literal(Literal::Bool(b)),
-            Expr::Unit => Pattern::Literal(Literal::Unit),
+        map(literal, |expr| match expr.kind {
+            ExprKind::IntLit(n) => Pattern::Literal(Literal::Int(n)),
+            ExprKind::FloatLit(f) => Pattern::Literal(Literal::Float(f)),
+            ExprKind::StringLit(s) => Pattern::Literal(Literal::String(s)),
+            ExprKind::CharLit(c) => Pattern::Literal(Literal::Char(c)),
+            ExprKind::BoolLit(b) => Pattern::Literal(Literal::Bool(b)),
+            ExprKind::Unit => Pattern::Literal(Literal::Unit),
             _ => unreachable!(),
         }),
         map(ident, Pattern::Ident),
@@ -1193,10 +1193,10 @@ fn match_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, E
     match arms {
         Some(arms) => Ok((
             input,
-            Expr::Match(MatchExpr {
+            Expr::new(ExprKind::Match(MatchExpr {
                 expr: Box::new(expr),
                 arms,
-            }),
+            })),
         )),
         None => Ok((input, expr)),
     }
@@ -1214,10 +1214,10 @@ fn while_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, E
     match body {
         Some(body) => Ok((
             input,
-            Expr::While(WhileExpr {
+            Expr::new(ExprKind::While(WhileExpr {
                 condition: Box::new(expr),
                 body,
-            }),
+            })),
         )),
         None => Ok((input, expr)),
     }
@@ -1251,12 +1251,12 @@ fn then_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
                 .collect();
             Ok((
                 input,
-                Expr::Then(ThenExpr {
+                Expr::new(ExprKind::Then(ThenExpr {
                     condition: Box::new(first_cond),
                     then_block,
                     else_ifs,
                     else_block,
-                }),
+                })),
             ))
         }
         None => Ok((input, first_cond)),
@@ -1358,11 +1358,11 @@ fn binary_expr_min_precedence(
 
         let (after_right, right) =
             binary_expr_min_precedence(after_op, in_statement, precedence + 1)?;
-        left = Expr::Binary(BinaryExpr {
+        left = Expr::new(ExprKind::Binary(BinaryExpr {
             left: Box::new(left),
             op,
             right: Box::new(right),
-        });
+        }));
         input = after_right;
     }
 
@@ -1388,11 +1388,11 @@ fn pipe_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
     )))(input)?;
 
     let expr = pipes.into_iter().fold(first, |acc, (op, target)| {
-        Expr::Pipe(PipeExpr {
+        Expr::new(ExprKind::Pipe(PipeExpr {
             expr: Box::new(acc),
             op,
             target,
-        })
+        }))
     });
     Ok((input, expr))
 }
@@ -1424,10 +1424,10 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
             let (input, func) = simple_expr(input)?;
             Ok((
                 input,
-                Expr::Call(CallExpr {
+                Expr::new(ExprKind::Call(CallExpr {
                     function: Box::new(func),
                     args: args.into_iter().map(Box::new).collect(),
-                }),
+                })),
             ))
         },
         // Single expression or OSV style
@@ -1438,8 +1438,8 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
             // The Restrict Language enforces OSV (Object-Subject-Verb) word order.
             // Traditional syntax like func(args) or obj.method(args) is FORBIDDEN.
             // Only OSV syntax is allowed: (args) func, args func, args |> func
-            match &first {
-                Expr::Ident(_) | Expr::FieldAccess(_, _) => {
+            match &first.kind {
+                ExprKind::Ident(_) | ExprKind::FieldAccess(_, _) => {
                     // Check for a following parenthesized argument list after optional
                     // whitespace. Traditional calls like `func(args)`, `func (args)`,
                     // and `obj.method (args)` are rejected; calls must use OSV order.
@@ -1535,10 +1535,10 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
             } else {
                 // OSV: obj subj.verb => subj.verb(obj)
                 let result = rest.into_iter().fold(first, |arg, func| {
-                    Expr::Call(CallExpr {
+                    Expr::new(ExprKind::Call(CallExpr {
                         function: Box::new(func),
                         args: vec![Box::new(arg)],
-                    })
+                    }))
                 });
                 Ok((input, result))
             }
@@ -1555,10 +1555,10 @@ fn cast_expr(input: &str) -> ParseResult<'_, Expr> {
 
     while let Ok((after_as, _)) = expect_token::<'_>(Token::As)(input) {
         let (after_type, target) = parse_type(after_as)?;
-        expr = Expr::Cast(CastExpr {
+        expr = Expr::new(ExprKind::Cast(CastExpr {
             expr: Box::new(expr),
             target,
-        });
+        }));
         input = after_type;
     }
 
@@ -1588,17 +1588,17 @@ fn postfix_expr(input: &str) -> ParseResult<'_, Expr> {
                         separated_list0(expect_token(Token::Comma), field_init)(new_input)?;
                     let (new_input, _) = expect_token(Token::RBrace)(new_input)?;
 
-                    let mut clone_expr = Expr::Clone(CloneExpr {
+                    let mut clone_expr = Expr::new(ExprKind::Clone(CloneExpr {
                         base: Box::new(expr),
                         updates: RecordLit {
                             name: String::new(),
                             fields,
                         },
-                    });
+                    }));
 
                     // Check if freeze follows the clone
                     if let Ok((freeze_input, _)) = expect_token::<'_>(Token::Freeze)(new_input) {
-                        clone_expr = Expr::Freeze(Box::new(clone_expr));
+                        clone_expr = Expr::new(ExprKind::Freeze(Box::new(clone_expr)));
                         input = freeze_input;
                     } else {
                         input = new_input;
@@ -1608,12 +1608,12 @@ fn postfix_expr(input: &str) -> ParseResult<'_, Expr> {
                 } else {
                     // Regular field access
                     let (new_input, field) = ident(new_input)?;
-                    expr = Expr::FieldAccess(Box::new(expr), field);
+                    expr = Expr::new(ExprKind::FieldAccess(Box::new(expr), field));
                     input = new_input;
                 }
             }
             Some(PostfixOp::Freeze) => {
-                expr = Expr::Freeze(Box::new(expr));
+                expr = Expr::new(ExprKind::Freeze(Box::new(expr)));
                 input = new_input;
             }
             None => break,
@@ -1833,13 +1833,15 @@ pub fn parse_program(input: &str) -> ParseResult<'_, Program> {
         }
     }
 
-    Ok((
-        remaining,
-        Program {
-            imports,
-            declarations,
-        },
-    ))
+    let mut program = Program {
+        imports,
+        declarations,
+    };
+    // Number expression nodes once the full program structure is known, so
+    // downstream stages can key per-node facts by stable NodeId.
+    assign_node_ids(&mut program);
+
+    Ok((remaining, program))
 }
 
 #[cfg(test)]
@@ -1867,7 +1869,7 @@ mod tests {
     fn test_pipe_expr() {
         let input = "42 |> add 10";
         let (_, expr) = pipe_expr(input).unwrap();
-        assert!(matches!(expr, Expr::Pipe(_)));
+        assert!(matches!(&expr.kind, ExprKind::Pipe(_)));
     }
 
     #[test]
@@ -1879,14 +1881,14 @@ mod tests {
     fn test_clone_freeze() {
         let input = "base.clone { hp: 500 } freeze";
         let (_, expr) = simple_expr(input).unwrap();
-        assert!(matches!(expr, Expr::Freeze(_)));
+        assert!(matches!(&expr.kind, ExprKind::Freeze(_)));
     }
 
     #[test]
     fn test_field_access() {
         let input = "obj.field";
         let (_, expr) = simple_expr(input).unwrap();
-        assert!(matches!(expr, Expr::FieldAccess(_, _)));
+        assert!(matches!(&expr.kind, ExprKind::FieldAccess(_, _)));
     }
 
     #[test]
@@ -1901,7 +1903,7 @@ mod tests {
     fn test_with_lifetime() {
         let input = "with lifetime<~f> { 42 }";
         let (_, expr) = with_expr(input).unwrap();
-        if let Expr::WithLifetime(ref wl) = expr {
+        if let ExprKind::WithLifetime(ref wl) = expr.kind {
             assert_eq!(wl.lifetime, "f");
             assert!(!wl.anonymous);
             assert!(wl.constraints.is_empty());

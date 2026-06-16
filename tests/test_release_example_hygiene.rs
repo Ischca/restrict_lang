@@ -106,6 +106,14 @@ const KNOWN_EXPERIMENTAL_OR_STALE_EXAMPLES: &[NonReleaseExample] = &[
         reason: "parser/type-checker sketch for field-access variants",
     },
     NonReleaseExample {
+        path: "examples/form_container.rl",
+        reason: "form/takes design document outside the v0.0.1 default gate",
+    },
+    NonReleaseExample {
+        path: "examples/option_example.rl",
+        reason: "legacy option sketch that has not been promoted to the release example surface",
+    },
+    NonReleaseExample {
         path: "examples/tat_cleanup_demo.rl",
         reason: "temporal affine type demo outside the v0.0.1 default gate",
     },
@@ -127,52 +135,16 @@ const KNOWN_EXPERIMENTAL_OR_STALE_EXAMPLES: &[NonReleaseExample] = &[
             "v0.0.1 design gap: exported generic functions type-check but lack a concrete WASM ABI",
     },
     NonReleaseExample {
-        path: "linear_threading_demo.rl",
-        reason: "root-level linear-threading design sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "real_world_examples.rl",
-        reason: "root-level linear-threading design sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_factorial.rl",
-        reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
         path: "test_input.rl",
         reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
     },
     NonReleaseExample {
-        path: "test_method.rl",
+        path: "test_main.rl",
         reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
     },
     NonReleaseExample {
-        path: "test_pattern_complete.rl",
-        reason: "legacy root-level pattern sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_pattern_exhaustiveness_example.rl",
-        reason: "legacy root-level pattern sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_pattern_simple.rl",
-        reason: "legacy root-level pattern sketch outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_string.rl",
-        reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_string_complex.rl",
-        reason: "legacy root-level smoke fixture outside the v0.0.1 release surface",
-    },
-    NonReleaseExample {
-        path: "test_tat_basic.rl",
-        reason: "root-level TAT smoke sketch outside the v0.0.1 default gate",
-    },
-    NonReleaseExample {
-        path: "test_tat_simple.rl",
-        reason: "root-level TAT smoke sketch outside the v0.0.1 default gate",
+        path: "test_unit_return.rl",
+        reason: "legacy root-level Unit-return smoke fixture outside the v0.0.1 release surface",
     },
 ];
 
@@ -218,6 +190,7 @@ fn release_examples_use_current_syntax() {
 }
 
 #[test]
+#[ignore = "slow CLI release gate; run with `mise run check`"]
 fn standalone_release_examples_compile_through_cli() {
     assert_unique("release example", RELEASE_EXAMPLES);
     assert_all_exist("release example", RELEASE_EXAMPLES);
@@ -253,8 +226,12 @@ fn mise_check_task_matches_standalone_release_examples() {
     let task_body = mise_check_task_body(&mise);
     let task_examples = mise_check_examples(task_body);
     assert!(
-        task_body.contains("cargo test --test test_release_example_hygiene standalone_release_examples_compile_through_cli -- --exact"),
-        ".mise.toml tasks.check should delegate to the single release example manifest test"
+        task_body.contains("cargo test --test test_release_example_hygiene standalone_release_examples_compile_through_cli -- --ignored --exact"),
+        ".mise.toml tasks.check should delegate to the ignored release example CLI gate"
+    );
+    assert!(
+        task_body.contains("cargo test --test test_release_example_hygiene vscode_release_examples_compile_through_cli -- --ignored --exact"),
+        ".mise.toml tasks.check should include the ignored VS Code release example CLI gate"
     );
 
     let exceptions: HashSet<_> = RELEASE_EXAMPLE_CLI_EXCEPTIONS
@@ -422,6 +399,7 @@ fn vscode_release_examples_use_current_syntax() {
 }
 
 #[test]
+#[ignore = "slow CLI release gate; run with `mise run check`"]
 fn vscode_release_examples_compile_through_cli() {
     assert_unique("VS Code release example", VSCODE_RELEASE_EXAMPLE_FILES);
     assert_all_exist("VS Code release example", VSCODE_RELEASE_EXAMPLE_FILES);

@@ -8,7 +8,7 @@ development and Warder smoke tests for user projects.
 From the repository root, use the project-managed toolchain:
 
 ```bash
-mise exec -- cargo test
+mise run test-fast
 ```
 
 Useful focused commands:
@@ -16,8 +16,18 @@ Useful focused commands:
 ```bash
 mise exec -- cargo test --test test_docs_hygiene
 mise exec -- cargo test --test test_wat_validation
-mise exec -- cargo test --test test_release_example_hygiene
+mise run check
 ```
+
+`mise run test-fast` is the normal local gate for compiler work. It runs
+formatting, focused library checks, and one combined Cargo invocation for docs,
+release-surface, sample, and generic integration tests without the slow release
+example CLI sweep. Use `mise run test-full` or `mise run ci` before release
+handoff.
+
+`mise run check` executes the slow release example CLI entrypoint validation.
+Those tests are ignored in the default `cargo test` run so active compiler
+iteration stays fast while CI/release checks keep full coverage.
 
 `test_docs_hygiene` checks public documentation and examples for removed syntax
 such as `let`, `fn`, function-first calls, stale record initializers, and

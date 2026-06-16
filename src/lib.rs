@@ -49,6 +49,7 @@
 //! - [`ast`] - Abstract Syntax Tree definitions with support for generics
 //! - [`parser`] - Parsing Restrict Language's OSV syntax
 //! - [`type_checker`] - Type checking with affine types and generic inference
+//! - [`ir`] - Typed IR, layout metadata, and optimization-stage foundations
 //! - [`codegen`] - WebAssembly code generation with monomorphization
 //! - [`module`] - Module system for managing imports/exports
 //! - [`lsp`] - Language Server Protocol implementation for IDE support
@@ -71,6 +72,9 @@ pub mod type_checker;
 
 /// Constraint primitives for bidirectional type inference
 pub mod type_constraints;
+
+/// Typed IR, internal ABI layout, and optimization-stage foundations
+pub mod ir;
 
 /// Code generation module for producing WebAssembly output
 pub mod codegen;

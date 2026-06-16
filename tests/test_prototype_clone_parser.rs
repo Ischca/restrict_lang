@@ -1,4 +1,4 @@
-use restrict_lang::ast::{Expr, FieldInit, TopDecl};
+use restrict_lang::ast::{Expr, ExprKind, FieldInit, TopDecl};
 use restrict_lang::parser::parse_program;
 
 fn parse_binding_expr(source: &str) -> Expr {
@@ -16,8 +16,8 @@ fn parse_binding_expr(source: &str) -> Expr {
 }
 
 fn field_names(expr: &Expr) -> Vec<&str> {
-    match expr {
-        Expr::Clone(clone) => clone
+    match &expr.kind {
+        ExprKind::Clone(clone) => clone
             .updates
             .fields
             .iter()
@@ -60,8 +60,8 @@ val child = base.clone { hp: 500 } freeze
 "#,
     );
 
-    match expr {
-        Expr::Freeze(inner) => assert_eq!(field_names(&inner), vec!["hp"]),
+    match &expr.kind {
+        ExprKind::Freeze(inner) => assert_eq!(field_names(inner), vec!["hp"]),
         other => panic!("expected frozen clone expression, got {other:?}"),
     }
 }

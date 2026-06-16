@@ -228,12 +228,17 @@ fn is_scalar_checked_type(ty: &TypedType) -> bool {
 }
 
 fn is_scalar_literal_constant(expr: &Expr) -> bool {
-    match expr {
-        Expr::IntLit(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::CharLit(_) | Expr::Unit => {
-            true
-        }
-        Expr::Unary(unary) if matches!(unary.op, UnaryOp::Neg) => {
-            matches!(unary.expr.as_ref(), Expr::IntLit(_) | Expr::FloatLit(_))
+    match &expr.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::Unit => true,
+        ExprKind::Unary(unary) if matches!(unary.op, UnaryOp::Neg) => {
+            matches!(
+                &unary.expr.kind,
+                ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+            )
         }
         _ => false,
     }
@@ -357,61 +362,61 @@ fn reject_tat_block(block: &BlockExpr) -> Result<(), ReleaseSurfaceError> {
 }
 
 fn reject_tat_expr(expr: &Expr) -> Result<(), ReleaseSurfaceError> {
-    match expr {
-        Expr::Cast(cast) => {
+    match &expr.kind {
+        ExprKind::Cast(cast) => {
             reject_tat_expr(&cast.expr)?;
             reject_tat_type("cast target", &cast.target)
         }
-        Expr::Binary(binary) => {
+        ExprKind::Binary(binary) => {
             reject_tat_expr(&binary.left)?;
             reject_tat_expr(&binary.right)
         }
-        Expr::Unary(unary) => reject_tat_expr(&unary.expr),
-        Expr::Call(call) => {
+        ExprKind::Unary(unary) => reject_tat_expr(&unary.expr),
+        ExprKind::Call(call) => {
             reject_tat_expr(&call.function)?;
             for arg in &call.args {
                 reject_tat_expr(arg)?;
             }
             Ok(())
         }
-        Expr::Pipe(pipe) => {
+        ExprKind::Pipe(pipe) => {
             reject_tat_expr(&pipe.expr)?;
             if let PipeTarget::Expr(target) = &pipe.target {
                 reject_tat_expr(target)?;
             }
             Ok(())
         }
-        Expr::FieldAccess(base, _) => reject_tat_expr(base),
-        Expr::RecordLit(record) => reject_tat_record_lit(record),
-        Expr::Clone(clone_expr) => {
+        ExprKind::FieldAccess(base, _) => reject_tat_expr(base),
+        ExprKind::RecordLit(record) => reject_tat_record_lit(record),
+        ExprKind::Clone(clone_expr) => {
             reject_tat_expr(&clone_expr.base)?;
             reject_tat_record_lit(&clone_expr.updates)
         }
-        Expr::PrototypeClone(proto_clone) => reject_tat_record_lit(&proto_clone.updates),
-        Expr::Freeze(inner)
-        | Expr::Some(inner)
-        | Expr::Ok(inner)
-        | Expr::Err(inner)
-        | Expr::Await(inner)
-        | Expr::Spawn(inner) => reject_tat_expr(inner),
-        Expr::ListLit(elements) | Expr::ArrayLit(elements) => {
+        ExprKind::PrototypeClone(proto_clone) => reject_tat_record_lit(&proto_clone.updates),
+        ExprKind::Freeze(inner)
+        | ExprKind::Some(inner)
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner)
+        | ExprKind::Await(inner)
+        | ExprKind::Spawn(inner) => reject_tat_expr(inner),
+        ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
             for element in elements {
                 reject_tat_expr(element)?;
             }
             Ok(())
         }
-        Expr::RangeLit(range) => {
+        ExprKind::RangeLit(range) => {
             reject_tat_expr(&range.start)?;
             reject_tat_expr(&range.end)
         }
-        Expr::Match(match_expr) => {
+        ExprKind::Match(match_expr) => {
             reject_tat_expr(&match_expr.expr)?;
             for arm in &match_expr.arms {
                 reject_tat_block(&arm.body)?;
             }
             Ok(())
         }
-        Expr::Then(then_expr) => {
+        ExprKind::Then(then_expr) => {
             reject_tat_expr(&then_expr.condition)?;
             reject_tat_block(&then_expr.then_block)?;
             for (condition, block) in &then_expr.else_ifs {
@@ -423,12 +428,12 @@ fn reject_tat_expr(expr: &Expr) -> Result<(), ReleaseSurfaceError> {
             }
             Ok(())
         }
-        Expr::While(while_expr) => {
+        ExprKind::While(while_expr) => {
             reject_tat_expr(&while_expr.condition)?;
             reject_tat_block(&while_expr.body)
         }
-        Expr::Block(block) => reject_tat_block(block),
-        Expr::Lambda(lambda) => {
+        ExprKind::Block(block) => reject_tat_block(block),
+        ExprKind::Lambda(lambda) => {
             for param in &lambda.params {
                 if let Some(annotation) = &param.type_annotation {
                     reject_tat_type("lambda parameter", annotation)?;
@@ -436,24 +441,24 @@ fn reject_tat_expr(expr: &Expr) -> Result<(), ReleaseSurfaceError> {
             }
             reject_tat_expr(&lambda.body)
         }
-        Expr::With(with_expr) => {
+        ExprKind::With(with_expr) => {
             for binding in &with_expr.bindings {
                 reject_tat_field_init(binding)?;
             }
             reject_tat_block(&with_expr.body)
         }
-        Expr::WithLifetime(_) => Err(ReleaseSurfaceError::new(format!(
+        ExprKind::WithLifetime(_) => Err(ReleaseSurfaceError::new(format!(
             "with lifetime blocks are unsupported in v0.0.1; {}",
             TAT_RELEASE_GATE_MESSAGE
         ))),
-        Expr::IntLit(_)
-        | Expr::FloatLit(_)
-        | Expr::StringLit(_)
-        | Expr::CharLit(_)
-        | Expr::BoolLit(_)
-        | Expr::Unit
-        | Expr::Ident(_)
-        | Expr::None => Ok(()),
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Unit
+        | ExprKind::Ident(_)
+        | ExprKind::None => Ok(()),
     }
 }
 

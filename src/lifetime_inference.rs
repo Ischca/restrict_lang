@@ -214,8 +214,8 @@ impl LifetimeInference {
 
     /// Collect from an expression
     fn collect_from_expr(&mut self, expr: &Expr) -> Result<(), String> {
-        match expr {
-            Expr::RecordLit(record_lit) => {
+        match &expr.kind {
+            ExprKind::RecordLit(record_lit) => {
                 // Check if this is a temporal record
                 if self.is_temporal_record(&record_lit.name) {
                     let _lifetime = self
@@ -238,22 +238,22 @@ impl LifetimeInference {
                     }
                 }
             }
-            Expr::Call(call_expr) => {
+            ExprKind::Call(call_expr) => {
                 for arg in &call_expr.args {
                     self.collect_from_expr(arg)?;
                 }
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.collect_from_block(block)?;
             }
-            Expr::Then(then_expr) => {
+            ExprKind::Then(then_expr) => {
                 self.collect_from_expr(&then_expr.condition)?;
                 self.collect_from_block(&then_expr.then_block)?;
                 if let Some(else_block) = &then_expr.else_block {
                     self.collect_from_block(else_block)?;
                 }
             }
-            Expr::Binary(binary_expr) => {
+            ExprKind::Binary(binary_expr) => {
                 self.collect_from_expr(&binary_expr.left)?;
                 self.collect_from_expr(&binary_expr.right)?;
             }

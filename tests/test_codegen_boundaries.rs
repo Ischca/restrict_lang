@@ -1,6 +1,6 @@
 use restrict_lang::ast::{
-    BlockExpr, Expr, FieldDecl, FieldInit, FunDecl, Program, PrototypeCloneExpr, RecordDecl,
-    RecordLit, TopDecl, Type,
+    BlockExpr, Expr, ExprKind, FieldDecl, FieldInit, FunDecl, Program, PrototypeCloneExpr,
+    RecordDecl, RecordLit, TopDecl, Type,
 };
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
@@ -181,18 +181,20 @@ fn prototype_identity_clone_rejects_with_explicit_codegen_error() {
                 return_type: Some(Type::Named("Base".to_string())),
                 body: BlockExpr {
                     statements: Vec::new(),
-                    expr: Some(Box::new(Expr::PrototypeClone(PrototypeCloneExpr {
-                        base: "Base".to_string(),
-                        updates: RecordLit {
-                            name: "Base".to_string(),
-                            fields: vec![FieldInit::Field {
-                                name: "id".to_string(),
-                                value: Box::new(Expr::IntLit(7)),
-                            }],
+                    expr: Some(Box::new(Expr::new(ExprKind::PrototypeClone(
+                        PrototypeCloneExpr {
+                            base: "Base".to_string(),
+                            updates: RecordLit {
+                                name: "Base".to_string(),
+                                fields: vec![FieldInit::Field {
+                                    name: "id".to_string(),
+                                    value: Box::new(Expr::new(ExprKind::IntLit(7))),
+                                }],
+                            },
+                            freeze_immediately: false,
+                            sealed: false,
                         },
-                        freeze_immediately: false,
-                        sealed: false,
-                    }))),
+                    )))),
                 },
             }),
         ],

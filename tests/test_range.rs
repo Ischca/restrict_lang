@@ -1,4 +1,4 @@
-use restrict_lang::{generate, parse_program, Expr, TopDecl, TypeChecker, TypeError};
+use restrict_lang::{generate, parse_program, ExprKind, TopDecl, TypeChecker, TypeError};
 
 fn compile(source: &str) -> Result<String, String> {
     let (remaining, ast) = parse_program(source).map_err(|e| format!("Parse error: {:?}", e))?;
@@ -29,10 +29,10 @@ fn parses_range_literal() {
         panic!("expected function declaration");
     };
     assert!(matches!(
-        function.body.expr.as_deref(),
-        Some(Expr::RangeLit(range))
-            if matches!(range.start.as_ref(), Expr::IntLit(1))
-                && matches!(range.end.as_ref(), Expr::IntLit(10))
+        function.body.expr.as_deref().map(|e| &e.kind),
+        Some(ExprKind::RangeLit(range))
+            if matches!(&range.start.kind, ExprKind::IntLit(1))
+                && matches!(&range.end.kind, ExprKind::IntLit(10))
     ));
 }
 

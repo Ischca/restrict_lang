@@ -1,0 +1,1554 @@
+//! Low-level optimization stage for the future Wasm MIR pipeline.
+
+use std::collections::HashMap;
+
+use super::binding_graph::{build_function_binding_graph, FunctionBindingGraph};
+use super::builder::{CheckedFunctionIr, CheckedProgramIr};
+use super::layout::{
+    LayoutId, LayoutKind, LayoutTable, RecordStrategy, SumOptimizationCandidate, SumStrategy,
+};
+use super::{ApplyFlavor, BindingId, ExprId, TypedExprKind, UseEvent, UseKind, ValueId, ValueRepr};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramValueUseSummary {
+    pub functions: Vec<FunctionValueUseSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionValueUseSummary {
+    pub name: String,
+    pub values: Vec<ValueUseSummary>,
+    pub findings: Vec<ValueUseFinding>,
+    pub forwarding_candidates: Vec<AffineForwardingCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueUseSummary {
+    pub value: ValueId,
+    pub producer: ExprId,
+    pub producer_kind: ValueProducerKind,
+    pub binding: Option<BindingId>,
+    pub repr: ValueRepr,
+    pub is_body_result: bool,
+    pub uses: Vec<UseEvent>,
+    pub classification: ValueUseClassification,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueProducerKind {
+    Literal,
+    PlainValue,
+    Binding,
+    Apply,
+    Block,
+    Branch,
+    Match,
+    Region,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueUseClassification {
+    BodyResult,
+    CopyOnly {
+        reads: usize,
+    },
+    SingleMove,
+    AffineConsumed {
+        copy_reads: usize,
+        moves: usize,
+        borrows: usize,
+        drops: usize,
+    },
+    UnusedPureValue,
+    NotRewritableApply {
+        reason: ApplyRewriteBlocker,
+    },
+    UnusedValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyRewriteBlocker {
+    EffectUnknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueUseFinding {
+    CopyOnly {
+        value: ValueId,
+        reads: usize,
+    },
+    SingleMove {
+        value: ValueId,
+        repr: ValueRepr,
+    },
+    UnusedPureValue {
+        value: ValueId,
+        producer: ExprId,
+    },
+    NotRewritableApply {
+        value: ValueId,
+        producer: ExprId,
+        reason: ApplyRewriteBlocker,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AffineForwardingCandidate {
+    pub value: ValueId,
+    pub binding: BindingId,
+    pub binding_name: String,
+    pub producer: ExprId,
+    pub apply_expr: ExprId,
+    pub apply_flavor: ApplyFlavor,
+    pub arg_index: usize,
+    pub repr: ValueRepr,
+    pub rewrite_blocker: ForwardingRewriteBlocker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardingRewriteBlocker {
+    /// A validated binding def-use graph now backs each candidate, but
+    /// builder-local `BindingId`s are still not stable across builds nor a
+    /// codegen authority, so the move may not yet be rewritten.
+    AuthoritativeBindingIdentityRequired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramLayoutOptimizationSummary {
+    pub functions: Vec<FunctionLayoutOptimizationSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionLayoutOptimizationSummary {
+    pub name: String,
+    pub sum_candidates: Vec<SumLayoutOptimizationCandidate>,
+    pub record_layouts: Vec<RecordLayoutOptimizationCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SumLayoutOptimizationCandidate {
+    pub layout: LayoutId,
+    pub strategy: SumStrategy,
+    pub candidates: Vec<SumOptimizationCandidate>,
+    pub rewrite_blocker: LayoutOptimizationRewriteBlocker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordLayoutOptimizationCandidate {
+    pub layout: LayoutId,
+    pub name: String,
+    pub type_args: Vec<String>,
+    pub strategy: RecordStrategy,
+    pub fields: Vec<RecordFieldLayoutFact>,
+    pub scalar_replacement: RecordScalarReplacement,
+    pub rewrite_blocker: LayoutOptimizationRewriteBlocker,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldLayoutFact {
+    pub name: String,
+    pub offset: u32,
+    pub repr: ValueRepr,
+    pub size: u32,
+    pub align: u32,
+}
+
+/// Whether a concrete record is shape-eligible for scalar replacement of
+/// aggregates, i.e. exploding the record into one local per field. Shape
+/// eligibility is necessary but not sufficient: it does not prove the record is
+/// safe to replace, only that its fields fit individual locals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordScalarReplacement {
+    /// Every field is a scalar or unit value, so each field could live in its
+    /// own local. Still blocked until escape/flow analysis proves the record is
+    /// never observed by reference.
+    ScalarFieldsOnly {
+        rewrite_blocker: ScalarReplacementBlocker,
+    },
+    /// At least one field is a runtime reference, so flat scalar replacement is
+    /// not shape-eligible. Nested replacement is left to later passes.
+    HasReferenceFields,
+}
+
+/// The analysis still missing before a shape-eligible record may actually be
+/// scalar-replaced. Naming the real gate keeps the candidate honest rather than
+/// implying the rewrite is already safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarReplacementBlocker {
+    EscapeAnalysisRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutOptimizationRewriteBlocker {
+    AdvisoryOnly,
+}
+
+pub fn summarize_checked_program_value_uses(program: &CheckedProgramIr) -> ProgramValueUseSummary {
+    ProgramValueUseSummary {
+        functions: program
+            .functions
+            .iter()
+            .map(summarize_checked_function_value_uses)
+            .collect(),
+    }
+}
+
+pub fn summarize_checked_program_layout_optimizations(
+    program: &CheckedProgramIr,
+) -> ProgramLayoutOptimizationSummary {
+    ProgramLayoutOptimizationSummary {
+        functions: program
+            .functions
+            .iter()
+            .map(|function| {
+                summarize_checked_function_layout_optimizations(function, &program.layout_table)
+            })
+            .collect(),
+    }
+}
+
+pub fn summarize_checked_function_layout_optimizations(
+    function: &CheckedFunctionIr,
+    layout_table: &LayoutTable,
+) -> FunctionLayoutOptimizationSummary {
+    let mut sum_candidates = Vec::new();
+    let mut record_layouts = Vec::new();
+
+    for layout in &function.lowering.required_layouts {
+        let Some(descriptor) = layout_table.get(*layout) else {
+            continue;
+        };
+        match &descriptor.kind {
+            LayoutKind::Sum(sum) => {
+                if sum.optimization_candidates.is_empty() {
+                    continue;
+                }
+                sum_candidates.push(SumLayoutOptimizationCandidate {
+                    layout: *layout,
+                    strategy: sum.strategy.clone(),
+                    candidates: sum.optimization_candidates.clone(),
+                    rewrite_blocker: LayoutOptimizationRewriteBlocker::AdvisoryOnly,
+                });
+            }
+            LayoutKind::Record(record) => {
+                if record.fields.is_empty() {
+                    continue;
+                }
+                let fields = record
+                    .fields
+                    .iter()
+                    .map(|field| RecordFieldLayoutFact {
+                        name: field.name.clone(),
+                        offset: field.offset,
+                        repr: field.element.repr,
+                        size: field.element.size,
+                        align: field.element.align,
+                    })
+                    .collect::<Vec<_>>();
+                let scalar_replacement = classify_record_scalar_replacement(&fields);
+                record_layouts.push(RecordLayoutOptimizationCandidate {
+                    layout: *layout,
+                    name: record.name.clone(),
+                    type_args: record.type_args.clone(),
+                    strategy: record.strategy.clone(),
+                    fields,
+                    scalar_replacement,
+                    rewrite_blocker: LayoutOptimizationRewriteBlocker::AdvisoryOnly,
+                });
+            }
+            LayoutKind::String(_)
+            | LayoutKind::List(_)
+            | LayoutKind::Array(_)
+            | LayoutKind::Range(_)
+            | LayoutKind::Closure(_)
+            | LayoutKind::Opaque(_) => {}
+        }
+    }
+
+    FunctionLayoutOptimizationSummary {
+        name: function.name.clone(),
+        sum_candidates,
+        record_layouts,
+    }
+}
+
+fn classify_record_scalar_replacement(fields: &[RecordFieldLayoutFact]) -> RecordScalarReplacement {
+    // The caller filters empty records before classification. Assert that
+    // contract so a degenerate empty slice can never be silently reported as
+    // scalar-replaceable rather than flagged (No Silent Fallbacks).
+    debug_assert!(
+        !fields.is_empty(),
+        "scalar replacement classification expects a non-empty record"
+    );
+    if fields.iter().any(|field| field.repr.is_runtime_reference()) {
+        RecordScalarReplacement::HasReferenceFields
+    } else {
+        RecordScalarReplacement::ScalarFieldsOnly {
+            rewrite_blocker: ScalarReplacementBlocker::EscapeAnalysisRequired,
+        }
+    }
+}
+
+pub fn summarize_checked_function_value_uses(
+    function: &CheckedFunctionIr,
+) -> FunctionValueUseSummary {
+    let mut values = Vec::new();
+    let mut value_indexes = HashMap::new();
+    let body_result = function.lowering.body_result;
+    let mut applies_by_expr = HashMap::new();
+
+    for expr in &function.typed_exprs {
+        if let TypedExprKind::Apply(apply) = &expr.kind {
+            applies_by_expr.insert(expr.id, apply);
+        }
+        for value in expr.flow.produced() {
+            if value_indexes.contains_key(value) {
+                continue;
+            }
+            value_indexes.insert(*value, values.len());
+            values.push(ValueUseSummary {
+                value: *value,
+                producer: expr.id,
+                producer_kind: producer_kind(&expr.kind),
+                binding: binding_for_kind(&expr.kind),
+                repr: expr.repr,
+                is_body_result: Some(*value) == body_result,
+                uses: Vec::new(),
+                classification: ValueUseClassification::UnusedValue,
+            });
+        }
+    }
+
+    for expr in &function.typed_exprs {
+        for event in expr.flow.uses() {
+            if let Some(index) = value_indexes.get(&event.value) {
+                values[*index].uses.push(*event);
+            }
+        }
+    }
+
+    let mut findings = Vec::new();
+    for value in &mut values {
+        value.classification = classify_value_use(value);
+        if let Some(finding) = finding_for_value(value) {
+            findings.push(finding);
+        }
+    }
+    let binding_graph = build_function_binding_graph(function)
+        .expect("validated checked IR must yield a consistent binding graph");
+    let forwarding_candidates = forwarding_candidates_from_graph(&binding_graph, &applies_by_expr);
+
+    FunctionValueUseSummary {
+        name: function.name.clone(),
+        values,
+        findings,
+        forwarding_candidates,
+    }
+}
+
+fn producer_kind(kind: &TypedExprKind) -> ValueProducerKind {
+    match kind {
+        TypedExprKind::Literal => ValueProducerKind::Literal,
+        TypedExprKind::Value(_) => ValueProducerKind::PlainValue,
+        TypedExprKind::Binding(_) => ValueProducerKind::Binding,
+        TypedExprKind::Apply(_) => ValueProducerKind::Apply,
+        TypedExprKind::Block(_) => ValueProducerKind::Block,
+        TypedExprKind::Branch { .. } => ValueProducerKind::Branch,
+        TypedExprKind::Match { .. } => ValueProducerKind::Match,
+        TypedExprKind::Region { .. } => ValueProducerKind::Region,
+    }
+}
+
+fn binding_for_kind(kind: &TypedExprKind) -> Option<BindingId> {
+    match kind {
+        TypedExprKind::Binding(binding) => Some(*binding),
+        _ => None,
+    }
+}
+
+fn classify_value_use(value: &ValueUseSummary) -> ValueUseClassification {
+    if value.is_body_result {
+        return ValueUseClassification::BodyResult;
+    }
+
+    if value.uses.is_empty() {
+        return match value.producer_kind {
+            ValueProducerKind::Literal | ValueProducerKind::PlainValue => {
+                ValueUseClassification::UnusedPureValue
+            }
+            ValueProducerKind::Apply => ValueUseClassification::NotRewritableApply {
+                reason: ApplyRewriteBlocker::EffectUnknown,
+            },
+            ValueProducerKind::Binding
+            | ValueProducerKind::Block
+            | ValueProducerKind::Branch
+            | ValueProducerKind::Match
+            | ValueProducerKind::Region => ValueUseClassification::UnusedValue,
+        };
+    }
+
+    let copy_reads = value
+        .uses
+        .iter()
+        .filter(|event| event.kind == UseKind::ReadCopy)
+        .count();
+    let moves = value
+        .uses
+        .iter()
+        .filter(|event| event.kind == UseKind::Move)
+        .count();
+    let borrows = value
+        .uses
+        .iter()
+        .filter(|event| matches!(event.kind, UseKind::BorrowShared | UseKind::BorrowMut))
+        .count();
+    let drops = value
+        .uses
+        .iter()
+        .filter(|event| event.kind == UseKind::Drop)
+        .count();
+
+    if copy_reads == value.uses.len() {
+        return ValueUseClassification::CopyOnly { reads: copy_reads };
+    }
+
+    if moves == 1 && copy_reads == 0 && borrows == 0 && drops == 0 {
+        return ValueUseClassification::SingleMove;
+    }
+
+    ValueUseClassification::AffineConsumed {
+        copy_reads,
+        moves,
+        borrows,
+        drops,
+    }
+}
+
+fn finding_for_value(value: &ValueUseSummary) -> Option<ValueUseFinding> {
+    match value.classification {
+        ValueUseClassification::CopyOnly { reads } => Some(ValueUseFinding::CopyOnly {
+            value: value.value,
+            reads,
+        }),
+        ValueUseClassification::SingleMove => Some(ValueUseFinding::SingleMove {
+            value: value.value,
+            repr: value.repr,
+        }),
+        ValueUseClassification::UnusedPureValue => Some(ValueUseFinding::UnusedPureValue {
+            value: value.value,
+            producer: value.producer,
+        }),
+        ValueUseClassification::NotRewritableApply { reason } => {
+            Some(ValueUseFinding::NotRewritableApply {
+                value: value.value,
+                producer: value.producer,
+                reason,
+            })
+        }
+        ValueUseClassification::BodyResult
+        | ValueUseClassification::AffineConsumed { .. }
+        | ValueUseClassification::UnusedValue => None,
+    }
+}
+
+fn forwarding_candidates_from_graph(
+    graph: &FunctionBindingGraph,
+    applies_by_expr: &HashMap<ExprId, &super::ApplyIr>,
+) -> Vec<AffineForwardingCandidate> {
+    let mut candidates = Vec::new();
+
+    for binding in &graph.bindings {
+        if binding.mutable {
+            continue;
+        }
+        if !binding.repr.is_runtime_reference() {
+            continue;
+        }
+
+        // A forwarding candidate is a runtime-reference binding read that is
+        // consumed exactly once, as a move directly into an apply argument. The
+        // binding def-use graph supplies the binding -> read -> use linking that
+        // was previously reconstructed from the flat value list.
+        for read in &binding.reads {
+            if read.uses.len() != 1 {
+                continue;
+            }
+            let event = read.uses[0];
+            if event.kind != UseKind::Move {
+                continue;
+            }
+            let Some(apply) = applies_by_expr.get(&event.at) else {
+                continue;
+            };
+            let Some(arg_index) = apply.args.iter().position(|arg| *arg == read.value) else {
+                continue;
+            };
+
+            candidates.push(AffineForwardingCandidate {
+                value: read.value,
+                binding: binding.id,
+                binding_name: binding.name.clone(),
+                producer: read.at,
+                apply_expr: event.at,
+                apply_flavor: apply.flavor,
+                arg_index,
+                repr: binding.repr,
+                rewrite_blocker: ForwardingRewriteBlocker::AuthoritativeBindingIdentityRequired,
+            });
+        }
+    }
+
+    candidates
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmMirModule {
+    pub functions: Vec<WasmMirFunction>,
+}
+
+impl WasmMirModule {
+    pub fn optimize(&mut self, level: OptimizationLevel) -> OptimizationReport {
+        if level == OptimizationLevel::None {
+            return OptimizationReport::default();
+        }
+
+        let mut report = OptimizationReport::default();
+
+        for function in &mut self.functions {
+            report.removed_nops += remove_nops(function);
+            if level >= OptimizationLevel::Local {
+                report += optimize_local_to_fixpoint(function);
+            }
+        }
+
+        report
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmMirFunction {
+    pub name: String,
+    pub instructions: Vec<WasmMirInstr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WasmMirInstr {
+    Nop,
+    I32Const(i32),
+    I32Add,
+    I32Sub,
+    I32Mul,
+    LocalGet(u32),
+    LocalSet(u32),
+    Drop,
+    Return,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OptimizationLevel {
+    None,
+    Hygiene,
+    Local,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OptimizationReport {
+    pub removed_nops: usize,
+    pub folded_constants: usize,
+    pub simplified_identities: usize,
+    pub removed_dead_stack_values: usize,
+}
+
+impl std::ops::AddAssign for OptimizationReport {
+    fn add_assign(&mut self, other: Self) {
+        self.removed_nops += other.removed_nops;
+        self.folded_constants += other.folded_constants;
+        self.simplified_identities += other.simplified_identities;
+        self.removed_dead_stack_values += other.removed_dead_stack_values;
+    }
+}
+
+fn remove_nops(function: &mut WasmMirFunction) -> usize {
+    let before = function.instructions.len();
+    function
+        .instructions
+        .retain(|instr| !matches!(instr, WasmMirInstr::Nop));
+    before - function.instructions.len()
+}
+
+fn optimize_local_to_fixpoint(function: &mut WasmMirFunction) -> OptimizationReport {
+    let mut report = OptimizationReport::default();
+
+    // Each rewrite strictly shrinks the instruction list when it fires, so the
+    // combined loop is monotonic and converges. Running them together lets one
+    // rewrite expose work for another (a fold can produce an identity operand,
+    // and a dead-value removal can expose a fold) within the same fixpoint.
+    loop {
+        let folded_constants = fold_i32_arith_constants(function);
+        let simplified_identities = simplify_i32_identities(function);
+        let removed_dead_stack_values = remove_dead_stack_values(function);
+        if folded_constants == 0 && simplified_identities == 0 && removed_dead_stack_values == 0 {
+            return report;
+        }
+        report.folded_constants += folded_constants;
+        report.simplified_identities += simplified_identities;
+        report.removed_dead_stack_values += removed_dead_stack_values;
+    }
+}
+
+fn fold_i32_arith_constants(function: &mut WasmMirFunction) -> usize {
+    let mut folded = 0;
+    let mut output = Vec::with_capacity(function.instructions.len());
+    let mut cursor = 0;
+
+    while cursor < function.instructions.len() {
+        let window = &function.instructions[cursor..function.instructions.len().min(cursor + 3)];
+        if let [WasmMirInstr::I32Const(left), WasmMirInstr::I32Const(right), op] = window {
+            if let Some(value) = fold_i32_binop(*left, *right, op) {
+                output.push(WasmMirInstr::I32Const(value));
+                folded += 1;
+                cursor += 3;
+                continue;
+            }
+        }
+        output.push(function.instructions[cursor].clone());
+        cursor += 1;
+    }
+
+    function.instructions = output;
+    folded
+}
+
+fn fold_i32_binop(left: i32, right: i32, op: &WasmMirInstr) -> Option<i32> {
+    match op {
+        WasmMirInstr::I32Add => Some(left.wrapping_add(right)),
+        WasmMirInstr::I32Sub => Some(left.wrapping_sub(right)),
+        WasmMirInstr::I32Mul => Some(left.wrapping_mul(right)),
+        _ => None,
+    }
+}
+
+fn simplify_i32_identities(function: &mut WasmMirFunction) -> usize {
+    let mut simplified = 0;
+    let mut output = Vec::with_capacity(function.instructions.len());
+    let mut cursor = 0;
+
+    while cursor < function.instructions.len() {
+        let window = &function.instructions[cursor..function.instructions.len().min(cursor + 2)];
+        if let [WasmMirInstr::I32Const(value), op] = window {
+            if is_i32_identity(*value, op) {
+                simplified += 1;
+                cursor += 2;
+                continue;
+            }
+        }
+        output.push(function.instructions[cursor].clone());
+        cursor += 1;
+    }
+
+    function.instructions = output;
+    simplified
+}
+
+// A constant operand that leaves the other operand unchanged: `x + 0`, `x - 0`,
+// and `x * 1`. The matched window always encodes the constant as the right-hand
+// operand, so `i32.sub`'s non-commutativity is safe (`0 - x` could never appear
+// as `[I32Const(0), I32Sub]`). `x * 0` is intentionally excluded: it would have
+// to drop `x` rather than simply elide the operation.
+fn is_i32_identity(value: i32, op: &WasmMirInstr) -> bool {
+    match op {
+        WasmMirInstr::I32Add | WasmMirInstr::I32Sub => value == 0,
+        WasmMirInstr::I32Mul => value == 1,
+        _ => false,
+    }
+}
+
+fn remove_dead_stack_values(function: &mut WasmMirFunction) -> usize {
+    let mut removed = 0;
+    let mut output = Vec::with_capacity(function.instructions.len());
+    let mut cursor = 0;
+
+    while cursor < function.instructions.len() {
+        if cursor + 1 < function.instructions.len()
+            && is_pure_stack_producer(&function.instructions[cursor])
+            && function.instructions[cursor + 1] == WasmMirInstr::Drop
+        {
+            removed += 1;
+            cursor += 2;
+        } else {
+            output.push(function.instructions[cursor].clone());
+            cursor += 1;
+        }
+    }
+
+    function.instructions = output;
+    removed
+}
+
+fn is_pure_stack_producer(instr: &WasmMirInstr) -> bool {
+    matches!(instr, WasmMirInstr::I32Const(_) | WasmMirInstr::LocalGet(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::Program;
+    use crate::ir::builder::{build_checked_ir, CheckedProgramIr};
+    use crate::ir::layout::SumVariantIdentity;
+    use crate::ir::{HostAbi, InternalOnlyReason, ScalarRepr};
+    use crate::parser::parse_program;
+    use crate::type_checker::TypeChecker;
+
+    fn parse_source(source: &str) -> Program {
+        let (remaining, program) = parse_program(source).expect("source should parse");
+        assert!(remaining.trim().is_empty(), "unparsed input: {remaining:?}");
+        program
+    }
+
+    fn checked_ir(source: &str) -> CheckedProgramIr {
+        let program = parse_source(source);
+        checked_ir_for_program(&program)
+    }
+
+    fn checked_ir_for_program(program: &Program) -> CheckedProgramIr {
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(program)
+            .expect("source should type-check");
+        build_checked_ir(program, &checker).expect("checked IR should build")
+    }
+
+    fn function_summary<'a>(
+        summary: &'a ProgramValueUseSummary,
+        name: &str,
+    ) -> &'a FunctionValueUseSummary {
+        summary
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .expect("function summary should be present")
+    }
+
+    fn layout_function_summary<'a>(
+        summary: &'a ProgramLayoutOptimizationSummary,
+        name: &str,
+    ) -> &'a FunctionLayoutOptimizationSummary {
+        summary
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .expect("function layout summary should be present")
+    }
+
+    fn sum_variant(tag: u32, name: &str) -> SumVariantIdentity {
+        SumVariantIdentity {
+            tag,
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_reports_sum_candidates() {
+        let ir = checked_ir(
+            r#"
+fun keep_option_string: (value: Option<String>) -> Option<String> = {
+    value
+}
+
+fun keep_result_scalar: (value: Result<Int32, Boolean>) -> Result<Int32, Boolean> = {
+    value
+}
+
+fun keep_range: (value: Range<Int32>) -> Range<Int32> = {
+    value
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+
+        let option = layout_function_summary(&summary, "keep_option_string");
+        assert_eq!(option.sum_candidates.len(), 1);
+        let option_candidate = &option.sum_candidates[0];
+        assert_eq!(option_candidate.strategy, SumStrategy::TaggedPayload);
+        assert_eq!(
+            option_candidate.rewrite_blocker,
+            LayoutOptimizationRewriteBlocker::AdvisoryOnly
+        );
+        assert_eq!(
+            option_candidate.candidates,
+            vec![SumOptimizationCandidate::NullNiche {
+                payload_variant: sum_variant(1, "Some"),
+            }]
+        );
+
+        let result = layout_function_summary(&summary, "keep_result_scalar");
+        assert_eq!(result.sum_candidates.len(), 1);
+        let result_candidate = &result.sum_candidates[0];
+        assert_eq!(result_candidate.strategy, SumStrategy::TaggedPayload);
+        assert_eq!(
+            result_candidate.rewrite_blocker,
+            LayoutOptimizationRewriteBlocker::AdvisoryOnly
+        );
+        assert!(result_candidate
+            .candidates
+            .contains(&SumOptimizationCandidate::ScalarPair {
+                payload_variants: vec![sum_variant(0, "Err"), sum_variant(1, "Ok")]
+            }));
+        assert!(result_candidate
+            .candidates
+            .contains(&SumOptimizationCandidate::ScalarLocal {
+                payload_variants: vec![sum_variant(0, "Err"), sum_variant(1, "Ok")]
+            }));
+
+        let range = layout_function_summary(&summary, "keep_range");
+        assert!(range.sum_candidates.is_empty());
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_reports_record_layout_facts() {
+        let ir = checked_ir(
+            r#"
+record ReleaseScore {
+    value: Int32,
+    label: String
+}
+
+record Box<T> {
+    value: T
+}
+
+fun keep_score: (score: ReleaseScore) -> ReleaseScore = {
+    score
+}
+
+fun keep_box: <T>(item: Box<T>) -> Box<T> = {
+    item
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+
+        let score = layout_function_summary(&summary, "keep_score");
+        assert!(score.sum_candidates.is_empty());
+        assert_eq!(score.record_layouts.len(), 1);
+        let record = &score.record_layouts[0];
+        assert_eq!(record.name, "ReleaseScore");
+        assert!(record.type_args.is_empty());
+        assert_eq!(record.strategy, RecordStrategy::DescriptorManaged);
+        assert_eq!(
+            record.rewrite_blocker,
+            LayoutOptimizationRewriteBlocker::AdvisoryOnly
+        );
+        assert_eq!(
+            record.scalar_replacement,
+            RecordScalarReplacement::HasReferenceFields
+        );
+        assert_eq!(record.fields.len(), 2);
+        assert_eq!(
+            record.fields[0],
+            RecordFieldLayoutFact {
+                name: "value".to_string(),
+                offset: 0,
+                repr: ValueRepr::Scalar(ScalarRepr::I32),
+                size: 4,
+                align: 4,
+            }
+        );
+        assert_eq!(record.fields[1].name, "label");
+        assert_eq!(record.fields[1].offset, 4);
+        assert!(matches!(record.fields[1].repr, ValueRepr::Ref(_)));
+        assert_eq!(record.fields[1].size, 4);
+        assert_eq!(record.fields[1].align, 4);
+
+        let open_generic = layout_function_summary(&summary, "keep_box");
+        assert!(open_generic.record_layouts.is_empty());
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_flags_scalar_record_for_replacement() {
+        let ir = checked_ir(
+            r#"
+record Point {
+    x: Int32,
+    y: Int32
+}
+
+record Tagged {
+    id: Int32,
+    label: String
+}
+
+fun keep_point: (point: Point) -> Point = {
+    point
+}
+
+fun keep_tagged: (tagged: Tagged) -> Tagged = {
+    tagged
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+
+        let point = layout_function_summary(&summary, "keep_point");
+        assert_eq!(point.record_layouts.len(), 1);
+        assert_eq!(
+            point.record_layouts[0].scalar_replacement,
+            RecordScalarReplacement::ScalarFieldsOnly {
+                rewrite_blocker: ScalarReplacementBlocker::EscapeAnalysisRequired,
+            }
+        );
+
+        let tagged = layout_function_summary(&summary, "keep_tagged");
+        assert_eq!(tagged.record_layouts.len(), 1);
+        assert_eq!(
+            tagged.record_layouts[0].scalar_replacement,
+            RecordScalarReplacement::HasReferenceFields
+        );
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_keeps_host_abi_internal_only() {
+        let ir = checked_ir(
+            r#"
+fun keep_option: (value: Option<Int32>) -> Option<Int32> = {
+    value
+}
+"#,
+        );
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+        let function = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "keep_option")
+            .expect("function should be present");
+        let layout_summary = layout_function_summary(&summary, "keep_option");
+        let composite = InternalOnlyReason::CompositeHostAbiUnstable;
+
+        assert_eq!(layout_summary.sum_candidates.len(), 1);
+        assert_eq!(
+            function.lowering.param_host_abis,
+            vec![HostAbi::InternalOnly(composite.clone())]
+        );
+        assert_eq!(
+            function.lowering.return_host_abi,
+            HostAbi::InternalOnly(composite)
+        );
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    }
+
+    #[test]
+    fn checked_ir_layout_optimization_summary_does_not_mutate_ir_or_wat() {
+        let program = parse_source(
+            r#"
+fun keep_option: (value: Option<Int32>) -> Option<Int32> = {
+    value
+}
+
+fun main: () -> Int32 = {
+    42
+}
+"#,
+        );
+        let before_wat = crate::generate(&program).expect("source should generate WAT");
+        let ir = checked_ir_for_program(&program);
+        let before_ir = ir.clone();
+
+        let summary = summarize_checked_program_layout_optimizations(&ir);
+        assert_eq!(
+            layout_function_summary(&summary, "keep_option")
+                .sum_candidates
+                .len(),
+            1
+        );
+        assert_eq!(ir, before_ir);
+        assert_eq!(
+            crate::generate(&program).expect("source should still generate WAT"),
+            before_wat
+        );
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_marks_scalar_copy_reads() {
+        let ir = checked_ir(
+            r#"
+fun add: (left: Int32, right: Int32) -> Int32 = {
+    left + right
+}
+
+fun main: () -> Int32 = {
+    (1, 2) add
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+        let copied_literals = main
+            .values
+            .iter()
+            .filter(|value| value.producer_kind == ValueProducerKind::Literal)
+            .filter(|value| {
+                matches!(
+                    value.classification,
+                    ValueUseClassification::CopyOnly { reads: 1 }
+                )
+            })
+            .count();
+
+        assert_eq!(copied_literals, 2);
+        assert_eq!(
+            main.findings
+                .iter()
+                .filter(|finding| matches!(finding, ValueUseFinding::CopyOnly { reads: 1, .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_marks_composite_single_move() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: () -> List<Int32> = {
+    [] |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+        let moved_list = main
+            .values
+            .iter()
+            .find(|value| {
+                value.producer_kind == ValueProducerKind::Literal
+                    && value.repr.is_runtime_reference()
+            })
+            .expect("list literal should be tracked");
+
+        assert_eq!(
+            moved_list.classification,
+            ValueUseClassification::SingleMove
+        );
+        assert!(main.findings.iter().any(|finding| {
+            matches!(
+                finding,
+                ValueUseFinding::SingleMove { value, repr }
+                    if *value == moved_list.value && *repr == moved_list.repr
+            )
+        }));
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_reports_affine_forwarding_candidate() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: (items: List<Int32>) -> List<Int32> = {
+    items |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert_eq!(main.forwarding_candidates.len(), 1);
+        let candidate = &main.forwarding_candidates[0];
+        let value = main
+            .values
+            .iter()
+            .find(|value| value.value == candidate.value)
+            .expect("candidate value should be summarized");
+
+        assert_eq!(value.producer_kind, ValueProducerKind::Binding);
+        assert_eq!(candidate.binding_name, "items");
+        assert_eq!(value.binding, Some(candidate.binding));
+        assert_eq!(value.classification, ValueUseClassification::SingleMove);
+        assert_eq!(candidate.apply_flavor, ApplyFlavor::Pipe);
+        assert_eq!(candidate.arg_index, 0);
+        assert_eq!(
+            candidate.rewrite_blocker,
+            ForwardingRewriteBlocker::AuthoritativeBindingIdentityRequired
+        );
+        assert!(candidate.repr.is_runtime_reference());
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_reports_local_alias_forwarding_candidate() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: (items: List<Int32>) -> List<Int32> = {
+    val alias = items
+    alias |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert_eq!(main.forwarding_candidates.len(), 1);
+        let candidate = &main.forwarding_candidates[0];
+        let value = main
+            .values
+            .iter()
+            .find(|value| value.value == candidate.value)
+            .expect("candidate value should be summarized");
+
+        assert_eq!(candidate.binding_name, "alias");
+        assert_eq!(value.binding, Some(candidate.binding));
+        assert_eq!(value.producer_kind, ValueProducerKind::Binding);
+        assert_eq!(candidate.apply_flavor, ApplyFlavor::Pipe);
+        assert_eq!(
+            candidate.rewrite_blocker,
+            ForwardingRewriteBlocker::AuthoritativeBindingIdentityRequired
+        );
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_does_not_forward_mutable_alias() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: () -> List<Int32> = {
+    mut val alias: List<Int32> = []
+    alias |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert!(main.forwarding_candidates.is_empty());
+        assert!(main.values.iter().any(|value| {
+            value.binding.is_some() && value.classification == ValueUseClassification::SingleMove
+        }));
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_does_not_forward_literal_direct_move() {
+        let ir = checked_ir(
+            r#"
+fun keep: (items: List<Int32>) -> List<Int32> = {
+    items
+}
+
+fun main: () -> List<Int32> = {
+    [] |> keep
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert!(main.forwarding_candidates.is_empty());
+        assert!(main.findings.iter().any(|finding| {
+            matches!(
+                finding,
+                ValueUseFinding::SingleMove { repr, .. } if repr.is_runtime_reference()
+            )
+        }));
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_does_not_forward_scalar_copy() {
+        let ir = checked_ir(
+            r#"
+fun inc: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: (value: Int32) -> Int32 = {
+    value |> inc
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert!(main.forwarding_candidates.is_empty());
+        assert!(main
+            .findings
+            .iter()
+            .any(|finding| { matches!(finding, ValueUseFinding::CopyOnly { reads: 1, .. }) }));
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_treats_body_result_as_live() {
+        let ir = checked_ir(
+            r#"
+fun main: () -> Int32 = {
+    42
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+
+        assert_eq!(main.values.len(), 1);
+        assert_eq!(
+            main.values[0].classification,
+            ValueUseClassification::BodyResult
+        );
+        assert!(main.findings.is_empty());
+    }
+
+    #[test]
+    fn checked_ir_value_use_summary_keeps_unused_apply_non_rewritable() {
+        let ir = checked_ir(
+            r#"
+fun inc: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: () -> Int32 = {
+    (1) inc
+    42
+}
+"#,
+        );
+
+        let program_summary = summarize_checked_program_value_uses(&ir);
+        let main = function_summary(&program_summary, "main");
+        let apply_result = main
+            .values
+            .iter()
+            .find(|value| value.producer_kind == ValueProducerKind::Apply)
+            .expect("unused apply result should be tracked");
+
+        assert_eq!(
+            apply_result.classification,
+            ValueUseClassification::NotRewritableApply {
+                reason: ApplyRewriteBlocker::EffectUnknown
+            }
+        );
+        assert!(main.findings.iter().any(|finding| {
+            matches!(
+                finding,
+                ValueUseFinding::NotRewritableApply {
+                    value,
+                    reason: ApplyRewriteBlocker::EffectUnknown,
+                    ..
+                } if *value == apply_result.value
+            )
+        }));
+    }
+
+    #[test]
+    fn hygiene_optimization_removes_nops() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::Nop,
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::Nop,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Hygiene);
+        assert_eq!(report.removed_nops, 2);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(1), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_folds_adjacent_i32_add() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(40),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(42), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_folds_i32_add_chains_to_fixpoint() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::I32Const(3),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 2);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(6), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_removes_dead_pure_stack_values() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(7),
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.removed_dead_stack_values, 2);
+        assert_eq!(module.functions[0].instructions, vec![WasmMirInstr::Return]);
+    }
+
+    #[test]
+    fn local_optimization_folds_then_removes_dead_constant_result() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(20),
+                    WasmMirInstr::I32Const(22),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(report.removed_dead_stack_values, 1);
+        assert_eq!(module.functions[0].instructions, vec![WasmMirInstr::Return]);
+    }
+
+    #[test]
+    fn local_optimization_repeats_when_dead_value_removal_exposes_fold() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Const(99),
+                    WasmMirInstr::Drop,
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(report.removed_dead_stack_values, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(3), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn none_optimization_is_noop() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::Nop,
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Add,
+                ],
+            }],
+        };
+        let original = module.clone();
+
+        let report = module.optimize(OptimizationLevel::None);
+        assert_eq!(report, OptimizationReport::default());
+        assert_eq!(module, original);
+    }
+
+    #[test]
+    fn local_optimization_uses_i32_wrapping_semantics() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "wrap".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(i32::MAX),
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Add,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(i32::MIN)]
+        );
+    }
+
+    #[test]
+    fn local_optimization_folds_i32_sub_and_mul_constants() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::I32Const(40),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Sub,
+                    WasmMirInstr::I32Const(3),
+                    WasmMirInstr::I32Mul,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 2);
+        assert_eq!(report.simplified_identities, 0);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::I32Const(114), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_eliminates_additive_identities() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::I32Const(0),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::I32Const(0),
+                    WasmMirInstr::I32Sub,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.simplified_identities, 2);
+        assert_eq!(report.folded_constants, 0);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::LocalGet(0), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_eliminates_multiplicative_identity() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(1),
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Mul,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.simplified_identities, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::LocalGet(1), WasmMirInstr::Return]
+        );
+    }
+
+    #[test]
+    fn local_optimization_keeps_non_identity_constants() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::I32Const(1),
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::LocalGet(1),
+                    WasmMirInstr::I32Const(0),
+                    WasmMirInstr::I32Mul,
+                ],
+            }],
+        };
+        let original = module.clone();
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.simplified_identities, 0);
+        assert_eq!(report.folded_constants, 0);
+        assert_eq!(module, original);
+    }
+
+    #[test]
+    fn local_optimization_folds_then_eliminates_identity_to_fixpoint() {
+        let mut module = WasmMirModule {
+            functions: vec![WasmMirFunction {
+                name: "score".to_string(),
+                instructions: vec![
+                    WasmMirInstr::LocalGet(0),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Const(2),
+                    WasmMirInstr::I32Sub,
+                    WasmMirInstr::I32Add,
+                    WasmMirInstr::Return,
+                ],
+            }],
+        };
+
+        let report = module.optimize(OptimizationLevel::Local);
+        assert_eq!(report.folded_constants, 1);
+        assert_eq!(report.simplified_identities, 1);
+        assert_eq!(
+            module.functions[0].instructions,
+            vec![WasmMirInstr::LocalGet(0), WasmMirInstr::Return]
+        );
+    }
+}

@@ -20,8 +20,6 @@ fn compile_sample(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("Type error in {}: {}", path.display(), e))?;
 
     let mut codegen = WasmCodeGen::new();
-    // Pass inferred expression types from the type checker to codegen
-    codegen.set_expr_types(checker.expr_types());
     let wat = codegen
         .generate(&program)
         .map_err(|e| format!("Codegen error in {}: {}", path.display(), e))?;

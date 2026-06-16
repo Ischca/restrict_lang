@@ -1,16 +1,10 @@
-// Restrict Language Standard Library: Database Context
-// 標準ライブラリ: Database コンテキスト
+// Standard Library: Database reference surface
 //
-// Provides database access using the context mechanism.
-// Currently a stub - awaiting WASI-sql support.
+// This file is not the runtime implementation. The current compiler has no
+// compiler-registered database surface in v0.0.1.
+// Keep this file as a canonical, source-adjacent index for readers and tests.
 //
-// Usage:
-//   with Database {
-//       // Database operations will be available here
-//   }
-
-context Database {
-    connect: (String) -> Int
-    query: (Int, String) -> String
-    execute: (Int, String) -> Int
-}
+// Current compiler-registered surface:
+// - none
+//
+// Database capabilities are outside the compiler-registered v0.0.1 surface.

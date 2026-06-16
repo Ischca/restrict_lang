@@ -1,4 +1,4 @@
-use restrict_lang::ast::{Expr, TopDecl};
+use restrict_lang::ast::{Expr, ExprKind, TopDecl};
 use restrict_lang::parse_program;
 
 fn fully_parses(source: &str) -> bool {
@@ -133,8 +133,9 @@ fn anonymous_record_fields_require_colon() {
             r#"
 val point = { x: 1 }
 "#
-        ),
-        Expr::RecordLit(_)
+        )
+        .kind,
+        ExprKind::RecordLit(_)
     ));
 
     assert!(!matches!(
@@ -142,8 +143,9 @@ val point = { x: 1 }
             r#"
 val point = { x = 1 }
 "#
-        ),
-        Expr::RecordLit(_)
+        )
+        .kind,
+        ExprKind::RecordLit(_)
     ));
 }
 

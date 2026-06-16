@@ -1,4 +1,4 @@
-use restrict_lang::ast::{BinaryOp, Expr, TopDecl, Type};
+use restrict_lang::ast::{BinaryOp, ExprKind, TopDecl, Type};
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn parse_source(source: &str) -> restrict_lang::ast::Program {
@@ -44,17 +44,18 @@ fun main: () -> Float64 = {
     let TopDecl::Function(func) = &program.declarations[0] else {
         panic!("expected function declaration");
     };
-    let Expr::Cast(cast) = func
+    let ExprKind::Cast(cast) = &func
         .body
         .expr
         .as_deref()
         .expect("function body should return")
+        .kind
     else {
         panic!("expected cast expression");
     };
 
     assert_eq!(cast.target, Type::Named("Float64".to_string()));
-    let Expr::Binary(binary) = cast.expr.as_ref() else {
+    let ExprKind::Binary(binary) = &cast.expr.kind else {
         panic!("expected cast operand to be binary");
     };
     assert_eq!(binary.op, BinaryOp::Add);

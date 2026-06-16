@@ -630,6 +630,7 @@ struct DeferredLambdaCandidate {
 #[derive(Debug)]
 struct RecordDef {
     fields: HashMap<String, TypedType>,
+    field_order: Vec<String>,
     type_params: Vec<TypeParam>,
     temporal_constraints: Vec<TemporalConstraint>,
     hash: Option<String>,
@@ -653,6 +654,14 @@ struct FunctionDef {
     temporal_constraints: Vec<TemporalConstraint>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CheckedFunctionSignature {
+    pub params: Vec<(String, TypedType)>,
+    pub return_type: TypedType,
+    pub type_params: Vec<TypeParam>,
+    pub temporal_constraints: Vec<TemporalConstraint>,
+}
+
 struct VariantPayloadExpectedContext<'a> {
     field_template: &'a TypedType,
     expected: Option<&'a TypedType>,
@@ -672,6 +681,8 @@ pub struct TypeChecker {
     records: HashMap<String, RecordDef>,
     // Function definitions
     functions: HashMap<String, FunctionDef>,
+    // Checked expression types, keyed by stable AST node id.
+    checked_expr_types: HashMap<NodeId, TypedType>,
     // Method implementations: record_name -> method_name -> function_def
     methods: HashMap<String, HashMap<String, FunctionDef>>,
     // Functions whose signatures were registered with a provisional return type.
@@ -707,6 +718,7 @@ impl TypeChecker {
             trait_impls: HashMap::new(),
             records: HashMap::new(),
             functions: HashMap::new(),
+            checked_expr_types: HashMap::new(),
             methods: HashMap::new(),
             provisional_function_returns: HashSet::new(),
             provisional_method_returns: HashSet::new(),
@@ -732,8 +744,81 @@ impl TypeChecker {
             .map(|function| function.return_type.clone())
     }
 
+    pub fn checked_function_signature(&self, name: &str) -> Option<CheckedFunctionSignature> {
+        self.functions
+            .get(name)
+            .map(|function| CheckedFunctionSignature {
+                params: function.params.clone(),
+                return_type: function.return_type.clone(),
+                type_params: function.type_params.clone(),
+                temporal_constraints: function.temporal_constraints.clone(),
+            })
+    }
+
+    pub fn checked_record_fields_for_type(
+        &self,
+        ty: &TypedType,
+    ) -> Option<Vec<(String, TypedType)>> {
+        let base_ty = match ty {
+            TypedType::Temporal { base_type, .. } => base_type.as_ref(),
+            _ => ty,
+        };
+        let TypedType::Record {
+            name, type_args, ..
+        } = base_ty
+        else {
+            return None;
+        };
+
+        let record_def = self.records.get(name)?;
+        let bindings = Self::type_arg_bindings(&record_def.type_params, type_args);
+        record_def
+            .field_order
+            .iter()
+            .map(|field_name| {
+                record_def.fields.get(field_name).map(|field_ty| {
+                    (
+                        field_name.clone(),
+                        Self::apply_type_arg_bindings(field_ty, &bindings),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Return the finalized type recorded while checking the node with
+    /// this stable id.
+    ///
+    /// Facts are keyed by `NodeId`, so they remain valid for any AST that
+    /// carries the same numbering as the checked program: the instance
+    /// itself and clones of it. A plain re-parse of the root source is NOT
+    /// sufficient when the program had imports, because import resolution
+    /// splices imported declarations and renumbers the whole program;
+    /// querying with differently-numbered nodes silently returns facts for
+    /// other nodes.
+    pub fn checked_expr_type(&self, expr: &Expr) -> Option<TypedType> {
+        self.checked_expr_types.get(&expr.id).cloned()
+    }
+
+    pub fn checked_expr_type_count(&self) -> usize {
+        self.checked_expr_types.len()
+    }
+
     pub fn checked_variable_type(&self, name: &str) -> Option<TypedType> {
         self.peek_var_type(name)
+    }
+
+    fn record_checked_expr_type(&mut self, expr: &Expr, ty: &TypedType) {
+        if expr.id == NodeId::DUMMY {
+            // Synthesized desugar nodes have no stable identity. Source
+            // subexpressions cloned into desugared forms keep their original
+            // ids, so their facts are recorded under the source node.
+            return;
+        }
+        if Self::contains_inference_internal_type(ty) {
+            return;
+        }
+        self.checked_expr_types.insert(expr.id, ty.clone());
     }
 
     fn range_int32_type() -> TypedType {
@@ -2219,7 +2304,7 @@ impl TypeChecker {
         substitution: &ConstraintSubstitution,
     ) -> Result<TypedType, TypeError> {
         let resolved = substitution.apply(actual)?;
-        if let Expr::Ident(name) = expr {
+        if let ExprKind::Ident(name) = &expr.kind {
             if Self::contains_inference_internal_type(actual) {
                 self.update_var_type(name, resolved.clone());
             }
@@ -2507,7 +2592,8 @@ impl TypeChecker {
             }
         }
 
-        let remaining_names: Vec<String> = remaining_fields.keys().cloned().collect();
+        let mut remaining_names: Vec<String> = remaining_fields.keys().cloned().collect();
+        remaining_names.sort();
         let residual_name = Self::residual_record_name(record_name, &remaining_names);
 
         if !self.records.contains_key(&residual_name) {
@@ -2515,6 +2601,7 @@ impl TypeChecker {
                 residual_name.clone(),
                 RecordDef {
                     fields: remaining_fields,
+                    field_order: remaining_names,
                     type_params: vec![],
                     temporal_constraints: vec![],
                     hash: None,
@@ -2731,9 +2818,9 @@ impl TypeChecker {
     }
 
     fn peek_method_receiver_type(&self, expr: &Expr) -> Option<TypedType> {
-        match expr {
-            Expr::Ident(name) => self.peek_var_type(name),
-            Expr::RecordLit(record_lit) if self.records.contains_key(&record_lit.name) => {
+        match &expr.kind {
+            ExprKind::Ident(name) => self.peek_var_type(name),
+            ExprKind::RecordLit(record_lit) if self.records.contains_key(&record_lit.name) => {
                 Some(TypedType::Record {
                     name: record_lit.name.clone(),
                     type_args: Vec::new(),
@@ -2742,14 +2829,14 @@ impl TypeChecker {
                     parent_hash: None,
                 })
             }
-            Expr::Call(call) => self.peek_named_call_return_type(call),
-            Expr::Pipe(pipe) => self.peek_pipe_return_type(pipe),
+            ExprKind::Call(call) => self.peek_named_call_return_type(call),
+            ExprKind::Pipe(pipe) => self.peek_pipe_return_type(pipe),
             _ => None,
         }
     }
 
     fn peek_named_call_return_type(&self, call: &CallExpr) -> Option<TypedType> {
-        let Expr::Ident(name) = call.function.as_ref() else {
+        let ExprKind::Ident(name) = &call.function.kind else {
             return None;
         };
 
@@ -2834,7 +2921,7 @@ impl TypeChecker {
 
         if !method_info.type_params.is_empty() {
             let call = CallExpr {
-                function: Box::new(Expr::Ident(method_name.to_string())),
+                function: Box::new(Expr::new(ExprKind::Ident(method_name.to_string()))),
                 args: args.to_vec(),
             };
             return self
@@ -2988,6 +3075,7 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), TypeError> {
+        self.checked_expr_types.clear();
         self.reject_unresolved_imports(&program.imports)?;
 
         // Run lifetime inference if needed
@@ -3167,13 +3255,13 @@ impl TypeChecker {
     ) -> HashSet<String> {
         let mut deps = HashSet::new();
 
-        match expr {
-            Expr::Ident(name) => {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
                 if !bound_vars.contains(name) && unannotated_names.contains(name) {
                     deps.insert(name.clone());
                 }
             }
-            Expr::Binary(binary) => {
+            ExprKind::Binary(binary) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &binary.left,
                     bound_vars,
@@ -3185,21 +3273,21 @@ impl TypeChecker {
                     unannotated_names,
                 ));
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &unary.expr,
                     bound_vars,
                     unannotated_names,
                 ));
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &cast.expr,
                     bound_vars,
                     unannotated_names,
                 ));
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &call.function,
                     bound_vars,
@@ -3213,7 +3301,7 @@ impl TypeChecker {
                     ));
                 }
             }
-            Expr::Pipe(pipe) => {
+            ExprKind::Pipe(pipe) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &pipe.expr,
                     bound_vars,
@@ -3234,14 +3322,14 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::FieldAccess(object, _) => {
+            ExprKind::FieldAccess(object, _) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     object,
                     bound_vars,
                     unannotated_names,
                 ));
             }
-            Expr::RecordLit(record_lit) => {
+            ExprKind::RecordLit(record_lit) => {
                 for field in &record_lit.fields {
                     match field {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
@@ -3254,7 +3342,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Clone(clone_expr) => {
+            ExprKind::Clone(clone_expr) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &clone_expr.base,
                     bound_vars,
@@ -3272,7 +3360,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::PrototypeClone(proto_clone) => {
+            ExprKind::PrototypeClone(proto_clone) => {
                 for field in &proto_clone.updates.fields {
                     match field {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
@@ -3285,19 +3373,19 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Freeze(inner)
-            | Expr::Some(inner)
-            | Expr::Ok(inner)
-            | Expr::Err(inner)
-            | Expr::Await(inner)
-            | Expr::Spawn(inner) => {
+            ExprKind::Freeze(inner)
+            | ExprKind::Some(inner)
+            | ExprKind::Ok(inner)
+            | ExprKind::Err(inner)
+            | ExprKind::Await(inner)
+            | ExprKind::Spawn(inner) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     inner,
                     bound_vars,
                     unannotated_names,
                 ));
             }
-            Expr::ListLit(elements) | Expr::ArrayLit(elements) => {
+            ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
                 for element in elements {
                     deps.extend(self.collect_unannotated_function_deps_in_expr(
                         element,
@@ -3306,7 +3394,7 @@ impl TypeChecker {
                     ));
                 }
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &range.start,
                     bound_vars,
@@ -3318,7 +3406,7 @@ impl TypeChecker {
                     unannotated_names,
                 ));
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &match_expr.expr,
                     bound_vars,
@@ -3334,7 +3422,7 @@ impl TypeChecker {
                     ));
                 }
             }
-            Expr::Then(then_expr) => {
+            ExprKind::Then(then_expr) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &then_expr.condition,
                     bound_vars,
@@ -3365,7 +3453,7 @@ impl TypeChecker {
                     ));
                 }
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &while_expr.condition,
                     bound_vars,
@@ -3377,14 +3465,14 @@ impl TypeChecker {
                     unannotated_names,
                 ));
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 deps.extend(self.collect_unannotated_function_deps_in_block(
                     block,
                     bound_vars,
                     unannotated_names,
                 ));
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 let mut lambda_bound = bound_vars.clone();
                 for param in &lambda.params {
                     lambda_bound.insert(param.name.clone());
@@ -3395,7 +3483,7 @@ impl TypeChecker {
                     unannotated_names,
                 ));
             }
-            Expr::With(with_expr) => {
+            ExprKind::With(with_expr) => {
                 let mut body_bound = bound_vars.clone();
                 for binding in &with_expr.bindings {
                     match binding {
@@ -3422,20 +3510,20 @@ impl TypeChecker {
                     unannotated_names,
                 ));
             }
-            Expr::WithLifetime(with_lifetime) => {
+            ExprKind::WithLifetime(with_lifetime) => {
                 deps.extend(self.collect_unannotated_function_deps_in_block(
                     &with_lifetime.body,
                     bound_vars,
                     unannotated_names,
                 ));
             }
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::None => {}
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::None => {}
         }
 
         deps
@@ -3583,6 +3671,11 @@ impl TypeChecker {
         }
 
         self.push_type_param_scope(&record.type_params);
+        let field_order = record
+            .fields
+            .iter()
+            .map(|field| field.name.clone())
+            .collect::<Vec<_>>();
         let fields = record
             .fields
             .iter()
@@ -3598,6 +3691,7 @@ impl TypeChecker {
             record.name.clone(),
             RecordDef {
                 fields,
+                field_order,
                 type_params: record.type_params.clone(),
                 temporal_constraints: record
                     .temporal_constraints
@@ -3794,8 +3888,8 @@ impl TypeChecker {
         if annotated_ty.is_none()
             && contextual_expected_ty.is_none()
             && matches!(
-                (&bind.pattern, bind.value.as_ref()),
-                (Pattern::Ident(_), Expr::ListLit(_))
+                (&bind.pattern, &bind.value.kind),
+                (Pattern::Ident(_), ExprKind::ListLit(_))
             )
         {
             if let Pattern::Ident(name) = &bind.pattern {
@@ -3809,13 +3903,13 @@ impl TypeChecker {
         &mut self,
         expr: &Expr,
     ) -> Result<(TypedType, Option<DeferredBinding>), TypeError> {
-        if let Expr::Lambda(lambda) = expr {
+        if let ExprKind::Lambda(lambda) = &expr.kind {
             return self.check_deferred_lambda_binding(lambda);
         }
 
-        match expr {
-            Expr::Then(then) => self.check_then_expr_as_deferred_callable(then),
-            Expr::Match(match_expr) => self.check_match_expr_as_deferred_callable(match_expr),
+        match &expr.kind {
+            ExprKind::Then(then) => self.check_then_expr_as_deferred_callable(then),
+            ExprKind::Match(match_expr) => self.check_match_expr_as_deferred_callable(match_expr),
             _ => Err(TypeError::CannotInferType(
                 "deferred callable binding requires a lambda-producing expression".to_string(),
             )),
@@ -3932,7 +4026,12 @@ impl TypeChecker {
             params,
             return_type: Box::new(self.type_var_generator.fresh_var()),
         };
-        Ok((func_type, Some(DeferredBinding::Lambda(lambda.clone()))))
+        // The stored clone is re-checked per use site under use-site expected
+        // types; strip ids so those instantiation-specific re-checks cannot
+        // record facts under the source lambda body's node ids.
+        let mut deferred_lambda = lambda.clone();
+        strip_expr_ids(&mut deferred_lambda.body);
+        Ok((func_type, Some(DeferredBinding::Lambda(deferred_lambda))))
     }
 
     fn check_then_expr_as_deferred_callable(
@@ -4172,8 +4271,12 @@ impl TypeChecker {
             }
         }
 
+        // Same id discipline as DeferredBinding::Lambda: per-use-site
+        // re-checks of this clone must not write source-node facts.
+        let mut deferred_lambda = lambda.clone();
+        strip_expr_ids(&mut deferred_lambda.body);
         Ok(DeferredLambdaCandidate {
-            lambda: lambda.clone(),
+            lambda: deferred_lambda,
             captures,
         })
     }
@@ -4259,9 +4362,9 @@ impl TypeChecker {
     }
 
     fn can_defer_callable_expr(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Lambda(_) => true,
-            Expr::Then(then) => {
+        match &expr.kind {
+            ExprKind::Lambda(_) => true,
+            ExprKind::Then(then) => {
                 self.branch_expr_has_terminal_lambda(expr)
                     && self.expr_is_replay_safe_for_deferred_callable(&then.condition)
                     && then.else_ifs.iter().all(|(condition, block)| {
@@ -4274,7 +4377,7 @@ impl TypeChecker {
                         .as_ref()
                         .is_some_and(|block| self.block_result_is_deferred_callable(block))
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 self.branch_expr_has_terminal_lambda(expr)
                     && !match_expr.arms.is_empty()
                     && match_expr
@@ -4295,8 +4398,8 @@ impl TypeChecker {
     }
 
     fn branch_expr_has_terminal_lambda(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Then(then) => {
+        match &expr.kind {
+            ExprKind::Then(then) => {
                 self.block_terminal_lambda(&then.then_block).is_some()
                     || then
                         .else_ifs
@@ -4307,7 +4410,7 @@ impl TypeChecker {
                         .as_ref()
                         .is_some_and(|block| self.block_terminal_lambda(block).is_some())
             }
-            Expr::Match(match_expr) => match_expr
+            ExprKind::Match(match_expr) => match_expr
                 .arms
                 .iter()
                 .any(|arm| self.block_terminal_lambda(&arm.body).is_some()),
@@ -4323,8 +4426,8 @@ impl TypeChecker {
     }
 
     fn block_terminal_lambda<'a>(&self, block: &'a BlockExpr) -> Option<&'a LambdaExpr> {
-        match self.block_terminal_expr(block) {
-            Some(Expr::Lambda(lambda)) => Some(lambda),
+        match self.block_terminal_expr(block).map(|expr| &expr.kind) {
+            Some(ExprKind::Lambda(lambda)) => Some(lambda),
             _ => None,
         }
     }
@@ -4351,28 +4454,28 @@ impl TypeChecker {
     }
 
     fn expr_is_replay_safe_for_deferred_callable(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::None => true,
-            Expr::Ident(name) => self.ident_is_replay_safe_for_deferred_callable(name),
-            Expr::Binary(binary) => {
+        match &expr.kind {
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::None => true,
+            ExprKind::Ident(name) => self.ident_is_replay_safe_for_deferred_callable(name),
+            ExprKind::Binary(binary) => {
                 self.expr_is_replay_safe_for_deferred_callable(&binary.left)
                     && self.expr_is_replay_safe_for_deferred_callable(&binary.right)
             }
-            Expr::Unary(unary) => self.expr_is_replay_safe_for_deferred_callable(&unary.expr),
-            Expr::Cast(cast) => self.expr_is_replay_safe_for_deferred_callable(&cast.expr),
-            Expr::Some(inner) | Expr::Ok(inner) | Expr::Err(inner) => {
+            ExprKind::Unary(unary) => self.expr_is_replay_safe_for_deferred_callable(&unary.expr),
+            ExprKind::Cast(cast) => self.expr_is_replay_safe_for_deferred_callable(&cast.expr),
+            ExprKind::Some(inner) | ExprKind::Ok(inner) | ExprKind::Err(inner) => {
                 self.expr_is_replay_safe_for_deferred_callable(inner)
             }
-            Expr::ListLit(elements) | Expr::ArrayLit(elements) => elements
+            ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => elements
                 .iter()
                 .all(|element| self.expr_is_replay_safe_for_deferred_callable(element)),
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 self.expr_is_replay_safe_for_deferred_callable(&range.start)
                     && self.expr_is_replay_safe_for_deferred_callable(&range.end)
             }
@@ -4814,8 +4917,10 @@ impl TypeChecker {
     fn check_context_decl(&mut self, context: &ContextDecl) -> Result<(), TypeError> {
         // Store context definition
         let mut fields = HashMap::new();
+        let mut field_order = Vec::new();
         for field in &context.fields {
             let ty = self.convert_type(&field.ty)?;
+            field_order.push(field.name.clone());
             fields.insert(field.name.clone(), ty);
         }
 
@@ -4827,6 +4932,7 @@ impl TypeChecker {
             context.name.clone(),
             RecordDef {
                 fields,
+                field_order,
                 type_params: vec![],
                 temporal_constraints: vec![],
                 hash: None,
@@ -4868,162 +4974,181 @@ impl TypeChecker {
         expr: &Expr,
         expected: Option<&TypedType>,
     ) -> Result<TypedType, TypeError> {
-        match expr {
-            Expr::IntLit(value) => self.check_int_lit(*value, expected),
-            Expr::FloatLit(_) => Ok(TypedType::Float64),
-            Expr::StringLit(_) => Ok(TypedType::String),
-            Expr::CharLit(_) => Ok(TypedType::Char),
-            Expr::BoolLit(_) => Ok(TypedType::Boolean),
-            Expr::Unit => Ok(TypedType::Unit),
-            Expr::Ident(name) => {
-                // First try as a variable
-                match self.lookup_var(name) {
-                    Ok(ty) => {
-                        if let Some(expected_ty) = expected {
-                            if let Some(deferred) = self.peek_deferred_callable(name) {
-                                if matches!(expected_ty, TypedType::Function { .. }) {
-                                    let mut substitution = ConstraintSubstitution::new();
-                                    return self.check_deferred_callable_against_expected(
+        let result = (|| -> Result<TypedType, TypeError> {
+            match &expr.kind {
+                ExprKind::IntLit(value) => self.check_int_lit(*value, expected),
+                ExprKind::FloatLit(_) => Ok(TypedType::Float64),
+                ExprKind::StringLit(_) => Ok(TypedType::String),
+                ExprKind::CharLit(_) => Ok(TypedType::Char),
+                ExprKind::BoolLit(_) => Ok(TypedType::Boolean),
+                ExprKind::Unit => Ok(TypedType::Unit),
+                ExprKind::Ident(name) => {
+                    // First try as a variable
+                    match self.lookup_var(name) {
+                        Ok(ty) => {
+                            if let Some(expected_ty) = expected {
+                                if let Some(deferred) = self.peek_deferred_callable(name) {
+                                    if matches!(expected_ty, TypedType::Function { .. }) {
+                                        let mut substitution = ConstraintSubstitution::new();
+                                        return self.check_deferred_callable_against_expected(
+                                            name,
+                                            &deferred,
+                                            expected_ty,
+                                            &mut substitution,
+                                        );
+                                    }
+                                }
+
+                                if let Some(constrained_ty) = self
+                                    .constrain_inference_binding_from_expected(
                                         name,
-                                        &deferred,
+                                        &ty,
                                         expected_ty,
-                                        &mut substitution,
-                                    );
+                                    )?
+                                {
+                                    return Ok(constrained_ty);
                                 }
                             }
 
-                            if let Some(constrained_ty) = self
-                                .constrain_inference_binding_from_expected(name, &ty, expected_ty)?
-                            {
-                                return Ok(constrained_ty);
-                            }
+                            Ok(ty)
                         }
-
-                        Ok(ty)
-                    }
-                    Err(e) => {
-                        // If not a variable, check if it's a function. In expression
-                        // position a function identifier is a function value. A
-                        // zero-argument function must still be invoked with the
-                        // OSV unit form `() function` when a value is expected.
-                        if let Some(func_def) = self.functions.get(name).cloned() {
-                            if self.provisional_function_returns.contains(name) {
-                                return Err(TypeError::CannotInferType(format!(
+                        Err(e) => {
+                            // If not a variable, check if it's a function. In expression
+                            // position a function identifier is a function value. A
+                            // zero-argument function must still be invoked with the
+                            // OSV unit form `() function` when a value is expected.
+                            if let Some(func_def) = self.functions.get(name).cloned() {
+                                if self.provisional_function_returns.contains(name) {
+                                    return Err(TypeError::CannotInferType(format!(
                                     "function '{}' is used before its return type has been inferred; add an explicit return annotation",
                                     name
                                 )));
-                            }
+                                }
 
-                            if func_def.params.is_empty()
-                                && expected.is_some()
-                                && !matches!(expected, Some(TypedType::Function { .. }))
-                            {
-                                Err(TypeError::UnsupportedFeature(format!(
+                                if func_def.params.is_empty()
+                                    && expected.is_some()
+                                    && !matches!(expected, Some(TypedType::Function { .. }))
+                                {
+                                    Err(TypeError::UnsupportedFeature(format!(
                                     "zero-argument function '{name}' must be called with OSV unit syntax `() {name}` or used where a `() -> ...` function type is expected"
                                 )))
+                                } else {
+                                    self.named_function_value_type(name, &func_def, expected)
+                                }
                             } else {
-                                self.named_function_value_type(name, &func_def, expected)
+                                if matches!(name.as_str(), "some" | "none") {
+                                    return Err(lowercase_option_constructor_error(name));
+                                }
+                                Err(e) // Return the original error
                             }
-                        } else {
-                            if matches!(name.as_str(), "some" | "none") {
-                                return Err(lowercase_option_constructor_error(name));
-                            }
-                            Err(e) // Return the original error
                         }
                     }
                 }
-            }
-            Expr::RecordLit(record_lit) => {
-                self.check_record_lit_with_expected(record_lit, expected)
-            }
-            Expr::Clone(clone_expr) => self.check_clone_expr(clone_expr),
-            Expr::Freeze(expr) => self.check_freeze_expr(expr),
-            Expr::FieldAccess(expr, field) => self.check_field_access(expr, field),
-            Expr::Call(call) => self.check_call_expr_with_expected(call, expected),
-            Expr::Block(block) => self.check_block_expr_with_expected(block, expected),
-            Expr::Binary(binary) => self.check_binary_expr(binary, expected),
-            Expr::Unary(unary) => self.check_unary_expr(unary, expected),
-            Expr::Cast(cast) => self.check_cast_expr(cast),
-            Expr::Pipe(pipe) => self.check_pipe_expr_with_expected(pipe, expected),
-            Expr::With(with) => self.check_with_expr_with_expected(with, expected),
-            Expr::WithLifetime(with_lifetime) => self.check_with_lifetime_expr(with_lifetime),
-            Expr::Then(then) => self.check_then_expr_with_expected(then, expected),
-            Expr::While(while_expr) => self.check_while_expr(while_expr),
-            Expr::Match(match_expr) => self.check_match_expr_with_expected(match_expr, expected),
-            Expr::ListLit(elements) if matches!(expected, Some(TypedType::Array(_, _))) => {
-                self.check_array_lit(elements, expected)
-            }
-            Expr::ListLit(elements) => self.check_list_lit(elements, expected),
-            Expr::RangeLit(range) => self.check_range_lit(range, expected),
-            Expr::ArrayLit(elements) => self.check_array_lit(elements, expected),
-            Expr::Some(expr) => {
-                let inferred_inner;
-                let expected_inner = if let Some(TypedType::Option(inner)) = expected {
-                    Some(inner.as_ref())
-                } else if matches!(expected, Some(TypedType::InferVar(_))) {
-                    inferred_inner = self.type_var_generator.fresh_var();
-                    Some(&inferred_inner)
-                } else {
-                    None
-                };
-                let inner_type = self.check_expr_with_expected(expr, expected_inner)?;
-                Ok(TypedType::Option(Box::new(inner_type)))
-            }
-            Expr::None => {
-                // Use expected type if available
-                if let Some(TypedType::Option(inner)) = expected {
-                    Ok(TypedType::Option(inner.clone()))
-                } else if matches!(expected, Some(TypedType::InferVar(_))) {
-                    Ok(TypedType::Option(Box::new(
-                        self.type_var_generator.fresh_var(),
-                    )))
-                } else {
-                    Err(TypeError::CannotInferType(
-                        "None requires an expected Option type".to_string(),
-                    ))
+                ExprKind::RecordLit(record_lit) => {
+                    self.check_record_lit_with_expected(record_lit, expected)
                 }
+                ExprKind::Clone(clone_expr) => self.check_clone_expr(clone_expr),
+                ExprKind::Freeze(expr) => self.check_freeze_expr(expr),
+                ExprKind::FieldAccess(expr, field) => self.check_field_access(expr, field),
+                ExprKind::Call(call) => self.check_call_expr_with_expected(call, expected),
+                ExprKind::Block(block) => self.check_block_expr_with_expected(block, expected),
+                ExprKind::Binary(binary) => self.check_binary_expr(binary, expected),
+                ExprKind::Unary(unary) => self.check_unary_expr(unary, expected),
+                ExprKind::Cast(cast) => self.check_cast_expr(cast),
+                ExprKind::Pipe(pipe) => self.check_pipe_expr_with_expected(pipe, expected),
+                ExprKind::With(with) => self.check_with_expr_with_expected(with, expected),
+                ExprKind::WithLifetime(with_lifetime) => {
+                    self.check_with_lifetime_expr(with_lifetime)
+                }
+                ExprKind::Then(then) => self.check_then_expr_with_expected(then, expected),
+                ExprKind::While(while_expr) => self.check_while_expr(while_expr),
+                ExprKind::Match(match_expr) => {
+                    self.check_match_expr_with_expected(match_expr, expected)
+                }
+                ExprKind::ListLit(elements) if matches!(expected, Some(TypedType::Array(_, _))) => {
+                    self.check_array_lit(elements, expected)
+                }
+                ExprKind::ListLit(elements) => self.check_list_lit(elements, expected),
+                ExprKind::RangeLit(range) => self.check_range_lit(range, expected),
+                ExprKind::ArrayLit(elements) => self.check_array_lit(elements, expected),
+                ExprKind::Some(expr) => {
+                    let inferred_inner;
+                    let expected_inner = if let Some(TypedType::Option(inner)) = expected {
+                        Some(inner.as_ref())
+                    } else if matches!(expected, Some(TypedType::InferVar(_))) {
+                        inferred_inner = self.type_var_generator.fresh_var();
+                        Some(&inferred_inner)
+                    } else {
+                        None
+                    };
+                    let inner_type = self.check_expr_with_expected(expr, expected_inner)?;
+                    Ok(TypedType::Option(Box::new(inner_type)))
+                }
+                ExprKind::None => {
+                    // Use expected type if available
+                    if let Some(TypedType::Option(inner)) = expected {
+                        Ok(TypedType::Option(inner.clone()))
+                    } else if matches!(expected, Some(TypedType::InferVar(_))) {
+                        Ok(TypedType::Option(Box::new(
+                            self.type_var_generator.fresh_var(),
+                        )))
+                    } else {
+                        Err(TypeError::CannotInferType(
+                            "None requires an expected Option type".to_string(),
+                        ))
+                    }
+                }
+                ExprKind::Ok(expr) => match expected {
+                    Some(TypedType::Result(ok_ty, err_ty)) => {
+                        let actual_ok = self.check_expr_with_expected(expr, Some(ok_ty))?;
+                        Ok(TypedType::Result(Box::new(actual_ok), err_ty.clone()))
+                    }
+                    Some(TypedType::InferVar(_)) => {
+                        let inferred_ok = self.type_var_generator.fresh_var();
+                        let inferred_err = self.type_var_generator.fresh_var();
+                        let actual_ok = self.check_expr_with_expected(expr, Some(&inferred_ok))?;
+                        Ok(TypedType::Result(
+                            Box::new(actual_ok),
+                            Box::new(inferred_err),
+                        ))
+                    }
+                    _ => Err(TypeError::CannotInferType(
+                        "Ok requires an expected Result type".to_string(),
+                    )),
+                },
+                ExprKind::Err(expr) => match expected {
+                    Some(TypedType::Result(ok_ty, err_ty)) => {
+                        let actual_err = self.check_expr_with_expected(expr, Some(err_ty))?;
+                        Ok(TypedType::Result(ok_ty.clone(), Box::new(actual_err)))
+                    }
+                    Some(TypedType::InferVar(_)) => {
+                        let inferred_ok = self.type_var_generator.fresh_var();
+                        let inferred_err = self.type_var_generator.fresh_var();
+                        let actual_err =
+                            self.check_expr_with_expected(expr, Some(&inferred_err))?;
+                        Ok(TypedType::Result(
+                            Box::new(inferred_ok),
+                            Box::new(actual_err),
+                        ))
+                    }
+                    _ => Err(TypeError::CannotInferType(
+                        "Err requires an expected Result type".to_string(),
+                    )),
+                },
+                ExprKind::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
+                ExprKind::PrototypeClone(proto_clone) => {
+                    self.check_prototype_clone_expr(proto_clone)
+                }
+                ExprKind::Await(expr) => self.check_await_expr(expr),
+                ExprKind::Spawn(expr) => self.check_spawn_expr(expr),
             }
-            Expr::Ok(expr) => match expected {
-                Some(TypedType::Result(ok_ty, err_ty)) => {
-                    let actual_ok = self.check_expr_with_expected(expr, Some(ok_ty))?;
-                    Ok(TypedType::Result(Box::new(actual_ok), err_ty.clone()))
-                }
-                Some(TypedType::InferVar(_)) => {
-                    let inferred_ok = self.type_var_generator.fresh_var();
-                    let inferred_err = self.type_var_generator.fresh_var();
-                    let actual_ok = self.check_expr_with_expected(expr, Some(&inferred_ok))?;
-                    Ok(TypedType::Result(
-                        Box::new(actual_ok),
-                        Box::new(inferred_err),
-                    ))
-                }
-                _ => Err(TypeError::CannotInferType(
-                    "Ok requires an expected Result type".to_string(),
-                )),
-            },
-            Expr::Err(expr) => match expected {
-                Some(TypedType::Result(ok_ty, err_ty)) => {
-                    let actual_err = self.check_expr_with_expected(expr, Some(err_ty))?;
-                    Ok(TypedType::Result(ok_ty.clone(), Box::new(actual_err)))
-                }
-                Some(TypedType::InferVar(_)) => {
-                    let inferred_ok = self.type_var_generator.fresh_var();
-                    let inferred_err = self.type_var_generator.fresh_var();
-                    let actual_err = self.check_expr_with_expected(expr, Some(&inferred_err))?;
-                    Ok(TypedType::Result(
-                        Box::new(inferred_ok),
-                        Box::new(actual_err),
-                    ))
-                }
-                _ => Err(TypeError::CannotInferType(
-                    "Err requires an expected Result type".to_string(),
-                )),
-            },
-            Expr::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
-            Expr::PrototypeClone(proto_clone) => self.check_prototype_clone_expr(proto_clone),
-            Expr::Await(expr) => self.check_await_expr(expr),
-            Expr::Spawn(expr) => self.check_spawn_expr(expr),
+        })();
+
+        if let Ok(ty) = &result {
+            self.record_checked_expr_type(expr, ty);
         }
+
+        result
     }
 
     fn expected_record_type_args(
@@ -5453,9 +5578,9 @@ impl TypeChecker {
     }
 
     fn expr_constraint_name(expr: &Expr) -> Option<String> {
-        match expr {
-            Expr::Ident(name) => Some(name.clone()),
-            Expr::FieldAccess(_, field) => Some(field.clone()),
+        match &expr.kind {
+            ExprKind::Ident(name) => Some(name.clone()),
+            ExprKind::FieldAccess(_, field) => Some(field.clone()),
             _ => None,
         }
     }
@@ -5724,7 +5849,9 @@ impl TypeChecker {
         )?;
         self.apply_substitution_to_var_env(&substitution)?;
         for (arg, actual_ty) in call.args.iter().zip(checked_arg_types.iter()) {
-            self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            let resolved =
+                self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            self.record_checked_expr_type(arg, &resolved);
         }
         finalize_type(&return_type, &substitution)
     }
@@ -5809,7 +5936,7 @@ impl TypeChecker {
         // B-layer affine effects while letting their concrete types feed A-layer
         // constraints before lambda bodies are checked.
         for (i, arg) in args.iter().enumerate() {
-            if matches!(&**arg, Expr::Lambda(_)) {
+            if matches!(&arg.kind, ExprKind::Lambda(_)) {
                 continue;
             }
 
@@ -5832,7 +5959,7 @@ impl TypeChecker {
             let param_type = substitution.apply(&param_types[i])?;
             let actual_ty = if let Some(actual_ty) = checked_arg_types[i].clone() {
                 actual_ty
-            } else if let Expr::Lambda(lambda) = &**arg {
+            } else if let ExprKind::Lambda(lambda) = &arg.kind {
                 self.check_generic_lambda_arg(lambda, &param_type, substitution)?
             } else {
                 self.check_expr_with_expected(arg, Some(&param_type))?
@@ -6059,31 +6186,33 @@ impl TypeChecker {
     }
 
     fn expr_requires_expected_type(expr: &Expr) -> bool {
-        match expr {
-            Expr::ListLit(elements) | Expr::ArrayLit(elements) => {
+        match &expr.kind {
+            ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
                 elements.is_empty()
                     || elements
                         .iter()
                         .any(|element| Self::expr_requires_expected_type(element))
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 Self::expr_requires_expected_type(&range.start)
                     || Self::expr_requires_expected_type(&range.end)
             }
-            Expr::None => true,
-            Expr::Some(inner) => Self::expr_requires_expected_type(inner),
-            Expr::Ok(_) | Expr::Err(_) => true,
-            Expr::Unary(unary) => Self::expr_requires_expected_type(&unary.expr),
-            Expr::Cast(cast) => Self::expr_requires_expected_type(&cast.expr),
-            Expr::RecordLit(record_lit) => record_lit.fields.iter().any(|field| match field {
+            ExprKind::None => true,
+            ExprKind::Some(inner) => Self::expr_requires_expected_type(inner),
+            ExprKind::Ok(_) | ExprKind::Err(_) => true,
+            ExprKind::Unary(unary) => Self::expr_requires_expected_type(&unary.expr),
+            ExprKind::Cast(cast) => Self::expr_requires_expected_type(&cast.expr),
+            ExprKind::RecordLit(record_lit) => record_lit.fields.iter().any(|field| match field {
                 FieldInit::Field { value, .. } => Self::expr_requires_expected_type(value),
                 FieldInit::Spread(expr) => Self::expr_requires_expected_type(expr),
             }),
-            Expr::Clone(clone_expr) => clone_expr.updates.fields.iter().any(|field| match field {
-                FieldInit::Field { value, .. } => Self::expr_requires_expected_type(value),
-                FieldInit::Spread(expr) => Self::expr_requires_expected_type(expr),
-            }),
-            Expr::Then(then_expr) => {
+            ExprKind::Clone(clone_expr) => {
+                clone_expr.updates.fields.iter().any(|field| match field {
+                    FieldInit::Field { value, .. } => Self::expr_requires_expected_type(value),
+                    FieldInit::Spread(expr) => Self::expr_requires_expected_type(expr),
+                })
+            }
+            ExprKind::Then(then_expr) => {
                 Self::expr_requires_expected_type(&then_expr.condition)
                     || then_expr
                         .then_block
@@ -6103,7 +6232,7 @@ impl TypeChecker {
                         .and_then(|block| block.expr.as_deref())
                         .is_some_and(Self::expr_requires_expected_type)
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 Self::expr_requires_expected_type(&match_expr.expr)
                     || match_expr.arms.iter().any(|arm| {
                         arm.body
@@ -6117,7 +6246,7 @@ impl TypeChecker {
     }
 
     fn expr_requires_call_parameter_context(expr: &Expr) -> bool {
-        matches!(expr, Expr::Lambda(_)) || Self::expr_requires_expected_type(expr)
+        matches!(&expr.kind, ExprKind::Lambda(_)) || Self::expr_requires_expected_type(expr)
     }
 
     fn check_function_value_call_with_expected(
@@ -6207,7 +6336,9 @@ impl TypeChecker {
         }
         self.apply_substitution_to_var_env(&substitution)?;
         for (arg, actual_ty) in args.iter().zip(checked_arg_types.iter()) {
-            self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            let resolved =
+                self.update_direct_ident_from_substitution(arg, actual_ty, &substitution)?;
+            self.record_checked_expr_type(arg, &resolved);
         }
         if let Some(func_var_name) = func_var_name {
             if Self::contains_inference_internal_type(&lowered_func_ty) {
@@ -6219,7 +6350,7 @@ impl TypeChecker {
     }
 
     fn check_field_access(&mut self, expr: &Expr, field: &str) -> Result<TypedType, TypeError> {
-        if let Expr::Ident(name) = expr {
+        if let ExprKind::Ident(name) = &expr.kind {
             let var = self._peek_var(name)?.clone();
             let field_ty = self.record_field_type(&var.ty, field)?;
 
@@ -6281,8 +6412,8 @@ impl TypeChecker {
         expected_return: Option<&TypedType>,
     ) -> Result<TypedType, TypeError> {
         // First check the function expression type
-        match &*call.function {
-            Expr::Ident(name) => {
+        match &call.function.kind {
+            ExprKind::Ident(name) => {
                 // First check if it's a variable that holds a function
                 match self.lookup_var(name) {
                     Ok(var_ty) => {
@@ -6362,7 +6493,7 @@ impl TypeChecker {
                     Err(TypeError::UndefinedFunction(name.clone()))
                 }
             }
-            Expr::FieldAccess(obj_expr, method_name) => {
+            ExprKind::FieldAccess(obj_expr, method_name) => {
                 // Parser-level field access can still appear in callable position.
                 // Function-typed fields are first-class callable values; otherwise
                 // the public method form remains OSV: `(receiver, args...) method`.
@@ -6381,7 +6512,7 @@ impl TypeChecker {
             }
             _ => {
                 // For other function expressions (including lambdas)
-                if let Expr::Lambda(lambda) = &*call.function {
+                if let ExprKind::Lambda(lambda) = &call.function.kind {
                     return self.check_immediate_lambda_call(lambda, &call.args, expected_return);
                 }
 
@@ -6427,17 +6558,18 @@ impl TypeChecker {
                     } else {
                         None
                     };
-                    let expected_for_binding =
-                        match (&bind.pattern, block.expr.as_deref(), expected) {
-                            (
-                                Pattern::Ident(bind_name),
-                                Some(Expr::Ident(return_name)),
-                                Some(ty),
-                            ) if bind.type_annotation.is_none() && bind_name == return_name => {
-                                Some(ty)
-                            }
-                            _ => inferred_later_expected.as_ref(),
-                        };
+                    let expected_for_binding = match (
+                        &bind.pattern,
+                        block.expr.as_deref().map(|expr| &expr.kind),
+                        expected,
+                    ) {
+                        (
+                            Pattern::Ident(bind_name),
+                            Some(ExprKind::Ident(return_name)),
+                            Some(ty),
+                        ) if bind.type_annotation.is_none() && bind_name == return_name => Some(ty),
+                        _ => inferred_later_expected.as_ref(),
+                    };
                     self.check_bind_decl_with_expected(bind, expected_for_binding)?
                 }
                 Stmt::Assignment(assign) => self.check_assignment(assign)?,
@@ -6504,8 +6636,8 @@ impl TypeChecker {
         final_expr: Option<&Expr>,
         expected: Option<&TypedType>,
     ) -> Option<TypedType> {
-        match (final_expr, expected) {
-            (Some(Expr::Ident(returned_name)), Some(ty)) if returned_name == name => {
+        match (final_expr.map(|expr| &expr.kind), expected) {
+            (Some(ExprKind::Ident(returned_name)), Some(ty)) if returned_name == name => {
                 Some(ty.clone())
             }
             _ => None,
@@ -6521,8 +6653,8 @@ impl TypeChecker {
         expected: Option<&TypedType>,
     ) -> Result<Option<TypedType>, TypeError> {
         if !matches!(
-            value,
-            Expr::Some(_) | Expr::None | Expr::Ok(_) | Expr::Err(_)
+            &value.kind,
+            ExprKind::Some(_) | ExprKind::None | ExprKind::Ok(_) | ExprKind::Err(_)
         ) {
             return Ok(None);
         }
@@ -6551,7 +6683,7 @@ impl TypeChecker {
         expr: &Expr,
         expected: Option<&TypedType>,
     ) -> Result<Option<TypedType>, TypeError> {
-        let Expr::Match(match_expr) = expr else {
+        let ExprKind::Match(match_expr) = &expr.kind else {
             return Ok(None);
         };
         if !Self::expr_is_ident(&match_expr.expr, binding_name) {
@@ -6589,11 +6721,11 @@ impl TypeChecker {
             }
         }
 
-        Ok(match value {
-            Expr::Some(_) | Expr::None => {
+        Ok(match &value.kind {
+            ExprKind::Some(_) | ExprKind::None => {
                 option_payload.map(|payload| TypedType::Option(Box::new(payload)))
             }
-            Expr::Ok(_) | Expr::Err(_) => match (result_ok, result_err) {
+            ExprKind::Ok(_) | ExprKind::Err(_) => match (result_ok, result_err) {
                 (Some(ok), Some(err)) => Some(TypedType::Result(Box::new(ok), Box::new(err))),
                 _ => None,
             },
@@ -6621,7 +6753,7 @@ impl TypeChecker {
         final_expr: Option<&Expr>,
         expected: Option<&TypedType>,
     ) -> Result<Option<TypedType>, TypeError> {
-        let Expr::RecordLit(record_lit) = value else {
+        let ExprKind::RecordLit(record_lit) = &value.kind else {
             return Ok(None);
         };
 
@@ -6702,8 +6834,8 @@ impl TypeChecker {
         type_arg_bindings: &HashMap<String, TypedType>,
         substitution: &mut ConstraintSubstitution,
     ) -> Result<(), TypeError> {
-        match expr {
-            Expr::FieldAccess(object, field) => {
+        match &expr.kind {
+            ExprKind::FieldAccess(object, field) => {
                 if Self::expr_is_ident(object, binding_name) {
                     if let Some(field_ty) = expected {
                         self.bind_record_binding_field_expected_type(
@@ -6716,8 +6848,8 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Match(match_expr) => {
-                if let Expr::FieldAccess(object, field) = match_expr.expr.as_ref() {
+            ExprKind::Match(match_expr) => {
+                if let ExprKind::FieldAccess(object, field) = &match_expr.expr.kind {
                     if Self::expr_is_ident(object, binding_name) {
                         self.bind_record_binding_field_match_expected_type(
                             record_name,
@@ -6730,7 +6862,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 self.bind_record_binding_expected_type_params_from_block(
                     binding_name,
                     record_name,
@@ -6760,7 +6892,7 @@ impl TypeChecker {
                     )?;
                 }
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 self.bind_record_binding_expected_type_params_from_block(
                     binding_name,
                     record_name,
@@ -6941,14 +7073,14 @@ impl TypeChecker {
             return Ok(expected.cloned());
         }
 
-        match expr {
-            Expr::Pipe(pipe) => {
+        match &expr.kind {
+            ExprKind::Pipe(pipe) => {
                 if Self::expr_is_ident(&pipe.expr, name) {
                     return self.expected_type_for_pipe_target_first_arg(&pipe.target);
                 }
             }
-            Expr::Call(call) => {
-                if let Expr::Ident(func_name) = call.function.as_ref() {
+            ExprKind::Call(call) => {
+                if let ExprKind::Ident(func_name) = &call.function.kind {
                     for (index, arg) in call.args.iter().enumerate() {
                         if Self::expr_is_ident(arg, name) {
                             return self.expected_function_param_type_for_call(
@@ -6958,10 +7090,10 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 return self.expected_type_for_ident_in_block(name, block, expected);
             }
-            Expr::Then(then) => {
+            ExprKind::Then(then) => {
                 if let Some(ty) =
                     self.expected_type_for_ident_in_block(name, &then.then_block, expected)?
                 {
@@ -6991,7 +7123,7 @@ impl TypeChecker {
         match target {
             PipeTarget::Ident(func_name) => Ok(self.expected_function_param_type(func_name, 0)),
             PipeTarget::Expr(expr) => {
-                if let Expr::Ident(func_name) = expr.as_ref() {
+                if let ExprKind::Ident(func_name) = &expr.kind {
                     Ok(self.expected_function_param_type(func_name, 0))
                 } else {
                     Ok(None)
@@ -7058,20 +7190,20 @@ impl TypeChecker {
     }
 
     fn non_consuming_expected_context_expr_type(&self, expr: &Expr) -> Option<TypedType> {
-        match expr {
-            Expr::IntLit(value) => Some(Self::int_literal_type(*value)),
-            Expr::FloatLit(_) => Some(TypedType::Float64),
-            Expr::StringLit(_) => Some(TypedType::String),
-            Expr::CharLit(_) => Some(TypedType::Char),
-            Expr::BoolLit(_) => Some(TypedType::Boolean),
-            Expr::Unit => Some(TypedType::Unit),
-            Expr::Ident(name) => self
+        match &expr.kind {
+            ExprKind::IntLit(value) => Some(Self::int_literal_type(*value)),
+            ExprKind::FloatLit(_) => Some(TypedType::Float64),
+            ExprKind::StringLit(_) => Some(TypedType::String),
+            ExprKind::CharLit(_) => Some(TypedType::Char),
+            ExprKind::BoolLit(_) => Some(TypedType::Boolean),
+            ExprKind::Unit => Some(TypedType::Unit),
+            ExprKind::Ident(name) => self
                 .peek_var_type(name)
                 .and_then(|ty| (!Self::contains_inference_internal_type(&ty)).then_some(ty)),
-            Expr::Some(inner) => self
+            ExprKind::Some(inner) => self
                 .non_consuming_expected_context_expr_type(inner)
                 .map(|ty| TypedType::Option(Box::new(ty))),
-            Expr::ListLit(elements) => {
+            ExprKind::ListLit(elements) => {
                 let mut element_ty = None;
                 for element in elements {
                     let ty = self.non_consuming_expected_context_expr_type(element)?;
@@ -7085,7 +7217,7 @@ impl TypeChecker {
                 }
                 element_ty.map(|ty| TypedType::List(Box::new(ty)))
             }
-            Expr::ArrayLit(elements) => {
+            ExprKind::ArrayLit(elements) => {
                 let mut element_ty = None;
                 for element in elements {
                     let ty = self.non_consuming_expected_context_expr_type(element)?;
@@ -7112,7 +7244,7 @@ impl TypeChecker {
     }
 
     fn expr_is_ident(expr: &Expr, name: &str) -> bool {
-        matches!(expr, Expr::Ident(candidate) if candidate == name)
+        matches!(&expr.kind, ExprKind::Ident(candidate) if candidate == name)
     }
 
     fn check_binary_expr(
@@ -7231,13 +7363,13 @@ impl TypeChecker {
     }
 
     fn is_int_literal_expr(expr: &Expr) -> bool {
-        matches!(expr, Expr::IntLit(_))
+        matches!(&expr.kind, ExprKind::IntLit(_))
             || matches!(
-                expr,
-                Expr::Unary(UnaryExpr {
+                &expr.kind,
+                ExprKind::Unary(UnaryExpr {
                     op: UnaryOp::Neg,
                     expr,
-                }) if matches!(expr.as_ref(), Expr::IntLit(_))
+                }) if matches!(&expr.kind, ExprKind::IntLit(_))
             )
     }
 
@@ -7339,9 +7471,11 @@ impl TypeChecker {
                 let function_variable =
                     matches!(self.peek_var_type(name), Some(TypedType::Function { .. }));
                 if self.functions.contains_key(name) || function_variable {
-                    // Pipe to function: expr |> function
+                    // Pipe to function: expr |> function. The desugared call
+                    // checks an id-preserving clone of the pipe object, so its
+                    // facts are recorded directly under the source node ids.
                     let call = CallExpr {
-                        function: Box::new(Expr::Ident(name.clone())),
+                        function: Box::new(Expr::new(ExprKind::Ident(name.clone()))),
                         args: vec![pipe.expr.clone()],
                     };
                     self.check_call_expr_with_expected(&call, expected)
@@ -7355,7 +7489,9 @@ impl TypeChecker {
                 }
             }
             PipeTarget::Expr(target_expr) => {
-                // Pipe to expression: expr |> (func_expr)
+                // Pipe to expression: expr |> (func_expr). As above, the
+                // cloned object and target keep their ids, so checking the
+                // desugared call records facts under the source nodes.
                 let call = CallExpr {
                     function: target_expr.clone(),
                     args: vec![pipe.expr.clone()],
@@ -8905,6 +9041,51 @@ mod tests {
         checker.check_program(&program)
     }
 
+    #[test]
+    fn deferred_lambda_resolution_does_not_overwrite_source_facts() {
+        // A mutable deferred lambda binding escapes affine single-use
+        // marking, so it can be resolved at two different instantiations
+        // in one accepted program. Those per-use-site re-checks happen on
+        // stored clones; with ids stripped from the clones, they must not
+        // record instantiation-specific facts under the source lambda
+        // body's node ids.
+        let source = r#"
+fun main: () -> Int32 = {
+    mut val emit = |x| [];
+    val r = true then {
+        val a: Int32 -> List<Int32> = emit;
+        val xs: List<Int32> = 1 |> a;
+        0
+    } else {
+        0
+    };
+    val b: Boolean -> List<Boolean> = emit;
+    42
+}
+"#;
+        let (_, program) = parse_program(source).unwrap();
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .expect("double resolution of a mutable deferred lambda is accepted");
+
+        let TopDecl::Function(func) = &program.declarations[0] else {
+            panic!("first declaration should be main");
+        };
+        let Stmt::Binding(binding) = &func.body.statements[0] else {
+            panic!("first statement should bind the lambda");
+        };
+        let ExprKind::Lambda(lambda) = &binding.value.kind else {
+            panic!("binding value should be a lambda");
+        };
+
+        assert_eq!(
+            checker.checked_expr_type(&lambda.body),
+            None,
+            "use-site instantiations must not write facts for source lambda body nodes"
+        );
+    }
+
     fn test_record_type(name: &str) -> TypedType {
         TypedType::Record {
             name: name.to_string(),
@@ -8913,6 +9094,45 @@ mod tests {
             hash: None,
             parent_hash: None,
         }
+    }
+
+    #[test]
+    fn checked_record_fields_preserve_order_and_apply_type_args() {
+        let (_, program) = parse_program(
+            r#"
+record Box<T> {
+    label: String,
+    value: T
+}
+
+fun main: (item: Box<Int64>) -> Box<Int64> = {
+    item
+}
+"#,
+        )
+        .unwrap();
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .expect("program should type-check");
+
+        let fields = checker
+            .checked_record_fields_for_type(&TypedType::Record {
+                name: "Box".to_string(),
+                type_args: vec![TypedType::Int64],
+                frozen: false,
+                hash: None,
+                parent_hash: None,
+            })
+            .expect("checked record fields should be available");
+
+        assert_eq!(
+            fields,
+            vec![
+                ("label".to_string(), TypedType::String),
+                ("value".to_string(), TypedType::Int64),
+            ]
+        );
     }
 
     #[test]
@@ -9187,7 +9407,7 @@ mod tests {
             .unwrap();
 
         let clone_expr = CloneExpr {
-            base: Box::new(Expr::Ident("ghost".to_string())),
+            base: Box::new(Expr::new(ExprKind::Ident("ghost".to_string()))),
             updates: RecordLit {
                 name: String::new(),
                 fields: vec![],
@@ -9207,6 +9427,7 @@ mod tests {
             "Point".to_string(),
             RecordDef {
                 fields: HashMap::from([("x".to_string(), TypedType::Int32)]),
+                field_order: vec!["x".to_string()],
                 type_params: vec![],
                 temporal_constraints: vec![],
                 hash: None,
@@ -9664,8 +9885,8 @@ impl TypeChecker {
     fn collect_free_variables(&self, expr: &Expr, bound_vars: &HashSet<String>) -> HashSet<String> {
         let mut free_vars = HashSet::new();
 
-        match expr {
-            Expr::Ident(name) => {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
                 if !bound_vars.contains(name) {
                     // Check if variable exists in scope
                     for scope in self.var_env.iter().rev() {
@@ -9676,26 +9897,26 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Binary(bin) => {
+            ExprKind::Binary(bin) => {
                 free_vars.extend(self.collect_free_variables(&bin.left, bound_vars));
                 free_vars.extend(self.collect_free_variables(&bin.right, bound_vars));
             }
-            Expr::Unary(unary) => {
+            ExprKind::Unary(unary) => {
                 free_vars.extend(self.collect_free_variables(&unary.expr, bound_vars));
             }
-            Expr::Cast(cast) => {
+            ExprKind::Cast(cast) => {
                 free_vars.extend(self.collect_free_variables(&cast.expr, bound_vars));
             }
-            Expr::Call(call) => {
+            ExprKind::Call(call) => {
                 free_vars.extend(self.collect_free_variables(&call.function, bound_vars));
                 for arg in &call.args {
                     free_vars.extend(self.collect_free_variables(arg, bound_vars));
                 }
             }
-            Expr::FieldAccess(object, _field) => {
+            ExprKind::FieldAccess(object, _field) => {
                 free_vars.extend(self.collect_free_variables(object, bound_vars));
             }
-            Expr::RecordLit(record_lit) => {
+            ExprKind::RecordLit(record_lit) => {
                 for field in &record_lit.fields {
                     match field {
                         FieldInit::Field { value, .. } => {
@@ -9707,7 +9928,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Clone(clone_expr) => {
+            ExprKind::Clone(clone_expr) => {
                 free_vars.extend(self.collect_free_variables(&clone_expr.base, bound_vars));
                 for field in &clone_expr.updates.fields {
                     match field {
@@ -9720,10 +9941,10 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Freeze(expr) => {
+            ExprKind::Freeze(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
-            Expr::PrototypeClone(proto_clone) => {
+            ExprKind::PrototypeClone(proto_clone) => {
                 // Base is just a name, not an expression, so no free vars from it
                 for field in &proto_clone.updates.fields {
                     match field {
@@ -9736,21 +9957,21 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::ListLit(elements) => {
+            ExprKind::ListLit(elements) => {
                 for elem in elements {
                     free_vars.extend(self.collect_free_variables(elem, bound_vars));
                 }
             }
-            Expr::ArrayLit(elements) => {
+            ExprKind::ArrayLit(elements) => {
                 for elem in elements {
                     free_vars.extend(self.collect_free_variables(elem, bound_vars));
                 }
             }
-            Expr::RangeLit(range) => {
+            ExprKind::RangeLit(range) => {
                 free_vars.extend(self.collect_free_variables(&range.start, bound_vars));
                 free_vars.extend(self.collect_free_variables(&range.end, bound_vars));
             }
-            Expr::Match(match_expr) => {
+            ExprKind::Match(match_expr) => {
                 free_vars.extend(self.collect_free_variables(&match_expr.expr, bound_vars));
                 for arm in &match_expr.arms {
                     // Pattern bindings create new bound variables
@@ -9760,7 +9981,7 @@ impl TypeChecker {
                     free_vars.extend(self.collect_free_variables_in_block(&arm.body, &arm_bound));
                 }
             }
-            Expr::Then(then_expr) => {
+            ExprKind::Then(then_expr) => {
                 free_vars.extend(self.collect_free_variables(&then_expr.condition, bound_vars));
                 free_vars.extend(
                     self.collect_free_variables_in_block(&then_expr.then_block, bound_vars),
@@ -9773,25 +9994,25 @@ impl TypeChecker {
                     free_vars.extend(self.collect_free_variables_in_block(else_block, bound_vars));
                 }
             }
-            Expr::While(while_expr) => {
+            ExprKind::While(while_expr) => {
                 free_vars.extend(self.collect_free_variables(&while_expr.condition, bound_vars));
                 free_vars
                     .extend(self.collect_free_variables_in_block(&while_expr.body, bound_vars));
             }
-            Expr::Block(block) => {
+            ExprKind::Block(block) => {
                 free_vars.extend(self.collect_free_variables_in_block(block, bound_vars));
             }
-            Expr::Lambda(lambda) => {
+            ExprKind::Lambda(lambda) => {
                 let mut lambda_bound = bound_vars.clone();
                 for param in &lambda.params {
                     lambda_bound.insert(param.name.clone());
                 }
                 free_vars.extend(self.collect_free_variables(&lambda.body, &lambda_bound));
             }
-            Expr::WithLifetime(wl) => {
+            ExprKind::WithLifetime(wl) => {
                 free_vars.extend(self.collect_free_variables_in_block(&wl.body, bound_vars));
             }
-            Expr::With(with_expr) => {
+            ExprKind::With(with_expr) => {
                 let mut body_bound = bound_vars.clone();
                 for binding in &with_expr.bindings {
                     match binding {
@@ -9807,7 +10028,7 @@ impl TypeChecker {
                 free_vars
                     .extend(self.collect_free_variables_in_block(&with_expr.body, &body_bound));
             }
-            Expr::Pipe(pipe_expr) => {
+            ExprKind::Pipe(pipe_expr) => {
                 free_vars.extend(self.collect_free_variables(&pipe_expr.expr, bound_vars));
                 match &pipe_expr.target {
                     PipeTarget::Ident(_) => {
@@ -9818,26 +10039,26 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Some(expr) => {
+            ExprKind::Some(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
-            Expr::Ok(expr) | Expr::Err(expr) => {
+            ExprKind::Ok(expr) | ExprKind::Err(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
-            Expr::Await(expr) => {
+            ExprKind::Await(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
-            Expr::Spawn(expr) => {
+            ExprKind::Spawn(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
             // Literals and None have no free variables
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::StringLit(_)
-            | Expr::CharLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Unit
-            | Expr::None => {}
+            ExprKind::IntLit(_)
+            | ExprKind::FloatLit(_)
+            | ExprKind::StringLit(_)
+            | ExprKind::CharLit(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::Unit
+            | ExprKind::None => {}
         }
 
         free_vars

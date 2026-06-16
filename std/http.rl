@@ -1,15 +1,10 @@
-// Restrict Language Standard Library: HttpClient Context
-// 標準ライブラリ: HttpClient コンテキスト
+// Standard Library: HTTP reference surface
 //
-// Provides HTTP client access using the context mechanism.
-// Currently a stub - awaiting WASI-http support.
+// This file is not the runtime implementation. The current compiler has no
+// compiler-registered HTTP surface in v0.0.1.
+// Keep this file as a canonical, source-adjacent index for readers and tests.
 //
-// Usage:
-//   with HttpClient {
-//       // HTTP operations will be available here
-//   }
-
-context HttpClient {
-    get: (String) -> String
-    post: (String, String) -> String
-}
+// Current compiler-registered surface:
+// - none
+//
+// HTTP capabilities are outside the compiler-registered v0.0.1 surface.

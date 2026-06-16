@@ -6,25 +6,21 @@
 // This replaces the "dependency injection" pattern
 // with compile-time checked capabilities.
 
-record Logger { level: Int }
-record Config { debug: Int }
+record Event { severity: Int32 }
 
-context Logging { val logger: Logger }
-context AppConfig { val config: Config }
-
-fun start_app: () with Logging, AppConfig = {
-    "App started with logging and config" |> println
+context Logging {
+    level: Int32
 }
 
-fun main = {
-    with Arena {
-        val log = Logger { level = 1 }
-        val cfg = Config { debug = 0 }
+context AppConfig {
+    debug: Int32
+}
 
-        with Logging { logger = log } {
-            with AppConfig { config = cfg } {
-                start_app
-            }
+fun main: () -> Int32 = {
+    with Logging { level: 10 } {
+        with AppConfig { debug: 1 } {
+            val event = Event { severity: 4 }
+            event.severity + level + debug
         }
     }
 }

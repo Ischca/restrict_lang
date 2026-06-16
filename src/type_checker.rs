@@ -1682,7 +1682,7 @@ impl TypeChecker {
             .iter()
             .filter(|(_, var)| Self::contains_inference_internal_type(&var.ty))
             .collect::<Vec<_>>();
-        unresolved.sort_by(|(left, _), (right, _)| left.cmp(right));
+        unresolved.sort_by_key(|(left, _)| *left);
 
         if let Some((name, var)) = unresolved.first() {
             return Err(TypeError::CannotInferType(format!(
@@ -3561,15 +3561,11 @@ impl TypeChecker {
         // Check if any declaration uses temporal types without explicit lifetimes
         for decl in &program.declarations {
             match decl {
-                TopDecl::Record(record) => {
-                    if record.type_params.iter().any(|p| p.is_temporal) {
-                        return true;
-                    }
+                TopDecl::Record(record) if record.type_params.iter().any(|p| p.is_temporal) => {
+                    return true;
                 }
-                TopDecl::Function(func) => {
-                    if func.type_params.iter().any(|p| p.is_temporal) {
-                        return true;
-                    }
+                TopDecl::Function(func) if func.type_params.iter().any(|p| p.is_temporal) => {
+                    return true;
                 }
                 _ => {}
             }

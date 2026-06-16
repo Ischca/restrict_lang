@@ -7655,11 +7655,9 @@ impl WasmCodeGen {
             }
         }
 
-        let mut next_idx = lambda.params.len() as u32 + 1;
-        for (name, ty) in &lambda_locals {
+        for (next_idx, (name, ty)) in (lambda.params.len() as u32 + 1..).zip(lambda_locals.iter()) {
             self.add_local(name, next_idx);
             self.set_local_type(name, *ty);
-            next_idx += 1;
         }
 
         // Generate lambda body

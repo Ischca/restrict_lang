@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# Cancel superseded runs for the same ref so rapid pushes / PR updates
+# (e.g. Dependabot bursts) do not pile up redundant runner-minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -14,23 +20,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        override: true
         components: rustfmt, clippy
 
     - name: Cache cargo
-      uses: actions/cache@v3
+      uses: Swatinem/rust-cache@v2
       with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        workspaces: |
+          .
+          warder
 
     - name: Check formatting
       run: cargo fmt -- --check
@@ -45,23 +47,18 @@ jobs:
       run: cd warder && cargo test --verbose
 
     - name: Install mise
-      run: |
-        curl https://mise.run | sh
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
+      uses: jdx/mise-action@v2
 
     - name: Check release example entrypoints compile
-      run: ~/.local/bin/mise run check
+      run: mise run check
 
+    # Release build is a smoke test only: real release artifacts come from
+    # release.yml on tags. Run it on main pushes to catch breakage before a
+    # tag, but skip it on PRs to roughly halve their compile time.
     - name: Build release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: cargo build --release
 
     - name: Build Warder release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: cd warder && cargo build --release
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: restrict-lang-tools
-        path: |
-          target/release/restrict_lang
-          warder/target/release/warder

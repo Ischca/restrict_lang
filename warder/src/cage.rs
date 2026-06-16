@@ -79,7 +79,9 @@ impl Cage {
         let file = File::create(path)
             .with_context(|| format!("Failed to create cage file at {:?}", path))?;
         let mut zip = ZipWriter::new(file);
-        let options = FileOptions::default();
+        // zip 8 made FileOptions generic over its extension type; a basic
+        // archive needs no extra options, so pin the unit extension.
+        let options = FileOptions::<'_, ()>::default();
 
         // Write manifest
         let manifest_toml = toml::to_string(&self.manifest)?;

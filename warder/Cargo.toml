@@ -24,7 +24,7 @@ url = "2.5"
 zip = "0.6"
 oci-client = "0.11"
 tempfile = "3.8"
-which = "6.0"
+which = "8.0"
 colored = "2.1"
 indicatif = "0.17"
 restrict_lang = { path = ".." }

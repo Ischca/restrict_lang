@@ -15,12 +15,12 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
 #[test]
 fn test_tuple_literal_parsing() {
     let source = r#"
-        fun add: (a: Int, b: Int) -> Int = {
+        fun add: (a: Int32, b: Int32) -> Int32 = {
             a + b
         }
 
-        fun main: () -> Int = {
-            (5, 3) |> add
+        fun main: () -> Int32 = {
+            (5, 3) add
         }
     "#;
 
@@ -37,11 +37,11 @@ fn test_tuple_literal_parsing() {
 #[test]
 fn test_single_arg_pipe_still_works() {
     let source = r#"
-        fun double: (n: Int) -> Int = {
+        fun double: (n: Int32) -> Int32 = {
             n + n
         }
 
-        fun main: () -> Int = {
+        fun main: () -> Int32 = {
             42 |> double
         }
     "#;
@@ -55,12 +55,12 @@ fn test_single_arg_pipe_still_works() {
 fn test_tuple_in_binding() {
     // Tuple as a binding value should allocate on heap
     let source = r#"
-        fun add: (a: Int, b: Int) -> Int = {
+        fun add: (a: Int32, b: Int32) -> Int32 = {
             a + b
         }
 
-        fun main: () -> Int = {
-            val result = (10, 20) |> add
+        fun main: () -> Int32 = {
+            val result = (10, 20) add
             result
         }
     "#;
@@ -75,11 +75,11 @@ fn test_tuple_in_binding() {
 #[test]
 fn test_pipe_chain() {
     let source = r#"
-        fun double: (n: Int) -> Int = {
+        fun double: (n: Int32) -> Int32 = {
             n + n
         }
 
-        fun main: () -> Int = {
+        fun main: () -> Int32 = {
             5 |> double |> double
         }
     "#;

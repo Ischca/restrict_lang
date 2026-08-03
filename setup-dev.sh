@@ -13,18 +13,17 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
+if ! command -v mise &> /dev/null; then
+    echo "mise not found. Please install it from https://mise.jdx.dev/"
+    exit 1
+fi
+
 echo "✅ Rust found: $(rustc --version)"
 
 # Build
 echo ""
 echo "Building Restrict Language compiler..."
-cargo build --release
-
-echo ""
-echo "Building Warder package manager..."
-cd warder
-cargo build --release
-cd ..
+mise exec -- cargo build --workspace --locked --release
 
 # Create convenient scripts
 echo ""
@@ -39,7 +38,7 @@ EOF
 
 cat > bin/warder << 'EOF'
 #!/bin/bash
-exec "$(dirname "$0")/../warder/target/release/warder" "$@"
+exec "$(dirname "$0")/../target/release/warder" "$@"
 EOF
 
 chmod +x bin/restrict_lang bin/warder

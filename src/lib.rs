@@ -54,9 +54,9 @@
 //! - [`module`] - Module system for managing imports/exports
 //! - [`lsp`] - Language Server Protocol implementation for IDE support
 
-#![doc(html_logo_url = "https://restrict-lang.org/logo.svg")]
-#![doc(html_favicon_url = "https://restrict-lang.org/favicon.ico")]
-#![doc(html_playground_url = "https://play.restrict-lang.org")]
+#![doc(html_logo_url = "https://ischca.github.io/restrict_lang/favicon.svg")]
+#![doc(html_favicon_url = "https://ischca.github.io/restrict_lang/favicon.svg")]
+#![doc(html_playground_url = "https://ischca.github.io/restrict_lang/compiler/")]
 
 /// Lexical analysis module for tokenizing Restrict Language source code
 pub mod lexer;

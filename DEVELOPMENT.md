@@ -12,30 +12,25 @@
 ### 1. リポジトリのクローン
 
 ```bash
-git clone https://github.com/restrict-lang/restrict_lang.git
+git clone https://github.com/Ischca/restrict_lang.git
 cd restrict_lang
 ```
 
 ### 2. ビルド
 
 ```bash
-# Restrict Language コンパイラをビルド
-cargo build --release
-
-# Warder パッケージマネージャをビルド
-cd warder
-cargo build --release
-cd ..
+# コンパイラとWarderをワークスペースとしてビルド
+mise exec -- cargo build --workspace --locked --release
 ```
 
 ### 3. PATHの設定
 
 ```bash
 # 一時的に使用する場合
-export PATH="$PWD/target/release:$PWD/warder/target/release:$PATH"
+export PATH="$PWD/target/release:$PATH"
 
 # 永続的に使用する場合（~/.bashrc or ~/.zshrc に追加）
-export PATH="$HOME/workspace/ischca/restrict_lang/target/release:$HOME/workspace/ischca/restrict_lang/warder/target/release:$PATH"
+export PATH="$HOME/workspace/ischca/restrict_lang/target/release:$PATH"
 ```
 
 ### 4. 動作確認
@@ -50,19 +45,19 @@ warder --version
 
 ```bash
 # 開発ビルド（デバッグ情報付き）
-cargo build
+mise exec -- cargo build --workspace --locked
 
 # テスト実行
-cargo test
+mise exec -- cargo test --workspace --locked
 
 # ドキュメント生成
-cargo doc --open
+mise exec -- cargo doc --open
 
 # フォーマット
-cargo fmt
+mise exec -- cargo fmt --all
 
 # Lint
-cargo clippy
+mise exec -- cargo clippy --workspace --locked
 ```
 
 ## VS Code 設定
@@ -103,10 +98,10 @@ warder test
 
 ```bash
 # フルパスで実行
-~/workspace/ischca/restrict_lang/warder/target/release/warder new test-project
+~/workspace/ischca/restrict_lang/target/release/warder new test-project
 
 # または alias を設定
-alias warder="$HOME/workspace/ischca/restrict_lang/warder/target/release/warder"
+alias warder="$HOME/workspace/ischca/restrict_lang/target/release/warder"
 alias restrict_lang="$HOME/workspace/ischca/restrict_lang/target/release/restrict_lang"
 ```
 
@@ -114,11 +109,11 @@ alias restrict_lang="$HOME/workspace/ischca/restrict_lang/target/release/restric
 
 ```bash
 # 依存関係を更新
-cargo update
+mise exec -- cargo update
 
 # クリーンビルド
-cargo clean
-cargo build --release
+mise exec -- cargo clean
+mise exec -- cargo build --workspace --locked --release
 ```
 
 ## 開発に参加する

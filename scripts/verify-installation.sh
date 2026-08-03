@@ -90,5 +90,5 @@ else
     echo -e "${RED}❌ Some checks failed${NC}"
     echo ""
     echo "Please ensure Restrict Language is properly installed and in your PATH."
-    echo "Installation guide: https://docs.restrict-lang.org/getting-started/installation"
+    echo "Installation guide: https://ischca.github.io/restrict_lang/docs/getting-started/installation"
 fi

@@ -3,16 +3,16 @@
 
 [project]
 name = "restrict_lang"
-version = "0.1.0"
+version = "0.0.1"
 description = "Restrict Language with affine types for WebAssembly"
 authors = ["Restrict Lang Team"]
 license = "MIT"
 edition = "2021"
 
 # Repository information
-repository = "https://github.com/restrict-lang/restrict_lang"
-homepage = "https://restrict-lang.org"
-documentation = "https://docs.restrict-lang.org"
+repository = "https://github.com/Ischca/restrict_lang"
+homepage = "https://ischca.github.io/restrict_lang/"
+documentation = "https://ischca.github.io/restrict_lang/docs/"
 
 # Build configuration
 [build]
@@ -37,7 +37,7 @@ max-size = "1GB"
 # Dependencies
 [dependencies]
 # Standard library (built-in)
-std = { path = "./std", version = "0.1.0" }
+std = { path = "./std", version = "0.0.1" }
 
 # External dependencies would go here
 # example_lib = { git = "https://github.com/example/lib", version = "1.0" }
@@ -51,20 +51,16 @@ test_utils = { path = "./test_utils", optional = true }
 # Registry configuration
 [registry]
 # Default registry for publishing packages
-default = "wardhub"
+default = "local"
 
 # Registry URLs
-[registry.wardhub]
-url = "https://wardhub.io"
-api-url = "https://api.wardhub.io"
-
 [registry.local]
 url = "file://./local-registry"
 
 # Publishing configuration
 [publish]
-# Verify signatures before publishing
-verify = true
+# Registry upload and signing are not part of v0.0.1.
+verify = false
 
 # Include files in published package
 include = [
@@ -82,7 +78,7 @@ exclude = ["target/**/*", ".git/**/*", "test/**/*", "*.wat", "*.wasm"]
 # Security configuration
 [security]
 # Cryptographic signatures
-signing = true
+signing = false
 signature-algorithm = "ed25519"
 
 # Dependency verification

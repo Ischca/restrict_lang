@@ -1,6 +1,17 @@
 # インストール
 
-このガイドでは、Restrict LanguageとWarderをソースからビルドして使う手順を説明します。配布方法やリリース版の識別子はリリースごとの案内に従ってください。
+v0.0.1 previewはGitHub Releasesから配布し、ソースからもビルドできます。パッケージレジストリ、安定版Homebrew formula、VS Code Marketplaceは今回のpreviewには含めません。
+
+## Previewバイナリをインストール
+
+シェルインストーラーはx86-64 Linux、Intel Mac、Apple Silicon Macに対応し、ダウンロードしたアーカイブをSHA-256マニフェストで検証します。
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/Ischca/restrict_lang/main/install.sh | bash
+```
+
+表示された`$HOME/.restrict-lang/bin`をPATHに追加してください。Windowsでは[GitHub pre-release](https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1)のzipを直接ダウンロードします。
 
 ## システム要件
 
@@ -12,7 +23,7 @@
 ## ソースからビルド
 
 ```bash
-git clone https://github.com/restrict-lang/restrict_lang.git
+git clone https://github.com/Ischca/restrict_lang.git
 cd restrict_lang
 mise exec -- cargo build --workspace --release
 ```
@@ -20,10 +31,10 @@ mise exec -- cargo build --workspace --release
 ビルド後、コンパイラとWarderをPATHに追加します：
 
 ```bash
-export PATH="$PWD/target/release:$PWD/warder/target/release:$PATH"
+export PATH="$PWD/target/release:$PATH"
 ```
 
-通常のワークスペースビルドでは`target/release`に`restrict_lang`と`warder`が生成されます。Warderを`warder/`配下で個別にビルドした環境では`warder/target/release`もPATHに含めてください。
+ワークスペースビルドでは`target/release`に`restrict_lang`と`warder`の両方が生成されます。
 
 ## インストールの確認
 
@@ -99,7 +110,7 @@ restrict_lang --lsp
 PATHにビルド成果物のディレクトリが含まれていることを確認してください：
 
 ```bash
-export PATH="$PWD/target/release:$PWD/warder/target/release:$PATH"
+export PATH="$PWD/target/release:$PATH"
 which restrict_lang
 which warder
 ```

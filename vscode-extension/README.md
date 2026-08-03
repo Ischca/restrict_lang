@@ -230,8 +230,8 @@ If you get "Compiler not found" errors:
 
 ## Release Notes
 
-### 0.1.0
-- Initial release
+### 0.0.1
+- Preview release for local VSIX installation
 - Basic syntax highlighting
 - Compiler integration
 - Code snippets

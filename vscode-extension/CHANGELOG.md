@@ -5,18 +5,18 @@ All notable changes to the "restrict-language" extension will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2025-01-XX
+## [0.0.1] - 2026-08-04
 
 ### Added
-- Initial release of Restrict Language VS Code extension
-- Complete syntax highlighting for .rl files
+- Preview release of the Restrict Language VS Code extension
+- Syntax highlighting for the v0.0.1 language surface
 - Language configuration with auto-closing pairs and brackets
 - Code snippets for common language constructs
 - Compiler integration with build commands
 - Type checking with error diagnostics
 - AST viewer for debugging
 - Custom dark and light color themes
-- Auto-completion support
+- Language Server hover and document symbol support
 - Comment toggling support
 - Code folding capabilities
 
@@ -59,14 +59,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Built with TypeScript
 - Uses TextMate grammar for syntax highlighting
 - Integrates with VS Code's language server protocol
-- Supports all VS Code language features (folding, commenting, etc.)
+- Provides folding, commenting, compiler commands, and the current LSP surface
 
 ### Requirements
 - VS Code 1.74.0 or later
 - Restrict Language compiler in PATH or configured path
 
 ### Known Issues
-- None at initial release
+- Marketplace publishing is deferred; build the VSIX locally for preview use
+- Language Server functionality follows the compiler's v0.0.1 release boundary
 
 ### Documentation
 - Complete README with usage instructions

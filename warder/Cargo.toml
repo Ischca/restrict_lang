@@ -1,6 +1,6 @@
 [package]
 name = "warder"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 description = "Warder: The official build tool and package manager for Restrict Language"
 authors = ["Restrict Lang Team"]
@@ -27,7 +27,7 @@ tempfile = "3.8"
 which = "8"
 colored = "3"
 indicatif = "0.18"
-restrict_lang = { path = ".." }
+restrict_lang = { path = "..", version = "0.0.1" }
 walkdir = "2.3"
 reqwest = { version = "0.12", features = ["json"] }
 wat = "1"

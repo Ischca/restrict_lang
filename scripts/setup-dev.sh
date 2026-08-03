@@ -160,7 +160,7 @@ cat > .env.local << 'EOF'
 RUST_LOG=debug
 RESTRICT_LANG_STD_PATH=./std
 warder_CACHE_DIR=.warder/cache
-warder_REGISTRY_URL=https://wardhub.io
+WARDER_REGISTRY_URL=file://./local-registry
 EOF
 
 # Print setup summary

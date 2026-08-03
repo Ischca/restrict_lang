@@ -1,383 +1,240 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Restrict Language Web Compiler</title>
-    <meta name="theme-color" content="#ff6b35">
-    <style>
-        :root {
-            --logo-primary: #ff6b35;
-            --logo-amber: #f7931e;
-            --logo-deep: #c1440e;
-            --logo-glow: #ffaa55;
-            --logo-line: #ff8855;
-            --logo-cream: #fff8f3;
-            --ink: #241812;
-            --muted: #6d5d55;
-            --line: #ead8ce;
-            --paper: #fffdfb;
-            --surface: var(--logo-cream);
-            --accent: var(--logo-primary);
-            --syntax-primary: var(--logo-deep);
-            --syntax-secondary: var(--logo-primary);
-            --syntax-soft: #8a3411;
-            --syntax-line: #b84a17;
-            --syntax-muted: #7b655b;
-            --syntax-strong: #4a2415;
-        }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playground · Restrict Language</title>
+  <meta name="description" content="Compile, tokenize, and parse Restrict Language locally in your browser.">
+  <meta name="theme-color" content="#ff6b35">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      color-scheme: light;
+      --logo-primary: #ff6b35;
+      --logo-amber: #f7931e;
+      --logo-deep: #c1440e;
+      --logo-glow: #ffaa55;
+      --logo-line: #ff8855;
+      --logo-cream: #fff8f3;
+      --ink: #211711;
+      --muted: #6d5d55;
+      --line: #e8d8ce;
+      --paper: #fffdfb;
+      --surface: #fff8f3;
+      --panel: #ffffff;
+      --code: #20110c;
+      --code-panel: #2a1710;
+      --code-fg: #fff8f3;
+      --syntax-primary: var(--logo-primary);
+      --syntax-secondary: var(--logo-amber);
+      --syntax-soft: #8a3411;
+      --syntax-line: #b84a17;
+      --syntax-muted: #7b655b;
+      --syntax-strong: #4a2415;
+      --success: #267547;
+      --danger: #a73719;
+    }
 
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: var(--surface);
-            color: var(--ink);
-        }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    a { color: inherit; }
+    button, select, textarea { font: inherit; }
+    button, select { min-height: 40px; }
+    button { cursor: pointer; }
 
-        .container {
-            background: var(--paper);
-            border-radius: 10px;
-            box-shadow: 0 18px 45px rgba(193, 68, 14, 0.12);
-            padding: 30px;
-        }
+    .skip-link { position: fixed; left: 16px; top: -80px; z-index: 100; padding: 10px 14px; border-radius: 6px; background: var(--ink); color: white; }
+    .skip-link:focus { top: 12px; }
 
-        h1 {
-            color: var(--ink);
-            text-align: center;
-            margin-bottom: 30px;
-        }
+    .app-header { border-bottom: 1px solid var(--line); background: rgba(255, 253, 251, 0.94); }
+    .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 64px; max-width: 1440px; margin: 0 auto; padding: 0 28px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 780; text-decoration: none; }
+    .brand-mark { display: inline-grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--logo-primary); color: white; font-size: 0.85rem; }
+    nav { display: flex; gap: 22px; color: var(--muted); font-size: 0.88rem; font-weight: 650; }
+    nav a { text-decoration: none; }
+    nav a:hover, nav a[aria-current="page"] { color: var(--logo-deep); }
 
-        .editor-section {
-            margin-bottom: 30px;
-        }
+    .playground-shell { max-width: 1440px; margin: 0 auto; padding: 34px 28px 42px; }
+    .playground-intro { display: flex; align-items: end; justify-content: space-between; gap: 30px; margin-bottom: 24px; }
+    .eyebrow { margin: 0 0 7px; color: var(--logo-deep); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1; letter-spacing: -0.045em; }
+    .intro-copy { max-width: 640px; margin: 12px 0 0; color: var(--muted); }
+    .privacy-note { display: flex; max-width: 360px; align-items: center; gap: 10px; color: var(--muted); font-size: 0.82rem; }
+    .privacy-note::before { content: ""; flex: 0 0 auto; width: 8px; height: 8px; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 5px rgba(38, 117, 71, 0.1); }
 
-        .editor-section h3 {
-            color: var(--muted);
-            margin-bottom: 10px;
-        }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 650px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 24px 70px rgba(100, 54, 32, 0.1); }
+    .workspace-panel { min-width: 0; display: flex; flex-direction: column; }
+    .workspace-panel + .workspace-panel { border-left: 1px solid var(--line); }
+    .panel-heading { display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 16px; border-bottom: 1px solid var(--line); background: var(--paper); }
+    .panel-title strong, .panel-title small { display: block; }
+    .panel-title strong { font-size: 0.91rem; }
+    .panel-title small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; }
+    .panel-tools { display: flex; align-items: center; gap: 8px; }
+    .select-wrap { position: relative; }
+    select { max-width: 180px; padding: 0 34px 0 11px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); }
+    .tool-button, .tab { padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); font-size: 0.78rem; font-weight: 700; }
+    .tool-button:hover, .tab:hover { border-color: var(--logo-primary); }
+    .tool-button:focus-visible, .tab:focus-visible, .action-button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(255, 107, 53, 0.24); outline-offset: 2px; }
+    .tool-button:disabled, .action-button:disabled { cursor: wait; opacity: 0.55; }
 
-        .source-editor {
-            position: relative;
-            height: 260px;
-        }
+    .editor-wrap { position: relative; flex: 1; min-height: 440px; background: var(--paper); }
+    textarea, .source-highlight { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 22px; overflow: auto; border: 0; border-radius: 0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13.5px; line-height: 1.72; tab-size: 4; white-space: pre; }
+    textarea { z-index: 2; resize: none; background: transparent; color: transparent; caret-color: var(--logo-deep); }
+    textarea::selection { background: rgba(255, 107, 53, 0.22); color: transparent; }
+    textarea:focus { outline-offset: -3px; }
+    .source-highlight { z-index: 1; background: var(--paper); color: var(--ink); pointer-events: none; }
+    .source-highlight code { font: inherit; white-space: pre; }
+    .hljs-keyword { color: var(--syntax-primary); font-weight: 700; }
+    .hljs-title { color: var(--syntax-strong); font-weight: 700; }
+    .hljs-type { color: var(--syntax-secondary); font-weight: 650; }
+    .hljs-literal { color: var(--syntax-line); font-weight: 650; }
+    .hljs-string, .hljs-number { color: var(--syntax-soft); }
+    .hljs-comment { color: var(--syntax-muted); font-style: italic; }
+    .hljs-operator { color: var(--syntax-primary); font-weight: 700; }
 
-        textarea,
-        .source-highlight {
-            width: 100%;
-            height: 100%;
-            border: 2px solid var(--line);
-            border-radius: 5px;
-            padding: 12px;
-            box-sizing: border-box;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 14px;
-            line-height: 1.5;
-            tab-size: 4;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            overflow: auto;
-        }
+    .editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--surface); }
+    .action-group { display: flex; flex-wrap: wrap; gap: 8px; }
+    .action-button { padding: 0 15px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); font-size: 0.82rem; font-weight: 750; }
+    .action-button.primary { border-color: var(--logo-primary); background: var(--logo-primary); color: white; }
+    .action-button.primary:hover { border-color: var(--logo-deep); background: var(--logo-deep); }
+    .shortcut { color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
+    kbd { padding: 2px 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: white; font-family: inherit; }
 
-        textarea {
-            position: relative;
-            z-index: 2;
-            background: transparent;
-            color: transparent;
-            caret-color: var(--logo-deep);
-            resize: none;
-        }
+    .status-bar { display: flex; min-height: 44px; align-items: center; gap: 9px; padding: 0 16px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 0.8rem; }
+    .status-dot { width: 8px; height: 8px; border-radius: 999px; background: #9a8b83; }
+    .status-bar[data-tone="success"] .status-dot { background: var(--success); }
+    .status-bar[data-tone="error"] .status-dot { background: var(--danger); }
+    .status-bar[data-tone="working"] .status-dot { background: var(--logo-amber); }
+    .status-bar[data-tone="success"] { color: var(--success); }
+    .status-bar[data-tone="error"] { color: var(--danger); }
 
-        textarea:focus {
-            outline: none;
-            border-color: var(--logo-primary);
-        }
+    .output-tabs { display: flex; gap: 4px; padding: 10px 12px 0; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--paper); }
+    .tab { min-height: 36px; border-bottom: 0; border-radius: 6px 6px 0 0; color: var(--muted); }
+    .tab[aria-selected="true"] { border-color: var(--code); background: var(--code); color: white; }
+    .output-stack { position: relative; flex: 1; min-height: 460px; background: var(--code); }
+    .output-content { position: absolute; inset: 0; overflow: auto; padding: 22px; background: var(--code); color: var(--code-fg); }
+    .output-content[hidden] { display: none; }
+    .output-content pre { margin: 0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .output-content.is-error { color: #ffc2ad; }
+    .output-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 16px; border-top: 1px solid #4b281c; background: var(--code-panel); color: #d5aa96; font-size: 0.7rem; }
+    .output-footer .tool-button { border-color: #6b3b2a; background: transparent; color: #fff8f3; }
 
-        textarea::placeholder {
-            color: #777;
-        }
+    .playground-footer { display: flex; justify-content: space-between; gap: 16px; padding-top: 22px; color: var(--muted); font-size: 0.78rem; }
+    .playground-footer a { color: var(--logo-deep); text-decoration: none; }
+    .playground-footer a:hover { text-decoration: underline; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-        textarea::selection {
-            background-color: rgba(255, 107, 53, 0.22);
-            color: transparent;
-        }
+    @media (max-width: 940px) {
+      .workspace { grid-template-columns: 1fr; }
+      .workspace-panel + .workspace-panel { border-top: 1px solid var(--line); border-left: 0; }
+      .editor-wrap { min-height: 430px; }
+      .output-stack { min-height: 420px; }
+      .playground-intro { align-items: flex-start; flex-direction: column; }
+    }
 
-        .source-highlight {
-            position: absolute;
-            inset: 0;
-            z-index: 1;
-            margin: 0;
-            background: #fffdfb;
-            color: var(--ink);
-            pointer-events: none;
-        }
+    @media (max-width: 620px) {
+      .header-inner { min-height: auto; align-items: flex-start; flex-direction: column; padding: 13px 18px; }
+      nav { width: 100%; justify-content: space-between; gap: 8px; font-size: 0.77rem; }
+      .playground-shell { padding: 28px 14px 34px; }
+      .panel-heading { align-items: flex-start; flex-direction: column; }
+      .panel-tools { width: 100%; }
+      select { max-width: none; width: 100%; }
+      .select-wrap { flex: 1; }
+      .editor-actions { align-items: flex-start; flex-direction: column; }
+      .action-group { width: 100%; }
+      .action-button { flex: 1; }
+      .shortcut { display: none; }
+      .playground-footer { align-items: flex-start; flex-direction: column; }
+    }
 
-        .source-highlight code {
-            font: inherit;
-            white-space: pre-wrap;
-        }
-
-        .hljs-keyword {
-            color: var(--syntax-primary);
-            font-weight: 700;
-        }
-
-        .hljs-title {
-            color: var(--syntax-strong);
-            font-weight: 700;
-        }
-
-        .hljs-type {
-            color: var(--syntax-secondary);
-            font-weight: 650;
-        }
-
-        .hljs-literal {
-            color: var(--syntax-line);
-            font-weight: 650;
-        }
-
-        .hljs-string {
-            color: var(--syntax-soft);
-        }
-
-        .hljs-number {
-            color: var(--syntax-soft);
-        }
-
-        .hljs-comment {
-            color: var(--syntax-muted);
-            font-style: italic;
-        }
-
-        .hljs-operator {
-            color: var(--syntax-primary);
-            font-weight: 700;
-        }
-
-        .button-container {
-            text-align: center;
-            margin: 30px 0;
-        }
-
-        button {
-            background-color: var(--logo-primary);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin: 0 10px;
-            transition: background-color 0.3s;
-        }
-
-        button:hover {
-            background-color: var(--logo-deep);
-        }
-
-        button:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-        }
-
-        .output-section {
-            margin-top: 30px;
-        }
-
-        .output-tabs {
-            border-bottom: 2px solid var(--line);
-            margin-bottom: 20px;
-        }
-
-        .tab {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: var(--surface);
-            border: none;
-            border-radius: 5px 5px 0 0;
-            cursor: pointer;
-            margin-right: 5px;
-            transition: background-color 0.3s;
-        }
-
-        .tab.active {
-            background-color: var(--logo-primary);
-            color: white;
-        }
-
-        .tab:hover {
-            background-color: #ffe8d9;
-        }
-
-        .tab.active:hover {
-            background-color: var(--logo-deep);
-        }
-
-        .output-content {
-            background-color: #fffdfb;
-            border: 1px solid var(--line);
-            border-radius: 5px;
-            padding: 15px;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .output-content pre {
-            margin: 0;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 12px;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-
-        .error {
-            color: #d32f2f;
-            background-color: #ffebee;
-            border: 1px solid #ffcdd2;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
-        }
-
-        .success {
-            color: #388e3c;
-            background-color: #e8f5e8;
-            border: 1px solid #c8e6c9;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
-        }
-
-        .loading {
-            text-align: center;
-            color: #666;
-            font-style: italic;
-        }
-
-        .examples {
-            margin-top: 30px;
-            padding: 20px;
-            background-color: var(--surface);
-            border-radius: 5px;
-        }
-
-        .examples h3 {
-            color: var(--ink);
-            margin-bottom: 15px;
-        }
-
-        .example {
-            background-color: var(--paper);
-            border: 1px solid var(--line);
-            border-radius: 3px;
-            padding: 10px;
-            margin: 10px 0;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-
-        .example:hover {
-            background-color: #ffe8d9;
-        }
-
-        .example-title {
-            font-weight: bold;
-            color: #555;
-            margin-bottom: 5px;
-        }
-
-        .example-code {
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 12px;
-            color: #666;
-            background-color: #f8f8f8;
-            padding: 5px;
-            border-radius: 3px;
-            white-space: pre-wrap;
-        }
-    </style>
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: 0.01ms !important; }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🌐 Restrict Language Web Compiler</h1>
+  <a class="skip-link" href="#workspace">Skip to editor</a>
+  <header class="app-header">
+    <div class="header-inner">
+      <a class="brand" href="../" aria-label="Restrict Language home"><span class="brand-mark" aria-hidden="true">R</span><span>Restrict</span></a>
+      <nav aria-label="Primary navigation">
+        <a href="../docs/">Docs</a>
+        <a href="./" aria-current="page">Playground</a>
+        <a href="../blog/">Blog</a>
+        <a href="https://github.com/Ischca/restrict_lang">GitHub</a>
+      </nav>
+    </div>
+  </header>
 
-        <div class="editor-section">
-            <h3>📝 Source Code</h3>
-            <div class="source-editor">
-                <pre id="sourceHighlight" class="source-highlight" aria-hidden="true"><code></code></pre>
-                <textarea id="sourceCode" spellcheck="false" placeholder="Enter your Restrict Language code here...">// Basic arithmetic example
+  <main class="playground-shell">
+    <section class="playground-intro">
+      <div>
+        <p class="eyebrow">v0.0.1 browser compiler</p>
+        <h1>See every stage.</h1>
+        <p class="intro-copy">Write Restrict, then inspect WebAssembly-oriented output, tokens, the parsed tree, or an exact diagnostic.</p>
+      </div>
+      <p class="privacy-note">Compilation stays in this browser. Source is only added to a URL when you choose Share.</p>
+    </section>
+
+    <section class="workspace" id="workspace" aria-label="Restrict Language playground">
+      <div class="workspace-panel">
+        <div class="panel-heading">
+          <div class="panel-title"><strong>Source</strong><small id="sourceStats">0 lines · 0 characters</small></div>
+          <div class="panel-tools">
+            <label class="sr-only" for="exampleSelect">Load an example</label>
+            <span class="select-wrap"><select id="exampleSelect"><option value="function">Add two values</option><option value="pipe">Pipe a value</option><option value="record">Build a record</option><option value="match">Match an option</option></select></span>
+            <button class="tool-button" type="button" id="resetBtn">Reset</button>
+            <button class="tool-button" type="button" id="shareBtn">Share</button>
+          </div>
+        </div>
+
+        <div class="editor-wrap">
+          <pre id="sourceHighlight" class="source-highlight" aria-hidden="true"><code></code></pre>
+          <textarea id="sourceCode" aria-label="Restrict source code" spellcheck="false" autocomplete="off">// Values come before verbs.
 fun add: (left: Int32, right: Int32) -> Int32 = {
     left + right
 }
 
-// Main function
 fun main: () -> Int32 = {
-    val result = (2, 3) add
-    result
+    (20, 22) add
 }</textarea>
-            </div>
         </div>
 
-        <div class="button-container">
-            <button onclick="compile()" id="compileBtn">🔧 Compile</button>
-            <button onclick="lexOnly()" id="lexBtn">📝 Lex Only</button>
-            <button onclick="parseOnly()" id="parseBtn">🔍 Parse Only</button>
-            <button onclick="clearOutput()" id="clearBtn">🗑️ Clear</button>
+        <div class="editor-actions">
+          <div class="action-group">
+            <button class="action-button primary" type="button" id="compileBtn">Compile</button>
+            <button class="action-button" type="button" id="lexBtn">Tokenize</button>
+            <button class="action-button" type="button" id="parseBtn">Parse</button>
+          </div>
+          <span class="shortcut"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to compile</span>
         </div>
+      </div>
 
-        <div class="output-section">
-            <div class="output-tabs">
-                <button class="tab active" data-tab="wasm" onclick="showTab('wasm')">📦 WASM Output</button>
-                <button class="tab" data-tab="tokens" onclick="showTab('tokens')">🎯 Tokens</button>
-                <button class="tab" data-tab="ast" onclick="showTab('ast')">🌳 AST</button>
-                <button class="tab" data-tab="error" onclick="showTab('error')">⚠️ Errors</button>
-            </div>
-
-            <div id="wasm" class="output-content">
-                <pre id="wasmOutput">Ready to compile...</pre>
-            </div>
-
-            <div id="tokens" class="output-content" style="display: none;">
-                <pre id="tokensOutput">No tokens yet...</pre>
-            </div>
-
-            <div id="ast" class="output-content" style="display: none;">
-                <pre id="astOutput">No AST yet...</pre>
-            </div>
-
-            <div id="error" class="output-content" style="display: none;">
-                <pre id="errorOutput">No errors...</pre>
-            </div>
+      <div class="workspace-panel">
+        <div class="panel-heading">
+          <div class="panel-title"><strong>Inspector</strong><small>Compiler output is plain text and safe to copy.</small></div>
+          <button class="tool-button" type="button" id="copyOutputBtn">Copy output</button>
         </div>
-
-        <div class="examples">
-            <h3>📚 Example Programs</h3>
-
-            <div class="example" onclick="loadExample('hello')">
-                <div class="example-title">Hello World</div>
-                <div class="example-code">fun main: () -> Int32 = { 42 }</div>
-            </div>
-
-            <div class="example" onclick="loadExample('function')">
-                <div class="example-title">Function Definition</div>
-                <div class="example-code">fun add: (left: Int32, right: Int32) -> Int32 = { left + right }</div>
-            </div>
-
-            <div class="example" onclick="loadExample('pipe')">
-                <div class="example-title">Pipe Operations</div>
-                <div class="example-code">42 |> increment</div>
-            </div>
-
-            <div class="example" onclick="loadExample('record')">
-                <div class="example-title">Record Types</div>
-                <div class="example-code">record Point { x: Int32, y: Int32 }</div>
-            </div>
+        <div class="status-bar" id="compilerStatus" role="status" aria-live="polite" data-tone="working"><span class="status-dot" aria-hidden="true"></span><span id="statusText">Loading compiler…</span></div>
+        <div class="output-tabs" role="tablist" aria-label="Compiler results">
+          <button class="tab" type="button" id="tab-wasm" role="tab" aria-selected="true" aria-controls="wasm" data-tab="wasm">Wasm</button>
+          <button class="tab" type="button" id="tab-tokens" role="tab" aria-selected="false" aria-controls="tokens" data-tab="tokens" tabindex="-1">Tokens</button>
+          <button class="tab" type="button" id="tab-ast" role="tab" aria-selected="false" aria-controls="ast" data-tab="ast" tabindex="-1">AST</button>
+          <button class="tab" type="button" id="tab-error" role="tab" aria-selected="false" aria-controls="error" data-tab="error" tabindex="-1">Errors</button>
         </div>
-    </div>
+        <div class="output-stack">
+          <div id="wasm" class="output-content" role="tabpanel" aria-labelledby="tab-wasm"><pre id="wasmOutput">The compiler is loading…</pre></div>
+          <div id="tokens" class="output-content" role="tabpanel" aria-labelledby="tab-tokens" hidden><pre id="tokensOutput">No tokens yet.</pre></div>
+          <div id="ast" class="output-content" role="tabpanel" aria-labelledby="tab-ast" hidden><pre id="astOutput">No AST yet.</pre></div>
+          <div id="error" class="output-content" role="tabpanel" aria-labelledby="tab-error" hidden><pre id="errorOutput">No errors.</pre></div>
+        </div>
+        <div class="output-footer"><span>Runs with the same Rust compiler compiled to WebAssembly.</span><span id="activeOutputLabel">Wasm output</span></div>
+      </div>
+    </section>
 
-    <script src="./restrict-highlight.js"></script>
-    <script type="module" src="./app.js"></script>
+    <footer class="playground-footer"><span>Restrict Language · v0.0.1 preview</span><span><a href="../docs/en/reference/release-surface.html">Release surface</a> · <a href="https://github.com/Ischca/restrict_lang/issues">Report an issue</a></span></footer>
+  </main>
+
+  <script src="./restrict-highlight.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

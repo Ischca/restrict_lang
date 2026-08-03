@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://restrict-lang.github.io/restrict_lang/sitemap.xml
+Sitemap: https://ischca.github.io/restrict_lang/sitemap.xml

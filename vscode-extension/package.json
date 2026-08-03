@@ -2,16 +2,16 @@
     "name": "restrict-language",
     "displayName": "Restrict Language",
     "description": "Language support for Restrict Language - A functional programming language with affine types for WebAssembly",
-    "version": "0.1.0",
+    "version": "0.0.1",
     "publisher": "restrict-lang",
     "icon": "images/icon.png",
     "repository": {
         "type": "git",
-        "url": "https://github.com/restrict-lang/restrict_lang"
+        "url": "https://github.com/Ischca/restrict_lang"
     },
-    "homepage": "https://github.com/restrict-lang/restrict_lang#readme",
+    "homepage": "https://ischca.github.io/restrict_lang/docs/",
     "bugs": {
-        "url": "https://github.com/restrict-lang/restrict_lang/issues"
+        "url": "https://github.com/Ischca/restrict_lang/issues"
     },
     "engines": {
         "vscode": "^1.74.0"

@@ -20,7 +20,7 @@ cargo doc --all-features --no-deps --document-private-items
 ## Online Documentation
 
 The latest API documentation is available at:
-- [https://docs.restrict-lang.org/api/](https://docs.restrict-lang.org/api/)
+- [https://ischca.github.io/restrict_lang/docs/api/](https://ischca.github.io/restrict_lang/docs/api/)
 
 ## Core Modules
 

@@ -8,17 +8,17 @@ v0.0.1の検証では、まずソースからビルドする手順を使いま�
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/restrict-lang/restrict_lang
+git clone https://github.com/Ischca/restrict_lang
 cd restrict_lang
 
 # ビルド（Rustとmiseが必要）
 mise exec -- cargo build --workspace --release
 
 # パスに追加
-export PATH="$PWD/target/release:$PWD/warder/target/release:$PATH"
+export PATH="$PWD/target/release:$PATH"
 ```
 
-ワークスペース全体をビルドした場合、通常は`target/release`に`restrict_lang`と`warder`が生成されます。Warderだけを別ディレクトリでビルドした場合は、`warder/target/release`もPATHに含めてください。
+ワークスペース全体をビルドすると、`target/release`に`restrict_lang`と`warder`の両方が生成されます。
 
 ## 最初のプログラム
 
@@ -28,7 +28,7 @@ export PATH="$PWD/target/release:$PWD/warder/target/release:$PATH"
 
 ```restrict
 // hello.rl
-fun main: () = {
+fun main: () -> () = {
     "Hello, Restrict Language!" |> println
 }
 ```
@@ -205,7 +205,7 @@ PATHに実行ファイルが含まれていることを確認してください�
 which restrict_lang
 
 # PATHに追加（必要に応じて）
-export PATH="$PWD/target/release:$PWD/warder/target/release:$PATH"
+export PATH="$PWD/target/release:$PATH"
 ```
 
 ### WebAssemblyランタイムがない
@@ -228,8 +228,8 @@ val z = x  // エラー: Variable 'x' has already been used
 
 ## コミュニティとサポート
 
-- **GitHub**: [https://github.com/restrict-lang/restrict_lang](https://github.com/restrict-lang/restrict_lang)
-- **ドキュメント**: [https://restrict-lang.github.io/restrict_lang/](https://restrict-lang.github.io/restrict_lang/)
+- **GitHub**: [https://github.com/Ischca/restrict_lang](https://github.com/Ischca/restrict_lang)
+- **ドキュメント**: [https://ischca.github.io/restrict_lang/](https://ischca.github.io/restrict_lang/)
 - **Issues**: バグ報告や機能リクエストはGitHub Issuesへ
 
 Restrict Languageへようこそ！

@@ -164,7 +164,7 @@ async fn resolve_dependencies(manifest: &Manifest, vault: &mut Vault) -> Result<
                 PackageLock {
                     version: ver.clone(),
                     source: LockSource::Registry {
-                        url: "https://wardhub.restrict-lang.org".to_string(),
+                        url: "local-preflight://unresolved".to_string(),
                     },
                     abi_hash: String::new(),
                     sha256: String::new(),

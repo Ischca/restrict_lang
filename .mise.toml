@@ -8,11 +8,11 @@ rust = "latest"
 
 [tasks.test]
 description = "Run default tests"
-run = ["cargo test -- --nocapture", "cd warder && cargo test -- --nocapture"]
+run = "cargo test --workspace --locked -- --nocapture"
 
 [tasks.test-quiet]
 description = "Run default tests (quiet)"
-run = ["cargo test", "cd warder && cargo test"]
+run = "cargo test --workspace --locked"
 
 [tasks.test-fast]
 description = "Run fast local checks for active compiler work"
@@ -46,11 +46,11 @@ cargo test $TEST -- --nocapture
 
 [tasks.build]
 description = "Build all components"
-run = ["cargo build", "cd warder && cargo build"]
+run = "cargo build --workspace --locked"
 
 [tasks.build-release]
 description = "Build all components in release mode"
-run = ["cargo build --release", "cd warder && cargo build --release"]
+run = "cargo build --workspace --locked --release"
 
 [tasks.watch]
 description = "Watch mode - auto recompile on changes"
@@ -83,22 +83,15 @@ run = "cargo bench"
 
 [tasks.clean]
 description = "Clean generated files"
-run = [
-  "cargo clean",
-  "cd warder && cargo clean",
-  "rm -f test/*.wat test/*.wasm examples/*.wat examples/*.wasm",
-]
+run = ["cargo clean", "rm -f test/*.wat test/*.wasm examples/*.wat examples/*.wasm"]
 
 [tasks.fmt]
 description = "Format code"
-run = ["cargo fmt", "cd warder && cargo fmt"]
+run = "cargo fmt --all"
 
 [tasks.lint]
 description = "Lint code"
-run = [
-  "cargo clippy -- -D warnings",
-  "cd warder && cargo clippy -- -D warnings",
-]
+run = "cargo clippy --workspace --locked -- -D warnings"
 
 [tasks.doc]
 description = "Generate API documentation"
@@ -179,11 +172,11 @@ echo "Development environment setup complete!"
 # Warder-specific tasks
 [tasks.build-warder]
 description = "Build only Warder package manager"
-run = "cd warder && cargo build --release"
+run = "cargo build --locked --release -p warder"
 
 [tasks.test-warder]
 description = "Test only Warder"
-run = "cd warder && cargo test -- --nocapture"
+run = "cargo test --locked -p warder -- --nocapture"
 
 [tasks.warder-new]
 description = "Create new project with Warder"
@@ -192,24 +185,24 @@ if [ -z "$PROJECT_NAME" ]; then
   echo "Usage: PROJECT_NAME=my_project mise run warder-new"
   exit 1
 fi
-./warder/target/release/warder new "$PROJECT_NAME"
+./target/release/warder new "$PROJECT_NAME"
 """
 
 [tasks.warder-init]
 description = "Initialize Warder project in current directory"
-run = "./warder/target/release/warder init"
+run = "./target/release/warder init"
 
 [tasks.warder-build]
 description = "Build project with Warder"
-run = "./warder/target/release/warder build"
+run = "./target/release/warder build"
 
 [tasks.warder-test]
 description = "Test project with Warder"
-run = "./warder/target/release/warder test"
+run = "./target/release/warder test"
 
 [tasks.warder-doctor]
 description = "Check project health with Warder"
-run = "./warder/target/release/warder doctor"
+run = "./target/release/warder doctor"
 
 # Advanced build tasks
 [tasks.build-wasm]
@@ -228,29 +221,20 @@ run = ["cd vscode-extension", "npm run package"]
 # Cross-platform builds
 [tasks.build-linux]
 description = "Cross-compile for Linux"
-run = [
-  "cargo build --release --target x86_64-unknown-linux-gnu",
-  "cd warder && cargo build --release --target x86_64-unknown-linux-gnu",
-]
+run = "cargo build --workspace --locked --release --target x86_64-unknown-linux-gnu"
 
 [tasks.build-windows]
 description = "Cross-compile for Windows"
-run = [
-  "cargo build --release --target x86_64-pc-windows-gnu",
-  "cd warder && cargo build --release --target x86_64-pc-windows-gnu",
-]
+run = "cargo build --workspace --locked --release --target x86_64-pc-windows-gnu"
 
 [tasks.build-macos]
 description = "Cross-compile for macOS"
-run = [
-  "cargo build --release --target x86_64-apple-darwin",
-  "cd warder && cargo build --release --target x86_64-apple-darwin",
-]
+run = "cargo build --workspace --locked --release --target x86_64-apple-darwin"
 
 # Security and quality
 [tasks.audit]
 description = "Security audit"
-run = ["cargo audit", "cd warder && cargo audit"]
+run = "cargo audit"
 
 [tasks.coverage]
 description = "Generate test coverage report"
@@ -262,7 +246,7 @@ description = "Install tools system-wide"
 depends = ["build-release"]
 run = """
 sudo cp target/release/restrict_lang /usr/local/bin/
-sudo cp warder/target/release/warder /usr/local/bin/
+sudo cp target/release/warder /usr/local/bin/
 echo "Tools installed to /usr/local/bin/"
 """
 
@@ -290,7 +274,7 @@ run = """
 echo "Release build complete!"
 echo "Artifacts:"
 echo "  - Compiler: target/release/restrict_lang"
-echo "  - Package Manager: warder/target/release/warder"
+echo "  - Package Manager: target/release/warder"
 echo "  - VS Code Extension: vscode-extension/*.vsix"
 """
 
@@ -366,11 +350,11 @@ cargo run --bin restrict_lang -- --check "$tmpdir/main.rl"
 # Docker tasks
 [tasks.docker-build]
 description = "Build Docker image"
-run = "docker build -t restrict_lang:0.1.0 ."
+run = "docker build -t restrict_lang:0.0.1 ."
 
 [tasks.docker-test]
 description = "Run tests in Docker"
-run = "docker run --rm restrict_lang:0.1.0 cargo test"
+run = "docker run --rm restrict_lang:0.0.1 cargo test"
 
 [tasks.dev]
 description = "Run development workflow"

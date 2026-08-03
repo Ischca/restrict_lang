@@ -3,54 +3,65 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Restrict Blog</title>
-  <meta name="description" content="Implementation notes for the Restrict programming language.">
+  <title>Build notes · Restrict Language</title>
+  <meta name="description" content="Release, compiler, and runtime notes from the Restrict Language workbench.">
   <meta name="theme-color" content="#ff6b35">
   <meta property="og:site_name" content="Restrict Language">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Restrict Blog">
-  <meta property="og:description" content="Implementation notes for the Restrict programming language.">
-  <meta property="og:url" content="https://restrict-lang.github.io/restrict_lang/blog/">
+  <meta property="og:title" content="Build notes · Restrict Language">
+  <meta property="og:description" content="Release, compiler, and runtime notes from the Restrict Language workbench.">
+  <meta property="og:url" content="https://ischca.github.io/restrict_lang/blog/">
   <meta name="twitter:card" content="summary">
-  <link rel="canonical" href="https://restrict-lang.github.io/restrict_lang/blog/">
+  <link rel="canonical" href="https://ischca.github.io/restrict_lang/blog/">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#content">Skip to content</a>
   <header class="site-header">
-    <a class="brand" href="../">Restrict</a>
-    <nav aria-label="Primary navigation">
-      <a href="../docs/">Docs</a>
-      <a href="../compiler/">Compiler</a>
-      <a href="./" aria-current="page">Blog</a>
-      <a href="https://github.com/restrict-lang/restrict_lang">GitHub</a>
-    </nav>
+    <div class="header-inner">
+      <a class="brand" href="../" aria-label="Restrict Language home"><span class="brand-mark" aria-hidden="true">R</span><span>Restrict</span></a>
+      <nav aria-label="Primary navigation">
+        <a href="../docs/">Docs</a>
+        <a href="../compiler/">Playground</a>
+        <a href="./" aria-current="page">Blog</a>
+        <a href="https://github.com/Ischca/restrict_lang">GitHub</a>
+      </nav>
+    </div>
   </header>
 
-  <main class="page-shell">
+  <main class="page-shell" id="content">
     <section class="page-title">
-      <p class="eyebrow">Blog</p>
-      <h1>Implementation notes</h1>
+      <p class="eyebrow">Build notes</p>
+      <h1>Decisions behind the language.</h1>
       <p>
-        Short updates on the language surface, compiler implementation, and
-        dogfood examples that shape Restrict.
+        Release engineering, compiler boundaries, and executable experiments.
+        These notes explain what Restrict does today—and the design work that
+        stays deliberately unfinished.
       </p>
     </section>
 
-    <section class="post-list standalone">
+    <section class="post-list standalone" aria-label="Articles">
+      <a href="shipping-v001-preview.html">
+        <small>Release engineering · August 4, 2026 · 6 min</small>
+        <span>What it means to ship the v0.0.1 preview</span>
+        <p>Aligning Pages, examples, binaries, and documentation around one public contract.</p>
+      </a>
       <a href="type-inference-v001.html">
-        <span>Type inference in the v0.0.1 surface</span>
-        <small>How the current inference work fits the release boundary.</small>
+        <small>Compiler notes · August 4, 2026 · 7 min</small>
+        <span>Type inference without widening the promise</span>
+        <p>How bidirectional inference improves everyday code while the host ABI stays narrow.</p>
       </a>
       <a href="runtime-dogfood.html">
-        <span>Dogfooding Restrict with runtime examples</span>
-        <small>Turning real examples into executable WebAssembly checks.</small>
+        <small>Runtime coverage · August 4, 2026 · 5 min</small>
+        <span>Dogfooding Restrict with executable examples</span>
+        <p>Why a real Wasm result catches failures that type-check-only fixtures cannot.</p>
       </a>
     </section>
   </main>
   <footer>
-    <span>Restrict Language</span>
-    <span><a href="../">Home</a></span>
+    <span>Restrict Language · v0.0.1 preview</span>
+    <span><a href="../">Back home</a></span>
   </footer>
 </body>
 </html>

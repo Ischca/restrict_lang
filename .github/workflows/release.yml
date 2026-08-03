@@ -4,127 +4,129 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label used for dry-run artifact names
+        required: true
+        default: v0.0.1
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  create-release:
-    name: Create Release
+  validate:
+    name: Validate release version
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.release.outputs.upload_url }}
-      version: ${{ env.VERSION }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      
-      - name: Get version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
-      
-      - name: Create Release
-        id: release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
+      - uses: actions/checkout@v6
 
-  build-release:
-    name: Build Release
-    needs: create-release
+      - id: version
+        name: Match workflow version to Cargo metadata
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+        run: |
+          set -euo pipefail
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          requested_version="${REQUESTED_VERSION#v}"
+          test "$requested_version" = "$cargo_version"
+          echo "version=$requested_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: validate
     strategy:
+      fail-fast: false
       matrix:
         include:
-          # Linux
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64
-          
-          # macOS Intel
+            archive: tar.gz
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: darwin-x86_64
-          
-          # macOS Apple Silicon
+            archive: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             platform: darwin-aarch64
-          
-          # Windows
+            archive: tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             platform: windows-x86_64
-
+            archive: zip
     runs-on: ${{ matrix.os }}
-    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v6
+
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           target: ${{ matrix.target }}
-          override: true
-      
-      - name: Build
+
+      - name: Build workspace binaries
+        run: cargo build --workspace --locked --release --target ${{ matrix.target }}
+
+      - name: Package Unix binaries
+        if: matrix.archive == 'tar.gz'
+        shell: bash
         run: |
-          cargo build --release --target ${{ matrix.target }}
-          cd warder
-          cargo build --release --target ${{ matrix.target }}
-      
-      - name: Package (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/restrict_lang dist/
-          cp warder/target/${{ matrix.target }}/release/warder dist/
-          chmod +x dist/restrict_lang dist/warder
-          cd dist
-          tar czf ../restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.tar.gz *
-      
-      - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
+          set -euo pipefail
+          package_dir="restrict-lang-v${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
+          mkdir -p "$package_dir"
+          cp "target/${{ matrix.target }}/release/restrict_lang" "$package_dir/"
+          cp "target/${{ matrix.target }}/release/warder" "$package_dir/"
+          cp README.md LICENSE "$package_dir/"
+          tar -czf "$package_dir.tar.gz" "$package_dir"
+
+      - name: Package Windows binaries
+        if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist
-          Copy-Item target\${{ matrix.target }}\release\restrict_lang.exe dist\
-          Copy-Item warder\target\${{ matrix.target }}\release\warder.exe dist\
-          Compress-Archive -Path dist\* -DestinationPath restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.zip
-      
-      - name: Upload Release Asset (Unix)
-        if: matrix.os != 'windows-latest'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.tar.gz
-          asset_name: restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.tar.gz
-          asset_content_type: application/gzip
-      
-      - name: Upload Release Asset (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.zip
-          asset_name: restrict-lang-v${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.zip
-          asset_content_type: application/zip
+          $packageDir = "restrict-lang-v${{ needs.validate.outputs.version }}-${{ matrix.platform }}"
+          New-Item -ItemType Directory -Force -Path $packageDir
+          Copy-Item "target/${{ matrix.target }}/release/restrict_lang.exe" $packageDir
+          Copy-Item "target/${{ matrix.target }}/release/warder.exe" $packageDir
+          Copy-Item README.md, LICENSE $packageDir
+          Compress-Archive -Path $packageDir -DestinationPath "$packageDir.zip"
 
-  update-homebrew:
-    name: Update Homebrew Formula
-    needs: [create-release, build-release]
+      - name: Upload packaged binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: restrict-lang-${{ matrix.platform }}
+          path: restrict-lang-v${{ needs.validate.outputs.version }}-${{ matrix.platform }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub pre-release
+    if: github.event_name == 'push'
+    needs: [validate, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Update Homebrew Formula
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: restrict-lang-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum restrict-lang-* > SHA256SUMS
+
+      - name: Create pre-release after every artifact succeeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          # This would typically update the homebrew tap repository
-          echo "TODO: Update homebrew formula with new version and SHA256"
+          gh release create "${{ github.ref_name }}" dist/* \
+            --generate-notes \
+            --prerelease \
+            --title "Restrict Language ${{ github.ref_name }}"

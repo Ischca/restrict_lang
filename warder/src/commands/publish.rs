@@ -7,7 +7,7 @@ pub async fn publish_package(registry: Option<String>) -> Result<()> {
     let manifest = load_manifest()?;
 
     // Default registry
-    let registry_url = registry.unwrap_or_else(|| "https://wardhub.restrict-lang.org".to_string());
+    let registry_url = registry.unwrap_or_else(|| "local preflight".to_string());
 
     // Build in release mode first
     print_info("Running publish preflight build...");

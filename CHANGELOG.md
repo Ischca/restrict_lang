@@ -1,32 +1,26 @@
 # Changelog
 
-All notable changes to the Restrict Language compiler will be documented in this file.
+All notable changes to the Restrict Language compiler are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-## [0.1.0] - 2026-03-11
+## [0.0.1] - 2026-08-04
 
 ### Added
-- Complete OSV (Object-Subject-Verb) syntax
-- Affine type system with use-at-most-once semantics
-- Pattern matching for Option, Result, List, and Record types
-- Generic functions with monomorphization
-- Prototype-based records with `clone` and `freeze`
-- Context-based resource management (`with` blocks)
-- Arena allocator with bounds checking and nested arena support
-- Module system with imports and exports
-- Standard library: Option, Result, List, String, I/O
-- FileSystem context for safe file operations
-- WebAssembly (WAT) code generation
-- LSP server with diagnostics, document symbols, and hover
-- WASM playground for browser-based editing
-- Pipe operators (`|>` for immutable, `|>>` for mutable binding)
-- Single-line (`//`) and multi-line (`/* */`) comments
 
-### Known Limitations
-- Float64 fields in record pattern matching assume 4-byte offsets
-- Closures do not capture free variables from outer scope
-- While loop code generation is not complete
-- Pattern guards are not yet implemented
-- `it` implicit parameter defaults to Int32 type
-- Temporal Affine Types (TAT) are experimental and deferred to v2.0
+- OSV-only calls through `value |> function`, `(args) function`, and `() function`
+- Affine binding checks with `val` and `mut val`
+- Bidirectional type inference for the supported generic, lambda, and container surface
+- Pattern matching for built-in `Option`, `Result`, `List`, and record values
+- Source modules with dotted imports and scalar WebAssembly exports
+- WebAssembly text generation, arena allocation, and executable runtime examples
+- Browser compiler with compile, tokenize, and parse inspection views
+- Language Server Protocol support and the Warder project tool
+
+### Release boundaries
+
+- Host-visible exports are limited to concrete scalar parameters, results, and literal constants
+- User-defined ADTs, source-level `form`/`takes`, temporal affine types, and direct composite host ABI are reserved for later design work
+- Warder registry publishing performs local preflight validation only and uploads nothing
+- Homebrew and VS Code Marketplace distribution are not part of this preview release
+
+[0.0.1]: https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1

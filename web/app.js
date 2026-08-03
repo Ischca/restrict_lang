@@ -1,241 +1,26 @@
 import init, { compile_restrict_lang, lex_only, parse_only } from './pkg/restrict_lang.js';
 
 let wasmModule = null;
+let activeTab = 'wasm';
 
-// Initialize the WASM module
-async function initWasm() {
-    try {
-        wasmModule = await init();
-        console.log('WASM module initialized successfully');
-        updateStatus('Ready to compile!', 'success');
-    } catch (error) {
-        console.error('Failed to initialize WASM module:', error);
-        updateStatus('Failed to initialize compiler: ' + error.message, 'error');
-    }
-}
-
-// Update status display
-function updateStatus(message, type = 'info') {
-    const wasmOutput = document.getElementById('wasmOutput');
-    if (type === 'error') {
-        wasmOutput.innerHTML = `<div class="error">${escapeHtml(message)}</div>`;
-    } else if (type === 'success') {
-        wasmOutput.innerHTML = `<div class="success">${escapeHtml(message)}</div>`;
-    } else {
-        wasmOutput.textContent = message;
-    }
-}
-
-// Compile the source code
-async function compile() {
-    if (!wasmModule) {
-        updateStatus('Compiler not initialized yet. Please wait...', 'error');
-        return;
-    }
-
-    const sourceCode = document.getElementById('sourceCode').value;
-    if (!sourceCode.trim()) {
-        updateStatus('Please enter some source code to compile.', 'error');
-        return;
-    }
-
-    try {
-        setButtonsDisabled(true);
-        updateStatus('Compiling...', 'info');
-
-        const result = compile_restrict_lang(sourceCode);
-
-        if (result.success) {
-            // Display WASM output
-            document.getElementById('wasmOutput').innerHTML =
-                `<div class="success">Compilation successful!</div><pre>${escapeHtml(result.output || 'No output generated')}</pre>`;
-
-            // Display tokens if available
-            if (result.tokens) {
-                document.getElementById('tokensOutput').innerHTML =
-                    `<pre>${escapeHtml(result.tokens)}</pre>`;
-            }
-
-            // Display AST if available
-            if (result.ast) {
-                document.getElementById('astOutput').innerHTML =
-                    `<pre>${escapeHtml(result.ast)}</pre>`;
-            }
-
-            // Clear errors
-            document.getElementById('errorOutput').innerHTML =
-                `<pre>No errors!</pre>`;
-
-        } else {
-            // Display error
-            document.getElementById('errorOutput').innerHTML =
-                `<pre class="error">${escapeHtml(result.error || 'Unknown error occurred')}</pre>`;
-
-            // Display partial results if available
-            if (result.tokens) {
-                document.getElementById('tokensOutput').innerHTML =
-                    `<pre>${escapeHtml(result.tokens)}</pre>`;
-            }
-
-            if (result.ast) {
-                document.getElementById('astOutput').innerHTML =
-                    `<pre>${escapeHtml(result.ast)}</pre>`;
-            }
-
-            // Show error tab
-            showTab('error');
-        }
-    } catch (error) {
-        console.error('Compilation error:', error);
-        updateStatus('Compilation failed: ' + error.message, 'error');
-        document.getElementById('errorOutput').innerHTML =
-            `<pre class="error">JavaScript error: ${escapeHtml(error.message)}</pre>`;
-        showTab('error');
-    } finally {
-        setButtonsDisabled(false);
-    }
-}
-
-// Lex only
-async function lexOnly() {
-    if (!wasmModule) {
-        updateStatus('Compiler not initialized yet. Please wait...', 'error');
-        return;
-    }
-
-    const sourceCode = document.getElementById('sourceCode').value;
-    if (!sourceCode.trim()) {
-        updateStatus('Please enter some source code to tokenize.', 'error');
-        return;
-    }
-
-    try {
-        setButtonsDisabled(true);
-        updateStatus('Tokenizing...', 'info');
-
-        const result = lex_only(sourceCode);
-
-        if (result.success) {
-            document.getElementById('tokensOutput').innerHTML =
-                `<pre>${escapeHtml(result.tokens || 'No tokens generated')}</pre>`;
-            showTab('tokens');
-            updateStatus('Tokenization successful!', 'success');
-        } else {
-            document.getElementById('errorOutput').innerHTML =
-                `<pre class="error">${escapeHtml(result.error || 'Unknown error occurred')}</pre>`;
-            showTab('error');
-            updateStatus('Tokenization failed', 'error');
-        }
-    } catch (error) {
-        console.error('Tokenization error:', error);
-        updateStatus('Tokenization failed: ' + error.message, 'error');
-    } finally {
-        setButtonsDisabled(false);
-    }
-}
-
-// Parse only
-async function parseOnly() {
-    if (!wasmModule) {
-        updateStatus('Compiler not initialized yet. Please wait...', 'error');
-        return;
-    }
-
-    const sourceCode = document.getElementById('sourceCode').value;
-    if (!sourceCode.trim()) {
-        updateStatus('Please enter some source code to parse.', 'error');
-        return;
-    }
-
-    try {
-        setButtonsDisabled(true);
-        updateStatus('Parsing...', 'info');
-
-        const result = parse_only(sourceCode);
-
-        if (result.success) {
-            document.getElementById('astOutput').innerHTML =
-                `<pre>${escapeHtml(result.ast || 'No AST generated')}</pre>`;
-            showTab('ast');
-            updateStatus('Parsing successful!', 'success');
-        } else {
-            document.getElementById('errorOutput').innerHTML =
-                `<pre class="error">${escapeHtml(result.error || 'Unknown error occurred')}</pre>`;
-            showTab('error');
-            updateStatus('Parsing failed', 'error');
-        }
-    } catch (error) {
-        console.error('Parsing error:', error);
-        updateStatus('Parsing failed: ' + error.message, 'error');
-    } finally {
-        setButtonsDisabled(false);
-    }
-}
-
-// Clear output
-function clearOutput() {
-    document.getElementById('wasmOutput').innerHTML = 'Ready to compile...';
-    document.getElementById('tokensOutput').innerHTML = 'No tokens yet...';
-    document.getElementById('astOutput').innerHTML = 'No AST yet...';
-    document.getElementById('errorOutput').innerHTML = 'No errors...';
-    showTab('wasm');
-}
-
-// Show tab
-function showTab(tabName) {
-    // Hide all tabs
-    const tabs = document.querySelectorAll('.output-content');
-    tabs.forEach(tab => tab.style.display = 'none');
-
-    // Remove active class from all tab buttons
-    const tabButtons = document.querySelectorAll('.tab');
-    tabButtons.forEach(button => button.classList.remove('active'));
-
-    // Show selected tab
-    document.getElementById(tabName).style.display = 'block';
-
-    // Add active class to selected tab button
-    const activeButton = document.querySelector(`.tab[data-tab="${tabName}"]`);
-    if (activeButton) {
-        activeButton.classList.add('active');
-    }
-}
-
-// Set buttons disabled state
-function setButtonsDisabled(disabled) {
-    document.getElementById('compileBtn').disabled = disabled;
-    document.getElementById('lexBtn').disabled = disabled;
-    document.getElementById('parseBtn').disabled = disabled;
-}
-
-// Load example
-function loadExample(exampleName) {
-    const examples = {
-        'hello': `// Hello World example
-fun main: () -> Int32 = {
-    42
-}`,
-
-        'function': `// Function definition example
+const examples = {
+    function: `// Values come before verbs.
 fun add: (left: Int32, right: Int32) -> Int32 = {
     left + right
 }
 
 fun main: () -> Int32 = {
-    val result = (2, 3) add
-    result
+    (20, 22) add
 }`,
-
-        'pipe': `// Pipe operations example
+    pipe: `// A pipe sends one value into a function.
 fun increment: (value: Int32) -> Int32 = {
     value + 1
 }
 
 fun main: () -> Int32 = {
-    42 |> increment
+    41 |> increment
 }`,
-
-        'record': `// Record type example
+    record: `// Record fields use colons.
 record Point {
     x: Int32
     y: Int32
@@ -243,15 +28,207 @@ record Point {
 
 fun make_origin: () -> Point = {
     Point { x: 0, y: 0 }
-}`
-    };
-
-    const example = examples[exampleName];
-    if (example) {
-        document.getElementById('sourceCode').value = example;
-        syncSourceHighlight();
-        clearOutput();
+}`,
+    match: `// Built-in options can be matched.
+fun choose: (value: Option<Int32>) -> Int32 = {
+    value match {
+        Some(number) => { number }
+        None => { 0 }
     }
+}
+
+fun main: () -> Int32 = {
+    Some(42) |> choose
+}`
+};
+
+async function initWasm() {
+    try {
+        wasmModule = await init();
+        updateStatus('Compiler ready. Choose an action or press Ctrl/⌘ + Enter.', 'success');
+        setOutput('wasm', 'Ready to compile.');
+    } catch (error) {
+        console.error('Failed to initialize WASM module:', error);
+        updateStatus(`Failed to initialize compiler: ${error.message}`, 'error');
+        setOutput('error', `Compiler initialization failed\n\n${error.message}`, true);
+        showTab('error');
+    }
+}
+
+function updateStatus(message, type = 'info') {
+    const status = document.getElementById('compilerStatus');
+    const statusText = document.getElementById('statusText');
+    status.dataset.tone = type;
+    statusText.textContent = message;
+}
+
+function setOutput(name, value, isError = false) {
+    const panel = document.getElementById(name);
+    const output = document.getElementById(`${name}Output`);
+    output.textContent = value;
+    panel.classList.toggle('is-error', isError);
+}
+
+function sourceValue() {
+    return document.getElementById('sourceCode').value;
+}
+
+function ensureReady(action) {
+    if (!wasmModule) {
+        updateStatus(`Compiler is still loading; ${action} is not available yet.`, 'error');
+        return false;
+    }
+    if (!sourceValue().trim()) {
+        updateStatus(`Add source code before you ${action}.`, 'error');
+        return false;
+    }
+    return true;
+}
+
+async function compile() {
+    if (!ensureReady('compile')) {
+        return;
+    }
+
+    try {
+        setButtonsDisabled(true);
+        updateStatus('Compiling the full pipeline…', 'working');
+        const result = compile_restrict_lang(sourceValue());
+
+        if (result.success) {
+            setOutput('wasm', result.output || 'Compilation succeeded without textual output.');
+            setOutput('tokens', result.tokens || 'No token output was returned.');
+            setOutput('ast', result.ast || 'No AST output was returned.');
+            setOutput('error', 'No errors.');
+            showTab('wasm');
+            updateStatus('Compilation succeeded.', 'success');
+        } else {
+            setOutput('error', result.error || 'The compiler returned an unknown error.', true);
+            if (result.tokens) {
+                setOutput('tokens', result.tokens);
+            }
+            if (result.ast) {
+                setOutput('ast', result.ast);
+            }
+            showTab('error');
+            updateStatus('Compilation stopped with a diagnostic.', 'error');
+        }
+    } catch (error) {
+        console.error('Compilation error:', error);
+        setOutput('error', `Browser compiler error\n\n${error.message}`, true);
+        showTab('error');
+        updateStatus('Compilation failed in the browser.', 'error');
+    } finally {
+        setButtonsDisabled(false);
+    }
+}
+
+async function lexOnly() {
+    if (!ensureReady('tokenize')) {
+        return;
+    }
+
+    try {
+        setButtonsDisabled(true);
+        updateStatus('Tokenizing source…', 'working');
+        const result = lex_only(sourceValue());
+
+        if (result.success) {
+            setOutput('tokens', result.tokens || 'No tokens were returned.');
+            showTab('tokens');
+            updateStatus('Tokenization succeeded.', 'success');
+        } else {
+            setOutput('error', result.error || 'Tokenization failed without a diagnostic.', true);
+            showTab('error');
+            updateStatus('Tokenization stopped with a diagnostic.', 'error');
+        }
+    } catch (error) {
+        console.error('Tokenization error:', error);
+        setOutput('error', `Browser tokenizer error\n\n${error.message}`, true);
+        showTab('error');
+        updateStatus('Tokenization failed in the browser.', 'error');
+    } finally {
+        setButtonsDisabled(false);
+    }
+}
+
+async function parseOnly() {
+    if (!ensureReady('parse')) {
+        return;
+    }
+
+    try {
+        setButtonsDisabled(true);
+        updateStatus('Parsing source…', 'working');
+        const result = parse_only(sourceValue());
+
+        if (result.success) {
+            setOutput('ast', result.ast || 'No AST was returned.');
+            showTab('ast');
+            updateStatus('Parsing succeeded.', 'success');
+        } else {
+            setOutput('error', result.error || 'Parsing failed without a diagnostic.', true);
+            showTab('error');
+            updateStatus('Parsing stopped with a diagnostic.', 'error');
+        }
+    } catch (error) {
+        console.error('Parsing error:', error);
+        setOutput('error', `Browser parser error\n\n${error.message}`, true);
+        showTab('error');
+        updateStatus('Parsing failed in the browser.', 'error');
+    } finally {
+        setButtonsDisabled(false);
+    }
+}
+
+function clearOutput() {
+    setOutput('wasm', 'Ready to compile.');
+    setOutput('tokens', 'No tokens yet.');
+    setOutput('ast', 'No AST yet.');
+    setOutput('error', 'No errors.');
+    showTab('wasm');
+}
+
+function showTab(tabName) {
+    const panels = document.querySelectorAll('.output-content');
+    const buttons = document.querySelectorAll('.tab');
+
+    panels.forEach((panel) => {
+        panel.hidden = panel.id !== tabName;
+    });
+    buttons.forEach((button) => {
+        const selected = button.dataset.tab === tabName;
+        button.setAttribute('aria-selected', String(selected));
+        button.tabIndex = selected ? 0 : -1;
+    });
+
+    activeTab = tabName;
+    const labels = { wasm: 'Wasm output', tokens: 'Token output', ast: 'AST output', error: 'Error output' };
+    document.getElementById('activeOutputLabel').textContent = labels[tabName];
+}
+
+function setButtonsDisabled(disabled) {
+    for (const id of ['compileBtn', 'lexBtn', 'parseBtn']) {
+        document.getElementById(id).disabled = disabled;
+    }
+}
+
+function loadExample(exampleName) {
+    const example = examples[exampleName];
+    if (!example) {
+        return;
+    }
+
+    document.getElementById('sourceCode').value = example;
+    document.getElementById('exampleSelect').value = exampleName;
+    syncSourceHighlight();
+    updateSourceStats();
+    clearOutput();
+    updateStatus('Example loaded. Ready to compile.', wasmModule ? 'success' : 'working');
+}
+
+function resetSource() {
+    loadExample(document.getElementById('exampleSelect').value);
 }
 
 function escapeHtml(value) {
@@ -280,24 +257,74 @@ function syncSourceHighlight() {
     highlight.scrollLeft = source.scrollLeft;
 }
 
-function initializeSourceHighlighting() {
-    const source = document.getElementById('sourceCode');
-    if (!source) {
-        return;
-    }
-
-    source.addEventListener('input', syncSourceHighlight);
-    source.addEventListener('scroll', syncSourceHighlight);
-    syncSourceHighlight();
+function updateSourceStats() {
+    const value = sourceValue();
+    const lines = value ? value.split('\n').length : 0;
+    document.getElementById('sourceStats').textContent = `${lines} ${lines === 1 ? 'line' : 'lines'} · ${value.length} characters`;
 }
 
-// Make functions available globally
-window.compile = compile;
-window.lexOnly = lexOnly;
-window.parseOnly = parseOnly;
-window.clearOutput = clearOutput;
-window.showTab = showTab;
-window.loadExample = loadExample;
+async function copyText(value, successMessage) {
+    try {
+        await navigator.clipboard.writeText(value);
+        updateStatus(successMessage, 'success');
+    } catch (error) {
+        console.error('Clipboard write failed:', error);
+        updateStatus('Clipboard access was unavailable. Select and copy the text manually.', 'error');
+    }
+}
+
+async function copyActiveOutput() {
+    const value = document.getElementById(`${activeTab}Output`).textContent;
+    await copyText(value, 'Active output copied to the clipboard.');
+}
+
+async function shareSource() {
+    const url = new URL(window.location.href);
+    url.searchParams.set('code', sourceValue());
+    url.hash = '';
+    await copyText(url.toString(), 'Share link copied. The source is encoded in the URL.');
+}
+
+function initializeSourceHighlighting() {
+    const source = document.getElementById('sourceCode');
+    source.addEventListener('input', syncSourceHighlight);
+    source.addEventListener('input', updateSourceStats);
+    source.addEventListener('scroll', syncSourceHighlight);
+    syncSourceHighlight();
+    updateSourceStats();
+}
+
+function initializeActions() {
+    document.getElementById('compileBtn').addEventListener('click', compile);
+    document.getElementById('lexBtn').addEventListener('click', lexOnly);
+    document.getElementById('parseBtn').addEventListener('click', parseOnly);
+    document.getElementById('resetBtn').addEventListener('click', resetSource);
+    document.getElementById('shareBtn').addEventListener('click', shareSource);
+    document.getElementById('copyOutputBtn').addEventListener('click', copyActiveOutput);
+    document.getElementById('exampleSelect').addEventListener('change', (event) => loadExample(event.target.value));
+
+    const tabButtons = Array.from(document.querySelectorAll('.tab'));
+    tabButtons.forEach((button, index) => {
+        button.addEventListener('click', () => showTab(button.dataset.tab));
+        button.addEventListener('keydown', (event) => {
+            if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+                return;
+            }
+            event.preventDefault();
+            const direction = event.key === 'ArrowRight' ? 1 : -1;
+            const next = (index + direction + tabButtons.length) % tabButtons.length;
+            showTab(tabButtons[next].dataset.tab);
+            tabButtons[next].focus();
+        });
+    });
+
+    document.getElementById('sourceCode').addEventListener('keydown', (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.preventDefault();
+            compile();
+        }
+    });
+}
 
 function loadInitialCodeFromQuery() {
     const params = new URLSearchParams(window.location.search);
@@ -305,13 +332,21 @@ function loadInitialCodeFromQuery() {
     if (code !== null) {
         document.getElementById('sourceCode').value = code;
         syncSourceHighlight();
+        updateSourceStats();
         clearOutput();
     }
 }
 
-// Initialize when the page loads
+window.compile = compile;
+window.lexOnly = lexOnly;
+window.parseOnly = parseOnly;
+window.clearOutput = clearOutput;
+window.showTab = showTab;
+window.loadExample = loadExample;
+
 document.addEventListener('DOMContentLoaded', () => {
     initializeSourceHighlighting();
+    initializeActions();
     loadInitialCodeFromQuery();
     initWasm();
 });

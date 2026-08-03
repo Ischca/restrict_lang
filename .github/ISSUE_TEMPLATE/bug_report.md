@@ -33,7 +33,7 @@ Paste any error messages here
 
 ## Environment
 - OS: [e.g. macOS 14.0, Ubuntu 22.04]
-- Restrict Language version: [e.g. 0.1.0]
+- Restrict Language version: [e.g. 0.0.1]
 - Installation method: [e.g. brew, cargo, from source]
 
 ## Additional context

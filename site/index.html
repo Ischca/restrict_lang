@@ -3,126 +3,173 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Restrict Language</title>
-  <meta name="description" content="Restrict is an OSV programming language for WebAssembly with affine ownership and a focused v0.0.1 release surface.">
+  <title>Restrict Language · Affine programs for WebAssembly</title>
+  <meta name="description" content="Restrict is an OSV programming language exploring affine ownership and focused WebAssembly output. Try the v0.0.1 preview in your browser.">
   <meta name="theme-color" content="#ff6b35">
   <meta property="og:site_name" content="Restrict Language">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Restrict Language">
-  <meta property="og:description" content="Restrict is an OSV programming language for WebAssembly with affine ownership and a focused v0.0.1 release surface.">
-  <meta property="og:url" content="https://restrict-lang.github.io/restrict_lang/">
+  <meta property="og:title" content="Restrict Language · Affine programs for WebAssembly">
+  <meta property="og:description" content="Write OSV programs, make ownership visible, and compile a focused v0.0.1 surface to WebAssembly.">
+  <meta property="og:url" content="https://ischca.github.io/restrict_lang/">
   <meta name="twitter:card" content="summary">
-  <link rel="canonical" href="https://restrict-lang.github.io/restrict_lang/">
+  <link rel="canonical" href="https://ischca.github.io/restrict_lang/">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#content">Skip to content</a>
   <header class="site-header">
-    <a class="brand" href="./">Restrict</a>
-    <nav aria-label="Primary navigation">
-      <a href="docs/">Docs</a>
-      <a href="compiler/">Compiler</a>
-      <a href="blog/">Blog</a>
-      <a href="https://github.com/restrict-lang/restrict_lang">GitHub</a>
-    </nav>
+    <div class="header-inner">
+      <a class="brand" href="./" aria-label="Restrict Language home">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <span>Restrict</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="docs/">Docs</a>
+        <a href="compiler/">Playground</a>
+        <a href="blog/">Blog</a>
+        <a href="https://github.com/Ischca/restrict_lang">GitHub</a>
+      </nav>
+    </div>
   </header>
 
-  <main>
+  <main id="content">
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">OSV syntax. Affine ownership. WebAssembly target.</p>
-        <h1>Restrict Language</h1>
+        <p class="eyebrow status-label"><span aria-hidden="true"></span>v0.0.1 preview</p>
+        <h1>Values first.<br>Ownership clear.</h1>
         <p class="lead">
-          Restrict is a small programming language exploring object-subject-verb
-          composition, single-use values, and deterministic WebAssembly output.
+          Restrict is a small programming language where data comes before the
+          operation. Its OSV syntax and affine checks make value flow explicit,
+          then a focused compiler turns that program into WebAssembly.
         </p>
         <div class="hero-actions">
-          <a class="button primary" href="compiler/">Try the compiler</a>
-          <a class="button secondary" href="docs/">Read the docs</a>
+          <a class="button primary" href="compiler/">Open the playground</a>
+          <a class="button secondary" href="docs/en/getting-started/quick-start.html">Start from source</a>
         </div>
+        <ul class="hero-facts" aria-label="Preview facts">
+          <li>Runs locally in your browser</li>
+          <li>MIT licensed</li>
+          <li>Preview contract documented</li>
+        </ul>
       </div>
       <div class="compiler-visual" aria-label="Restrict code and WebAssembly preview">
         <div class="visual-bar">
-          <span>pipeline.rl</span>
-          <span>v0.0.1 surface</span>
+          <span>score.rl</span>
+          <span class="visual-state">release surface</span>
         </div>
-        <pre><code class="language-restrict">fun increment: (value: Int32) -> Int32 = {
+        <pre><code class="language-restrict">fun increment: (value: Int32) -&gt; Int32 = {
     value + 1
 }
 
-export fun score: () -> Int32 = {
-    41 |> increment
+export fun score: () -&gt; Int32 = {
+    41 |&gt; increment
 }</code></pre>
         <div class="visual-output">
-          <span>typecheck ok</span>
-          <span>host export: score() -> Int32</span>
+          <span>typecheck · ok</span>
+          <span>score() → i32</span>
         </div>
       </div>
     </section>
 
-    <section class="band">
+    <section class="signal-strip" aria-label="Language highlights">
+      <div><strong>OSV-only</strong><span>arguments lead, verbs finish</span></div>
+      <div><strong>Affine by default</strong><span>values are used at most once</span></div>
+      <div><strong>WebAssembly target</strong><span>scalar host ABI in v0.0.1</span></div>
+    </section>
+
+    <section class="band" id="current-surface">
       <div class="section-heading">
-        <p class="eyebrow">What is stable now</p>
-        <h2>Release-facing surface</h2>
+        <p class="eyebrow">Available today</p>
+        <h2>A small surface you can inspect end to end.</h2>
+        <p>Learn the syntax, see every compiler stage, and verify the boundary without installing a toolchain.</p>
       </div>
       <div class="feature-grid">
         <article>
-          <h3>OSV-only calls</h3>
-          <p>Values flow into verbs with `value |> function`, tuple calls, and unit calls.</p>
+          <span class="feature-index">01</span>
+          <h3>Compose with OSV calls</h3>
+          <p>Use <code>value |&gt; function</code>, <code>(args) function</code>, or <code>() function</code>. Function-first calls are intentionally outside the language.</p>
+          <a class="text-link" href="docs/en/guide/syntax.html">Read the syntax guide</a>
         </article>
         <article>
-          <h3>Affine defaults</h3>
-          <p>Bindings are checked as single-use unless the type is copyable or explicitly mutable.</p>
+          <span class="feature-index">02</span>
+          <h3>Track value ownership</h3>
+          <p>Affine checks reject accidental reuse of moved values while copyable scalars remain ergonomic.</p>
+          <a class="text-link" href="blog/type-inference-v001.html">See the compiler note</a>
         </article>
         <article>
-          <h3>Focused host ABI</h3>
-          <p>v0.0.1 keeps host-visible exports scalar while composite values stay inside Restrict.</p>
+          <span class="feature-index">03</span>
+          <h3>Inspect the pipeline</h3>
+          <p>Compile, tokenize, and parse in the browser. Source stays on the device and every output remains visible.</p>
+          <a class="text-link" href="compiler/">Try a live example</a>
         </article>
       </div>
     </section>
 
-    <section class="split">
+    <section class="split story-split">
       <div>
-        <p class="eyebrow">Documentation</p>
-        <h2>Guides, reference, and release boundaries</h2>
-        <p>
-          The mdBook documentation covers syntax, ownership, type inference,
-          standard library notes, and the v0.0.1 release surface.
-        </p>
-        <a class="text-link" href="docs/">Open documentation</a>
+        <p class="eyebrow">The idea</p>
+        <h2>Make data flow read in the direction it moves.</h2>
       </div>
-      <div>
-        <p class="eyebrow">Online compiler</p>
-        <h2>Keep the browser compiler beside the docs</h2>
+      <div class="prose-stack">
         <p>
-          The existing WebAssembly compiler UI is published under `/compiler/`
-          so examples, blog posts, and docs can link to a live playground.
+          Restrict puts objects and arguments before verbs. Pipes are not an
+          alternate style layered onto conventional calls; they are part of one
+          consistent calling model.
         </p>
-        <a class="text-link" href="compiler/">Open compiler</a>
+        <pre class="inline-code"><code class="language-restrict">val answer = 41
+    |&gt; increment
+    |&gt; double</code></pre>
       </div>
     </section>
 
-    <section class="band">
-      <div class="section-heading">
-        <p class="eyebrow">From the blog</p>
-        <h2>Implementation notes</h2>
+    <section class="release-callout">
+      <div>
+        <p class="eyebrow">An honest preview</p>
+        <h2>v0.0.1 draws a line around what is ready.</h2>
+      </div>
+      <div>
+        <p>
+          Generic and composite values work inside Restrict programs. The host
+          boundary stays deliberately scalar while record, string, list, and
+          generic ABI design remains open. Temporal affine types, user-defined
+          ADTs, and source-level forms are reserved for later work.
+        </p>
+        <a class="button dark" href="docs/en/reference/release-surface.html">Review the release contract</a>
+      </div>
+    </section>
+
+    <section class="band blog-band">
+      <div class="section-heading horizontal-heading">
+        <div>
+          <p class="eyebrow">Build notes</p>
+          <h2>From the compiler workbench.</h2>
+        </div>
+        <a class="text-link" href="blog/">All posts</a>
       </div>
       <div class="post-list">
+        <a href="blog/shipping-v001-preview.html">
+          <small>Release engineering · 6 min</small>
+          <span>What it means to ship the v0.0.1 preview</span>
+          <p>One public contract across the compiler, Pages, binaries, and examples.</p>
+        </a>
         <a href="blog/type-inference-v001.html">
-          <span>Type inference in the v0.0.1 surface</span>
-          <small>Constraint-based bidirectional inference without widening the release gate.</small>
+          <small>Compiler notes · 7 min</small>
+          <span>Type inference without widening the promise</span>
+          <p>Where bidirectional inference helps—and where the host ABI still stops.</p>
         </a>
         <a href="blog/runtime-dogfood.html">
-          <span>Dogfooding Restrict with runtime examples</span>
-          <small>Why scalar host wrappers matter while generic and composite ABI work is still reserved.</small>
+          <small>Runtime coverage · 5 min</small>
+          <span>Dogfooding Restrict with executable examples</span>
+          <p>Using scalar wrappers to test rich internal programs in real WebAssembly.</p>
         </a>
       </div>
     </section>
   </main>
 
   <footer>
-    <span>Restrict Language</span>
-    <span>Docs, compiler, and blog are published together through GitHub Pages.</span>
+    <span>Restrict Language · v0.0.1 preview</span>
+    <span>Built in the open by <a href="https://github.com/Ischca">Ischca</a>.</span>
   </footer>
   <script src="restrict-highlight.js"></script>
   <script src="restrict-code-blocks.js"></script>

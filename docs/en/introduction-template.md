@@ -43,7 +43,7 @@ Ready to dive in? Head to the [Installation Guide](./getting-started/installatio
 
 ## Community
 
-- GitHub: [github.com/restrict-lang/restrict_lang](https://github.com/restrict-lang/restrict_lang)
+- GitHub: [github.com/Ischca/restrict_lang](https://github.com/Ischca/restrict_lang)
 - Discord: [Join our community](https://discord.gg/restrict-lang)
 - Forum: [discuss.restrict-lang.org](https://discuss.restrict-lang.org)
 

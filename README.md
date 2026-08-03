@@ -5,10 +5,12 @@
 
   **A functional programming language with affine types for WebAssembly**
 
-  [![CI](https://github.com/restrict-lang/restrict_lang/actions/workflows/ci.yml/badge.svg)](https://github.com/restrict-lang/restrict_lang/actions/workflows/ci.yml)
+  [![CI](https://github.com/Ischca/restrict_lang/actions/workflows/ci.yml/badge.svg)](https://github.com/Ischca/restrict_lang/actions/workflows/ci.yml)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![WASM](https://img.shields.io/badge/target-WebAssembly-orange.svg)](https://webassembly.org/)
-  [![Documentation](https://img.shields.io/badge/docs-mdBook-green.svg)](https://restrict-lang.github.io/restrict_lang/)
+  [![Documentation](https://img.shields.io/badge/docs-mdBook-green.svg)](https://ischca.github.io/restrict_lang/docs/)
+
+  [Website](https://ischca.github.io/restrict_lang/) · [Playground](https://ischca.github.io/restrict_lang/compiler/) · [Release surface](docs/en/reference/release-surface.md)
 </div>
 
 ---
@@ -21,10 +23,13 @@ A statically-typed functional programming language that compiles to WebAssembly,
 
 ## 🚀 Quick Start
 
+The v0.0.1 browser preview runs without an installation at the
+[Restrict playground](https://ischca.github.io/restrict_lang/compiler/).
+
 ### From Source
 
 ```bash
-git clone https://github.com/restrict-lang/restrict_lang
+git clone https://github.com/Ischca/restrict_lang
 cd restrict_lang
 
 # Build the compiler
@@ -287,7 +292,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - **[Quick Start](docs/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
 - **[Language Guide](docs/en/guide/README.md)** - Release-facing v0.0.1 syntax and design rules
-- **[Release Surface](docs/v001-release-surface.md)** - Supported, rejected, and experimental v0.0.1 boundaries
+- **[Release Surface](docs/en/reference/release-surface.md)** - Supported, rejected, and reserved v0.0.1 boundaries
 - **[Examples](examples/)** - Sample programs and use cases
 
 ## 🏗️ Implementation Status
@@ -410,7 +415,7 @@ We welcome contributions! Please see our contributing guidelines:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
-git clone https://github.com/restrict-lang/restrict_lang
+git clone https://github.com/Ischca/restrict_lang
 cd restrict_lang
 mise exec -- cargo build
 
@@ -433,10 +438,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📊 Project Stats
 
-![GitHub Stars](https://img.shields.io/github/stars/restrict-lang/restrict_lang)
-![GitHub Forks](https://img.shields.io/github/forks/restrict-lang/restrict_lang)
-![GitHub Issues](https://img.shields.io/github/issues/restrict-lang/restrict_lang)
-![License](https://img.shields.io/github/license/restrict-lang/restrict_lang)
+![GitHub Stars](https://img.shields.io/github/stars/Ischca/restrict_lang)
+![GitHub Forks](https://img.shields.io/github/forks/Ischca/restrict_lang)
+![GitHub Issues](https://img.shields.io/github/issues/Ischca/restrict_lang)
+![License](https://img.shields.io/github/license/Ischca/restrict_lang)
 
 ---
 

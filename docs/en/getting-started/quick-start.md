@@ -13,9 +13,7 @@ restrict_lang --version
 warder --version
 ```
 
-When using a local source build, the binaries are normally under
-`target/release`. If Warder was built from its package directory separately,
-also check `warder/target/release`.
+When using a local workspace build, both binaries are under `target/release`.
 
 ## Create A Project
 

@@ -1,8 +1,23 @@
 # Installation
 
-This page describes the source-build path for the current repository. It does
-not assume a release channel, package registry, installer, or published version
-identity.
+The v0.0.1 preview is distributed through GitHub Releases and can also be built
+from source. The package registry, stable Homebrew formula, and VS Code
+Marketplace channel remain outside this preview.
+
+## Install the Preview Binary
+
+The shell installer supports x86-64 Linux plus Intel and Apple Silicon macOS.
+It downloads both the compiler and Warder, then verifies the archive against
+the release SHA-256 manifest.
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/Ischca/restrict_lang/main/install.sh | bash
+```
+
+Add the reported `$HOME/.restrict-lang/bin` directory to `PATH`. Windows users
+can download and verify the zip archive from the
+[GitHub pre-release](https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1).
 
 ## Requirements
 
@@ -16,7 +31,7 @@ identity.
 Clone the repository:
 
 ```bash
-git clone https://github.com/restrict-lang/restrict_lang.git
+git clone https://github.com/Ischca/restrict_lang.git
 cd restrict_lang
 ```
 
@@ -32,19 +47,13 @@ The workspace build writes binaries under:
 target/release/
 ```
 
-If you build Warder from its package directory separately, also check:
-
-```text
-warder/target/release/
-```
-
-Add the appropriate directories to your shell `PATH`:
+Add the workspace release directory to your shell `PATH`:
 
 ```bash
-export PATH="$PWD/target/release:$PWD/warder/target/release:$PATH"
+export PATH="$PWD/target/release:$PATH"
 ```
 
-Use only the directories that exist for your build layout.
+The Cargo workspace uses the root `target` directory for both binaries.
 
 ## Verify Installation
 
@@ -110,8 +119,7 @@ server.
 **Command not found**
 
 Check that the release binary directory from your source build is on `PATH`.
-For workspace builds this is usually `target/release`; for separate Warder
-builds it may be `warder/target/release`.
+For workspace builds this is `target/release`.
 
 **Warder cannot find the compiler**
 

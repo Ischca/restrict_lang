@@ -55,6 +55,7 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
         "site/blog/index.html",
         "site/blog/type-inference-v001.html",
         "site/blog/runtime-dogfood.html",
+        "site/blog/shipping-v001-preview.html",
         "site/tools/highlight-theme-lab.html",
         "site/build-pages.sh",
         "scripts/build-pages.sh",
@@ -135,6 +136,7 @@ fn restrict_highlighting_is_shared_by_docs_and_compiler() {
     let landing_html = read_fixture(root, "site/index.html");
     let inference_post = read_fixture(root, "site/blog/type-inference-v001.html");
     let dogfood_post = read_fixture(root, "site/blog/runtime-dogfood.html");
+    let shipping_post = read_fixture(root, "site/blog/shipping-v001-preview.html");
     let compiler_html = read_fixture(root, "web/index.html");
     let compiler_app = read_fixture(root, "web/app.js");
     let build_script = read_fixture(root, "site/build-pages.sh");
@@ -221,6 +223,12 @@ fn restrict_highlighting_is_shared_by_docs_and_compiler() {
             r#"src="../restrict-highlight.js""#,
             r#"src="../restrict-code-blocks.js""#,
         ),
+        (
+            "site/blog/shipping-v001-preview.html",
+            &shipping_post,
+            r#"src="../restrict-highlight.js""#,
+            r#"src="../restrict-code-blocks.js""#,
+        ),
     ] {
         assert!(
             html.contains(r#"<code class="language-restrict">"#)
@@ -261,22 +269,27 @@ fn pages_static_html_has_public_metadata() {
     for (path, canonical_url, og_type) in [
         (
             "site/index.html",
-            "https://restrict-lang.github.io/restrict_lang/",
+            "https://ischca.github.io/restrict_lang/",
             "website",
         ),
         (
             "site/blog/index.html",
-            "https://restrict-lang.github.io/restrict_lang/blog/",
+            "https://ischca.github.io/restrict_lang/blog/",
             "website",
         ),
         (
             "site/blog/type-inference-v001.html",
-            "https://restrict-lang.github.io/restrict_lang/blog/type-inference-v001.html",
+            "https://ischca.github.io/restrict_lang/blog/type-inference-v001.html",
             "article",
         ),
         (
             "site/blog/runtime-dogfood.html",
-            "https://restrict-lang.github.io/restrict_lang/blog/runtime-dogfood.html",
+            "https://ischca.github.io/restrict_lang/blog/runtime-dogfood.html",
+            "article",
+        ),
+        (
+            "site/blog/shipping-v001-preview.html",
+            "https://ischca.github.io/restrict_lang/blog/shipping-v001-preview.html",
             "article",
         ),
     ] {
@@ -326,17 +339,18 @@ fn pages_auxiliary_routes_are_publishable() {
         "404 page should be non-indexed and route visitors back to key Pages sections"
     );
     assert!(
-        robots.contains("Sitemap: https://restrict-lang.github.io/restrict_lang/sitemap.xml"),
+        robots.contains("Sitemap: https://ischca.github.io/restrict_lang/sitemap.xml"),
         "robots.txt should point crawlers at the Pages sitemap"
     );
 
     for public_url in [
-        "https://restrict-lang.github.io/restrict_lang/",
-        "https://restrict-lang.github.io/restrict_lang/docs/",
-        "https://restrict-lang.github.io/restrict_lang/compiler/",
-        "https://restrict-lang.github.io/restrict_lang/blog/",
-        "https://restrict-lang.github.io/restrict_lang/blog/type-inference-v001.html",
-        "https://restrict-lang.github.io/restrict_lang/blog/runtime-dogfood.html",
+        "https://ischca.github.io/restrict_lang/",
+        "https://ischca.github.io/restrict_lang/docs/",
+        "https://ischca.github.io/restrict_lang/compiler/",
+        "https://ischca.github.io/restrict_lang/blog/",
+        "https://ischca.github.io/restrict_lang/blog/shipping-v001-preview.html",
+        "https://ischca.github.io/restrict_lang/blog/type-inference-v001.html",
+        "https://ischca.github.io/restrict_lang/blog/runtime-dogfood.html",
     ] {
         assert!(
             sitemap.contains(&format!("<loc>{public_url}</loc>")),
@@ -402,8 +416,10 @@ fn pages_build_script_fails_before_partial_artifacts() {
         "require_dir \"$ROOT_DIR/web/pkg\"",
         "require_file \"$ROOT_DIR/web/pkg/restrict_lang.js\"",
         "require_file \"$SITE_DIR/tools/highlight-theme-lab.html\"",
+        "require_file \"$SITE_DIR/blog/shipping-v001-preview.html\"",
         "cp \"$SITE_DIR/tools/\"*.html \"$TMP_DIR/tools/\"",
         "require_file \"$TMP_DIR/tools/highlight-theme-lab.html\"",
+        "require_file \"$TMP_DIR/blog/shipping-v001-preview.html\"",
         "does not contain a .wasm bundle",
         "mktemp -d",
         "mv \"$TMP_DIR\" \"$DIST_DIR\"",

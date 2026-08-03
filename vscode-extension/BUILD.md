@@ -55,14 +55,14 @@ npm run watch
 # From the vscode-extension directory
 vsce package
 
-# This creates restrict-language-0.1.0.vsix
+# This creates restrict-language-0.0.1.vsix
 ```
 
 ### Install Locally
 
 ```bash
 # Install the packaged extension
-code --install-extension restrict-language-0.1.0.vsix
+code --install-extension restrict-language-0.0.1.vsix
 ```
 
 ## Publishing (Future)

@@ -99,6 +99,20 @@ function errorMessage(error) {
     return String(error);
 }
 
+function formatCompilerDiagnostic(message, source) {
+    const diagnostic = message || 'The compiler returned an unknown error.';
+    const mismatch = diagnostic.match(/Type mismatch: expected String, found (Int32|Float64)\b/);
+    const usesStringPrint = /\|>\s*print\b/.test(source);
+
+    if (!mismatch || !usesStringPrint) {
+        return diagnostic;
+    }
+
+    const valueType = mismatch[1];
+    const printFunction = valueType === 'Int32' ? 'print_int' : 'print_float';
+    return `${diagnostic}\n\nHint: print accepts String. Use ${printFunction} for ${valueType} values.`;
+}
+
 function applyCompilationOutputs(result) {
     setOutput('wasm', result.output || 'Compilation succeeded without textual output.');
     setOutput('tokens', result.tokens || 'No token output was returned.');
@@ -203,7 +217,7 @@ async function run() {
         const result = compile_restrict_lang(sourceValue());
 
         if (!result.success) {
-            setOutput('error', result.error || 'The compiler returned an unknown error.', true);
+            setOutput('error', formatCompilerDiagnostic(result.error, sourceValue()), true);
             if (result.tokens) {
                 setOutput('tokens', result.tokens);
             }
@@ -250,7 +264,7 @@ async function compile() {
             showTab('wasm');
             updateStatus('Compilation succeeded.', 'success');
         } else {
-            setOutput('error', result.error || 'The compiler returned an unknown error.', true);
+            setOutput('error', formatCompilerDiagnostic(result.error, sourceValue()), true);
             if (result.tokens) {
                 setOutput('tokens', result.tokens);
             }

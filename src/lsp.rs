@@ -1372,6 +1372,41 @@ fun main: () -> Int32 = {
     }
 
     #[tokio::test]
+    async fn compile_command_uses_checked_forward_float64_signature() {
+        let source = r#"
+fun adjusted: (value: Float64) = {
+    value |> risk
+}
+
+fun risk: (value: Float64) = {
+    value + 0.5
+}
+
+fun main: () -> Float64 = {
+    41.5 |> adjusted
+}
+"#;
+        let source_path = std::env::temp_dir().join(format!(
+            "restrict-lsp-checked-forward-{}.rl",
+            std::process::id()
+        ));
+        let wat_path = source_path.with_extension("wat");
+        let uri = Url::from_file_path(&source_path).expect("temporary path should become a URI");
+        let result = execute_lsp_test_command("restrict.lsp.compile", uri, source).await;
+
+        assert_eq!(
+            result.get("success").and_then(serde_json::Value::as_bool),
+            Some(true),
+            "LSP compile should succeed: {result}"
+        );
+        let wat = std::fs::read_to_string(&wat_path).expect("LSP should write checked WAT");
+        assert!(wat.contains("(func $adjusted (param $value f64) (result f64)"));
+        wat::parse_str(&wat).expect("LSP WAT should assemble");
+
+        let _ = std::fs::remove_file(wat_path);
+    }
+
+    #[tokio::test]
     async fn type_check_command_reports_release_validation_failure() {
         let source = r#"
 pub fun release_label: () = {
@@ -2066,10 +2101,24 @@ impl LanguageServer for RestrictLanguageServer {
                                             })));
                                         }
 
+                                        let checked_ir = match crate::ir::builder::build_checked_ir(
+                                            &ast,
+                                            &type_checker,
+                                        ) {
+                                            Ok(checked_ir) => checked_ir,
+                                            Err(_) => {
+                                                return Ok(Some(serde_json::json!({
+                                                    "success": false,
+                                                    "message": "Code generation error: Invalid checked compiler state: construction failed"
+                                                })));
+                                            }
+                                        };
+
                                         // Generate WASM
                                         let (wasm_result, has_globals) = {
                                             let mut codegen = crate::WasmCodeGen::new();
-                                            let result = codegen.generate(&ast);
+                                            let result =
+                                                codegen.generate_checked(&ast, &checked_ir);
                                             let has_globals = ast.declarations.iter().any(|d| {
                                                 matches!(d, crate::ast::TopDecl::Binding(_))
                                             });

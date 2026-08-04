@@ -34,6 +34,9 @@
 //! ```
 
 use crate::ast::*;
+use crate::ir::builder::{CheckedFunctionIr, CheckedProgramIr};
+use crate::ir::{FinalType, ScalarRepr, ValueRepr};
+use crate::type_checker::{ArrayLength, TypedType};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -63,6 +66,10 @@ pub enum CodeGenError {
     /// Feature not supported
     #[error("Unsupported feature: {0}")]
     UnsupportedFeature(String),
+
+    /// The checked compiler state does not match the AST being lowered.
+    #[error("Invalid checked compiler state: {0}")]
+    InvalidCheckedIr(String),
 }
 
 struct VariantPayloadBindContext<'a> {
@@ -265,6 +272,26 @@ impl WasmCodeGen {
     }
 
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
+        self.generate_internal(program, None)
+    }
+
+    /// Generate WAT using Checked IR as the authority for top-level function
+    /// parameter and return ABIs. Function bodies, builtins, and impl methods
+    /// remain on the legacy AST lowering path during this migration stage.
+    pub fn generate_checked(
+        &mut self,
+        program: &Program,
+        checked_ir: &CheckedProgramIr,
+    ) -> Result<String, CodeGenError> {
+        let checked_functions = Self::validate_checked_codegen_handoff(program, checked_ir)?;
+        self.generate_internal(program, Some(&checked_functions))
+    }
+
+    fn generate_internal(
+        &mut self,
+        program: &Program,
+        checked_functions: Option<&HashMap<String, &CheckedFunctionIr>>,
+    ) -> Result<String, CodeGenError> {
         self.output.push_str("(module\n");
 
         // Process module imports first
@@ -364,7 +391,17 @@ impl WasmCodeGen {
         for decl in &program.declarations {
             match Self::decl_codegen_item(decl) {
                 TopDecl::Function(func) => {
-                    self.register_function_signature(func)?;
+                    if let Some(checked_functions) = checked_functions {
+                        let checked = checked_functions.get(&func.name).ok_or_else(|| {
+                            CodeGenError::InvalidCheckedIr(format!(
+                                "missing top-level function '{}'",
+                                func.name
+                            ))
+                        })?;
+                        self.register_checked_function_signature(func, checked)?;
+                    } else {
+                        self.register_function_signature(func)?;
+                    }
                 }
                 TopDecl::Binding(_) => {}
                 TopDecl::Record(record) => {
@@ -441,6 +478,206 @@ impl WasmCodeGen {
         self.output.push_str(")\n");
 
         Ok(self.output.clone())
+    }
+
+    fn validate_checked_codegen_handoff<'a>(
+        program: &Program,
+        checked_ir: &'a CheckedProgramIr,
+    ) -> Result<HashMap<String, &'a CheckedFunctionIr>, CodeGenError> {
+        if !checked_ir.is_unmodified() {
+            return Err(CodeGenError::InvalidCheckedIr(
+                "checked compiler state was modified after construction".to_string(),
+            ));
+        }
+
+        if !checked_ir.matches_source_program(program) {
+            return Err(CodeGenError::InvalidCheckedIr(
+                "source program does not match the checked compiler state".to_string(),
+            ));
+        }
+
+        checked_ir.validate_lowering_summaries().map_err(|_| {
+            CodeGenError::InvalidCheckedIr(
+                "lowering summaries failed internal validation".to_string(),
+            )
+        })?;
+
+        let mut checked_functions = HashMap::new();
+        for function in &checked_ir.functions {
+            if checked_functions
+                .insert(function.name.clone(), function)
+                .is_some()
+            {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate top-level function '{}'",
+                    function.name
+                )));
+            }
+        }
+
+        let mut source_functions = HashSet::new();
+        for declaration in &program.declarations {
+            let source_exported = matches!(declaration, TopDecl::Export(_));
+            let TopDecl::Function(function) = Self::decl_codegen_item(declaration) else {
+                continue;
+            };
+
+            if !source_functions.insert(function.name.clone()) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate source function '{}'",
+                    function.name
+                )));
+            }
+
+            let checked = checked_functions.get(&function.name).ok_or_else(|| {
+                CodeGenError::InvalidCheckedIr(format!(
+                    "missing top-level function '{}'",
+                    function.name
+                ))
+            })?;
+            Self::validate_checked_function_alignment(function, source_exported, checked)?;
+        }
+
+        if let Some(extra) = checked_functions
+            .keys()
+            .filter(|name| !source_functions.contains(*name))
+            .min()
+        {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "checked function '{}' has no source declaration",
+                extra
+            )));
+        }
+
+        Ok(checked_functions)
+    }
+
+    fn validate_checked_function_alignment(
+        function: &FunDecl,
+        source_exported: bool,
+        checked: &CheckedFunctionIr,
+    ) -> Result<(), CodeGenError> {
+        if checked.lowering.source_exported != source_exported {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' export status does not match the source",
+                function.name
+            )));
+        }
+
+        let source_type_params = function
+            .type_params
+            .iter()
+            .map(|param| {
+                if param.is_temporal {
+                    format!("~{}", param.name)
+                } else {
+                    param.name.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        if checked.lowering.declared_type_params != source_type_params {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' type parameters do not match the source",
+                function.name
+            )));
+        }
+
+        let source_temporal_constraints = function
+            .temporal_constraints
+            .iter()
+            .map(|constraint| (&constraint.inner, &constraint.outer))
+            .collect::<Vec<_>>();
+        let checked_temporal_constraints = checked
+            .lowering
+            .temporal_constraints
+            .iter()
+            .map(|constraint| (&constraint.inner, &constraint.outer))
+            .collect::<Vec<_>>();
+        if checked_temporal_constraints != source_temporal_constraints {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' temporal constraints do not match the source",
+                function.name
+            )));
+        }
+
+        if checked.params.len() != function.params.len() {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' parameter count does not match the source",
+                function.name
+            )));
+        }
+
+        for (source_param, checked_param) in function.params.iter().zip(&checked.params) {
+            if checked_param.name != source_param.name {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' parameter names do not match the source",
+                    function.name
+                )));
+            }
+            if !Self::checked_repr_matches_type(
+                checked_param.final_type.as_typed_type(),
+                checked_param.repr,
+            ) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' parameter '{}' representation does not match its checked type",
+                    function.name, source_param.name
+                )));
+            }
+            let checked_source_type =
+                Self::source_type_from_final(&checked_param.final_type, &function.name)?;
+            if checked_source_type != source_param.ty {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' parameter '{}' type does not match the source",
+                    function.name, source_param.name
+                )));
+            }
+        }
+
+        if let Some(source_return) = &function.return_type {
+            let checked_return =
+                Self::source_type_from_final(&checked.return_type, &function.name)?;
+            if &checked_return != source_return {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' return type does not match the source",
+                    function.name
+                )));
+            }
+        }
+
+        if !Self::checked_repr_matches_type(
+            checked.return_type.as_typed_type(),
+            checked.return_repr,
+        ) {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' return representation does not match its checked type",
+                function.name
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn checked_repr_matches_type(ty: &TypedType, repr: ValueRepr) -> bool {
+        match ty {
+            TypedType::Unit => repr == ValueRepr::Unit,
+            TypedType::Int32 | TypedType::Boolean | TypedType::Char => {
+                repr == ValueRepr::Scalar(ScalarRepr::I32)
+            }
+            TypedType::Int64 => repr == ValueRepr::Scalar(ScalarRepr::I64),
+            TypedType::Float64 => repr == ValueRepr::Scalar(ScalarRepr::F64),
+            TypedType::Function { .. } => matches!(repr, ValueRepr::Closure { .. }),
+            TypedType::Temporal { base_type, .. } => {
+                Self::checked_repr_matches_type(base_type, repr)
+            }
+            TypedType::String
+            | TypedType::Record { .. }
+            | TypedType::Option(_)
+            | TypedType::Result(_, _)
+            | TypedType::List(_)
+            | TypedType::Array(_, _)
+            | TypedType::TypeParam(_) => matches!(repr, ValueRepr::Ref(_)),
+            TypedType::InferVar(_) | TypedType::Projection { .. } => false,
+        }
     }
 
     fn decl_codegen_item(decl: &TopDecl) -> &TopDecl {
@@ -4079,6 +4316,165 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn register_checked_function_signature(
+        &mut self,
+        func: &FunDecl,
+        checked: &CheckedFunctionIr,
+    ) -> Result<(), CodeGenError> {
+        let type_params = checked
+            .lowering
+            .declared_type_params
+            .iter()
+            .map(|name| name.strip_prefix('~').unwrap_or(name).to_string())
+            .collect::<Vec<_>>();
+        let params = checked
+            .params
+            .iter()
+            .map(|param| Self::checked_param_wasm_type(param.repr, &func.name, &param.name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let source_params = checked
+            .params
+            .iter()
+            .map(|param| Self::source_type_from_final(&param.final_type, &func.name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let source_result = Self::source_type_from_final(&checked.return_type, &func.name)?;
+        let result = Self::checked_result_wasm_type(checked.return_repr, &func.name)?;
+
+        self.functions.insert(
+            func.name.clone(),
+            FunctionSig {
+                _params: params,
+                result,
+            },
+        );
+        self.function_source_sigs.insert(
+            func.name.clone(),
+            FunctionSourceSig {
+                type_params,
+                params: source_params,
+                result: Some(source_result),
+            },
+        );
+        self.function_decls.insert(func.name.clone(), func.clone());
+
+        Ok(())
+    }
+
+    fn checked_param_wasm_type(
+        repr: ValueRepr,
+        _function: &str,
+        _parameter: &str,
+    ) -> Result<WasmType, CodeGenError> {
+        let wasm_type = match repr {
+            // The current call convention materializes Unit arguments as
+            // `i32.const 0`; preserving that convention keeps body lowering
+            // and call lowering unchanged during the signature migration.
+            ValueRepr::Unit | ValueRepr::Scalar(ScalarRepr::I32) => WasmType::I32,
+            ValueRepr::Scalar(ScalarRepr::I64) => WasmType::I64,
+            ValueRepr::Scalar(ScalarRepr::F64) => WasmType::F64,
+            ValueRepr::Ref(_) | ValueRepr::Closure { .. } => WasmType::I32,
+        };
+        Ok(wasm_type)
+    }
+
+    fn checked_result_wasm_type(
+        repr: ValueRepr,
+        _function: &str,
+    ) -> Result<Option<WasmType>, CodeGenError> {
+        let result = match repr {
+            ValueRepr::Unit => None,
+            ValueRepr::Scalar(ScalarRepr::I32) => Some(WasmType::I32),
+            ValueRepr::Scalar(ScalarRepr::I64) => Some(WasmType::I64),
+            ValueRepr::Scalar(ScalarRepr::F64) => Some(WasmType::F64),
+            ValueRepr::Ref(_) | ValueRepr::Closure { .. } => Some(WasmType::I32),
+        };
+        Ok(result)
+    }
+
+    fn source_type_from_final(ty: &FinalType, function: &str) -> Result<Type, CodeGenError> {
+        Self::source_type_from_checked(ty.as_typed_type()).map_err(|detail| {
+            CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' checked type cannot be represented for code generation: {}",
+                function, detail
+            ))
+        })
+    }
+
+    fn source_type_from_checked(ty: &TypedType) -> Result<Type, &'static str> {
+        match ty {
+            TypedType::Int32 => Ok(Type::Named("Int32".to_string())),
+            TypedType::Int64 => Ok(Type::Named("Int64".to_string())),
+            TypedType::Float64 => Ok(Type::Named("Float64".to_string())),
+            TypedType::Boolean => Ok(Type::Named("Boolean".to_string())),
+            TypedType::String => Ok(Type::Named("String".to_string())),
+            TypedType::Char => Ok(Type::Named("Char".to_string())),
+            TypedType::Unit => Ok(Type::Named("Unit".to_string())),
+            TypedType::Record {
+                name, type_args, ..
+            } => {
+                if type_args.is_empty() {
+                    Ok(Type::Named(name.clone()))
+                } else {
+                    Ok(Type::Generic(
+                        name.clone(),
+                        type_args
+                            .iter()
+                            .map(Self::source_type_from_checked)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ))
+                }
+            }
+            TypedType::Function {
+                params,
+                return_type,
+            } => Ok(Type::Function(
+                params
+                    .iter()
+                    .map(Self::source_type_from_checked)
+                    .collect::<Result<Vec<_>, _>>()?,
+                Box::new(Self::source_type_from_checked(return_type)?),
+            )),
+            TypedType::Option(inner) => Ok(Type::Generic(
+                "Option".to_string(),
+                vec![Self::source_type_from_checked(inner)?],
+            )),
+            TypedType::Result(ok, err) => Ok(Type::Generic(
+                "Result".to_string(),
+                vec![
+                    Self::source_type_from_checked(ok)?,
+                    Self::source_type_from_checked(err)?,
+                ],
+            )),
+            TypedType::List(inner) => Ok(Type::Generic(
+                "List".to_string(),
+                vec![Self::source_type_from_checked(inner)?],
+            )),
+            TypedType::Array(inner, ArrayLength::Known(length)) => Ok(Type::Generic(
+                "Array".to_string(),
+                vec![
+                    Self::source_type_from_checked(inner)?,
+                    Type::Named(length.to_string()),
+                ],
+            )),
+            TypedType::Array(_, ArrayLength::AnyInternal) => {
+                Err("an array length is still internal-only")
+            }
+            TypedType::TypeParam(name) => Ok(Type::Named(name.clone())),
+            TypedType::Temporal {
+                base_type,
+                temporals,
+            } => {
+                let Type::Named(name) = Self::source_type_from_checked(base_type)? else {
+                    return Err("a temporal base type is not source-representable");
+                };
+                Ok(Type::Temporal(name, temporals.clone()))
+            }
+            TypedType::InferVar(_) | TypedType::Projection { .. } => {
+                Err("an inference-only type reached code generation")
+            }
+        }
+    }
+
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
         let type_params: Vec<String> = func
             .type_params
@@ -5216,6 +5612,25 @@ impl WasmCodeGen {
             return Ok(());
         }
 
+        let parameter_wasm_types = self
+            .functions
+            .get(&func.name)
+            .map(|signature| signature._params.clone())
+            .ok_or_else(|| CodeGenError::UndefinedFunction(func.name.clone()))?;
+        let parameter_source_types = self
+            .function_source_sigs
+            .get(&func.name)
+            .map(|signature| signature.params.clone())
+            .ok_or_else(|| CodeGenError::UndefinedFunction(func.name.clone()))?;
+        if parameter_wasm_types.len() != func.params.len()
+            || parameter_source_types.len() != func.params.len()
+        {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' registered parameter signature is inconsistent",
+                func.name
+            )));
+        }
+
         let outer_default_arena = self.default_arena;
         let outer_record_tmp_count = self.record_tmp_count;
         self.binding_local_aliases.clear();
@@ -5228,19 +5643,27 @@ impl WasmCodeGen {
         let is_host_entry = self.exported_functions.contains(&func.name);
         self.push_scope();
 
-        for (idx, param) in func.params.iter().enumerate() {
-            let wasm_type = self.convert_type(&param.ty)?;
+        for (idx, (param, (wasm_type, source_type))) in func
+            .params
+            .iter()
+            .zip(
+                parameter_wasm_types
+                    .iter()
+                    .zip(parameter_source_types.iter()),
+            )
+            .enumerate()
+        {
             self.add_local(&param.name, idx as u32);
-            self.set_local_type(&param.name, wasm_type);
-            self.set_local_source_type(&param.name, param.ty.clone());
-            self.register_record_var_type(&param.name, &param.ty);
+            self.set_local_type(&param.name, *wasm_type);
+            self.set_local_source_type(&param.name, source_type.clone());
+            self.register_record_var_type(&param.name, source_type);
         }
 
-        let body_expected_source = func.return_type.clone().or_else(|| {
-            self.function_source_sigs
-                .get(&func.name)
-                .and_then(|sig| sig.result.clone())
-        });
+        let body_expected_source = self
+            .function_source_sigs
+            .get(&func.name)
+            .and_then(|sig| sig.result.clone())
+            .or_else(|| func.return_type.clone());
 
         // First, collect all local variables by analyzing the function body
         let mut locals: Vec<(String, WasmType)> = Vec::new();
@@ -5256,12 +5679,11 @@ impl WasmCodeGen {
 
         // Parameters
         let mut next_idx = 0u32;
-        for param in func.params.iter() {
-            let wasm_type = self.convert_type(&param.ty)?;
+        for (param, wasm_type) in func.params.iter().zip(&parameter_wasm_types) {
             self.output.push_str(&format!(
                 " (param ${} {})",
                 param.name,
-                self.wasm_type_str(wasm_type)
+                self.wasm_type_str(*wasm_type)
             ));
             next_idx += 1;
         }
@@ -9360,8 +9782,8 @@ impl WasmCodeGen {
                 })
             })
             .collect::<Result<Vec<_>, CodeGenError>>()?;
-        let specialized_return_type = func
-            .return_type
+        let specialized_return_type = source_sig
+            .result
             .as_ref()
             .map(|return_type| {
                 Self::substitute_source_type_params(

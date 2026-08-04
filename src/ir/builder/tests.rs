@@ -553,6 +553,113 @@ fun main: () -> List<Int32> = {
 }
 
 #[test]
+fn builder_keeps_projection_builtins_outside_final_type_provenance() {
+    let ir = checked_ir(
+        r#"
+fun main: () -> List<Float64> = {
+    val numbers = [1, 2];
+    (numbers, |value| 1.5) map
+}
+"#,
+    );
+
+    let main = ir
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .expect("main IR should be present");
+    let site = main
+        .apply_sites
+        .iter()
+        .find(|site| site.callee_hint.as_deref() == Some("map"))
+        .expect("map Apply should be present");
+
+    assert!(matches!(
+        site.apply.callee_provenance,
+        CalleeProvenance::Value
+    ));
+    let apply_expr = main
+        .typed_exprs
+        .iter()
+        .find(|expr| expr.id == site.expr_id)
+        .expect("map Apply should retain its concrete checked result");
+    assert_eq!(
+        apply_expr.final_type.as_typed_type(),
+        &TypedType::List(Box::new(TypedType::Float64))
+    );
+}
+
+#[test]
+fn builder_treats_a_source_shadow_of_a_builtin_as_source_provenance() {
+    let ir = checked_ir(
+        r#"
+fun map: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: () -> Int32 = {
+    41 |> map
+}
+"#,
+    );
+
+    let main = ir
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .expect("main IR should be present");
+    let site = main
+        .apply_sites
+        .iter()
+        .find(|site| site.callee_hint.as_deref() == Some("map"))
+        .expect("source map Apply should be present");
+
+    let CalleeProvenance::TopLevelFunction(callee) = &site.apply.callee_provenance else {
+        panic!("a source declaration named map should retain source provenance");
+    };
+    assert_eq!(callee.name, "map");
+    assert!(callee.monomorphic);
+}
+
+#[test]
+fn builder_keeps_first_class_container_builtin_results_concrete() {
+    let ir = checked_ir(
+        r#"
+fun main: () -> Option<String> = {
+    val maybe: Option<Int32> = Some(7);
+    val apply_map = map;
+    (maybe, |value| "ok") apply_map
+}
+"#,
+    );
+
+    let main = ir
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .expect("main IR should be present");
+    let site = main
+        .apply_sites
+        .iter()
+        .find(|site| site.callee_hint.as_deref() == Some("apply_map"))
+        .expect("first-class map Apply should be present");
+    let apply_expr = main
+        .typed_exprs
+        .iter()
+        .find(|expr| expr.id == site.expr_id)
+        .expect("first-class map Apply should retain a checked result");
+
+    assert!(matches!(
+        site.apply.callee_provenance,
+        CalleeProvenance::Value
+    ));
+    assert_eq!(
+        apply_expr.final_type.as_typed_type(),
+        &TypedType::Option(Box::new(TypedType::String))
+    );
+}
+
+#[test]
 fn builder_keeps_immediate_lambda_callee_as_value_provenance() {
     let ir = checked_ir(
         r#"

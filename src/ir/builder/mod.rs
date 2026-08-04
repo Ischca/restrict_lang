@@ -1,10 +1,12 @@
 //! Read-only Checked IR builder.
 //!
-//! This builder intentionally shadows the existing AST-driven codegen pipeline.
-//! It does not re-run inference, does not inspect or mutate affine checker
-//! state, and is not yet the codegen source of truth.
+//! This builder does not re-run inference or inspect or mutate affine checker
+//! state. Its finalized top-level function signatures are authoritative for the
+//! production codegen handoff; bodies and Apply lowering remain a read-only
+//! shadow of the existing AST-driven pipeline.
 
 use std::collections::{HashMap, HashSet};
+use thiserror::Error;
 
 use crate::ast::*;
 use crate::type_checker::{CheckedFunctionSignature, TypeChecker, TypedType};
@@ -26,9 +28,24 @@ mod tests;
 pub struct CheckedProgramIr {
     pub functions: Vec<CheckedFunctionIr>,
     pub layout_table: LayoutTable,
+    source_program: Program,
+    source_node_ids: Vec<NodeId>,
+    sealed_functions: Vec<CheckedFunctionIr>,
+    sealed_layout_table: LayoutTable,
 }
 
 impl CheckedProgramIr {
+    /// Checked facts are valid only for the exact resolved AST (or an equal
+    /// clone) that produced them. Node numbering alone cannot distinguish two
+    /// separately parsed programs with the same shape but different bodies.
+    pub(crate) fn matches_source_program(&self, program: &Program) -> bool {
+        &self.source_program == program && self.source_node_ids == collect_node_ids(program)
+    }
+
+    pub(crate) fn is_unmodified(&self) -> bool {
+        self.functions == self.sealed_functions && self.layout_table == self.sealed_layout_table
+    }
+
     pub fn validate_lowering_summaries(&self) -> Result<(), IrBuildError> {
         for function in &self.functions {
             function.validate_lowering_summary(&self.layout_table)?;
@@ -407,14 +424,21 @@ enum BindingScopeEntry {
     ShadowOnly,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum IrBuildError {
+    #[error("checked return type is missing for function '{0}'")]
     MissingCheckedReturn(String),
+    #[error("a checked expression type is missing")]
     MissingCheckedExprType(String),
+    #[error("a checked Apply value is missing")]
     MissingApplyValue(String),
+    #[error("a checked value representation is missing")]
     MissingValueRepr(ValueId),
+    #[error("checked IR shadow invariants are inconsistent")]
     ShadowInvariantViolation(String),
+    #[error("checked IR lowering summaries are inconsistent")]
     LoweringInvariantViolation(String),
+    #[error("checked IR contains an unfinalized type")]
     UnfinalizedType(String),
 }
 

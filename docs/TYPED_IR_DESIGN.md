@@ -17,14 +17,17 @@ AST
   -> WAT/Wasm
 ```
 
-The current compiler still lowers mostly from AST and type-checker side tables.
-The IR work should be introduced as a foundation first, then made authoritative
-one boundary at a time.
+The current compiler still lowers function bodies mostly from AST. Checked IR is
+now authoritative for the first production boundary: finalized top-level
+function parameter/source types, parameter representations, return/source type,
+and return representation. Remaining IR work continues one boundary at a time.
 
 The current IR foundation includes a read-only Checked IR builder. It constructs
 function signature IR, normalized Apply sites, and a flat `TypedExpr` skeleton
-from checked expression facts after type checking while the existing code
-generator remains AST-driven.
+from checked expression facts after type checking. Production CLI, browser, and
+LSP compile paths build it from the exact resolved AST and checker, then call
+`WasmCodeGen::generate_checked`. `WasmCodeGen::generate` remains a legacy
+compatibility path for tests and embedders that have not supplied Checked IR.
 
 ## Why Restrict Needs Its Own IR Shape
 
@@ -105,10 +108,12 @@ must be that `ApplyIr.result`, and the expression's `FlowSummary` must record
 that result as produced. For each Apply expression, `FlowSummary.uses()` must
 cover `ApplyIr.args` one-for-one in OSV/evaluation order with events at the
 Apply `ExprId`; top-level callee placeholders are not treated as ownership uses.
-Passing this validator does not make Checked IR the codegen source of truth, a
-stable `BindingId` graph, or an ownership authority.
+Passing this validator makes only finalized top-level function signatures valid
+for the strict codegen handoff. It does not make the shadow expression list the
+function-body source of truth, a stable `BindingId` graph, or an ownership
+authority.
 
-### Read-Only Function Lowering Readiness
+### Function Signature Handoff and Lowering Readiness
 
 Checked IR also reports a read-only lowering-readiness summary for each
 function: whether the source declaration was exported, which type parameters and
@@ -116,12 +121,28 @@ temporal constraints were declared, parameter and return `HostAbi` values, the
 current body result `ValueId`, required layout descriptors, and separated
 readiness for internal lowering versus v0.0.1 host ABI eligibility.
 
-This is migration evidence only. It does not make Checked IR the source of WAT
-generation, replace `WasmCodeGen::generate`, or authorize a new host-visible ABI
-surface. `HostAbi::Unit` and `HostAbi::Scalar` remain the only v0.0.1
-host-exportable shapes. Composite, generic, closure/function-value, temporal, or
-unfinalized types stay internal-only unless a future host adapter explicitly
-defines otherwise.
+The strict handoff revalidates these summaries, requires a one-to-one mapping
+between source and Checked IR top-level functions, and rejects stale parameter,
+return, representation, export, type-parameter, or temporal-constraint facts
+before emitting WAT. It also binds the facts to the exact resolved source
+structure and `NodeId` sequence (equal clones are accepted), so an unannotated
+body cannot be paired with return facts inferred from a different AST. A
+private construction seal also rejects mutation or transplantation of the
+public inspection fields before the strict handoff. Codegen registers and emits
+top-level function headers from `CheckedParamIr.repr` and
+`CheckedFunctionIr.return_repr`; inferred generic specializations consume the
+checked source result rather than re-inferring the declaration body.
+
+This does not authorize a new host-visible ABI surface. `HostAbi::Unit` and
+`HostAbi::Scalar` remain the only v0.0.1 host-exportable shapes. Composite,
+generic, closure/function-value, temporal, or unfinalized types stay
+internal-only unless a future host adapter explicitly defines otherwise.
+
+Function bodies, Apply lowering, ownership effects, record offsets, builtins,
+and impl methods remain on the legacy AST path. In particular, builtin Apply
+sites retain concrete checked argument/result facts but do not copy symbolic
+associated-type declarations such as `C.Item` into `FinalType` provenance.
+Checked IR controls only the source top-level signature boundary in this stage.
 
 ## Apply Normalization
 
@@ -336,15 +357,19 @@ introducing hidden clone/copy behavior.
    allocator calls.
 8. Optimizations may erase metadata, but must not introduce hidden clone or
    implicit copy.
-9. The read-only Checked IR builder must not re-run inference, mutate
-   `TypeChecker` affine state, or become the codegen source of truth until the
-   Layout IR migration begins.
+9. The Checked IR builder must not re-run inference or mutate `TypeChecker`
+   affine state. Only its finalized top-level signature facts are authoritative
+   today; shadow expressions cannot drive body lowering before their later
+   migration boundary.
 10. Checked expression facts are keyed by stable AST `NodeId`s: a dense
     pre-order numbering assigned at parse and re-assigned after import
     resolution. Facts remain valid for clones of the checked program; they
     must never be keyed by allocation addresses. Synthesized desugar nodes
     carry a dummy id and record no facts. `BindingId` is still builder-local
-    and must become authoritative before IR rewrites depend on it.
+    and must become authoritative before IR rewrites depend on it. The
+    production handoff compares both the resolved source structure and the
+    complete `NodeId` sequence: neither fact alone proves that the checked
+    program and lowered program are identical.
 11. `TypedExpr.final_type` must be derived from post-check facts, not from
     fallback codegen inference or by re-checking expressions inside the builder.
 12. Shadow `TypedExpr` `ValueId`s are not a control-flow or ownership authority
@@ -379,19 +404,24 @@ introducing hidden clone/copy behavior.
    `BindingId`s (the builder-local ids and binding graph are not yet stable
    symbol identities), and deciding whether builder-local `ExprId`s should
    be unified with AST `NodeId`s.
-4. Build read-only Checked IR from AST while existing codegen remains active.
-   The current builder covers function signatures, normalized Apply sites, and
-   a flat `TypedExpr` skeleton from checked facts.
-5. Extend Apply normalization with checked function-value and method metadata.
-6. Move layout selection behind `LayoutTable`.
-7. Add a shadow flow verifier matching current affine behavior.
-8. Make codegen consume Layout IR for one feature family at a time.
-9. Add Wasm MIR lowering and make the optimizer authoritative.
+4. Build Checked IR from AST while existing body codegen remains active. The
+   current builder covers function signatures, normalized Apply sites, and a
+   flat `TypedExpr` skeleton from checked facts.
+5. Make Checked IR authoritative for top-level function signature/source type
+   and internal ABI registration. DONE through `generate_checked` in CLI,
+   browser, and LSP compile paths; impl methods and bodies remain legacy.
+6. Extend Apply normalization with checked function-value and method metadata.
+7. Move layout selection behind `LayoutTable`.
+8. Add a shadow flow verifier matching current affine behavior.
+9. Make codegen consume Layout IR for one feature family at a time.
+10. Add Wasm MIR lowering and make the optimizer authoritative.
 
 ## Current Scope
 
-This design stage adds the skeleton, invariants, and a read-only builder for
-function signatures, Apply sites, and checked expression type facts. It does not
-yet replace `WasmCodeGen::generate`, change generated WAT, or broaden the host
-ABI. The lowering-readiness summary is advisory metadata for the migration plan;
-the release-surface validator and existing codegen remain authoritative.
+This stage makes the builder's finalized top-level function signatures
+authoritative through `WasmCodeGen::generate_checked`; the legacy `generate`
+entry point remains for compatibility. Apply sites, checked expression facts,
+function bodies, impl methods, and optimization summaries are still shadow or
+AST-driven. Generated WAT is expected to remain equivalent for already-correct
+programs, and the release-surface validator remains authoritative for the
+scalar-only v0.0.1 host ABI.

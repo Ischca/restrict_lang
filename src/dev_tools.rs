@@ -1,8 +1,10 @@
+use crate::check_v001_release_surface;
 use crate::codegen::WasmCodeGen;
 use crate::diagnostics::format_parse_error;
+use crate::ir::builder::build_checked_ir;
 use crate::module::resolve_program_imports_for_file;
 use crate::parser::parse_program;
-use crate::type_checker::type_check;
+use crate::type_checker::{type_check, TypeChecker};
 use colored::*;
 use std::fs;
 use std::path::Path;
@@ -74,18 +76,31 @@ impl DevTools {
             }
         };
 
-        // Type check
-        match type_check(&ast) {
-            Ok(()) => {}
-            Err(e) => {
-                Self::report_type_error(&content, e);
+        // Type check and retain the exact facts used by production codegen.
+        let mut type_checker = TypeChecker::new();
+        if let Err(e) = type_checker.check_program(&ast) {
+            Self::report_type_error(&content, e);
+            return;
+        }
+        if let Err(e) = check_v001_release_surface(&ast, &type_checker) {
+            eprintln!("{}", format!("Release surface error: {}", e).red());
+            return;
+        }
+        let checked_ir = match build_checked_ir(&ast, &type_checker) {
+            Ok(checked_ir) => checked_ir,
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    "Code generation error: Invalid checked compiler state: construction failed"
+                        .red()
+                );
                 return;
             }
         };
 
         // Generate code
         let mut codegen = WasmCodeGen::new();
-        let wat = match codegen.generate(&ast) {
+        let wat = match codegen.generate_checked(&ast, &checked_ir) {
             Ok(wat) => wat,
             Err(e) => {
                 eprintln!("{}", format!("Code generation error: {}", e).red());
@@ -253,4 +268,45 @@ fn binding_name_position(content: &str, binding_name: &str) -> Option<(u32, u32)
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compile_file_uses_checked_forward_float64_signature() {
+        let source_path = std::env::temp_dir().join(format!(
+            "restrict-dev-tools-checked-forward-{}.rl",
+            std::process::id()
+        ));
+        let wat_path = source_path.with_extension("wat");
+        let source = r#"
+fun adjusted: (value: Float64) = {
+    value |> risk
+}
+
+fun risk: (value: Float64) = {
+    value + 0.5
+}
+
+fun main: () -> Float64 = {
+    41.5 |> adjusted
+}
+"#;
+        fs::write(&source_path, source).expect("temporary source should be writable");
+
+        DevTools::compile_file(
+            source_path
+                .to_str()
+                .expect("temporary path should be UTF-8"),
+        );
+
+        let wat = fs::read_to_string(&wat_path).expect("watch compiler should write WAT");
+        assert!(wat.contains("(func $adjusted (param $value f64) (result f64)"));
+        wat::parse_str(&wat).expect("watch compiler WAT should assemble");
+
+        let _ = fs::remove_file(source_path);
+        let _ = fs::remove_file(wat_path);
+    }
 }

@@ -1,3 +1,4 @@
+use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::{parse_program, TypeChecker, WasmCodeGen};
 
 fn compile_to_wat(source: &str) -> Result<String, String> {
@@ -11,9 +12,12 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
         .check_program(&ast)
         .map_err(|e| format!("Type error: {}", e))?;
 
+    let checked_ir = build_checked_ir(&ast, &type_checker)
+        .map_err(|error| format!("Checked IR construction failed: {error}"))?;
+
     let mut codegen = WasmCodeGen::new();
     codegen
-        .generate(&ast)
+        .generate_checked(&ast, &checked_ir)
         .map_err(|e| format!("Codegen error: {}", e))
 }
 

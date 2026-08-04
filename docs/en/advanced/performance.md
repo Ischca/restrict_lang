@@ -120,7 +120,7 @@ Do not write performance-sensitive code that depends on:
 - WebAssembly Component Model lowering
 - WIT-generated adapters
 - Temporal Affine Type cleanup
-- user-defined ADT layout
+- source- or host-stable user enum tag and payload layout
 
 Those areas are reserved for later design and should not be treated as current
 performance contracts.

@@ -23,7 +23,7 @@ A statically-typed functional programming language that compiles to WebAssembly,
 
 ## 🚀 Quick Start
 
-The v0.0.1 browser preview runs without an installation at the
+The current browser preview runs without an installation at the
 [Restrict playground](https://ischca.github.io/restrict_lang/compiler/).
 
 ### From Source
@@ -47,7 +47,7 @@ wasmtime hello.wat
 
 - **🔒 Affine Type System**: Variables can be used at most once, preventing accidental resource duplication
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
-- **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for Option, List, and Record types
+- **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for closed user enums, Option, Result, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support for the current concrete ABI surface
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition (traditional function calls not supported)
@@ -55,14 +55,17 @@ wasmtime hello.wat
 - **🎪 Spread Destructuring**: Extract multiple record fields with rest patterns `{ field1, field2, ...rest }`
 - **⏰ Temporal Affine Types**: Experimental and excluded from the default v0.0.1 gate
 
-## v0.0.1 Design Boundaries
+## Release Design Boundaries
 
-The v0.0.1 release intentionally keeps a few language-shaping decisions out of
-the default support promise. These are not partially-complete user features:
-they need explicit design decisions before implementation.
+The v0.0.1 tag intentionally kept several language-shaping decisions out of
+its support promise. The current post-v0.0.1 compiler adds a deliberately
+small user-defined enum slice while retaining the ABI boundaries below.
 
-- User-defined `enum`/ADT declarations are reserved syntax only. Built-in
-  `Option<T>` and `Result<T, E>` are supported for sum-type workflows today.
+- Closed, non-generic, non-recursive user-defined `enum` declarations are
+  supported. Variants have zero or one payload, constructors use qualified
+  `Type::Variant` names in OSV order, patterns use the same qualified names,
+  and matches must be exhaustive. `pub enum` is source-module metadata only:
+  user enums have no host WebAssembly ABI.
 - User-defined `form`, `takes`, `of`, and associated-type declarations are
   future design work. The current `Container` behavior used by `map` and
   `filter` is a compiler-internal constraint for built-in `List` and `Option`.
@@ -77,6 +80,8 @@ they need explicit design decisions before implementation.
 - Generic functions, records, `Option`, and `Result` remain supported inside
   Restrict programs. Records may cross source-module boundaries; generic
   functions may not cross the unresolved host export ABI boundary.
+- `Result<T, CustomError>` works with a closed user enum as its error type, but
+  ergonomic `?` propagation syntax is not implemented yet.
 
 ## 📖 Language Overview
 
@@ -291,8 +296,8 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 ## 📚 Documentation
 
 - **[Quick Start](docs/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
-- **[Language Guide](docs/en/guide/README.md)** - Release-facing v0.0.1 syntax and design rules
-- **[Release Surface](docs/en/reference/release-surface.md)** - Supported, rejected, and reserved v0.0.1 boundaries
+- **[Language Guide](docs/en/guide/README.md)** - Current release-facing syntax and design rules
+- **[Release Surface](docs/en/reference/release-surface.md)** - Historical v0.0.1 boundaries and current post-v0.0.1 additions
 - **[Examples](examples/)** - Sample programs and use cases
 
 ## 🏗️ Implementation Status
@@ -303,7 +308,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [x] Parser with OSV syntax (traditional function calls not supported)
 - [x] Type system with affine types
 - [x] Lambda expressions with closures
-- [x] Pattern matching (Option, List, Record)
+- [x] Pattern matching (user enum, Option, Result, List, Record)
 - [x] Spread destructuring with `...rest` syntax
 - [x] WebAssembly code generation
 - [x] Arena memory management
@@ -312,6 +317,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [x] Higher-order functions (`map`, `filter`, `fold`) with typed function values
 - [x] Generics and parametric polymorphism inside Restrict programs
 - [x] Result types with expected-type inference
+- [x] Closed user-defined enums with qualified constructors and exhaustive matching
 - [x] Type-directed `impl` method dispatch through grouped OSV calls
 - [x] Source import resolution through the CLI
 - [x] Direct local Warder dependencies with manifest-bound namespaces and deterministic lock hashes
@@ -322,7 +328,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 ### 🚧 In Progress
 
 - [ ] Temporal Affine Types (TAT) outside the default v0.0.1 gate
-- [ ] User-defined enum/ADT declarations (`enum` is reserved; built-in `Option`/`Result` are supported)
+- [ ] Generic, recursive, and host-ABI user enum support beyond the current closed enum slice
 - [ ] Registry, Git, foreign-WASM, and transitive Warder dependency resolution
 - [ ] Source-level import aliases, re-exports, and std aggregators
 - [ ] Direct WebAssembly ABI for exported generic functions and host-visible record values
@@ -343,8 +349,9 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
   dependencies are implemented. Source `import ... as`, re-exports, std
   aggregators, and non-local or transitive package graphs remain future work
 - String interpolation is not part of the v0.0.1 syntax; use concatenation today
-- User-defined `enum`/ADT declarations are an intentional v0.0.1 design gap;
-  use built-in `Option` and `Result` today
+- Closed user-defined enums are supported after v0.0.1, including use as the
+  error type in `Result<T, CustomError>`. Generic and recursive user enums,
+  direct host enum ABI, and `?` propagation syntax remain future work
 - Exported generic functions require a concrete WebAssembly ABI design before
   codegen support; exported records are source-level only and emit no direct
   host-visible Wasm export

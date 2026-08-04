@@ -1,11 +1,12 @@
 # Syntax Reference
 
-This page summarizes the v0.0.1 syntax surface. The authoritative source is
-`LANGUAGE_SPECIFICATION.md`; this guide keeps examples practical and release
-oriented.
+This page summarizes the current syntax surface while identifying features
+added after v0.0.1. The authoritative source is `LANGUAGE_SPECIFICATION.md`;
+this guide keeps examples practical and release oriented.
 
 Temporal Affine Types are experimental and outside the default v0.0.1 gate.
-`enum` is reserved, but user-defined enum declarations are not supported yet.
+The current post-v0.0.1 compiler supports the closed user enum slice described
+below.
 
 ## Comments
 
@@ -100,8 +101,7 @@ fun double: (value: Int32) = {
 
 ## Public Declarations
 
-Use `pub` to expose a top-level function or supported constant from the
-generated module:
+Use `pub` to expose a supported top-level declaration from a source module:
 
 ```restrict
 pub fun public_score: (value: Int32) -> Int32 = {
@@ -112,11 +112,14 @@ pub val release_bias: Int32 = 3
 pub val no_payload: () = ()
 ```
 
+`pub enum` exposes an enum type namespace to other Restrict source modules. It
+does not create a host-visible WebAssembly enum export.
+
 For v0.0.1, top-level constants are limited to literal `Int32`, `Int64`,
 `Float64`, `Boolean`, `Char`, and `()` values. Exported `String`, records,
-lists, `Option`, and `Result` values require a composite host ABI or runtime
-allocation and are rejected by release-surface validation; create them inside
-functions instead.
+lists, `Option`, `Result`, and user enum values require a composite host ABI or
+runtime allocation and are rejected by release-surface validation; create them
+inside functions instead.
 
 ## OSV Calls
 
@@ -216,6 +219,40 @@ fun frozen_reading: (reading: Reading) -> Reading = {
 }
 ```
 
+## User-Defined Enums
+
+The current post-v0.0.1 slice supports closed, non-generic, non-recursive
+enums. Each variant has either no payload or one payload:
+
+```restrict
+pub enum ParseError {
+    Empty
+    Message(String)
+}
+```
+
+Constructors are qualified direct OSV call targets. Pass `()` to a payload-free
+variant and pipe the declared payload into a payload variant:
+
+```restrict
+val empty = () ParseError::Empty
+val invalid = "invalid input" |> ParseError::Message
+```
+
+Patterns are qualified too, and a `match` must cover every variant:
+
+```restrict
+fun error_code: (error: ParseError) -> Int32 = {
+    error match {
+        ParseError::Empty => { 1 }
+        ParseError::Message(message) => { 2 }
+    }
+}
+```
+
+Generic and recursive user enums, variants with more than one direct payload,
+first-class constructors, and a host enum ABI remain outside this slice.
+
 ## Lists, Option, And Result
 
 ```restrict
@@ -273,7 +310,7 @@ to the source file take precedence over the process working directory fallback.
 
 The practical precedence order is:
 
-1. Field access and clone/freeze postfix forms
+1. Qualified variant names such as `ParseError::Message`, then field access and clone/freeze postfix forms
 2. Unary `-` and `!`
 3. `*`, `/`, `%`
 4. `+`, `-`

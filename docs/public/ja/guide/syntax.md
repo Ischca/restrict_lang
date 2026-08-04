@@ -1,6 +1,6 @@
 # 構文リファレンス
 
-このガイドは、v0.0.1 の current surface として扱える Restrict Language 構文を中心に説明します。将来予定の構文は、最後のセクションに分けています。
+このガイドは、v0.0.1 の公開範囲と、現在のpost-v0.0.1 compilerで追加された構文を区別して説明します。将来予定の構文はcurrent surfaceには含めません。
 
 ## コメント
 
@@ -155,7 +155,7 @@ val unwrapped = maybe_value match {
 }
 ```
 
-パターンには、ワイルドカード、変数束縛、リテラル、`Some`、`None`、リスト、レコードが使えます。
+パターンには、ワイルドカード、変数束縛、リテラル、`Some`、`None`、リスト、レコード、修飾されたenumバリアントが使えます。
 
 ```restrict
 val first_or_zero = values match {
@@ -186,6 +186,29 @@ val origin = Point { x: 0, y: 0 }
 ```
 
 レコード定義とレコードリテラルのフィールドは `:` を使います。
+
+## ユーザー定義enum（post-v0.0.1）
+
+現在のcompilerでは、閉じたユーザー定義enumを宣言できます。
+
+```restrict
+enum ParseError {
+    Empty
+    Message(String)
+}
+
+fun empty_error: () -> ParseError = {
+    () ParseError::Empty
+}
+
+fun message_error: (message: String) -> ParseError = {
+    message |> ParseError::Message
+}
+```
+
+バリアント名は常に`ParseError::Empty`のように`型名::バリアント名`で修飾します。payloadなしのコンストラクタはunitを受け取り、payloadありのコンストラクタは宣言された型の値を1つだけ受け取ります。どちらも直接のOSV呼び出し対象であり、`ParseError::Message("error")`のような従来順の呼び出しは使えません。
+
+現在のenum宣言は非ジェネリックかつ非再帰で、各バリアントが持てるpayloadは0個または1個です。複数の値をまとめたい場合はrecordを1つのpayloadにします。
 
 ## 関数
 
@@ -274,9 +297,14 @@ pub record PublicPoint {
     x: Int32
     y: Int32
 }
+
+pub enum PublicError {
+    Missing
+    Invalid(String)
+}
 ```
 
-v0.0.1 では、export されたレコードや generic 関数はソースレベルのモジュールメタデータです。直接の host-visible WebAssembly ABI としては扱いません。
+v0.0.1 では、export されたレコードや generic 関数はソースレベルのモジュールメタデータです。post-v0.0.1の`pub enum`もRestrictソースモジュール間だけの公開で、直接のhost-visible WebAssembly enum ABIは提供しません。
 
 ## context と with
 
@@ -307,7 +335,7 @@ val strict = base.clone { timeout: 3 }
 
 ## 演算子の優先順位
 
-1. フィールドアクセス: `.field`、`.clone`、`freeze`
+1. フィールドアクセス、修飾されたバリアント名、グループ化された直接OSV呼び出し: `.field`、`.clone`、`Type::Variant`、`freeze`、`(value) f`、`() f`
 2. 単項演算子: `!`、`-`
 3. 乗除余: `*`、`/`、`%`
 4. 加減: `+`、`-`
@@ -316,7 +344,10 @@ val strict = base.clone { timeout: 3 }
 7. 論理 AND: `&&`
 8. 論理 OR: `||`
 9. パイプ: `|>`
-10. OSV 関数呼び出し
+
+## 現在のenum境界
+
+v0.0.1の公開リリースではユーザー定義enumは未対応でした。現在のpost-v0.0.1 compilerは上記の閉じた範囲をサポートしますが、ジェネリックenum、再帰enum、1バリアントに複数の直接payloadを持たせる構文、host enum ABIは将来の設計対象です。`Result<T, E>`のエラー伝播は`match`で明示し、`?`演算子はまだ使えません。
 
 ## v0.0.1 の current example ではない構文
 

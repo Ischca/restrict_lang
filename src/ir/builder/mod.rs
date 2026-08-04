@@ -15,9 +15,9 @@ use crate::type_checker::{CheckedFunctionSignature, TypeChecker, TypedType};
 
 use super::layout::{LayoutId, LayoutKind, LayoutTable};
 use super::{
-    ApplyFlavor, ApplyIr, BindingId, CalleeProvenance, ExprId, FinalType, FlowSummary,
-    FunctionCalleeIr, HostAbi, InternalOnlyReason, TypedExpr, TypedExprKind, UseEvent, UseKind,
-    ValueId, ValueRepr,
+    ApplyFlavor, ApplyIr, BindingId, CalleeProvenance, EnumVariantCalleeIr, ExprId, FinalType,
+    FlowSummary, FunctionCalleeIr, HostAbi, InternalOnlyReason, TypedExpr, TypedExprKind, UseEvent,
+    UseKind, ValueId, ValueRepr,
 };
 
 mod construct;
@@ -688,6 +688,7 @@ fn contains_record_layout_type_param(ty: &TypedType) -> bool {
         | TypedType::Boolean
         | TypedType::String
         | TypedType::Char
+        | TypedType::Enum { .. }
         | TypedType::Unit => false,
     }
 }
@@ -788,6 +789,23 @@ fn validate_apply_callee_provenance(
     function_name: &str,
 ) -> Result<(), IrBuildError> {
     let CalleeProvenance::TopLevelFunction(callee) = &apply.callee_provenance else {
+        if let CalleeProvenance::EnumVariant(variant) = &apply.callee_provenance {
+            if variant.enum_name.is_empty() || variant.variant_name.is_empty() {
+                return Err(shadow_invariant_violation(format!(
+                    "apply in {} has incomplete enum constructor provenance",
+                    function_name
+                )));
+            }
+            if let Some(hint) = callee_hint {
+                let qualified = format!("{}::{}", variant.enum_name, variant.variant_name);
+                if hint != qualified {
+                    return Err(shadow_invariant_violation(format!(
+                        "apply in {} has callee hint '{}' but enum constructor '{}'",
+                        function_name, hint, qualified
+                    )));
+                }
+            }
+        }
         return Ok(());
     };
     if callee.name.is_empty() {
@@ -842,6 +860,7 @@ fn callee_hint(expr: &Expr) -> Option<String> {
     match &expr.kind {
         ExprKind::Ident(name) => Some(name.clone()),
         ExprKind::FieldAccess(_, field) => Some(field.clone()),
+        ExprKind::VariantRef(path) => Some(format!("{}::{}", path.enum_name, path.variant_name)),
         _ => None,
     }
 }
@@ -872,6 +891,11 @@ fn collect_pattern_bound_names(pattern: &Pattern, names: &mut Vec<String>) {
         }
         Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
             collect_pattern_bound_names(inner, names);
+        }
+        Pattern::EnumVariant { payload, .. } => {
+            if let Some(payload) = payload {
+                collect_pattern_bound_names(payload, names);
+            }
         }
         Pattern::ListCons(head, tail) => {
             collect_pattern_bound_names(head, names);

@@ -30,14 +30,18 @@ When changing user-facing language behavior:
 4. Update `README.md` if the feature is important for first-time users.
 5. Run docs hygiene tests.
 
-Public examples must stay on the v0.0.1 release surface:
+Public examples must distinguish the historical v0.0.1 release surface from
+the current post-v0.0.1 compiler surface:
 
 - `val`, not `let`
 - `mut val`, not `val mut`
 - OSV calls, not function-first calls
 - `:` field initializers
 - scalar host exports only
-- TAT, user ADTs, `form`/`takes`, and composite host ABI marked as future work
+- closed, non-generic, non-recursive user enums may use qualified
+  `Type::Variant` names and exhaustive matches
+- generic or recursive user enums, enum host ABI, TAT, `form`/`takes`, and
+  composite host ABI marked as future work
 
 ## Internal Documentation Policy
 

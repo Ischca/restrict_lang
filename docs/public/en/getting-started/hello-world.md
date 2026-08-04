@@ -199,7 +199,11 @@ compiler-registered standard-library surface:
 - file-system and network I/O
 - direct host ABI for strings, records, lists, `Option`, or `Result`
 - Temporal Affine Types
-- user-defined `enum`/ADT declarations
+- generic or recursive user enums and direct host enum ABI
+
+The current post-v0.0.1 compiler does support closed, non-generic,
+non-recursive enums inside Restrict programs. See [Types](../guide/types.md) and
+[Pattern Matching](../guide/patterns.md) after completing this first path.
 
 Use the [Quick Start](./quick-start.md) for a shorter command reference, then
 continue with [OSV Word Order](../guide/osv-order.md), [Type Inference](../guide/type-inference.md),

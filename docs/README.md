@@ -71,10 +71,11 @@ When editing public docs:
 
 - edit `docs/public/en/` first
 - update `docs/public/SUMMARY.md` for visible navigation changes
-- keep examples on the v0.0.1 release surface
+- label examples that require the current post-v0.0.1 compiler
 - use `val`, `mut val`, OSV calls, and `:` record fields
-- avoid TAT, user-defined ADTs, `form`/`takes`, and composite host ABI examples
-  unless they are clearly marked as future work
+- keep user enum examples within the closed, non-generic, non-recursive slice;
+  avoid TAT, generic or recursive enums, `form`/`takes`, and composite host ABI
+  examples unless they are clearly marked as future work
 
 When editing internal docs:
 

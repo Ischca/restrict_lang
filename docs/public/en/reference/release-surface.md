@@ -51,6 +51,18 @@ export fun exported_score: () -> Int32 = {
 }
 ```
 
+## Current Post-v0.0.1 Addition
+
+The current compiler adds closed user-defined enums without changing the
+v0.0.1 host ABI:
+
+| Surface | Current status |
+| --- | --- |
+| Closed user enums | Supported when non-generic and non-recursive. Every variant has zero or one payload. |
+| Constructors and patterns | Use qualified `Type::Variant` names. Constructors use OSV order and matches are exhaustive. |
+| Custom `Result` errors | A closed enum can be the error in `Result<T, CustomError>`. Error propagation still uses explicit `match`; postfix `?` remains future work. |
+| `pub enum` | Exposes the enum namespace across Restrict source modules only. Enum values have no direct host-visible WebAssembly ABI. |
+
 ## Rejected With Explicit Diagnostics
 
 | Surface | Reason |
@@ -58,7 +70,7 @@ export fun exported_score: () -> Int32 = {
 | Traditional calls | Restrict is OSV-only. Use `(1, 2) add` or `value |> add`. |
 | String imports and import aliases | v0.0.1 keeps the source module surface dotted and direct. |
 | Re-exports | Import declarations stay at the source module boundary. |
-| User-defined `enum`/ADT declarations | The keyword is reserved, but declarations are not implemented in v0.0.1. |
+| User-defined enums in the v0.0.1 tag | The v0.0.1 release rejected these declarations. This is historical; the current closed enum slice is documented above. |
 | Exported generic functions | Host-visible generic ABI rules are still design work. |
 | Exported composite host values | Strings, records, lists, `Option`, and `Result` do not have a direct host ABI yet. |
 | Computed or mutable exported globals | Exported top-level bindings must be immutable scalar literal constants. |
@@ -67,7 +79,9 @@ export fun exported_score: () -> Int32 = {
 
 - Temporal Affine Types
 - source-level `form` / `takes` declarations
-- user-defined ADTs
+- generic or recursive user enums and variants with more than one direct payload
+- direct host WebAssembly ABI for user enum values
+- postfix `?` error propagation
 - direct generic or composite host ABI
 - WebAssembly Component Model and WIT binding generation
 

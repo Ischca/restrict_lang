@@ -45,6 +45,11 @@ The browser compiler can show:
 It uses the same parser, type checker, and code generator as the Rust crate.
 That makes it a good smoke test for examples in docs and blog posts.
 
+Choose **Custom errors with Result** from the example menu to run the current
+post-v0.0.1 closed enum slice. It demonstrates a non-generic, non-recursive
+`CustomError`, qualified `Type::Variant` construction, exhaustive matching, and
+`Result<Int32, CustomError>`; the program prints `-2`.
+
 ## Module Imports
 
 The web entry point supports a module-source map API internally. The default UI

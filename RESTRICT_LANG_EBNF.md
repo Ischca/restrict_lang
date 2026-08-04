@@ -56,6 +56,7 @@ logical_or_op     = "||" ;
 unary_op          = "!" | "-" ;
 pipe_op           = "|>" ;
 assign_op         = "=" ;
+namespace_op      = "::" ;
 ```
 
 ## 2. Types and Constraints
@@ -113,6 +114,7 @@ await_suffix        = "await" ;
 
 (* Primary Expressions *)
 primary_expr        = literal
+                    | variant_ref
                     | identifier
                     | "(" expression ")"
                     | lambda_expr
@@ -121,6 +123,8 @@ primary_expr        = literal
                     | then_else_expr
                     | record_literal
                     | scope_expr ;
+
+variant_ref         = identifier namespace_op identifier ;
 
 (* Literals *)
 literal             = int_literal | float_literal | string_literal
@@ -149,10 +153,13 @@ match_arm           = pattern "=>" ( expression | block_expr ) ;
 
 (* Patterns *)
 pattern             = "_"                    (* wildcard *)
+                    | enum_pattern          (* qualified user enum variant *)
                     | identifier             (* variable *)
                     | literal               (* literal *)
                     | record_pattern        (* record *)
                     | list_pattern ;        (* list *)
+
+enum_pattern        = variant_ref [ "(" pattern ")" ] ;
 
 record_pattern      = identifier "{" [ field_pattern { "," field_pattern } ] "}" ;
 field_pattern       = identifier [ "=" pattern ] ;
@@ -203,10 +210,11 @@ program             = { top_decl } ;
 
 top_decl            = function_decl
                     | record_decl
+                    | enum_decl
                     | context_decl
                     | impl_decl
                     | import_decl ;
-                    (* reserved: enum_decl, macro_decl, trait_decl, type_decl *)
+                    (* reserved: macro_decl, trait_decl, type_decl *)
 
 (* Function Declaration *)
 function_decl       = { context_ann } [ "pub" ] "fun" identifier ":"
@@ -238,13 +246,12 @@ impl_decl           = "impl" identifier "{" method_decl { method_decl } "}" ;
 method_decl         = "fun" identifier ":" function_signature "=" block_expr ;
                       (* first parameter must be self: Target; calls remain OSV *)
 
-(* Reserved Enum Declaration: post-v0.0.1, not reachable from top_decl *)
-enum_decl           = "enum" identifier [ type_params ] "{"
+(* Closed user enums: non-generic and non-recursive. Each variant has zero or
+   one payload; function and temporal payload types are not supported. *)
+enum_decl           = [ "pub" ] "enum" identifier "{"
                       variant { variant } "}" ;
 
-variant             = identifier [ variant_data ] ;
-variant_data        = "(" type { "," type } ")"
-                    | "{" field_decl { field_decl } "}" ;
+variant             = identifier [ "(" type ")" ] ;
 
 (* Import Declaration *)
 dotted_path         = identifier { "." identifier } ;

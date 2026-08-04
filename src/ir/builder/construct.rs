@@ -66,14 +66,19 @@ impl<'a> CheckedIrBuilder<'a> {
                 self.source_function_names.insert(func.name.clone());
             }
             TopDecl::Export(export) => self.register_source_function_name(export.item.as_ref()),
-            TopDecl::Impl(_) | TopDecl::Record(_) | TopDecl::Context(_) | TopDecl::Binding(_) => {}
+            TopDecl::Impl(_)
+            | TopDecl::Record(_)
+            | TopDecl::Enum(_)
+            | TopDecl::Context(_)
+            | TopDecl::Binding(_) => {}
         }
     }
 
     fn value_repr_for_type(&mut self, final_type: &FinalType) -> ValueRepr {
         let checker = self.checker;
-        self.layout_table
-            .value_repr_for_type_with_record_fields(final_type, &|name, type_args| {
+        self.layout_table.value_repr_for_type_with_metadata(
+            final_type,
+            &|name, type_args| {
                 if type_args.iter().any(contains_record_layout_type_param) {
                     return None;
                 }
@@ -85,7 +90,13 @@ impl<'a> CheckedIrBuilder<'a> {
                     parent_hash: None,
                 };
                 checker.checked_record_fields_for_type(&record_type)
-            })
+            },
+            &|name| {
+                checker.checked_enum_variants_for_type(&TypedType::Enum {
+                    name: name.to_string(),
+                })
+            },
+        )
     }
 
     fn collect_function_ir_from_decl(
@@ -101,7 +112,11 @@ impl<'a> CheckedIrBuilder<'a> {
             TopDecl::Export(export) => {
                 self.collect_function_ir_from_decl(export.item.as_ref(), functions, true)?
             }
-            TopDecl::Impl(_) | TopDecl::Record(_) | TopDecl::Context(_) | TopDecl::Binding(_) => {}
+            TopDecl::Impl(_)
+            | TopDecl::Record(_)
+            | TopDecl::Enum(_)
+            | TopDecl::Context(_)
+            | TopDecl::Binding(_) => {}
         }
         Ok(())
     }
@@ -379,6 +394,7 @@ impl<'a> CheckedIrBuilder<'a> {
             ExprKind::Lambda(lambda) => {
                 self.push_typed_exprs_from_expr(&lambda.body, exprs, sites, bindings)?;
             }
+            ExprKind::VariantRef(_) => {}
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)
@@ -387,6 +403,12 @@ impl<'a> CheckedIrBuilder<'a> {
             | ExprKind::Unit
             | ExprKind::Ident(_)
             | ExprKind::None => {}
+        }
+
+        if matches!(&expr.kind, ExprKind::VariantRef(_)) {
+            // Qualified constructors are direct call targets, never first-class
+            // values in the current enum slice.
+            return Ok(None);
         }
 
         if let Some(typed_expr) = self.build_typed_expr_skeleton(expr, apply, sites)? {
@@ -501,6 +523,7 @@ impl<'a> CheckedIrBuilder<'a> {
         let flavor = match &call.function.kind {
             ExprKind::Lambda(_) => ApplyFlavor::ImmediateLambda,
             ExprKind::FieldAccess(_, _) => ApplyFlavor::MethodResolution,
+            ExprKind::VariantRef(_) => ApplyFlavor::EnumConstructor,
             ExprKind::Ident(_) if call.args.is_empty() => ApplyFlavor::UnitCall,
             ExprKind::Ident(_) => ApplyFlavor::TupleCall,
             _ => ApplyFlavor::FunctionValue,
@@ -564,6 +587,10 @@ impl<'a> CheckedIrBuilder<'a> {
             ExprKind::Ident(name) => Ok(self
                 .top_level_callee_provenance(name)?
                 .unwrap_or(CalleeProvenance::Value)),
+            ExprKind::VariantRef(path) => Ok(CalleeProvenance::EnumVariant(EnumVariantCalleeIr {
+                enum_name: path.enum_name.clone(),
+                variant_name: path.variant_name.clone(),
+            })),
             _ => Ok(CalleeProvenance::Value),
         }
     }

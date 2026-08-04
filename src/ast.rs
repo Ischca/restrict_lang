@@ -66,6 +66,8 @@ pub enum ImportItems {
 pub enum TopDecl {
     /// Record type declaration (struct-like)
     Record(RecordDecl),
+    /// Closed enum declaration (sum type)
+    Enum(EnumDecl),
     /// Implementation block for a type
     Impl(ImplBlock),
     /// Context declaration (type class)
@@ -76,6 +78,28 @@ pub enum TopDecl {
     Binding(BindDecl),
     /// Export declaration (makes item public)
     Export(ExportDecl),
+}
+
+/// Closed enum declaration.
+///
+/// Enum variants are scoped by the enum name and carry either no payload or
+/// one payload value. Generic enum parameters are intentionally not part of
+/// the initial source syntax.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDecl {
+    /// Name of the enum type
+    pub name: String,
+    /// Variants in declaration order
+    pub variants: Vec<EnumVariantDecl>,
+}
+
+/// A single enum variant declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariantDecl {
+    /// Variant name, scoped within its containing enum
+    pub name: String,
+    /// Optional single payload type
+    pub payload: Option<Type>,
 }
 
 /// Export declaration that makes an item publicly available.
@@ -379,6 +403,8 @@ pub enum ExprKind {
     // Identifiers
     /// Variable or function reference
     Ident(String),
+    /// Qualified enum variant reference (e.g., `ResultState::Ready`)
+    VariantRef(VariantPath),
 
     // Record operations
     /// Record literal construction
@@ -460,6 +486,15 @@ pub enum ExprKind {
     Await(Box<Expr>),
     /// Spawn expression for planned async support
     Spawn(Box<Expr>),
+}
+
+/// A qualified reference to an enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VariantPath {
+    /// Enum type name
+    pub enum_name: String,
+    /// Variant name scoped within the enum
+    pub variant_name: String,
 }
 
 /// Record literal for creating record instances.
@@ -639,6 +674,15 @@ pub enum Pattern {
     Ok(Box<Pattern>),
     /// Err variant pattern
     Err(Box<Pattern>),
+    /// Qualified user-defined enum variant pattern
+    EnumVariant {
+        /// Enum type name
+        enum_name: String,
+        /// Variant name scoped within the enum
+        variant_name: String,
+        /// Optional payload pattern
+        payload: Option<Box<Pattern>>,
+    },
     /// Empty list pattern `[]`
     EmptyList,
     /// List cons pattern `[head | tail]`
@@ -973,7 +1017,7 @@ fn visit_top_decl_exprs_mut(decl: &mut TopDecl, f: &mut impl FnMut(&mut Expr)) {
             }
         }
         TopDecl::Export(export) => visit_top_decl_exprs_mut(&mut export.item, f),
-        TopDecl::Record(_) | TopDecl::Context(_) => {}
+        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Context(_) => {}
     }
 }
 
@@ -1077,6 +1121,7 @@ fn visit_expr_subtree_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
         | ExprKind::Ident(_)
+        | ExprKind::VariantRef(_)
         | ExprKind::None => {}
     }
 }
@@ -1101,7 +1146,7 @@ fn collect_top_decl_ids(decl: &TopDecl, ids: &mut Vec<NodeId>) {
             }
         }
         TopDecl::Export(export) => collect_top_decl_ids(&export.item, ids),
-        TopDecl::Record(_) | TopDecl::Context(_) => {}
+        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Context(_) => {}
     }
 }
 
@@ -1205,6 +1250,7 @@ fn collect_expr_ids(expr: &Expr, ids: &mut Vec<NodeId>) {
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
         | ExprKind::Ident(_)
+        | ExprKind::VariantRef(_)
         | ExprKind::None => {}
     }
 }

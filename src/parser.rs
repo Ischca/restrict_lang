@@ -36,8 +36,6 @@ use nom::{
 /// Type alias for parser results.
 type ParseResult<'a, T> = IResult<&'a str, T>;
 
-const UNSUPPORTED_ENUM_DECL_ERROR: &str =
-    "enum declarations are unsupported in v0.0.1; user-defined enum declarations are not implemented";
 const UNSUPPORTED_FORM_TAKES_DECL_ERROR: &str =
     "source-level `form` / `takes` syntax is unsupported in v0.0.1; v0.0.1 only exposes compiler-internal Container behavior";
 const UNSUPPORTED_IMPORT_ALIAS_ERROR: &str =
@@ -332,6 +330,41 @@ fn record_decl(input: &str) -> ParseResult<'_, RecordDecl> {
             parent_hash: None,
         },
     ))
+}
+
+fn enum_variant_decl(input: &str) -> ParseResult<'_, EnumVariantDecl> {
+    let (input, name) = ident(input)?;
+    let (input, payload) = opt(delimited(
+        expect_token(Token::LParen),
+        parse_type,
+        expect_token(Token::RParen),
+    ))(input)?;
+    Ok((input, EnumVariantDecl { name, payload }))
+}
+
+fn enum_decl(input: &str) -> ParseResult<'_, EnumDecl> {
+    let (input, _) = expect_token(Token::Enum)(input)?;
+    let (input, name) = ident(input)?;
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+
+    let (mut input, first) = enum_variant_decl(input)?;
+    let mut variants = vec![first];
+
+    loop {
+        let (after_comma, _) = opt(expect_token(Token::Comma))(input)?;
+        input = after_comma;
+
+        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(input) {
+            return Ok((after_brace, EnumDecl { name, variants }));
+        }
+
+        // Whitespace and newlines are already skipped by token parsing, so a
+        // comma is optional between variants while a trailing comma is also
+        // accepted.
+        let (after_variant, variant) = enum_variant_decl(input)?;
+        variants.push(variant);
+        input = after_variant;
+    }
 }
 
 // Parse a temporal constraint: ~tx within ~db
@@ -750,6 +783,7 @@ fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
         err_expr,    // Try Err before ident
         list_lit,    // Try list literal before record
         map(record_lit, |r| Expr::new(ExprKind::RecordLit(r))), // Try record_lit before ident
+        variant_ref_expr, // Try qualified variants before identifiers
         map(ident, |i| Expr::new(ExprKind::Ident(i))),
         delimited(
             expect_token(Token::LParen),
@@ -759,6 +793,23 @@ fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
         with_expr,
         map(block_expr, |b| Expr::new(ExprKind::Block(b))),
     ))(input)
+}
+
+fn variant_path(input: &str) -> ParseResult<'_, VariantPath> {
+    let (input, enum_name) = ident(input)?;
+    let (input, _) = expect_token(Token::ColonColon)(input)?;
+    let (input, variant_name) = ident(input)?;
+    Ok((
+        input,
+        VariantPath {
+            enum_name,
+            variant_name,
+        },
+    ))
+}
+
+fn variant_ref_expr(input: &str) -> ParseResult<'_, Expr> {
+    map(variant_path, |path| Expr::new(ExprKind::VariantRef(path)))(input)
 }
 
 fn unit_expr(input: &str) -> ParseResult<'_, Expr> {
@@ -999,6 +1050,7 @@ fn pattern(input: &str) -> ParseResult<'_, Pattern> {
         none_pattern,
         ok_pattern,
         err_pattern,
+        enum_variant_pattern,
         record_pattern, // Try record patterns before identifiers
         list_pattern,   // Try list patterns before literals
         unit_pattern,
@@ -1013,6 +1065,23 @@ fn pattern(input: &str) -> ParseResult<'_, Pattern> {
         }),
         map(ident, Pattern::Ident),
     ))(input)
+}
+
+fn enum_variant_pattern(input: &str) -> ParseResult<'_, Pattern> {
+    let (input, path) = variant_path(input)?;
+    let (input, payload) = opt(delimited(
+        expect_token(Token::LParen),
+        map(pattern, Box::new),
+        expect_token(Token::RParen),
+    ))(input)?;
+    Ok((
+        input,
+        Pattern::EnumVariant {
+            enum_name: path.enum_name,
+            variant_name: path.variant_name,
+            payload,
+        },
+    ))
 }
 
 fn unit_pattern(input: &str) -> ParseResult<'_, Pattern> {
@@ -1375,6 +1444,7 @@ fn pipe_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
     let (input, pipes) = many0(tuple((
         pipe_op,
         alt((
+            map(variant_ref_expr, |expr| PipeTarget::Expr(Box::new(expr))),
             map(ident, PipeTarget::Ident),
             map(
                 |i| binary_expr_with_context(i, in_statement),
@@ -1438,7 +1508,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
             // whitespace. Traditional calls like `func(args)`, `func (args)`,
             // and `obj.method (args)` are rejected; calls must use OSV order.
             match &first.kind {
-                ExprKind::Ident(_) | ExprKind::FieldAccess(_, _)
+                ExprKind::Ident(_) | ExprKind::FieldAccess(_, _) | ExprKind::VariantRef(_)
                     if input.trim_start().starts_with('(') =>
                 {
                     // This is traditional syntax like func() or obj.method() - REJECT IT
@@ -1713,14 +1783,6 @@ fn export_decl(input: &str) -> ParseResult<'_, TopDecl> {
     ))
 }
 
-fn unsupported_enum_decl(input: &str) -> ParseResult<'_, TopDecl> {
-    let (_input, _) = expect_token(Token::Enum)(input)?;
-    Err(nom::Err::Failure(nom::error::Error::new(
-        UNSUPPORTED_ENUM_DECL_ERROR,
-        nom::error::ErrorKind::Fail,
-    )))
-}
-
 fn unsupported_form_takes_decl(input: &str) -> ParseResult<'_, TopDecl> {
     let (_input, _) = alt((expect_token(Token::Form), expect_token(Token::Takes)))(input)?;
     Err(nom::Err::Failure(nom::error::Error::new(
@@ -1731,8 +1793,8 @@ fn unsupported_form_takes_decl(input: &str) -> ParseResult<'_, TopDecl> {
 
 fn top_decl_inner(input: &str) -> ParseResult<'_, TopDecl> {
     alt((
-        unsupported_enum_decl,
         unsupported_form_takes_decl,
+        map(enum_decl, TopDecl::Enum),
         map(fun_decl, TopDecl::Function),
         map(record_decl, TopDecl::Record),
         map(impl_block, TopDecl::Impl),
@@ -1850,6 +1912,152 @@ mod tests {
         let (_, decl) = record_decl(input).unwrap();
         assert_eq!(decl.name, "Enemy");
         assert_eq!(decl.fields.len(), 2);
+    }
+
+    #[test]
+    fn test_enum_decl_accepts_nullary_and_payload_variants() {
+        let input = r#"enum CheckoutError {
+            InvalidSku
+            PaymentDeclined(String),
+            RetryAfter(Result<Int32, String>),
+        }"#;
+        let (remaining, decl) = enum_decl(input).unwrap();
+
+        assert!(remaining.trim().is_empty());
+        assert_eq!(decl.name, "CheckoutError");
+        assert_eq!(
+            decl.variants,
+            vec![
+                EnumVariantDecl {
+                    name: "InvalidSku".to_string(),
+                    payload: None,
+                },
+                EnumVariantDecl {
+                    name: "PaymentDeclined".to_string(),
+                    payload: Some(Type::Named("String".to_string())),
+                },
+                EnumVariantDecl {
+                    name: "RetryAfter".to_string(),
+                    payload: Some(Type::Generic(
+                        "Result".to_string(),
+                        vec![
+                            Type::Named("Int32".to_string()),
+                            Type::Named("String".to_string()),
+                        ],
+                    )),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_enum_decl_requires_at_least_one_variant() {
+        assert!(enum_decl("enum Empty {}").is_err());
+    }
+
+    #[test]
+    fn test_enum_decl_rejects_generics_and_multiple_payloads() {
+        assert!(enum_decl("enum Generic<T> { Value(T) }").is_err());
+        assert!(enum_decl("enum PairLike { Pair(Int32, String) }").is_err());
+    }
+
+    #[test]
+    fn test_pub_enum_is_an_exported_top_decl() {
+        let (remaining, program) =
+            parse_program("pub enum Status { Ready, Failed(String) }").unwrap();
+        assert!(remaining.trim().is_empty());
+
+        let TopDecl::Export(export) = &program.declarations[0] else {
+            panic!("expected exported enum");
+        };
+        let TopDecl::Enum(enum_decl) = export.item.as_ref() else {
+            panic!("expected enum declaration");
+        };
+        assert_eq!(enum_decl.name, "Status");
+        assert_eq!(enum_decl.variants.len(), 2);
+    }
+
+    #[test]
+    fn test_qualified_variant_expression_ref() {
+        let (remaining, expr) = simple_expr("CheckoutError::InvalidSku").unwrap();
+        assert!(remaining.trim().is_empty());
+        assert_eq!(
+            expr.kind,
+            ExprKind::VariantRef(VariantPath {
+                enum_name: "CheckoutError".to_string(),
+                variant_name: "InvalidSku".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_osv_variant_constructors() {
+        let (remaining, nullary) = call_expr("() CheckoutError::InvalidSku").unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(nullary) = nullary.kind else {
+            panic!("expected nullary OSV constructor call");
+        };
+        assert!(nullary.args.is_empty());
+        assert!(matches!(
+            nullary.function.kind,
+            ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                if enum_name == "CheckoutError" && variant_name == "InvalidSku"
+        ));
+
+        let (remaining, payload) =
+            call_expr(r#"("declined") CheckoutError::PaymentDeclined"#).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(payload) = payload.kind else {
+            panic!("expected payload OSV constructor call");
+        };
+        assert_eq!(payload.args.len(), 1);
+        assert!(matches!(
+            payload.function.kind,
+            ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                if enum_name == "CheckoutError" && variant_name == "PaymentDeclined"
+        ));
+
+        let (remaining, piped) =
+            pipe_expr(r#""declined" |> CheckoutError::PaymentDeclined"#).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Pipe(piped) = piped.kind else {
+            panic!("expected pipe constructor call");
+        };
+        assert!(matches!(
+            piped.target,
+            PipeTarget::Expr(target)
+                if matches!(target.kind,
+                    ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                        if enum_name == "CheckoutError" && variant_name == "PaymentDeclined")
+        ));
+    }
+
+    #[test]
+    fn test_traditional_variant_constructor_call_is_rejected() {
+        let err = expression(r#"CheckoutError::PaymentDeclined("declined")"#).unwrap_err();
+        assert!(matches!(err, nom::Err::Failure(_)));
+    }
+
+    #[test]
+    fn test_qualified_variant_patterns() {
+        assert_eq!(
+            pattern("CheckoutError::InvalidSku").unwrap().1,
+            Pattern::EnumVariant {
+                enum_name: "CheckoutError".to_string(),
+                variant_name: "InvalidSku".to_string(),
+                payload: None,
+            }
+        );
+        assert_eq!(
+            pattern("CheckoutError::PaymentDeclined(message)")
+                .unwrap()
+                .1,
+            Pattern::EnumVariant {
+                enum_name: "CheckoutError".to_string(),
+                variant_name: "PaymentDeclined".to_string(),
+                payload: Some(Box::new(Pattern::Ident("message".to_string()))),
+            }
+        );
     }
 
     #[test]

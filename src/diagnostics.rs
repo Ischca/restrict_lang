@@ -98,12 +98,12 @@ mod tests {
 
     #[test]
     fn parse_error_formatter_preserves_unsupported_feature_messages() {
-        let source = "enum ReviewState { Ready }\n";
-        let err = parse_program(source).expect_err("enum declarations are not implemented");
+        let source = "form Printable { Item }\n";
+        let err = parse_program(source).expect_err("form declarations are not implemented");
         let message = format_parse_error(source, err);
 
-        assert!(message.contains("enum declarations are unsupported in v0.0.1"));
-        assert!(message.contains("user-defined enum declarations are not implemented"));
+        assert!(message.contains("source-level `form` / `takes` syntax is unsupported in v0.0.1"));
+        assert!(message.contains("compiler-internal Container behavior"));
         assert!(!message.contains("unexpected input near"));
         assert!(!message.contains("Error("));
         assert!(!message.contains("ErrorKind"));

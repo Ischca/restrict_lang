@@ -229,4 +229,4 @@ fun map_option: <T, U>(value: Option<T>, f: T -> U) -> Option<U> = {
 
 - [Type Inference](type-inference.md) - How function types are inferred
 - [Types](types.md) - Function type syntax and generic containers
-- [Syntax](syntax.md) - Current v0.0.1 syntax reference
+- [Syntax](syntax.md) - Current syntax reference

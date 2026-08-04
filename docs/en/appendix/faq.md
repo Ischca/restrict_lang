@@ -43,9 +43,13 @@ default v0.0.1 gate.
 
 ## Are user-defined enums supported?
 
-No. `enum` is reserved, and built-in `Option<T>` and `Result<T, E>` are
-supported, but user-defined ADT declarations are not implemented in the v0.0.1
-surface.
+Yes, in the current post-v0.0.1 compiler. The supported slice is closed,
+non-generic, and non-recursive; variants have zero or one payload and use
+qualified `Type::Variant` constructors and exhaustive patterns. A custom enum
+can be the error in `Result<T, CustomError>`.
+
+`pub enum` is source-module-only and creates no host enum ABI. Generic or
+recursive enums and postfix `?` propagation are not implemented yet.
 
 ## What should documentation examples use?
 

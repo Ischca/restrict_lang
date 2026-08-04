@@ -88,6 +88,9 @@ When adding docs:
 - use `mut val`, never `val mut`
 - use `:` in record fields and record literals
 - avoid stdin, filesystem, and network APIs in quick-start runnable examples
-- mark TAT, user ADTs, `form`/`takes`, and composite host ABI as future work
+- keep current user enum examples closed, non-generic, and non-recursive, with
+  qualified variants and exhaustive matches
+- mark TAT, generic or recursive enums, enum host ABI, `form`/`takes`, and
+  composite host ABI as future work
 
 The docs tests are meant to enforce those rules automatically.

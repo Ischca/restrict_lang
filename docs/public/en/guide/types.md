@@ -1,8 +1,9 @@
 # Type System
 
 Restrict combines static typing, affine ownership, local type inference, and
-WASM-friendly data layouts. This page describes the v0.0.1 type surface. TAT is
-experimental and excluded from the default release gate.
+WASM-friendly data layouts. This page distinguishes the v0.0.1 type surface
+from current post-v0.0.1 additions. TAT is experimental and excluded from the
+default release gate.
 
 ## Built-In Types
 
@@ -278,11 +279,37 @@ fun choose_option: (flag: Boolean) -> Option<Int32> = {
 }
 ```
 
-User-defined `enum`/ADT declarations are reserved but not implemented in the
-v0.0.1 gate. This is an intentional design-decision gap, not a statement that
-sum types are absent from Restrict. Use built-in `Option` and `Result` for
-sum-type workflows today while the user-defined ADT syntax, exhaustiveness
-rules, and export ABI are designed.
+## User-Defined Enums
+
+The current post-v0.0.1 compiler supports closed, non-generic, non-recursive
+user enums. Each variant has zero or one payload and is named through its enum
+namespace:
+
+```restrict
+enum DecodeError {
+    Empty
+    Invalid(String)
+}
+
+fun fail: (message: String) -> Result<Int32, DecodeError> = {
+    Err(message |> DecodeError::Invalid)
+}
+```
+
+Use `() DecodeError::Empty` for a payload-free constructor. A payload variant
+moves an affine payload into the enum; an enum is Copy only when every payload
+type is Copy. Matching consumes the enum once and must cover every declared
+variant.
+
+`==` and `!=` are not defined for user enum values in this initial slice. Use
+`match` on qualified variants; the compiler rejects enum equality instead of
+comparing internal allocation addresses.
+
+`pub enum` makes the type namespace available across Restrict source modules,
+but enum tags and payload layouts are compiler-internal and have no direct host
+WebAssembly ABI. Generic and recursive enums, multiple direct payloads, and
+ergonomic `?` propagation remain future work; handle `Result` explicitly with
+`match` today.
 
 ## Type Inference
 
@@ -309,10 +336,12 @@ lambda parameter, add a type annotation at the nearest useful boundary.
 
 ## Current Boundaries
 
-These are outside the default v0.0.1 support promise:
+These remain outside the current compiler surface:
 
 - Temporal Affine Type inference
-- User-defined `enum`/ADT declarations; built-in `Option` and `Result` remain supported
+- Generic or recursive user enums and variants with more than one direct payload
+- Direct host WebAssembly ABI for user enum values
+- Ergonomic `?` propagation
 - Direct WebAssembly ABI for exported generic functions and host-visible record values
 - User-defined `form`, `takes`, `of`, traits/typeclasses, and associated-type declarations
 - Borrowed slices/references

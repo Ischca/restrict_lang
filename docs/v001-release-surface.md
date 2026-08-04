@@ -26,7 +26,7 @@ the release intentionally presents as stable, explicitly rejected, or reserved.
 | Traditional calls | Rejected with diagnostic "traditional calls like `add(1, 2)` are not valid Restrict; use OSV syntax such as `(1, 2) add` or `value |> add`" because OSV-only calls are the public call surface. |
 | Import aliases and string imports | Rejected with `string import paths and import aliases are unsupported in v0.0.1; use dotted source imports such as import module.{item}`. |
 | Re-exports | Rejected with `re-exports are unsupported in v0.0.1; import declarations must stay at the source module boundary`. |
-| User enum/ADT reserved unsupported | Rejected with `enum declarations are unsupported in v0.0.1; user-defined enum declarations are not implemented`. |
+| User enum declarations in v0.0.1 | Historically rejected with `enum declarations are unsupported in v0.0.1; user-defined enum declarations are not implemented`. The current post-v0.0.1 slice is recorded below. |
 | Exported generic/composite host ABI as design gap | Rejected by v0.0.1 release-surface validation before `--check` success or code generation when a public export would require a generic or composite host ABI that v0.0.1 has not designed. |
 | Exported composite top-level global ABI as design gap | Rejected by v0.0.1 release-surface validation before `--check` success or code generation when an exported top-level binding would require a composite host ABI. |
 | Computed or mutable exported globals | Rejected by v0.0.1 release-surface validation. Exported top-level bindings must be immutable scalar constants in v0.0.1, and exported top-level bindings must be scalar literal constants in v0.0.1 rather than computed expressions. |
@@ -37,5 +37,6 @@ the release intentionally presents as stable, explicitly rejected, or reserved.
 | --- | --- |
 | TAT outside default gate | Temporal Affine Types are planned/experimental and remain outside the v0.0.1 default release gate. |
 | Source-level `form` / `takes` | Reserved for a later type-system pass. v0.0.1 only exposes the compiler-internal `Container` behavior for `List` and `Option`. |
-| User-defined ADTs | The `enum` keyword is reserved, but user-defined enum/ADT declarations remain unsupported. |
+| Closed user-defined enums | Added after v0.0.1. The current compiler accepts non-generic, non-recursive enums whose variants have zero or one payload. Constructors use qualified `Type::Variant` names in OSV order, patterns use the same qualified names, and matches are exhaustive. `pub enum` crosses source-module boundaries only and creates no host-visible enum ABI. |
+| Generic/recursive enums and `?` | Remain future work. Custom closed enums can be used as `Result<T, CustomError>` errors, but ergonomic `?` propagation is not implemented. |
 | Generic export ABI | Host-visible WebAssembly ABI rules for exported generic and composite values are still design work, not a supported release contract. |

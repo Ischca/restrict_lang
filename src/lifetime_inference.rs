@@ -140,6 +140,8 @@ impl LifetimeInference {
         match decl {
             TopDecl::Function(func) => self.collect_from_function(func),
             TopDecl::Record(record) => self.collect_from_record(record),
+            TopDecl::Enum(_) => Ok(()),
+            TopDecl::Export(export) => self.collect_from_decl(export.item.as_ref()),
             _ => Ok(()),
         }
     }
@@ -243,6 +245,18 @@ impl LifetimeInference {
                     self.collect_from_expr(arg)?;
                 }
             }
+            ExprKind::Pipe(pipe_expr) => {
+                self.collect_from_expr(&pipe_expr.expr)?;
+                if let PipeTarget::Expr(target) = &pipe_expr.target {
+                    self.collect_from_expr(target)?;
+                }
+            }
+            ExprKind::Match(match_expr) => {
+                self.collect_from_expr(&match_expr.expr)?;
+                for arm in &match_expr.arms {
+                    self.collect_from_block(&arm.body)?;
+                }
+            }
             ExprKind::Block(block) => {
                 self.collect_from_block(block)?;
             }
@@ -257,6 +271,7 @@ impl LifetimeInference {
                 self.collect_from_expr(&binary_expr.left)?;
                 self.collect_from_expr(&binary_expr.right)?;
             }
+            ExprKind::VariantRef(_) => {}
             _ => {}
         }
 

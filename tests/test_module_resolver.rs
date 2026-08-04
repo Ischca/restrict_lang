@@ -1,4 +1,4 @@
-use restrict_lang::ast::{ExprKind, ImportItems, PipeTarget, TopDecl, Type};
+use restrict_lang::ast::{ExprKind, ImportItems, Pattern, PipeTarget, TopDecl, Type};
 #[cfg(not(target_arch = "wasm32"))]
 use restrict_lang::dev_tools::{DevTools, DiagnosticSeverity};
 use restrict_lang::module::{
@@ -193,6 +193,187 @@ fun main: () -> Int32 = {
     assert!(wat.contains("call $public_score"));
 
     let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn resolver_collects_and_flattens_exported_enums_as_source_level_types() {
+    let root = parse_complete(
+        r#"
+import release.{CheckoutError}
+
+fun main: () -> Int32 = {
+    0
+}
+"#,
+    );
+    let mut sources = HashMap::new();
+    sources.insert(
+        "release".to_string(),
+        r#"
+export enum CheckoutError {
+    InvalidSku
+    PaymentDeclined(String)
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("exported enum import should resolve");
+
+    assert!(resolved.imports.is_empty());
+    assert!(matches!(
+        resolved.declarations.first(),
+        Some(TopDecl::Export(export))
+            if matches!(export.item.as_ref(), TopDecl::Enum(enum_decl)
+                if enum_decl.name == "CheckoutError"
+                    && enum_decl.variants[0].name == "InvalidSku"
+                    && enum_decl.variants[1].name == "PaymentDeclined")
+    ));
+}
+
+#[test]
+fn resolver_renames_private_enum_type_references_but_not_variant_names() {
+    let root = parse_complete(
+        r#"
+import release.{classify, make_error}
+
+fun main: () -> Int32 = {
+    0
+}
+"#,
+    );
+    let mut sources = HashMap::new();
+    sources.insert(
+        "release".to_string(),
+        r#"
+record InternalDetail {
+    code: Int32
+}
+
+enum InternalError {
+    Invalid
+    Message(InternalDetail)
+}
+
+fun message: () -> Int32 = {
+    99
+}
+
+export fun make_error: () -> InternalError = {
+    () InternalError::Invalid
+}
+
+export fun classify: (error: InternalError) -> Int32 = {
+    error match {
+        InternalError::Invalid => { 0 }
+        InternalError::Message(message) => { message }
+    }
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("private enum references should resolve");
+    let internal_enum = internal_module_name(&["release"], "InternalError");
+    let internal_detail = internal_module_name(&["release"], "InternalDetail");
+
+    assert!(resolved.declarations.iter().any(|decl| {
+        matches!(decl, TopDecl::Enum(enum_decl)
+            if enum_decl.name == internal_enum
+                && enum_decl.variants[0].name == "Invalid"
+                && enum_decl.variants[1].name == "Message"
+                && matches!(&enum_decl.variants[1].payload,
+                    Some(Type::Named(name)) if name == &internal_detail))
+    }));
+
+    let make_error = resolved
+        .declarations
+        .iter()
+        .find_map(|decl| match decl {
+            TopDecl::Function(fun) if fun.name == "make_error" => Some(fun),
+            _ => None,
+        })
+        .expect("make_error should be imported");
+    assert!(matches!(
+        &make_error.return_type,
+        Some(Type::Named(name)) if name == &internal_enum
+    ));
+    let make_expr = make_error
+        .body
+        .expr
+        .as_ref()
+        .expect("make_error should have a final expression");
+    let ExprKind::Call(call) = &make_expr.kind else {
+        panic!("make_error should contain an OSV constructor call");
+    };
+    assert!(matches!(
+        &call.function.kind,
+        ExprKind::VariantRef(path)
+            if path.enum_name == internal_enum && path.variant_name == "Invalid"
+    ));
+
+    let classify = resolved
+        .declarations
+        .iter()
+        .find_map(|decl| match decl {
+            TopDecl::Function(fun) if fun.name == "classify" => Some(fun),
+            _ => None,
+        })
+        .expect("classify should be imported");
+    assert!(matches!(
+        &classify.params[0].ty,
+        Type::Named(name) if name == &internal_enum
+    ));
+    let match_expr = classify
+        .body
+        .expr
+        .as_ref()
+        .expect("classify should have a final expression");
+    let ExprKind::Match(match_expr) = &match_expr.kind else {
+        panic!("classify should contain a match");
+    };
+    assert!(matches!(
+        &match_expr.arms[0].pattern,
+        Pattern::EnumVariant { enum_name, variant_name, payload: None }
+            if enum_name == &internal_enum && variant_name == "Invalid"
+    ));
+    assert!(matches!(
+        &match_expr.arms[1].pattern,
+        Pattern::EnumVariant { enum_name, variant_name, payload: Some(payload) }
+            if enum_name == &internal_enum
+                && variant_name == "Message"
+                && matches!(payload.as_ref(), Pattern::Ident(name) if name == "message")
+    ));
+    assert!(matches!(
+        match_expr.arms[1].body.expr.as_deref(),
+        Some(expr) if matches!(&expr.kind, ExprKind::Ident(name) if name == "message")
+    ));
+}
+
+#[test]
+fn resolver_reports_enum_type_name_collisions() {
+    let root = parse_complete(
+        r#"
+import release.{Status}
+
+enum Status { Local }
+"#,
+    );
+    let mut sources = HashMap::new();
+    sources.insert(
+        "release".to_string(),
+        "export enum Status { Remote }".to_string(),
+    );
+
+    let err = resolve_program_imports_with_module_source_map(root, sources)
+        .expect_err("enum type name collision should be rejected");
+    assert!(
+        err.to_string()
+            .contains("Import name collision for 'Status': root module already declares this name"),
+        "unexpected enum collision error: {err}"
+    );
 }
 
 #[test]

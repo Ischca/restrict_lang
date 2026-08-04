@@ -69,6 +69,87 @@ fun main: () -> Int32 = {
 }
 
 #[test]
+fn release_surface_accepts_source_enum_exports_without_host_values() {
+    check_release_surface(
+        r#"
+pub enum DeliveryState {
+    Pending
+    Delivered(String)
+}
+
+fun main: () -> Int32 = {
+    0
+}
+"#,
+    )
+    .expect("source-level enum metadata should be exportable without exposing enum values");
+}
+
+#[test]
+fn release_surface_rejects_enum_values_in_v001_host_signatures() {
+    assert_release_error(
+        r#"
+enum DeliveryState {
+    Pending
+    Delivered(String)
+}
+
+pub fun keep_state: (state: DeliveryState) -> DeliveryState = {
+    state
+}
+"#,
+        "Exported function 'keep_state' parameter 'state' type DeliveryState requires a composite host ABI",
+    );
+
+    assert_release_error(
+        r#"
+enum DeliveryState {
+    Pending
+    Delivered(String)
+}
+
+pub fun pending_state: () -> DeliveryState = {
+    () DeliveryState::Pending
+}
+"#,
+        "Exported function 'pending_state' return type DeliveryState requires a composite host ABI",
+    );
+}
+
+#[test]
+fn flat_record_v1_rejects_enum_values_with_an_explicit_reason() {
+    assert_profile_error(
+        r#"
+pub enum DeliveryState {
+    Pending
+    Delivered(String)
+}
+
+pub fun keep_state: (state: DeliveryState) -> DeliveryState = {
+    state
+}
+"#,
+        HostAbiProfile::FlatRecordV1,
+        "parameter 'state' type DeliveryState is unsupported by host ABI profile flat-record-v1: user-defined enum values do not have a host ABI",
+    );
+
+    assert_profile_error(
+        r#"
+pub enum DeliveryState {
+    Pending
+    Delivered(String)
+}
+
+pub fun pending_state: () = {
+    () DeliveryState::Pending
+}
+"#,
+        HostAbiProfile::FlatRecordV1,
+        "return type DeliveryState is unsupported by host ABI profile flat-record-v1: user-defined enum values do not have a host ABI",
+    );
+}
+
+#[test]
 fn v001_wrapper_matches_explicit_v001_profile() {
     let source = r#"
 record ReleaseSlice {

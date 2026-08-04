@@ -740,6 +740,11 @@ pub fn unify(
         | (TypedType::String, TypedType::String)
         | (TypedType::Char, TypedType::Char)
         | (TypedType::Unit, TypedType::Unit) => Ok(()),
+        (TypedType::Enum { name: left_name }, TypedType::Enum { name: right_name })
+            if left_name == right_name =>
+        {
+            Ok(())
+        }
         (TypedType::TypeParam(left), TypedType::TypeParam(right)) if left == right => Ok(()),
         (TypedType::List(left), TypedType::List(right))
         | (TypedType::Option(left), TypedType::Option(right)) => unify(left, right, substitution),
@@ -1057,6 +1062,22 @@ fn type_mismatch(expected: &TypedType, actual: &TypedType) -> Result<(), TypeErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enum_types_unify_nominally() {
+        let mut substitution = Substitution::new();
+        let state = TypedType::Enum {
+            name: "State".to_string(),
+        };
+        unify(&state, &state, &mut substitution).expect("the same enum type should unify");
+
+        let other = TypedType::Enum {
+            name: "OtherState".to_string(),
+        };
+        let error = unify(&state, &other, &mut substitution)
+            .expect_err("distinct enum names must remain nominally distinct");
+        assert!(matches!(error, TypeError::TypeMismatch { .. }));
+    }
 
     #[test]
     fn form_environment_rejects_duplicate_builtin_adoption() {

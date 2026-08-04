@@ -27,8 +27,11 @@ v0.0.1 implementation.
 
 Source-level declarations spelled `form` / `takes` are reserved design-space
 terminology for later type-system work and are outside the default v0.0.1
-gate. User-defined `enum`/ADT declarations are also outside default v0.0.1;
-only compiler-provided `Option<T>` and `Result<T, E>` sum types are current.
+gate. The v0.0.1 release included only compiler-provided `Option<T>` and
+`Result<T, E>` sum types. The current post-v0.0.1 compiler additionally
+supports the closed, non-generic user-defined `enum` slice specified below.
+Generic enums, recursive enums, and variants with more than one direct payload
+remain future work.
 Host-visible WebAssembly exports that would require an exported
 generic/composite host ABI, including exported generic functions or direct
 exported record values, remain outside default v0.0.1 until that ABI is
@@ -48,6 +51,7 @@ designed.
 &&  ||  // Logical
 !       // Logical not
 ~       // Temporal marker
+::      // Type/variant namespace separator
 ```
 
 ### 1.3 Delimiters
@@ -57,6 +61,7 @@ designed.
 [ ]     // List/Array literals
 , ;     // Separators
 : .     // Type annotation, field access
+::      // Type/variant namespace separator
 ```
 
 ### 1.4 Literals
@@ -162,6 +167,37 @@ Connection<~db>   // Database connection with scope ~db
 Int32 -> String         // Function type
 (Int32, String) -> Boolean // Multi-parameter function
 ```
+
+### 4.5 User-Defined Enum Types (Post-v0.0.1)
+
+```rust
+pub enum ParseError {
+    Empty
+    Message(String)
+}
+```
+
+An enum is a closed tagged sum. Variant tags follow declaration order starting
+at zero, but tag values and payload offsets are compiler-internal details and
+are not a source or host ABI.
+
+The current slice has these constraints:
+
+- an enum has at least one variant;
+- a variant has either no payload or exactly one payload;
+- multiple logical payload values must be wrapped in a record;
+- enum declarations are non-generic and non-recursive;
+- payload types are concrete, monomorphic, non-temporal, non-function types
+  supported by the compiler's internal WebAssembly representation;
+- variants are scoped under their enum name and are never injected as bare
+  names; and
+- `impl`, `clone`, `freeze`, match guards, first-class constructor values, and
+  `==`/`!=` structural equality for enums are outside this slice. Use `match`
+  on qualified variants instead of comparing enum allocation identities.
+
+An enum value is Copy only when every payload type is Copy. A payload-free enum
+is therefore Copy. Constructing a payload variant moves an affine payload, and
+matching an enum consumes the scrutinee once under the ordinary affine rules.
 
 ## 5. Expressions
 
@@ -283,6 +319,25 @@ Point { x: 0, y: 0 }
 |x: Int32| x + 1    // With type annotations
 ```
 
+### 5.9 User-Defined Enum Construction
+
+Enum constructors are qualified direct OSV call targets:
+
+```rust
+() ParseError::Empty
+"invalid input" |> ParseError::Message
+("invalid input") ParseError::Message
+```
+
+The payload-free constructor takes unit. A payload constructor takes exactly
+one value of its declared payload type. A qualified constructor is not a
+first-class value in this slice and must appear as the direct target of a call
+or pipe. Traditional call order remains invalid:
+
+```rust
+ParseError::Message("invalid input") // ERROR: traditional call syntax
+```
+
 ## 6. Patterns (for match expressions)
 
 ### 6.1 Basic Patterns
@@ -300,7 +355,22 @@ Some(x)         // Extract value from Some
 None            // Match None
 ```
 
-### 6.3 List Patterns
+### 6.3 User-Defined Enum Patterns
+
+```rust
+error match {
+    ParseError::Empty => { 0 }
+    ParseError::Message(message) => { 1 }
+}
+```
+
+Variant patterns are always qualified. A payload-free variant has no payload
+pattern; a payload variant has exactly one nested pattern. Match exhaustiveness
+is checked across all variants of the enum. Payload bindings obey the ordinary
+affine-use rules, and an enum variant pattern is refutable, so it cannot be
+used as a standalone `val` binding pattern.
+
+### 6.4 List Patterns
 ```rust
 []              // Empty list
 [x]             // Single element
@@ -308,14 +378,14 @@ None            // Match None
 [head | tail]   // Head and tail (cons pattern)
 ```
 
-### 6.4 Record Patterns
+### 6.5 Record Patterns
 ```rust
 Person { name, age }                    // Extract all fields
 Person { name: "Alice", age }          // Partial match with literal
 Point { x: 0, y: 0 }                   // Exact match
 ```
 
-### 6.5 Spread Destructuring Patterns
+### 6.6 Spread Destructuring Patterns
 
 Spread destructuring allows extraction of specific fields while capturing remaining fields in a rest binding:
 
@@ -558,17 +628,23 @@ than producing unresolved lock entries.
 ```rust
 pub fun publicFunction: () = { ... }
 pub record PublicType { ... }
+pub enum PublicError { Missing Invalid(String) }
 pub val release_bias: Int32 = 3
 ```
 
 For the v0.0.1 implementation, exported records are source-level module
-metadata. They can be imported and used by other Restrict source modules, but
-they do not emit direct host-visible WebAssembly exports. Exported generic
-functions also remain outside the current concrete WebAssembly ABI surface.
+metadata. Post-v0.0.1 exported enums have the same source-module-only meaning.
+Records and enums can be imported and used by other Restrict source modules,
+but they do not emit direct host-visible WebAssembly exports. Importing an enum
+imports its type namespace; callers continue to spell constructors and patterns
+as `EnumName::Variant`. Exported generic functions also remain outside the
+current concrete WebAssembly ABI surface.
 Host-visible exported top-level bindings are limited to scalar literal
 constants with `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()` ABI.
 Composite constants such as `String`, records, lists, `Option`, and `Result`
-remain source-level values unless a concrete host ABI is designed.
+or user-defined enums remain source-level values unless a concrete host ABI is
+designed. Host-visible function parameters and results involving user-defined
+enums are rejected by both the default ABI and `flat-record-v1`.
 
 ### 12.3 Experimental Flat Record Host ABI (Opt-in)
 
@@ -627,7 +703,8 @@ then returns normally, allowing the outer wrapper to restore its entry state.
 
 ## 13. Operator Precedence (Highest to Lowest)
 
-1. Field access and grouped direct OSV calls: `.field`, `.clone`, `freeze`, `(value) f`, `() f`
+1. Field access, qualified variant names, and grouped direct OSV calls:
+   `.field`, `.clone`, `Type::Variant`, `freeze`, `(value) f`, `() f`
 2. Unary: `!`, `-`
 3. Multiplicative: `*`, `/`, `%`
 4. Additive: `+`, `-`
@@ -652,6 +729,24 @@ right) max`, and `(1 + 2) double`. Pipe starts from a complete expression, so
 ### 14.2 Error Handling
 - `Option<T>` - May contain value (`Some(T)`) or `None`
 - `Result<T, E>` - Success (`Ok(T)`) or error (`Err(E)`)
+
+A user-defined enum may be used as the error parameter of `Result<T, E>`:
+
+```rust
+enum DecodeError {
+    Empty
+    Invalid(String)
+}
+
+fun fail: (message: String) -> Result<Int32, DecodeError> = {
+    Err(message |> DecodeError::Invalid)
+}
+```
+
+Error propagation is explicit through `match` in the current compiler. A
+postfix `?` operator remains future work until the language specifies a real
+early-exit operation together with affine branch merging and deterministic
+cleanup of arena and temporal resources.
 
 ### 14.3 Basic Functions
 ```rust
@@ -764,7 +859,27 @@ fun categorize_person: (person: Person) -> String = {
 }
 ```
 
-### 16.5 Records and Methods
+### 16.5 User-Defined Errors
+
+```rust
+enum CheckoutError {
+    InvalidSku
+    PaymentDeclined(String)
+}
+
+fun classify: (error: CheckoutError) -> Int32 = {
+    error match {
+        CheckoutError::InvalidSku => { 1 }
+        CheckoutError::PaymentDeclined(message) => { 2 }
+    }
+}
+
+fun reject: (message: String) -> Result<Int32, CheckoutError> = {
+    Err(message |> CheckoutError::PaymentDeclined)
+}
+```
+
+### 16.6 Records and Methods
 ```rust
 record Point {
     x: Int32
@@ -852,6 +967,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2025-01-10
+**Last Updated**: 2026-08-04
 **Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

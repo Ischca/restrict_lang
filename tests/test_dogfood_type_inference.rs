@@ -240,21 +240,17 @@ fun main: () -> Int32 = {
 }
 
 #[test]
-fn v001_design_gap_user_defined_enum_declarations_are_still_not_parsed() {
+fn user_defined_enum_errors_type_check_with_result() {
     let source = r#"
-enum ReviewState { Ready }
+enum ReviewError {
+    Missing
+    Invalid(String)
+}
 
-fun main: () -> Int32 = {
-    0
+fun review: (message: String) -> Result<Int32, ReviewError> = {
+    Err(message |> ReviewError::Invalid)
 }
 "#;
 
-    let err = parse_source(source).expect_err(
-        "user-defined enum/ADT declarations are reserved but not implemented by the parser",
-    );
-    assert!(
-        err.contains("enum declarations")
-            && (err.contains("unsupported") || err.contains("not implemented")),
-        "enum/ADT gap should be visible as an explicit unsupported-feature parse rejection, got: {err}"
-    );
+    type_check_source(source).expect("custom enum errors should type-check inside Result");
 }

@@ -70,6 +70,29 @@ fun main: () -> Int32 = {
 `None` needs type context from an annotation, expected return type, sibling
 branch, or argument position.
 
+## User-Defined Enum Patterns
+
+User enum patterns always use a qualified `Type::Variant` name. Payload-free
+variants have no nested pattern; payload variants take exactly one:
+
+```restrict
+enum DecodeError {
+    Empty
+    Invalid(String)
+}
+
+fun error_code: (error: DecodeError) -> Int32 = {
+    error match {
+        DecodeError::Empty => { 1 }
+        DecodeError::Invalid(message) => { 2 }
+    }
+}
+```
+
+All declared variants must be covered unless a wildcard handles the remainder.
+Variant patterns are refutable, so they are valid in `match` arms but not as a
+standalone `val` binding pattern. Heap-backed payload bindings remain affine.
+
 ## List Patterns
 
 ```restrict
@@ -167,4 +190,6 @@ possible value is represented by another pattern.
 - `Int32`, `Boolean`, `Float64`, `Char`, and `()` are copyable in patterns.
 - Heap-backed branch bindings such as `String`, `List<T>`, records, and function
   values remain affine.
+- Closed user enums use qualified variants and exhaustive matching. Generic and
+  recursive enums, a host enum ABI, and `?` propagation remain future work.
 - Pattern guards and tuple patterns are outside the v0.0.1 guide surface.

@@ -369,6 +369,7 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
         ),
         CompletionItem::new_simple("fun".to_string(), "Function definition".to_string()),
         CompletionItem::new_simple("record".to_string(), "Record type definition".to_string()),
+        CompletionItem::new_simple("enum".to_string(), "Closed enum definition".to_string()),
         CompletionItem::new_simple("then".to_string(), "Conditional expression".to_string()),
         CompletionItem::new_simple("else".to_string(), "Else clause".to_string()),
         CompletionItem::new_simple("while".to_string(), "While loop".to_string()),
@@ -536,6 +537,19 @@ fn pattern_symbol_label(pattern: &Pattern) -> String {
         Pattern::None => "None".to_string(),
         Pattern::Ok(inner) => format!("Ok({})", pattern_symbol_label(inner)),
         Pattern::Err(inner) => format!("Err({})", pattern_symbol_label(inner)),
+        Pattern::EnumVariant {
+            enum_name,
+            variant_name,
+            payload,
+        } => match payload {
+            Some(payload) => format!(
+                "{}::{}({})",
+                enum_name,
+                variant_name,
+                pattern_symbol_label(payload)
+            ),
+            None => format!("{}::{}", enum_name, variant_name),
+        },
         Pattern::EmptyList => "[]".to_string(),
         Pattern::ListCons(head, tail) => {
             format!(
@@ -552,6 +566,274 @@ fn pattern_symbol_label(pattern: &Pattern) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    }
+}
+
+fn enum_variant_hover_info(
+    ast: &crate::ast::Program,
+    enum_name: &str,
+    variant_name: &str,
+) -> Option<String> {
+    let enum_decl = ast.declarations.iter().find_map(|decl| {
+        let enum_decl = enum_decl_from_top_decl(decl)?;
+        (enum_decl.name == enum_name).then_some(enum_decl)
+    })?;
+    let variant = enum_decl
+        .variants
+        .iter()
+        .find(|variant| variant.name == variant_name)?;
+
+    Some(match &variant.payload {
+        Some(payload) => format!(
+            "**{}::{}({})**\n\nPayload enum variant.",
+            enum_decl.name, variant.name, payload
+        ),
+        None => format!(
+            "**{}::{}**\n\nPayload-free enum variant.",
+            enum_decl.name, variant.name
+        ),
+    })
+}
+
+fn enum_hover_info(ast: &crate::ast::Program, word: &str) -> Option<String> {
+    if let Some(enum_decl) = ast.declarations.iter().find_map(|decl| {
+        let enum_decl = enum_decl_from_top_decl(decl)?;
+        (enum_decl.name == word).then_some(enum_decl)
+    }) {
+        return Some(format!(
+            "**enum {}**\n\nClosed enum with {} variants.",
+            enum_decl.name,
+            enum_decl.variants.len()
+        ));
+    }
+
+    let mut owners = ast.declarations.iter().filter_map(|decl| {
+        let enum_decl = enum_decl_from_top_decl(decl)?;
+        enum_decl
+            .variants
+            .iter()
+            .any(|variant| variant.name == word)
+            .then_some(enum_decl.name.as_str())
+    });
+    let owner = owners.next()?;
+    if owners.next().is_some() {
+        // Bare variant names are ambiguous by design. Qualified source such as
+        // `State::Ready` is resolved by the cursor-aware path below.
+        return None;
+    }
+    enum_variant_hover_info(ast, owner, word)
+}
+
+fn qualified_enum_variant_at_word(
+    line: &str,
+    word_start: usize,
+    word_end: usize,
+) -> Option<(String, String)> {
+    let chars = line.chars().collect::<Vec<_>>();
+    if word_end > chars.len()
+        || word_start < 2
+        || chars[word_start - 2] != ':'
+        || chars[word_start - 1] != ':'
+    {
+        return None;
+    }
+
+    let enum_end = word_start - 2;
+    let mut enum_start = enum_end;
+    while enum_start > 0
+        && (chars[enum_start - 1].is_alphanumeric() || chars[enum_start - 1] == '_')
+    {
+        enum_start -= 1;
+    }
+    if enum_start == enum_end {
+        return None;
+    }
+
+    Some((
+        chars[enum_start..enum_end].iter().collect(),
+        chars[word_start..word_end].iter().collect(),
+    ))
+}
+
+#[derive(Debug)]
+struct SourceToken<'a> {
+    text: &'a str,
+    offset: usize,
+}
+
+fn source_tokens(text: &str) -> Vec<SourceToken<'_>> {
+    let bytes = text.as_bytes();
+    let mut tokens = Vec::new();
+    let mut offset = 0;
+
+    while offset < bytes.len() {
+        if bytes[offset].is_ascii_whitespace() {
+            offset += 1;
+            continue;
+        }
+        if bytes[offset..].starts_with(b"//") {
+            offset += 2;
+            while offset < bytes.len() && bytes[offset] != b'\n' {
+                offset += 1;
+            }
+            continue;
+        }
+        if bytes[offset..].starts_with(b"/*") {
+            offset += 2;
+            while offset + 1 < bytes.len() && !bytes[offset..].starts_with(b"*/") {
+                offset += 1;
+            }
+            offset = (offset + 2).min(bytes.len());
+            continue;
+        }
+        if matches!(bytes[offset], b'"' | b'\'') {
+            let quote = bytes[offset];
+            offset += 1;
+            while offset < bytes.len() {
+                if bytes[offset] == b'\\' {
+                    offset = (offset + 2).min(bytes.len());
+                } else if bytes[offset] == quote {
+                    offset += 1;
+                    break;
+                } else {
+                    offset += 1;
+                }
+            }
+            continue;
+        }
+
+        let start = offset;
+        if bytes[offset].is_ascii_alphabetic() || bytes[offset] == b'_' {
+            offset += 1;
+            while offset < bytes.len()
+                && (bytes[offset].is_ascii_alphanumeric() || bytes[offset] == b'_')
+            {
+                offset += 1;
+            }
+        } else if bytes[offset].is_ascii() {
+            offset += 1;
+        } else {
+            offset += text[offset..]
+                .chars()
+                .next()
+                .expect("offset should stay on a UTF-8 boundary")
+                .len_utf8();
+        }
+        tokens.push(SourceToken {
+            text: &text[start..offset],
+            offset: start,
+        });
+    }
+
+    tokens
+}
+
+fn source_range(text: &str, offset: usize, length: usize) -> Range {
+    let prefix = &text[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
+    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+    let character = text[line_start..offset].encode_utf16().count() as u32;
+    let end_character = character + text[offset..offset + length].encode_utf16().count() as u32;
+    Range::new(
+        Position::new(line, character),
+        Position::new(line, end_character),
+    )
+}
+
+fn enum_variant_definition_range(text: &str, enum_name: &str, variant_name: &str) -> Option<Range> {
+    let tokens = source_tokens(text);
+    let mut cursor = 0;
+
+    while cursor < tokens.len() {
+        if tokens[cursor].text != "enum"
+            || tokens.get(cursor + 1).map(|token| token.text) != Some(enum_name)
+        {
+            cursor += 1;
+            continue;
+        }
+
+        cursor += 2;
+        while cursor < tokens.len() && tokens[cursor].text != "{" {
+            cursor += 1;
+        }
+        if cursor == tokens.len() {
+            return None;
+        }
+
+        cursor += 1;
+        let mut paren_depth = 0_u32;
+        while cursor < tokens.len() {
+            let token = &tokens[cursor];
+            match token.text {
+                "(" => paren_depth += 1,
+                ")" => paren_depth = paren_depth.saturating_sub(1),
+                "}" if paren_depth == 0 => break,
+                _ if paren_depth == 0 && token.text == variant_name => {
+                    return Some(source_range(text, token.offset, token.text.len()));
+                }
+                _ => {}
+            }
+            cursor += 1;
+        }
+        return None;
+    }
+
+    None
+}
+
+fn enum_variant_symbol_at_position(
+    ast: &crate::ast::Program,
+    text: &str,
+    line: &str,
+    line_index: usize,
+    word_start: usize,
+    word_end: usize,
+) -> Option<(String, String)> {
+    if let Some((enum_name, variant_name)) =
+        qualified_enum_variant_at_word(line, word_start, word_end)
+    {
+        return enum_variant_hover_info(ast, &enum_name, &variant_name)
+            .is_some()
+            .then_some((enum_name, variant_name));
+    }
+
+    ast.declarations.iter().find_map(|decl| {
+        let enum_decl = enum_decl_from_top_decl(decl)?;
+        enum_decl.variants.iter().find_map(|variant| {
+            let range = enum_variant_definition_range(text, &enum_decl.name, &variant.name)?;
+            (range.start.line as usize == line_index
+                && (word_start as u32) >= range.start.character
+                && (word_start as u32) < range.end.character)
+                .then(|| (enum_decl.name.clone(), variant.name.clone()))
+        })
+    })
+}
+
+fn qualified_enum_variant_reference_ranges(
+    text: &str,
+    enum_name: &str,
+    variant_name: &str,
+) -> Vec<Range> {
+    source_tokens(text)
+        .windows(4)
+        .filter(|tokens| {
+            tokens[0].text == enum_name
+                && tokens[1].text == ":"
+                && tokens[2].text == ":"
+                && tokens[3].text == variant_name
+        })
+        .map(|tokens| source_range(text, tokens[3].offset, tokens[3].text.len()))
+        .collect()
+}
+
+fn enum_decl_from_top_decl(decl: &crate::ast::TopDecl) -> Option<&crate::ast::EnumDecl> {
+    match decl {
+        crate::ast::TopDecl::Enum(enum_decl) => Some(enum_decl),
+        crate::ast::TopDecl::Export(export) => match export.item.as_ref() {
+            crate::ast::TopDecl::Enum(enum_decl) => Some(enum_decl),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -770,7 +1052,7 @@ impl RestrictLanguageServer {
 
     fn find_definition_at_position(
         uri: &Url,
-        _ast: &crate::ast::Program,
+        ast: &crate::ast::Program,
         text: &str,
         position: &Position,
     ) -> Option<Location> {
@@ -793,10 +1075,20 @@ impl RestrictLanguageServer {
         let (start, end) = Self::extract_word_at_position(target_line, char_idx)?;
         let word = &target_line[start..end];
 
-        // Search for function definitions
+        if let Some((enum_name, variant_name)) =
+            enum_variant_symbol_at_position(ast, text, target_line, target_line_idx, start, end)
+        {
+            // Imported definitions do not have a range in the current document.
+            // Return no location instead of incorrectly jumping to a use site.
+            return enum_variant_definition_range(text, &enum_name, &variant_name)
+                .map(|range| Location::new(uri.clone(), range));
+        }
+
+        // Search for function and type definitions.
         for (line_idx, line) in lines.iter().enumerate() {
-            if line.contains("fun ") && line.contains(word) {
-                // Simple heuristic: if the line contains "fun" and our word
+            if (line.contains("fun ") || line.contains("record ") || line.contains("enum "))
+                && line.contains(word)
+            {
                 if let Some(pos) = line.find(word) {
                     return Some(Location::new(
                         uri.clone(),
@@ -814,7 +1106,7 @@ impl RestrictLanguageServer {
 
     fn get_hover_info(
         &self,
-        _ast: &crate::ast::Program,
+        ast: &crate::ast::Program,
         text: &str,
         position: &Position,
     ) -> Option<String> {
@@ -835,6 +1127,17 @@ impl RestrictLanguageServer {
         // Extract word at cursor position
         if let Some((start, end)) = Self::extract_word_at_position(target_line, char_idx) {
             let word = &target_line[start..end];
+            let enum_variant = enum_variant_symbol_at_position(
+                ast,
+                text,
+                target_line,
+                target_line_idx,
+                start,
+                end,
+            )
+            .and_then(|(enum_name, variant_name)| {
+                enum_variant_hover_info(ast, &enum_name, &variant_name)
+            });
 
             // Provide hover information based on word
             match word {
@@ -847,6 +1150,10 @@ impl RestrictLanguageServer {
                 ),
                 "mut" => Some(
                     "**mut** - Mutable variable modifier\n\nMakes a variable mutable.".to_string(),
+                ),
+                "enum" => Some(
+                    "**enum** - Closed sum type definition\n\nDefines qualified variants with zero or one payload."
+                        .to_string(),
                 ),
                 "then" => Some(
                     "**then** - Conditional expression\n\nConditional branch keyword.".to_string(),
@@ -878,7 +1185,9 @@ impl RestrictLanguageServer {
                         "list_head" => Some("**fun list_head: <T>(list: List<T>) -> Option<T>**\n\nReturns the first element of a list.".to_string()),
                         "list_tail" => Some("**fun list_tail: <T>(list: List<T>) -> Option<List<T>>**\n\nReturns the tail of a list.".to_string()),
                         "option_unwrap_or" => Some("**fun option_unwrap_or: <T>(opt: Option<T>, default: T) -> T**\n\nUnwraps an Option or returns a default value.".to_string()),
-                        _ => Some(format!("Symbol: **{}**", word)),
+                        _ => enum_variant
+                            .or_else(|| enum_hover_info(ast, word))
+                            .or_else(|| Some(format!("Symbol: **{}**", word))),
                     }
                 }
             }
@@ -894,6 +1203,35 @@ impl RestrictLanguageServer {
 
         // Extract symbols from AST
         for decl in &ast.declarations {
+            if let Some(enum_decl) = enum_decl_from_top_decl(decl) {
+                for (line_idx, line) in lines.iter().enumerate() {
+                    if line.contains(&format!("enum {}", enum_decl.name)) {
+                        let start_pos = line.find(&enum_decl.name).unwrap_or(0);
+                        symbols.push(document_symbol(
+                            enum_decl.name.clone(),
+                            Some(format!(
+                                "Closed enum with {} variants",
+                                enum_decl.variants.len()
+                            )),
+                            SymbolKind::ENUM,
+                            Range::new(
+                                Position::new(line_idx as u32, 0),
+                                Position::new(line_idx as u32, line.len() as u32),
+                            ),
+                            Range::new(
+                                Position::new(line_idx as u32, start_pos as u32),
+                                Position::new(
+                                    line_idx as u32,
+                                    (start_pos + enum_decl.name.len()) as u32,
+                                ),
+                            ),
+                        ));
+                        break;
+                    }
+                }
+                continue;
+            }
+
             match decl {
                 crate::ast::TopDecl::Function(func) => {
                     // Find the function in the text to get its position
@@ -1007,7 +1345,7 @@ impl RestrictLanguageServer {
 
     fn find_references_at_position(
         uri: &Url,
-        _ast: &crate::ast::Program,
+        ast: &crate::ast::Program,
         text: &str,
         position: &Position,
         include_declaration: bool,
@@ -1030,6 +1368,28 @@ impl RestrictLanguageServer {
         // Extract word at cursor position
         if let Some((start, end)) = Self::extract_word_at_position(target_line, char_idx) {
             let word = &target_line[start..end];
+
+            if let Some((enum_name, variant_name)) =
+                enum_variant_symbol_at_position(ast, text, target_line, target_line_idx, start, end)
+            {
+                references.extend(
+                    qualified_enum_variant_reference_ranges(text, &enum_name, &variant_name)
+                        .into_iter()
+                        .map(|range| Location::new(uri.clone(), range)),
+                );
+                if include_declaration {
+                    if let Some(range) =
+                        enum_variant_definition_range(text, &enum_name, &variant_name)
+                    {
+                        references.push(Location::new(uri.clone(), range));
+                    }
+                }
+                references.sort_by_key(|location| {
+                    (location.range.start.line, location.range.start.character)
+                });
+                references.dedup_by(|left, right| left.range == right.range);
+                return references;
+            }
 
             // Search for all occurrences of this word
             for (line_idx, line) in lines.iter().enumerate() {
@@ -1142,6 +1502,7 @@ impl RestrictLanguageServer {
             ("clone", SEMANTIC_TOKEN_KEYWORD),
             ("freeze", SEMANTIC_TOKEN_KEYWORD),
             ("record", SEMANTIC_TOKEN_KEYWORD),
+            ("enum", SEMANTIC_TOKEN_KEYWORD),
             ("true", SEMANTIC_TOKEN_KEYWORD),
             ("false", SEMANTIC_TOKEN_KEYWORD),
             ("Some", SEMANTIC_TOKEN_KEYWORD),
@@ -1491,6 +1852,7 @@ fun main: () -> Int32 = {
         assert!(joined_details.contains("fun print_int: (n: Int32) -> ()"));
         assert!(joined_details.contains("fun list_is_empty: <T>(list: List<T>) -> Boolean"));
         assert!(joined_details.contains("fun assert: (condition: Boolean, message: String) -> ()"));
+        assert!(items.iter().any(|item| item.label == "enum"));
 
         for item in &items {
             assert_ne!(item.label, "let");
@@ -1527,6 +1889,11 @@ fun main: () -> Int32 = {
             Box::new(Pattern::Ident("head".to_string())),
             Box::new(Pattern::Ident("tail".to_string())),
         );
+        let enum_variant = Pattern::EnumVariant {
+            enum_name: "ParseError".to_string(),
+            variant_name: "Message".to_string(),
+            payload: Some(Box::new(Pattern::Ident("message".to_string()))),
+        };
 
         assert_eq!(pattern_symbol_label(&record), "Point { x, y }");
         assert_eq!(
@@ -1534,11 +1901,16 @@ fun main: () -> Int32 = {
             "User { role: \"admin\", name, ...profile }"
         );
         assert_eq!(pattern_symbol_label(&list_cons), "[head | tail]");
+        assert_eq!(
+            pattern_symbol_label(&enum_variant),
+            "ParseError::Message(message)"
+        );
 
         for label in [
             pattern_symbol_label(&record),
             pattern_symbol_label(&spread),
             pattern_symbol_label(&list_cons),
+            pattern_symbol_label(&enum_variant),
         ] {
             assert!(!label.contains("complex_pattern"));
             assert!(!label.contains("tuple"));
@@ -1570,6 +1942,116 @@ fun main: () -> Int32 = {
                 ..symbol.selection_range.end.character as usize];
             assert_eq!(selected, symbol.name);
         }
+    }
+
+    #[test]
+    fn exported_enum_symbols_hover_and_variant_definitions_are_available() {
+        let text = r#"pub enum ParseError {
+    Empty
+    Message(String)
+}
+
+fun message_error: (message: String) -> ParseError = {
+    message |> ParseError::Message
+}
+"#;
+        let ast = parse_lsp_test_program(text);
+
+        let symbols = RestrictLanguageServer::extract_document_symbols(&ast, text);
+        let enum_symbol = symbols
+            .iter()
+            .find(|symbol| symbol.name == "ParseError")
+            .expect("exported enum should have a document symbol");
+        assert_eq!(enum_symbol.kind, SymbolKind::ENUM);
+        assert_eq!(
+            enum_symbol.detail.as_deref(),
+            Some("Closed enum with 2 variants")
+        );
+
+        assert_eq!(
+            enum_hover_info(&ast, "ParseError").as_deref(),
+            Some("**enum ParseError**\n\nClosed enum with 2 variants.")
+        );
+        assert_eq!(
+            enum_hover_info(&ast, "Message").as_deref(),
+            Some("**ParseError::Message(String)**\n\nPayload enum variant.")
+        );
+
+        let uri = Url::parse("file:///tmp/restrict/enum.rl").unwrap();
+        let reference = position_of_word(text, "Message", 1);
+        let definition =
+            RestrictLanguageServer::find_definition_at_position(&uri, &ast, text, &reference)
+                .expect("qualified enum variant should resolve to its declaration");
+        assert_eq!(definition.uri, uri);
+        assert_eq!(definition.range.start, Position::new(2, 4));
+        assert_eq!(definition.range.end, Position::new(2, 11));
+    }
+
+    #[test]
+    fn qualified_enum_lsp_resolution_keeps_same_named_variants_distinct() {
+        let text = r#"enum A {
+    Ready
+}
+
+enum B {
+    // Ready in this comment is not a declaration or reference.
+    Ready
+}
+
+fun from_a: () -> A = { () A::Ready }
+fun from_b: () -> B = { () B::Ready }
+fun from_b_again: () -> B = { () B::Ready }
+"#;
+        let ast = parse_lsp_test_program(text);
+
+        assert!(
+            enum_hover_info(&ast, "Ready").is_none(),
+            "a bare shared variant name must not pick the first enum"
+        );
+        assert_eq!(
+            enum_variant_hover_info(&ast, "B", "Ready").as_deref(),
+            Some("**B::Ready**\n\nPayload-free enum variant.")
+        );
+
+        let uri = Url::parse("file:///tmp/restrict/shared-variant.rl").unwrap();
+        let reference = position_of_word(text, "Ready", 4);
+        let definition =
+            RestrictLanguageServer::find_definition_at_position(&uri, &ast, text, &reference)
+                .expect("B::Ready should resolve to B's declaration");
+        assert_eq!(definition.range.start, Position::new(6, 4));
+        assert_eq!(definition.range.end, Position::new(6, 9));
+
+        let references =
+            RestrictLanguageServer::find_references_at_position(&uri, &ast, text, &reference, true);
+        assert_eq!(
+            references
+                .iter()
+                .map(|location| location.range.start.line)
+                .collect::<Vec<_>>(),
+            vec![6, 10, 11]
+        );
+    }
+
+    #[test]
+    fn imported_enum_definition_does_not_fall_back_to_a_current_file_use() {
+        let resolved_source = r#"enum Status { Ready }
+fun current: () -> Status = { () Status::Ready }
+"#;
+        let ast = parse_lsp_test_program(resolved_source);
+        let current_text = "fun current: () -> Status = { () Status::Ready }\n";
+        let uri = Url::parse("file:///tmp/restrict/import-user.rl").unwrap();
+        let reference = position_of_word(current_text, "Ready", 0);
+
+        assert!(
+            RestrictLanguageServer::find_definition_at_position(
+                &uri,
+                &ast,
+                current_text,
+                &reference,
+            )
+            .is_none(),
+            "an imported enum needs a cross-document location, not its current-file use site"
+        );
     }
 
     #[test]
@@ -1904,6 +2386,27 @@ impl LanguageServer for RestrictLanguageServer {
             if let Ok(ast) = self.parse_and_resolve_program(uri, text) {
                 // Add symbols from current document
                 for decl in &ast.declarations {
+                    if let Some(enum_decl) = enum_decl_from_top_decl(decl) {
+                        if crate::module::is_internal_module_name(&enum_decl.name) {
+                            continue;
+                        }
+                        completions.push(CompletionItem::new_simple(
+                            enum_decl.name.clone(),
+                            format!("Closed enum with {} variants", enum_decl.variants.len()),
+                        ));
+                        for variant in &enum_decl.variants {
+                            let qualified = format!("{}::{}", enum_decl.name, variant.name);
+                            let detail = match &variant.payload {
+                                Some(payload) => {
+                                    format!("Enum constructor: {} -> {}", payload, enum_decl.name)
+                                }
+                                None => format!("Payload-free {} constructor", enum_decl.name),
+                            };
+                            completions.push(CompletionItem::new_simple(qualified, detail));
+                        }
+                        continue;
+                    }
+
                     match decl {
                         crate::ast::TopDecl::Function(func) => {
                             if crate::module::is_internal_module_name(&func.name) {

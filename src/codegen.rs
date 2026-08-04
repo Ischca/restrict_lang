@@ -166,6 +166,9 @@ pub struct WasmCodeGen {
     captured_vars: Vec<String>,
     /// Record definitions: record_name -> fields
     records: HashMap<String, Vec<(String, Type)>>,
+    /// Closed enum definitions in declaration order. The vector index is the
+    /// compiler-internal runtime tag for a variant.
+    enums: HashMap<String, Vec<EnumVariantDecl>>,
     /// Record generic type parameter names.
     record_type_params: HashMap<String, Vec<String>>,
     /// Record field offsets: record_name -> field_name -> offset
@@ -279,6 +282,7 @@ impl WasmCodeGen {
             in_lambda_with_captures: false,
             captured_vars: Vec::new(),
             records: HashMap::new(),
+            enums: HashMap::new(),
             record_type_params: HashMap::new(),
             record_field_offsets: HashMap::new(),
             var_types: HashMap::new(),
@@ -406,10 +410,14 @@ impl WasmCodeGen {
         // Generate temporal cleanup functions
         self.generate_temporal_cleanup_functions()?;
 
-        // Collect record definitions first
+        // Collect type definitions first. Function signatures and expression
+        // lowering both need to know that records and enums use the internal
+        // pointer ABI.
         for decl in &program.declarations {
-            if let TopDecl::Record(record) = Self::decl_codegen_item(decl) {
-                self.register_record_definition(record)?;
+            match Self::decl_codegen_item(decl) {
+                TopDecl::Record(record) => self.register_record_definition(record)?,
+                TopDecl::Enum(enum_decl) => self.register_enum_definition(enum_decl)?,
+                _ => {}
             }
         }
         for decl in &program.declarations {
@@ -445,6 +453,7 @@ impl WasmCodeGen {
                 TopDecl::Record(record) => {
                     self.register_record_methods(record)?;
                 }
+                TopDecl::Enum(_) => {}
                 TopDecl::Impl(impl_block) => {
                     self.register_impl_methods(impl_block)?;
                 }
@@ -470,6 +479,7 @@ impl WasmCodeGen {
                 TopDecl::Record(record) => {
                     self.generate_record_methods(record)?;
                 }
+                TopDecl::Enum(_) => {}
                 TopDecl::Impl(impl_block) => {
                     self.generate_impl_methods(impl_block)?;
                 }
@@ -988,6 +998,7 @@ impl WasmCodeGen {
             }
             TypedType::String
             | TypedType::Record { .. }
+            | TypedType::Enum { .. }
             | TypedType::Option(_)
             | TypedType::Result(_, _)
             | TypedType::List(_)
@@ -4419,6 +4430,9 @@ impl WasmCodeGen {
                 TopDecl::Record(_record) => {
                     // Records don't have methods in the current AST
                 }
+                TopDecl::Enum(_) => {
+                    // Enum declarations contain type metadata only.
+                }
                 TopDecl::Impl(impl_block) => {
                     for func in &impl_block.functions {
                         self.collect_strings_from_block(&func.body)?;
@@ -4632,6 +4646,12 @@ impl WasmCodeGen {
             Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
                 self.collect_strings_from_pattern(inner)?;
             }
+            Pattern::EnumVariant {
+                payload: Some(inner),
+                ..
+            } => {
+                self.collect_strings_from_pattern(inner)?;
+            }
             Pattern::ListCons(head, tail) => {
                 self.collect_strings_from_pattern(head)?;
                 self.collect_strings_from_pattern(tail)?;
@@ -4645,6 +4665,7 @@ impl WasmCodeGen {
             | Pattern::Ident(_)
             | Pattern::Literal(_)
             | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
             | Pattern::EmptyList => {}
         }
 
@@ -4766,6 +4787,7 @@ impl WasmCodeGen {
                     ))
                 }
             }
+            TypedType::Enum { name } => Ok(Type::Named(name.clone())),
             TypedType::Function {
                 params,
                 return_type,
@@ -5006,6 +5028,16 @@ impl WasmCodeGen {
                 let payload_ty = self.variant_payload_type(value_ty, "Err").cloned();
                 self.bind_pattern_source_types_for_signature(inner, payload_ty.as_ref());
             }
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload: Some(inner),
+            } => {
+                let payload_ty = self
+                    .enum_variant_payload_type(enum_name, variant_name)
+                    .cloned();
+                self.bind_pattern_source_types_for_signature(inner, payload_ty.as_ref());
+            }
             Pattern::ListCons(head, tail) => {
                 let element_ty = match value_ty {
                     Some(Type::Generic(name, params)) if name == "List" => params.first().cloned(),
@@ -5023,7 +5055,11 @@ impl WasmCodeGen {
                     self.bind_pattern_source_types_for_signature(pattern, element_ty.as_ref());
                 }
             }
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::None | Pattern::EmptyList => {}
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
+            | Pattern::EmptyList => {}
         }
     }
 
@@ -5163,6 +5199,57 @@ impl WasmCodeGen {
             .insert(record.name.clone(), field_offsets);
 
         Ok(())
+    }
+
+    fn register_enum_definition(&mut self, enum_decl: &EnumDecl) -> Result<(), CodeGenError> {
+        if self.enums.contains_key(&enum_decl.name) {
+            return Err(CodeGenError::UnsupportedType(format!(
+                "duplicate enum definition '{}' reached code generation",
+                enum_decl.name
+            )));
+        }
+
+        self.enums
+            .insert(enum_decl.name.clone(), enum_decl.variants.clone());
+        Ok(())
+    }
+
+    fn enum_variant_definition(
+        &self,
+        path: &VariantPath,
+    ) -> Result<(i32, Option<Type>), CodeGenError> {
+        let variants = self.enums.get(&path.enum_name).ok_or_else(|| {
+            CodeGenError::UnsupportedType(format!(
+                "unknown enum type '{}' while lowering '{}::{}'",
+                path.enum_name, path.enum_name, path.variant_name
+            ))
+        })?;
+        let (tag, variant) = variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| variant.name == path.variant_name)
+            .ok_or_else(|| {
+                CodeGenError::UnsupportedType(format!(
+                    "unknown variant '{}::{}'",
+                    path.enum_name, path.variant_name
+                ))
+            })?;
+        let tag = i32::try_from(tag).map_err(|_| {
+            CodeGenError::UnsupportedFeature(format!(
+                "enum '{}' has too many variants for the internal tag representation",
+                path.enum_name
+            ))
+        })?;
+        Ok((tag, variant.payload.clone()))
+    }
+
+    fn enum_variant_payload_type(&self, enum_name: &str, variant_name: &str) -> Option<&Type> {
+        self.enums
+            .get(enum_name)?
+            .iter()
+            .find(|variant| variant.name == variant_name)?
+            .payload
+            .as_ref()
     }
 
     fn size_of_type(&self, ty: &Type) -> u32 {
@@ -5344,6 +5431,7 @@ impl WasmCodeGen {
                 "Float64" => Ok(WasmType::F64),
                 "String" => Ok(WasmType::I32), // String is a pointer
                 _ if self.records.contains_key(name) => Ok(WasmType::I32),
+                _ if self.enums.contains_key(name) => Ok(WasmType::I32),
                 _ => Err(CodeGenError::UnsupportedType(format!(
                     "unknown source type '{}' has no Wasm ABI{}",
                     name,
@@ -6950,6 +7038,7 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
+            | ExprKind::VariantRef(_)
             | ExprKind::None => None,
         }
     }
@@ -7648,6 +7737,7 @@ impl WasmCodeGen {
             | Pattern::Some(_)
             | Pattern::Ok(_)
             | Pattern::Err(_)
+            | Pattern::EnumVariant { .. }
             | Pattern::None
             | Pattern::EmptyList
             | Pattern::ListCons(_, _)
@@ -8082,6 +8172,12 @@ impl WasmCodeGen {
                 } else {
                     return Err(CodeGenError::UndefinedVariable(name.clone()));
                 }
+            }
+            ExprKind::VariantRef(path) => {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "enum constructor '{}::{}' is not a first-class value; invoke it with OSV call syntax",
+                    path.enum_name, path.variant_name
+                )));
             }
             ExprKind::Binary(binary) => {
                 self.generate_binary_expr(binary)?;
@@ -8751,6 +8847,7 @@ impl WasmCodeGen {
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
+            | ExprKind::VariantRef(_)
             | ExprKind::None => {}
         }
 
@@ -8879,12 +8976,22 @@ impl WasmCodeGen {
                     self.collect_pattern_bindings_for_codegen(tail, bound);
                 }
             }
+            Pattern::EnumVariant {
+                payload: Some(inner),
+                ..
+            } => {
+                self.collect_pattern_bindings_for_codegen(inner, bound);
+            }
             Pattern::ListExact(patterns) => {
                 for pattern in patterns {
                     self.collect_pattern_bindings_for_codegen(pattern, bound);
                 }
             }
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::None | Pattern::EmptyList => {}
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
+            | Pattern::EmptyList => {}
         }
     }
 
@@ -9217,7 +9324,60 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn generate_nullary_variant(&mut self, label: &str, tag: i32) -> Result<(), CodeGenError> {
+        self.output.push_str(&format!("    ;; {} literal\n", label));
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $match_tmp\n");
+        self.output.push_str("    local.get $match_tmp\n");
+        self.output
+            .push_str(&format!("    i32.const {} ;; {} tag\n", tag, label));
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $match_tmp\n");
+        Ok(())
+    }
+
+    fn generate_enum_variant_constructor(
+        &mut self,
+        path: &VariantPath,
+        argument: Option<&Expr>,
+    ) -> Result<(), CodeGenError> {
+        let (tag, payload_source) = self.enum_variant_definition(path)?;
+        let label = format!("{}::{}", path.enum_name, path.variant_name);
+
+        match (payload_source, argument) {
+            (None, None) => self.generate_nullary_variant(&label, tag),
+            (None, Some(_)) => Err(CodeGenError::UnsupportedFeature(format!(
+                "enum constructor '{}' takes unit and no payload",
+                label
+            ))),
+            (Some(_), None) => Err(CodeGenError::UnsupportedFeature(format!(
+                "enum constructor '{}' requires one payload",
+                label
+            ))),
+            (Some(payload_source), Some(argument)) => {
+                let payload_ty = self.convert_type(&payload_source)?;
+                self.generate_expr_with_expected_source(argument, &payload_source)?;
+                self.generate_variant_from_stack(&label, tag, payload_ty)
+            }
+        }
+    }
+
     fn generate_call_expr(&mut self, call: &CallExpr) -> Result<(), CodeGenError> {
+        if let ExprKind::VariantRef(path) = &call.function.kind {
+            let argument = match call.args.as_slice() {
+                [] => None,
+                [argument] => Some(argument.as_ref()),
+                _ => {
+                    return Err(CodeGenError::UnsupportedFeature(format!(
+                        "enum constructor '{}::{}' accepts at most one payload",
+                        path.enum_name, path.variant_name
+                    )));
+                }
+            };
+            return self.generate_enum_variant_constructor(path, argument);
+        }
+
         if let ExprKind::Ident(func_name) = &call.function.kind {
             if let Some(target_name) = self.lookup_generic_function_alias(func_name) {
                 match target_name.as_str() {
@@ -9561,6 +9721,28 @@ impl WasmCodeGen {
         expected_source: &Type,
     ) -> Result<(), CodeGenError> {
         if let ExprKind::Call(call) = &expr.kind {
+            if let ExprKind::VariantRef(path) = &call.function.kind {
+                let expected_enum =
+                    matches!(expected_source, Type::Named(name) if name == &path.enum_name);
+                if !expected_enum {
+                    return Err(CodeGenError::UnsupportedType(format!(
+                        "enum constructor '{}::{}' cannot produce expected type {}",
+                        path.enum_name, path.variant_name, expected_source
+                    )));
+                }
+                let argument = match call.args.as_slice() {
+                    [] => None,
+                    [argument] => Some(argument.as_ref()),
+                    _ => {
+                        return Err(CodeGenError::UnsupportedFeature(format!(
+                            "enum constructor '{}::{}' accepts at most one payload",
+                            path.enum_name, path.variant_name
+                        )));
+                    }
+                };
+                return self.generate_enum_variant_constructor(path, argument);
+            }
+
             if let ExprKind::Ident(func_name) = &call.function.kind {
                 if let Some(target_name) = self.lookup_generic_function_alias(func_name) {
                     match target_name.as_str() {
@@ -9583,6 +9765,20 @@ impl WasmCodeGen {
         }
 
         if let ExprKind::Pipe(pipe) = &expr.kind {
+            if let PipeTarget::Expr(target) = &pipe.target {
+                if let ExprKind::VariantRef(path) = &target.kind {
+                    let expected_enum =
+                        matches!(expected_source, Type::Named(name) if name == &path.enum_name);
+                    if !expected_enum {
+                        return Err(CodeGenError::UnsupportedType(format!(
+                            "enum constructor '{}::{}' cannot produce expected type {}",
+                            path.enum_name, path.variant_name, expected_source
+                        )));
+                    }
+                    return self.generate_enum_variant_constructor(path, Some(pipe.expr.as_ref()));
+                }
+            }
+
             let is_identity_target = match &pipe.target {
                 PipeTarget::Ident(name) => name == "identity",
                 PipeTarget::Expr(target) => {
@@ -11525,6 +11721,13 @@ impl WasmCodeGen {
                 Some(Type::Function(params, Box::new(return_ty)))
             }
             ExprKind::Call(call) => {
+                if let ExprKind::VariantRef(path) = &call.function.kind {
+                    return self
+                        .enums
+                        .contains_key(&path.enum_name)
+                        .then(|| Type::Named(path.enum_name.clone()));
+                }
+
                 if let ExprKind::Ident(name) = &call.function.kind {
                     let arg_exprs = call.args.iter().map(|arg| arg.as_ref()).collect::<Vec<_>>();
                     if self.can_infer_named_function_call_source_type(name, false) {
@@ -11573,6 +11776,13 @@ impl WasmCodeGen {
                     }
                 }
                 PipeTarget::Expr(target) => {
+                    if let ExprKind::VariantRef(path) = &target.kind {
+                        return self
+                            .enums
+                            .contains_key(&path.enum_name)
+                            .then(|| Type::Named(path.enum_name.clone()));
+                    }
+
                     if let ExprKind::Ident(name) = &target.kind {
                         if self.functions.contains_key(name) {
                             let args = [pipe.expr.as_ref()];
@@ -11977,6 +12187,13 @@ impl WasmCodeGen {
                 self.infer_binary_source_type_with_bindings(binary, bindings)
             }
             ExprKind::Call(call) => {
+                if let ExprKind::VariantRef(path) = &call.function.kind {
+                    return self
+                        .enums
+                        .contains_key(&path.enum_name)
+                        .then(|| Type::Named(path.enum_name.clone()));
+                }
+
                 if let ExprKind::Ident(name) = &call.function.kind {
                     let arg_exprs = call.args.iter().map(|arg| arg.as_ref()).collect::<Vec<_>>();
                     if self.can_infer_named_function_call_source_type(
@@ -12007,7 +12224,11 @@ impl WasmCodeGen {
                         self.infer_named_callable_return_source_type(name, &[arg_ty])
                     }
                     PipeTarget::Expr(target) => {
-                        if let ExprKind::Ident(name) = &target.kind {
+                        if let ExprKind::VariantRef(path) = &target.kind {
+                            self.enums
+                                .contains_key(&path.enum_name)
+                                .then(|| Type::Named(path.enum_name.clone()))
+                        } else if let ExprKind::Ident(name) = &target.kind {
                             self.infer_named_callable_return_source_type(name, &[arg_ty])
                         } else {
                             None
@@ -12112,6 +12333,17 @@ impl WasmCodeGen {
                     bindings,
                 );
             }
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload: Some(inner),
+            } => {
+                self.extend_pattern_source_bindings(
+                    inner,
+                    self.enum_variant_payload_type(enum_name, variant_name),
+                    bindings,
+                );
+            }
             Pattern::ListCons(head, tail) => {
                 let element_ty = self.list_element_source_type(value_ty);
                 self.extend_pattern_source_bindings(head, element_ty.as_ref(), bindings);
@@ -12127,7 +12359,11 @@ impl WasmCodeGen {
                     self.extend_pattern_source_bindings(item, element_ty.as_ref(), bindings);
                 }
             }
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::None | Pattern::EmptyList => {}
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
+            | Pattern::EmptyList => {}
             Pattern::Ident(_) => {}
         }
     }
@@ -12996,7 +13232,27 @@ impl WasmCodeGen {
                 let inner_wasm_ty = self.variant_payload_wasm_type(inner_source_ty)?;
                 self.collect_locals_from_pattern(inner, &inner_wasm_ty, inner_source_ty, locals)?;
             }
-            Pattern::Wildcard | Pattern::None | Pattern::EmptyList | Pattern::Literal(_) => {
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload: Some(inner),
+            } => {
+                let inner_source_ty = self
+                    .enum_variant_payload_type(enum_name, variant_name)
+                    .cloned();
+                let inner_wasm_ty = self.variant_payload_wasm_type(inner_source_ty.as_ref())?;
+                self.collect_locals_from_pattern(
+                    inner,
+                    &inner_wasm_ty,
+                    inner_source_ty.as_ref(),
+                    locals,
+                )?;
+            }
+            Pattern::Wildcard
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
+            | Pattern::EmptyList
+            | Pattern::Literal(_) => {
                 // These patterns don't bind variables
             }
         }
@@ -13403,6 +13659,7 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
+            | ExprKind::VariantRef(_)
             | ExprKind::None => {}
         }
 
@@ -13448,13 +13705,21 @@ impl WasmCodeGen {
             Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
                 Self::pattern_binds_name(inner, name)
             }
+            Pattern::EnumVariant {
+                payload: Some(inner),
+                ..
+            } => Self::pattern_binds_name(inner, name),
             Pattern::ListCons(head, tail) => {
                 Self::pattern_binds_name(head, name) || Self::pattern_binds_name(tail, name)
             }
             Pattern::ListExact(patterns) => patterns
                 .iter()
                 .any(|pattern| Self::pattern_binds_name(pattern, name)),
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::None | Pattern::EmptyList => false,
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
+            | Pattern::EmptyList => false,
         }
     }
 
@@ -13774,6 +14039,7 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
+            | ExprKind::VariantRef(_)
             | ExprKind::None => 0,
         }
     }
@@ -13804,6 +14070,10 @@ impl WasmCodeGen {
             Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
                 Self::max_record_tmp_depth_in_pattern(inner)
             }
+            Pattern::EnumVariant {
+                payload: Some(inner),
+                ..
+            } => Self::max_record_tmp_depth_in_pattern(inner),
             Pattern::ListCons(head, tail) => Self::max_record_tmp_depth_in_pattern(head)
                 .max(Self::max_record_tmp_depth_in_pattern(tail)),
             Pattern::ListExact(patterns) => patterns
@@ -13815,6 +14085,7 @@ impl WasmCodeGen {
             | Pattern::Ident(_)
             | Pattern::Literal(_)
             | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
             | Pattern::EmptyList => 0,
         }
     }
@@ -13959,7 +14230,20 @@ impl WasmCodeGen {
                 let payload_wasm_ty = self.variant_payload_wasm_type(payload_ty)?;
                 self.collect_pattern_binding_types(inner, payload_ty, payload_wasm_ty, bindings)?;
             }
-            Pattern::Wildcard | Pattern::None | Pattern::EmptyList | Pattern::Literal(_) => {}
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload: Some(inner),
+            } => {
+                let payload_ty = self.enum_variant_payload_type(enum_name, variant_name);
+                let payload_wasm_ty = self.variant_payload_wasm_type(payload_ty)?;
+                self.collect_pattern_binding_types(inner, payload_ty, payload_wasm_ty, bindings)?;
+            }
+            Pattern::Wildcard
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
+            | Pattern::EmptyList
+            | Pattern::Literal(_) => {}
         }
 
         Ok(())
@@ -14302,6 +14586,10 @@ impl WasmCodeGen {
                 }
             }
             PipeTarget::Expr(target_expr) => {
+                if let ExprKind::VariantRef(path) = &target_expr.kind {
+                    return self.generate_enum_variant_constructor(path, Some(&pipe.expr));
+                }
+
                 // This is a complex expression
                 match &target_expr.kind {
                     ExprKind::Ident(func_name) => {
@@ -15031,6 +15319,89 @@ impl WasmCodeGen {
                             .push_str("        i32.const 0 ;; tag mismatch\n");
                         self.output.push_str("      )\n");
                         self.output.push_str("    )\n");
+                    }
+                }
+            }
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload,
+            } => {
+                if !matches!(source_ty, Some(Type::Named(name)) if name == enum_name) {
+                    return Err(CodeGenError::UnsupportedType(format!(
+                        "enum pattern '{}::{}' requires scrutinee type '{}'",
+                        enum_name, variant_name, enum_name
+                    )));
+                }
+
+                let path = VariantPath {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                };
+                let (tag, payload_ty) = self.enum_variant_definition(&path)?;
+                let label = format!("{}::{}", enum_name, variant_name);
+
+                match (payload.as_deref(), payload_ty.as_ref()) {
+                    (None, None) => {
+                        self.output.push_str("    i32.load ;; load enum tag\n");
+                        self.output
+                            .push_str(&format!("    i32.const {} ;; {} tag\n", tag, label));
+                        self.output.push_str("    i32.eq\n");
+                    }
+                    (Some(_), None) => {
+                        return Err(CodeGenError::UnsupportedFeature(format!(
+                            "payload-free enum variant '{}' cannot bind a payload",
+                            label
+                        )));
+                    }
+                    (None, Some(_)) => {
+                        return Err(CodeGenError::UnsupportedFeature(format!(
+                            "payload enum variant '{}' requires a payload pattern",
+                            label
+                        )));
+                    }
+                    (Some(inner_pattern), Some(payload_ty)) => {
+                        self.output.push_str(
+                            "    local.tee $option_value_tmp ;; save for enum payload extraction\n",
+                        );
+                        self.output.push_str("    i32.load ;; load enum tag\n");
+                        self.output
+                            .push_str(&format!("    i32.const {} ;; {} tag\n", tag, label));
+                        self.output.push_str("    i32.eq\n");
+
+                        match inner_pattern {
+                            Pattern::Ident(name) => {
+                                bindings.push((
+                                    name.clone(),
+                                    self.variant_payload_load_code(
+                                        "option_value_tmp",
+                                        Some(payload_ty),
+                                        "        ",
+                                    )?,
+                                ));
+                            }
+                            Pattern::Wildcard => {}
+                            _ => {
+                                self.output.push_str("    (if (result i32)\n");
+                                self.output.push_str("      (then\n");
+                                self.emit_variant_payload_load(
+                                    "option_value_tmp",
+                                    Some(payload_ty),
+                                )?;
+                                let inner_bindings = self.generate_pattern_match(
+                                    inner_pattern,
+                                    Some(payload_ty),
+                                    "match_tmp",
+                                )?;
+                                bindings.extend(inner_bindings);
+                                self.output.push_str("      )\n");
+                                self.output.push_str("      (else\n");
+                                self.output
+                                    .push_str("        i32.const 0 ;; tag mismatch\n");
+                                self.output.push_str("      )\n");
+                                self.output.push_str("    )\n");
+                            }
+                        }
                     }
                 }
             }
@@ -16287,6 +16658,12 @@ impl WasmCodeGen {
                             record.name
                         ));
                     }
+                    TopDecl::Enum(enum_decl) => {
+                        self.output.push_str(&format!(
+                            "  ;; source export enum {} has no direct Wasm export\n",
+                            enum_decl.name
+                        ));
+                    }
                     TopDecl::Binding(binding) => {
                         let export_name = match &binding.pattern {
                             Pattern::Ident(name) => name.clone(),
@@ -16313,7 +16690,7 @@ impl WasmCodeGen {
                     }
                     _ => {
                         return Err(CodeGenError::UnsupportedFeature(
-                            "Only concrete function exports, source-level record exports, and constant global exports are supported by codegen".to_string(),
+                            "Only concrete function exports, source-level record or enum exports, and constant global exports are supported by codegen".to_string(),
                         ));
                     }
                 }

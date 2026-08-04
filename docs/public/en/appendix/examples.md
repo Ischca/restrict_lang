@@ -1,8 +1,9 @@
 # Examples
 
-These examples are small, self-contained programs that fit the v0.0.1 release
-surface. They avoid host stdin, filesystem access, networking, Temporal Affine
-Types, user-defined ADTs, and composite host exports.
+These examples are small, self-contained programs. Most fit the historical
+v0.0.1 release surface; the enum example is labeled as a current post-v0.0.1
+addition. They avoid host stdin, filesystem access, networking, Temporal Affine
+Types, and composite host exports.
 
 ## Scalar Pipeline
 
@@ -86,6 +87,47 @@ fun main: () -> Int32 = {
     (84, 2) checked_divide |> result_or_zero
 }
 ```
+
+## Custom Enum Error In Result
+
+This example requires the current post-v0.0.1 compiler. It uses a closed,
+non-generic, non-recursive enum, qualified OSV construction, and exhaustive
+matching. Running it prints `-2`.
+
+```restrict
+enum CustomError {
+    Empty
+    Invalid(String)
+}
+
+fun decode: (code: Int32) -> Result<Int32, CustomError> = {
+    code == 0 then {
+        Ok(42)
+    } else {
+        Err("invalid code" |> CustomError::Invalid)
+    }
+}
+
+fun collapse: (result: Result<Int32, CustomError>) -> Int32 = {
+    result match {
+        Ok(value) => { value }
+        Err(error) => {
+            error match {
+                CustomError::Empty => { -1 }
+                CustomError::Invalid(message) => { -2 }
+            }
+        }
+    }
+}
+
+fun main: () -> () = {
+    1 |> decode |> collapse |> print_int
+}
+```
+
+`pub enum` can expose the enum namespace to another Restrict source module, but
+there is no direct host enum ABI. Generic and recursive enums and postfix `?`
+propagation remain future work.
 
 ## Lambda Context
 

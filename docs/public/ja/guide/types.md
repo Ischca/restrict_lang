@@ -1,6 +1,6 @@
 # 型システム
 
-Restrict Languageのv0.0.1で公開ドキュメントに載せる型は、仕様で現在サポートされる構文に合わせます。基本は静的型付け、アフィン型、OSV呼び出し、明示的なレコード型です。
+Restrict Languageの型は、仕様で現在サポートされる構文に合わせて説明します。基本は静的型付け、アフィン型、OSV呼び出し、明示的なレコード型です。v0.0.1公開後に追加された閉じたユーザー定義enumは、履歴上のv0.0.1範囲と区別して示します。
 
 ## 基本型
 
@@ -97,6 +97,36 @@ fun result_or_zero: (result: Result<Int32, String>) -> Int32 = {
 }
 ```
 
+## ユーザー定義enum（post-v0.0.1）
+
+現在のcompilerでは、閉じたタグ付き和としてユーザー定義enumを宣言できます。宣言は非ジェネリックかつ非再帰で、各バリアントのpayloadは0個または1個です。
+
+```restrict
+enum DecodeError {
+    Empty
+    Invalid(String)
+}
+
+fun reject: (message: String) -> Result<Int32, DecodeError> = {
+    Err(message |> DecodeError::Invalid)
+}
+
+fun error_code: (error: DecodeError) -> Int32 = {
+    error match {
+        DecodeError::Empty => { 1 }
+        DecodeError::Invalid(message) => { 2 }
+    }
+}
+```
+
+バリアントは`DecodeError::Invalid`のように必ずenum名で修飾します。payloadなしのバリアントは`() DecodeError::Empty`、payloadありのバリアントは`message |> DecodeError::Invalid`のようにOSV語順で構築します。`match`はenumの全バリアントを網羅する必要があります。
+
+enum値がCopyになるのは、すべてのpayload型がCopyの場合だけです。アフィンなpayloadを構築するとその値は移動し、enumを`match`するとscrutineeは通常のアフィン規則に従って1回消費されます。
+
+この初期範囲ではenum値に`==`と`!=`は定義しません。内部の割り当てアドレスを誤って比較しないようcompilerがenumの等価比較を拒否するため、修飾されたバリアントを`match`してください。
+
+`pub enum`は別のRestrictソースモジュールからimportできる型名前空間を公開しますが、直接のhost-visible WebAssembly enum ABIは提供しません。`Result<T, DecodeError>`のエラー伝播は明示的な`match`で行い、`?`演算子はまだありません。
+
 ## レコード型
 
 関連する値は`record`でまとめます。フィールド定義とレコードリテラルのどちらも、フィールド名の後に`:`を置きます。
@@ -159,16 +189,20 @@ fun main: () -> Int32 = {
 }
 ```
 
-## v0.0.1の範囲外
+## 現在の範囲外
 
 次の項目は設計または実装が進行中であり、公開ガイドでは現在の実行可能なRestrictコードとして扱いません。
 
 - TATと時間スコープ付きリソース管理
 - 借用スライスや参照型中心のAPI
-- ユーザー定義の列挙型宣言、トレイト、関連型
+- ジェネリックenum、再帰enum、複数の直接payloadを持つバリアント
+- ユーザー定義enumのhost-visible WebAssembly ABIと`?`演算子
+- トレイトと関連型
 - 旧来のRust風コレクションAPIやパス構文
 - 文字列インポート、インポート別名、パッケージ単位の標準ライブラリ集約
 
+ユーザー定義enumそのものはv0.0.1公開時点では範囲外でしたが、現在のpost-v0.0.1 compilerでは前節の閉じた範囲を利用できます。
+
 ## まとめ
 
-v0.0.1の型システムでは、現在の構文で表せる基本型、ジェネリック型、レコード型、関数型を中心に書きます。例では常に`val`または`mut val`を使い、関数呼び出しは`value |> function`または`(a, b) function`のOSV形式に統一します。
+現在の型システムでは、基本型、組み込みジェネリック型、レコード型、関数型に加え、制約されたユーザー定義enumを利用できます。例では常に`val`または`mut val`を使い、関数呼び出しとenum構築は`value |> function`、`(a, b) function`、`() Type::Variant`などのOSV形式に統一します。

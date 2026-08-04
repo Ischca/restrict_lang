@@ -7,6 +7,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add end-to-end Warder builds and test checks for direct local path
+  dependencies. Manifest dependency keys bind compiler package namespaces,
+  package roots map to `src/lib.rl`, and submodules map below `src/`.
+- Record each local dependency's manifest version and deterministic source
+  SHA-256 in `restrict-lock.toml`.
+- Compile application and dependency sources from immutable staging snapshots,
+  serialize concurrent builds per project, and publish WAT, WASM, Cage, and
+  lock updates as one recoverable artifact transaction.
+- Diagnose missing, malformed, and source-stale direct-local lock files with
+  `warder doctor`.
 - Add the experimental, opt-in `--host-abi flat-record-v1` core-WebAssembly
   adapter for concrete non-temporal records with 1 to 16 direct scalar fields.
   Record parameters flatten in source field order and record results use
@@ -15,6 +25,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Compatibility
 
+- Keep registry, Git, foreign-WASM, and transitive package graphs outside the
+  direct-local v0.0.1 slice. Warder rejects them before writing placeholder
+  lock entries; source-level import aliases and re-exports remain unsupported.
 - Keep the published v0.0.1 host ABI scalar-only by default. Strings, nested
   records, collections, sum types, generics, temporal values, composite
   globals, WIT, and Component Model output remain outside `flat-record-v1`.
@@ -27,6 +40,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Reject duplicate exports, duplicate normalized virtual modules, ambiguous
   explicit search roots, and complete import cycles without poisoning the
   resolver cache after a failed attempt.
+- Reject overlapping application, package, and build roots; symlink escapes;
+  non-portable artifact names; and non-deterministic dependency manifest order.
 
 ## [0.0.1] - 2026-08-04
 

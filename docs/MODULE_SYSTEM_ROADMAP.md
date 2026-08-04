@@ -182,7 +182,7 @@ fun main: () -> Int = { 5 double }  // → 10
 
 **Status**: Basic structure implemented, some features incomplete
 
-### 5.1 warder.toml設計 ✅
+### 5.1 package.rl.toml設計 ✅
 - [x] パッケージメタデータ形式 (package.rl.toml)
 - [x] 依存関係記述
 - [x] バージョン指定
@@ -200,13 +200,21 @@ fun main: () -> Int = { 5 double }  // → 10
 
 ### 5.4 テスト ⚠️ PARTIAL
 - [x] `warder test` - テストファイル検出
+- [x] 直接ローカル依存関係を`warder build`と同じルートで型チェック
 - [ ] テストランナー実装 (スケルトンのみ)
 
 ### 5.5 依存関係管理 ⚠️ PARTIAL
-- [x] `warder add <dep>` - 依存追加 (基本構造)
-- [x] restrict-lock.toml - ロックファイル
-- [ ] 依存解決アルゴリズム (TODO)
-- [ ] レジストリからのフェッチ (TODO)
+- [x] `warder add <alias> --path <dir>` - 直接ローカル依存関係を追加
+- [x] マニフェスト別名をコンパイラのパッケージ名前空間へバインド
+- [x] `src/lib.rl`と`src/<module>.rl`のパッケージ解決
+- [x] 依存パッケージ内の修飾なしインポートをパッケージ内で解決
+- [x] restrict-lock.tomlへ依存先バージョンと決定的ソースSHA-256を記録
+- [x] アプリケーションと依存ソースを不変スナップショットからビルド
+- [x] 並行ビルドを直列化し、成果物とロックを復旧可能な一括更新で公開
+- [x] `warder doctor`で欠落・破損・ソース変更済みロックを検出
+- [x] 未対応依存関係をロック生成前に明示的に拒否
+- [ ] レジストリ、Git、外部WASM依存関係の解決
+- [ ] 推移的依存関係グラフの解決
 
 ### 5.6 Cage フォーマット ✅
 - [x] `warder wrap` - WASMをCageにパッケージ
@@ -231,7 +239,7 @@ fun main: () -> Int = { 5 double }  // → 10
 ### 中優先度 (Warder)
 | タスク | 説明 | 状態 |
 |--------|------|------|
-| 依存解決 | 完全な依存解決アルゴリズム | TODO |
+| 依存解決 | 直接ローカルは完了、非ローカルと推移的グラフは未実装 | PARTIAL |
 | テストランナー | 実際のテスト実行 | TODO |
 | Watch mode | ファイル監視ビルド | TODO |
 
@@ -260,8 +268,8 @@ fun main: () -> Int = { 5 double }  // → 10
 ### Phase 5 完了条件 🚧 IN PROGRESS
 - [x] `warder new/init` でプロジェクト作成
 - [x] `warder build/run` でビルド・実行
-- [ ] 依存関係の自動解決
-- [ ] サードパーティライブラリを作成・利用可能
+- [x] 直接ローカルのサードパーティライブラリを作成・利用可能
+- [ ] レジストリ、Git、外部WASM、推移的依存関係の自動解決
 
 ---
 

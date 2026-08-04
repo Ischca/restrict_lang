@@ -1,11 +1,18 @@
-use super::{find_project_root, print_error, print_info, print_success};
+use super::{find_project_root, load_manifest, print_error, print_info, print_success};
+use crate::dependencies::{resolve_local_dependencies, ResolvedLocalDependency};
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
 
 pub async fn test_project(filter: Option<String>) -> Result<()> {
     let root = find_project_root()?;
+    let root = std::fs::canonicalize(&root)
+        .with_context(|| format!("Failed to canonicalize project root {}", root.display()))?;
+    root.to_str()
+        .with_context(|| format!("Project root is not valid UTF-8: {:?}", root))?;
+    let manifest = load_manifest()?;
+    let (resolved_dependencies, _) = resolve_local_dependencies(&root, &manifest)?;
     let tests_dir = root.join("tests");
 
     if !tests_dir.exists() {
@@ -44,7 +51,7 @@ pub async fn test_project(filter: Option<String>) -> Result<()> {
     for test_file in test_files {
         print!("Testing {} ... ", test_file.display());
 
-        match run_test_file(&test_file).await {
+        match run_test_file(&root, &test_file, &resolved_dependencies).await {
             Ok(_) => {
                 println!("PASSED");
                 passed += 1;
@@ -68,13 +75,23 @@ pub async fn test_project(filter: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn run_test_file(test_file: &PathBuf) -> Result<()> {
+async fn run_test_file(
+    project_root: &Path,
+    test_file: &PathBuf,
+    resolved_dependencies: &[ResolvedLocalDependency],
+) -> Result<()> {
     // v0.0.1 does not have a dedicated test declaration syntax yet.
     // Treat test files as type-check smoke tests until the test DSL is designed.
     let compiler =
         std::env::var("RESTRICT_LANG_BIN").unwrap_or_else(|_| "restrict_lang".to_string());
-    let output = Command::new(compiler)
-        .arg("--check")
+    let mut command = Command::new(compiler);
+    command.current_dir(project_root).arg("--check");
+    for dependency in resolved_dependencies {
+        command
+            .arg("--module-root")
+            .arg(dependency.module_root_arg());
+    }
+    let output = command
         .arg(test_file)
         .output()
         .context("Failed to type-check test file")?;

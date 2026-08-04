@@ -59,6 +59,8 @@ fun main: () -> () = {
 /dist/
 /.restrict-cache/
 restrict-lock.toml
+.warder-build.lock
+.warder-build-transaction.toml
 
 # Editor
 .vscode/

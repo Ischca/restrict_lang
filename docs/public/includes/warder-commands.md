@@ -3,9 +3,8 @@
 warder new my-app
 cd my-app
 
-# Add dependencies
-warder add http
-warder add json@1.0
+# Add a direct local dependency
+warder add local_utils --path ../local-utils
 
 # Build and run
 warder build --release

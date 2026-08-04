@@ -1,4 +1,7 @@
-use super::{load_manifest, print_info, print_success, save_manifest};
+use super::{find_project_root, load_manifest, print_info, print_success, save_manifest};
+use crate::dependencies::{
+    resolve_local_dependencies, validate_dependency_alias, validate_local_dependency_layout,
+};
 use crate::manifest::Dependency;
 use anyhow::{bail, Result};
 use semver::VersionReq;
@@ -12,21 +15,50 @@ pub async fn add_dependency(
 ) -> Result<()> {
     let mut manifest = load_manifest()?;
 
+    let selected_sources = usize::from(path.is_some())
+        + usize::from(git.is_some())
+        + usize::from(wasm.is_some() || wit.is_some());
+    if selected_sources > 1 {
+        bail!("Choose exactly one dependency source; local --path cannot be combined with Git or foreign WASM options");
+    }
+    if wasm.is_some() != wit.is_some() {
+        bail!("Foreign WASM dependencies require both --wasm and --wit, and are not buildable in v0.0.1");
+    }
+
     // Parse dependency specification
     let (name, dependency) = if let Some(path) = path {
         // Local path dependency
+        if dep_spec.contains('@') {
+            bail!(
+                "Local path dependencies use the version from their package.rl.toml; pass an alias without @version"
+            );
+        }
         let name = extract_name_from_spec(dep_spec)?;
+        validate_dependency_alias(&name)?;
         (name, Dependency::Local { path })
     } else if let Some(git) = git {
-        // Git dependency
-        parse_git_dep(dep_spec, git)?
+        bail!(
+            "Git dependency '{}' ({}) is unsupported by warder add in v0.0.1; only direct local --path dependencies are currently buildable",
+            dep_spec,
+            git
+        )
     } else if let (Some(wasm), Some(wit)) = (wasm, wit) {
-        // Foreign WASM dependency
-        let name = extract_name_from_spec(dep_spec)?;
-        (name, Dependency::Foreign { wasm, wit })
+        bail!(
+            "Foreign WASM dependency '{}' ({}, {}) is unsupported by warder add; use warder wrap for experimental local evaluation",
+            dep_spec,
+            wasm,
+            wit
+        )
     } else {
-        // Registry dependency (name@version)
-        parse_registry_dep(dep_spec)?
+        let (_, requested) = parse_registry_dep(dep_spec)?;
+        let Dependency::Version(version) = requested else {
+            unreachable!();
+        };
+        bail!(
+            "Registry dependency '{}' ({}) is unsupported by warder add in v0.0.1; only direct local --path dependencies are currently buildable",
+            dep_spec,
+            version
+        )
     };
 
     // Check if dependency already exists
@@ -36,10 +68,13 @@ pub async fn add_dependency(
 
     // Add dependency
     manifest.add_dependency(name.clone(), dependency);
+    let root = find_project_root()?;
+    let (resolved_dependencies, _) = resolve_local_dependencies(&root, &manifest)?;
+    validate_local_dependency_layout(&root, &manifest, &resolved_dependencies)?;
     save_manifest(&manifest)?;
 
     print_success(&format!("Added dependency '{}'", name));
-    print_info("Run 'warder build' to download and build dependencies");
+    print_info("Run 'warder build' to compile the local dependency");
 
     Ok(())
 }
@@ -64,6 +99,7 @@ fn extract_name_from_spec(spec: &str) -> Result<String> {
     Ok(spec.split('@').next().unwrap_or(spec).to_string())
 }
 
+#[cfg(test)]
 fn parse_git_dep(spec: &str, git: String) -> Result<(String, Dependency)> {
     let (name, tag) = if let Some((name, tag)) = spec.split_once('@') {
         if tag.is_empty() {

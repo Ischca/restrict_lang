@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 
 mod cage;
 mod commands;
+mod dependencies;
 mod manifest;
 mod registry;
 mod vault;

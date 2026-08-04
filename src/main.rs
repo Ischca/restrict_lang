@@ -1,6 +1,6 @@
 use restrict_lang::diagnostics::{format_lex_error, format_parse_error};
 use restrict_lang::ir::builder::build_checked_ir;
-use restrict_lang::module::resolve_program_imports_for_file;
+use restrict_lang::module::resolve_program_imports_for_file_with_package_roots;
 use restrict_lang::{
     check_release_surface, lex, parse_program, HostAbiProfile, TypeChecker, WasmCodeGen,
 };
@@ -22,6 +22,8 @@ Options:
   --check       Check imports, types, and the selected host ABI surface without code generation
   --host-abi <PROFILE>
                 Select host ABI profile: v0.0.1 (default) or flat-record-v1
+  --module-root <ALIAS=DIR>
+                Mount a package src directory under a source import namespace; repeatable
   --ast         Show AST only (no compilation)
   --verbose     Show lexing, parsing, and codegen progress details
   --lsp         Start Language Server Protocol mode
@@ -45,6 +47,7 @@ async fn main() {
     let mut lsp_mode = false;
     let mut verbose = false;
     let mut host_abi_profile = HostAbiProfile::V001Scalar;
+    let mut package_roots = Vec::new();
     let mut source_file = String::new();
     let mut output_file = None;
 
@@ -72,6 +75,24 @@ async fn main() {
                         std::process::exit(1);
                     }
                 };
+                i += 1;
+            }
+            "--module-root" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("--module-root requires ALIAS=DIR");
+                    std::process::exit(1);
+                };
+                if value.starts_with("--") {
+                    eprintln!("--module-root requires ALIAS=DIR");
+                    std::process::exit(1);
+                }
+                match parse_module_root_spec(value) {
+                    Ok(root) => package_roots.push(root),
+                    Err(error) => {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                }
                 i += 1;
             }
             "--ast" => show_ast = true,
@@ -186,7 +207,11 @@ async fn main() {
         }
     };
 
-    let ast = match resolve_program_imports_for_file(ast, Path::new(filename)) {
+    let ast = match resolve_program_imports_for_file_with_package_roots(
+        ast,
+        Path::new(filename),
+        &package_roots,
+    ) {
         Ok(resolved) => resolved,
         Err(e) => {
             eprintln!("Import resolution error: {}", e);
@@ -263,4 +288,21 @@ async fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn parse_module_root_spec(value: &str) -> Result<(String, std::path::PathBuf), String> {
+    let Some((namespace, source_dir)) = value.split_once('=') else {
+        return Err(format!(
+            "Invalid --module-root '{}': expected ALIAS=DIR",
+            value
+        ));
+    };
+    if namespace.is_empty() || source_dir.is_empty() {
+        return Err(format!(
+            "Invalid --module-root '{}': alias and directory must both be non-empty",
+            value
+        ));
+    }
+
+    Ok((namespace.to_string(), source_dir.into()))
 }

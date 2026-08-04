@@ -32,6 +32,8 @@ output.txt
 *.bak
 *.swp
 *~
+.warder-build.lock
+.warder-build-transaction.toml
 
 # Local setup scripts
 setup-local.sh

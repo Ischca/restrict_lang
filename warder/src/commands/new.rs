@@ -48,6 +48,8 @@ fun test_example: () -> Boolean = {
 /dist/
 /.restrict-cache/
 restrict-lock.toml
+.warder-build.lock
+.warder-build-transaction.toml
 
 # Editor
 .vscode/
@@ -96,10 +98,10 @@ fn is_valid_project_name(name: &str) -> bool {
     }
 
     let first_char = name.chars().next().unwrap();
-    if !first_char.is_alphabetic() {
+    if !first_char.is_ascii_alphabetic() {
         return false;
     }
 
     name.chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }

@@ -176,6 +176,7 @@ fn cli_help_reports_release_usage_on_stdout() {
     for option in [
         "--version",
         "--check",
+        "--module-root",
         "--ast",
         "--verbose",
         "--lsp",
@@ -1615,4 +1616,187 @@ export fun release_identity_score: () -> Int32 = {
 
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_file(output_path);
+}
+
+#[test]
+fn cli_compiles_and_runs_with_repeated_module_roots() {
+    let temp_root = std::env::temp_dir().join(format!(
+        "restrict_lang_cli_module_roots_{}_{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let _ = fs::remove_dir_all(&temp_root);
+    let app_source = temp_root.join("app");
+    let left_source = temp_root.join("left_dependency/src");
+    let right_source = temp_root.join("right_dependency/src");
+    fs::create_dir_all(&app_source).expect("application source directory should be created");
+    fs::create_dir_all(&left_source).expect("left package source directory should be created");
+    fs::create_dir_all(&right_source).expect("right package source directory should be created");
+
+    fs::write(
+        left_source.join("lib.rl"),
+        r#"
+pub fun left_score: () -> Int32 = {
+    19
+}
+"#,
+    )
+    .expect("left package root module should be written");
+    fs::write(
+        right_source.join("math.rl"),
+        r#"
+pub fun right_score: () -> Int32 = {
+    23
+}
+"#,
+    )
+    .expect("right package submodule should be written");
+
+    let source_path = app_source.join("main.rl");
+    let output_path = temp_root.join("module_roots.wat");
+    fs::write(
+        &source_path,
+        r#"
+import left_dep.{left_score}
+import right_dep.math.{right_score}
+
+pub fun cli_package_score: () -> Int32 = {
+    val left = () left_score;
+    val right = () right_score;
+    left + right
+}
+"#,
+    )
+    .expect("application source should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--module-root")
+        .arg(format!("left_dep={}", left_source.display()))
+        .arg("--module-root")
+        .arg(format!("right_dep={}", right_source.display()))
+        .arg(&source_path)
+        .arg(&output_path)
+        .output()
+        .expect("restrict_lang binary should run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "repeated --module-root values should compile through the CLI, stderr: {stderr}"
+    );
+    assert_success_streams("module-root CLI", &output);
+
+    let wat =
+        fs::read_to_string(&output_path).expect("compiled module-root WAT should be readable");
+    let (mut store, instance) = instantiate_wat("module-root CLI", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "cli_package_score")
+        .expect("CLI package regression export should be host-callable");
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("CLI package regression export should execute"),
+        42
+    );
+
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cli_validates_module_roots_even_without_source_imports() {
+    let temp_root = std::env::temp_dir().join(format!(
+        "restrict_lang_cli_invalid_module_roots_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&temp_root);
+    let app_source = temp_root.join("app");
+    let first_source = temp_root.join("first/src");
+    let second_source = temp_root.join("second/src");
+    fs::create_dir_all(&app_source).expect("application source should be created");
+    fs::create_dir_all(&first_source).expect("first package source should be created");
+    fs::create_dir_all(&second_source).expect("second package source should be created");
+    let source_path = app_source.join("main.rl");
+    fs::write(
+        &source_path,
+        r#"
+fun main: () -> Int32 = {
+    42
+}
+"#,
+    )
+    .expect("import-free source should be written");
+
+    let malformed = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--check")
+        .arg("--module-root")
+        .arg("missing-separator")
+        .arg(&source_path)
+        .output()
+        .expect("restrict_lang binary should run");
+    assert!(!malformed.status.success());
+    assert!(String::from_utf8_lossy(&malformed.stderr).contains("expected ALIAS=DIR"));
+
+    let invalid_alias = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--check")
+        .arg("--module-root")
+        .arg(format!("bad-name={}", first_source.display()))
+        .arg(&source_path)
+        .output()
+        .expect("restrict_lang binary should run");
+    assert!(!invalid_alias.status.success());
+    assert!(String::from_utf8_lossy(&invalid_alias.stderr)
+        .contains("Invalid package namespace 'bad-name'"));
+
+    let duplicate_alias = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--check")
+        .arg("--module-root")
+        .arg(format!("local_utils={}", first_source.display()))
+        .arg("--module-root")
+        .arg(format!("local_utils={}", second_source.display()))
+        .arg(&source_path)
+        .output()
+        .expect("restrict_lang binary should run");
+    assert!(!duplicate_alias.status.success());
+    assert!(String::from_utf8_lossy(&duplicate_alias.stderr)
+        .contains("Duplicate package namespace 'local_utils'"));
+
+    let direct_entry = first_source.join("main.rl");
+    fs::write(&direct_entry, "fun main: () -> Int32 = { 42 }\n")
+        .expect("direct package-root entry should be written");
+    let direct_overlap = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--check")
+        .arg("--module-root")
+        .arg(format!("direct_dep={}", first_source.display()))
+        .arg(&direct_entry)
+        .output()
+        .expect("restrict_lang binary should run");
+    assert!(!direct_overlap.status.success());
+    let direct_stderr = String::from_utf8_lossy(&direct_overlap.stderr);
+    assert!(
+        direct_stderr.contains("overlaps configured module search root")
+            && direct_stderr.contains("direct_dep"),
+        "direct --module-root dep=src src/main.rl overlap should be rejected, got: {direct_stderr}"
+    );
+
+    let nested_entry_dir = first_source.join("examples");
+    fs::create_dir_all(&nested_entry_dir).expect("nested entry directory should be created");
+    let nested_entry = nested_entry_dir.join("main.rl");
+    fs::write(&nested_entry, "fun main: () -> Int32 = { 42 }\n")
+        .expect("nested package-root entry should be written");
+    let nested_overlap = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--check")
+        .arg("--module-root")
+        .arg(format!("nested_dep={}", first_source.display()))
+        .arg(&nested_entry)
+        .output()
+        .expect("restrict_lang binary should run");
+    assert!(!nested_overlap.status.success());
+    let nested_stderr = String::from_utf8_lossy(&nested_overlap.stderr);
+    assert!(
+        nested_stderr.contains("overlaps configured module search root")
+            && nested_stderr.contains("nested_dep"),
+        "entry paths nested below a module root should be rejected, got: {nested_stderr}"
+    );
+
+    let _ = fs::remove_dir_all(temp_root);
 }

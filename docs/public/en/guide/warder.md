@@ -12,7 +12,7 @@ The v0.0.1 CLI exposes these subcommands:
 |---------|-------------|
 | `warder new <name>` | Create a project directory |
 | `warder init` | Initialize the current directory |
-| `warder add <dep>` | Add a dependency |
+| `warder add <alias> --path <dir>` | Add a direct local path dependency |
 | `warder remove <name>` | Remove a dependency |
 | `warder build` | Build the package |
 | `warder run [args...]` | Build, then run the generated WASM |
@@ -70,10 +70,7 @@ entry = "src/main.rl"
 edition = "2025"
 
 [dependencies]
-math = "0.1.0"
 local_utils = { path = "../local-utils" }
-json = { git = "https://example.com/json.git", tag = "v1.0.0" }
-foreign_module = { wasm = "https://example.com/module.wasm", wit = "https://example.com/module.wit" }
 
 [build]
 target = "wasm32"
@@ -84,46 +81,81 @@ output = "dist/"
 The `package` table names the package, version, entry source file, and edition.
 `description` and `authors` are optional metadata fields.
 
-The `dependencies` table supports registry versions, local paths, Git
-repositories, and foreign WASM plus WIT references.
+The dependency-table key is the source namespace used by `import`. In the
+current v0.0.1 buildable slice, every dependency must be a **direct local path
+dependency**. The alias must be one non-keyword Restrict identifier, so use
+`local_utils` rather than `local-utils`; Warder never converts hyphens
+implicitly. The alias `std` is reserved.
+
+Registry versions, Git repositories, foreign WASM dependencies, and
+dependencies declared by a local dependency are not resolved yet. `warder
+add`, `warder build`, and `warder test` reject those forms explicitly instead
+of writing placeholder lock entries. Use `warder wrap` separately for
+experimental local evaluation of a foreign WASM file.
 
 The `build` table controls the target name, whether optimization is requested,
 and the output directory. The current default output directory is `dist/`.
 
 ## Dependencies
 
-Add a registry dependency:
-
-```bash
-warder add http
-warder add json@1.0.0
-```
-
 Add a local dependency:
 
 ```bash
-warder add local-utils --path ../local-utils
+warder add local_utils --path ../local-utils
 ```
 
-Add a Git dependency:
+The referenced package must contain its own manifest and library root:
 
-```bash
-warder add json@v1.0.0 --git https://example.com/json.git
+```text
+local-utils/
+├── package.rl.toml
+└── src/
+    ├── lib.rl
+    └── numbers.rl
 ```
 
-Add a foreign WASM dependency:
+The dependency manifest supplies the version recorded in the lock file. A
+minimal `src/lib.rl` might export a function:
 
-```bash
-warder add foreign-module --wasm https://example.com/module.wasm --wit https://example.com/module.wit
+```restrict
+pub fun score: () -> Int32 = {
+    42
+}
 ```
 
 Remove a dependency:
 
 ```bash
-warder remove http
+warder remove local_utils
 ```
 
-`warder build` updates `restrict-lock.toml` from the manifest dependency table.
+### Package namespaces
+
+The manifest binding mounts the dependency's `src/` directory under its alias:
+
+| Source import | Dependency file |
+|---------------|-----------------|
+| `import local_utils.{score}` | `../local-utils/src/lib.rl` |
+| `import local_utils` | `../local-utils/src/lib.rl` |
+| `import local_utils.numbers.{double}` | `../local-utils/src/numbers.rl` |
+
+An unqualified import inside a dependency stays package-local. For example,
+`import numbers.{double}` inside `local-utils/src/lib.rl` resolves to that
+package's `src/numbers.rl`, not an application module.
+
+This is a manifest-to-compiler namespace binding. It does not add source-level
+`import ... as` aliases or re-exports; both remain unsupported.
+
+On a successful build, Warder rewrites `restrict-lock.toml` with the local
+package's manifest version and a deterministic SHA-256 over its manifest and
+Restrict source files. Dependency validation happens first, so an unsupported
+or invalid dependency does not create a fake lock entry.
+
+Warder compiles immutable snapshots of both the application source tree and
+each dependency source tree. It rejects overlapping application, dependency,
+and output roots. Builds for one project are serialized, and the WAT, WASM,
+Cage, and lock file are published together through a recoverable transaction;
+a failed compile keeps the previous artifact set intact.
 
 ## Build Outputs
 
@@ -165,7 +197,10 @@ warder test
 warder test main
 ```
 
-In v0.0.1, `warder test` type-checks `.rl` files under `tests/`. There is no
+In v0.0.1, `warder test` type-checks `.rl` files under `tests/`. It resolves the
+same direct-local dependency roots as `warder build`, so test files can use the
+same package imports. Compiler fallback resolution is anchored at the project
+root, independent of the directory from which Warder was invoked. There is no
 dedicated test declaration syntax yet.
 
 ## Publish Preflight
@@ -208,5 +243,7 @@ warder doctor
 ```
 
 `warder doctor` validates the manifest, checks that the entry source exists,
-loads `restrict-lock.toml` when present, checks for a Restrict compiler, and
-reports whether a WASM runtime such as Wasmtime or Wasmer is available.
+loads `restrict-lock.toml` when present, and detects missing, malformed, or
+source-stale locks for direct local dependencies. It also checks for a Restrict
+compiler and reports whether a WASM runtime such as Wasmtime or Wasmer is
+available.

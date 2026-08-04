@@ -301,6 +301,14 @@ fn keyword(input: &str) -> IResult<&str, Token> {
     Ok((ident.0, token))
 }
 
+/// Returns whether `value` is a complete, non-keyword Restrict identifier.
+///
+/// Package tools use the same lexical rule as source imports so a manifest
+/// namespace can never produce an import path that the parser cannot read.
+pub fn is_source_identifier(value: &str) -> bool {
+    matches!(keyword(value), Ok(("", Token::Ident(name))) if name == value)
+}
+
 fn lexer_error(input: &str, kind: nom::error::ErrorKind) -> nom::Err<nom::error::Error<&str>> {
     nom::Err::Error(nom::error::Error::new(input, kind))
 }

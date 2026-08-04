@@ -47,7 +47,7 @@ jobs:
       run: cd warder && cargo test --verbose
 
     - name: Install mise
-      uses: jdx/mise-action@v2
+      uses: jdx/mise-action@v4
 
     - name: Check release example entrypoints compile
       run: mise run check

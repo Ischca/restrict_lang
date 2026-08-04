@@ -1906,7 +1906,7 @@ impl LanguageServer for RestrictLanguageServer {
                 for decl in &ast.declarations {
                     match decl {
                         crate::ast::TopDecl::Function(func) => {
-                            if func.name.starts_with("__rl_mod_") {
+                            if crate::module::is_internal_module_name(&func.name) {
                                 continue;
                             }
                             completions.push(CompletionItem::new_simple(
@@ -1915,7 +1915,7 @@ impl LanguageServer for RestrictLanguageServer {
                             ));
                         }
                         crate::ast::TopDecl::Record(record) => {
-                            if record.name.starts_with("__rl_mod_") {
+                            if crate::module::is_internal_module_name(&record.name) {
                                 continue;
                             }
                             completions.push(CompletionItem::new_simple(

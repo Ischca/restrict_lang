@@ -516,6 +516,17 @@ supports dotted module paths with named imports, wildcard imports, or whole
 module imports. String paths, import aliases, re-exports, and package-level
 standard-library aggregators are reserved for a later module-design pass.
 
+Within one compilation, a source declaration has one canonical identity: its
+dotted module path plus its declaration name. Splitting named imports across
+multiple statements, or reaching the same declaration through both direct and
+transitive imports, must not create distinct nominal types or duplicate module
+bodies. Duplicate exports, duplicate virtual sources that normalize to the
+same module path, ambiguous configured search roots, and cyclic imports are
+resolver errors. A failed resolution is not cached as a complete module and
+may be retried after the missing source becomes available. When compiling a
+source file, its parent directory is searched before the process working
+directory fallback.
+
 ### 12.2 Exports
 ```rust
 pub fun publicFunction: () = { ... }

@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 const UNSUPPORTED_STD_SOURCE_IMPORT_ERROR: &str =
     "standard-library source imports are unsupported in v0.0.1; std helpers are compiler-registered and available without importing std aggregators";
 
+type ModuleSymbol = (Vec<String>, String);
+const INTERNAL_MODULE_NAME_PREFIX: &str = "__rl$mod";
+
 #[derive(Debug, Clone)]
 pub struct Module {
     pub path: PathBuf,
@@ -26,6 +29,7 @@ pub struct ModuleResolver {
     modules: HashMap<Vec<String>, Module>,
     search_paths: Vec<PathBuf>,
     module_sources: HashMap<Vec<String>, String>,
+    module_source_conflicts: HashSet<Vec<String>>,
 }
 
 impl Default for ModuleResolver {
@@ -38,8 +42,11 @@ impl ModuleResolver {
     pub fn new() -> Self {
         Self {
             modules: HashMap::new(),
-            search_paths: vec![PathBuf::from(".")],
+            // Explicit roots take precedence over the process working
+            // directory. The latter remains a fallback for direct CLI use.
+            search_paths: Vec::new(),
             module_sources: HashMap::new(),
+            module_source_conflicts: HashSet::new(),
         }
     }
 
@@ -48,24 +55,81 @@ impl ModuleResolver {
     }
 
     pub fn add_module_source(&mut self, module_path: Vec<String>, source: String) {
+        let already_resolved = self.modules.contains_key(&module_path);
+        let replaced = self
+            .module_sources
+            .insert(module_path.clone(), source)
+            .is_some();
+        if already_resolved || replaced {
+            // Preserve the original infallible API while ensuring a duplicate
+            // cannot be accepted by a later resolver call.
+            self.module_source_conflicts.insert(module_path);
+        }
+    }
+
+    pub fn try_add_module_source(
+        &mut self,
+        module_path: Vec<String>,
+        source: String,
+    ) -> Result<()> {
+        if self.module_sources.contains_key(&module_path)
+            || self.modules.contains_key(&module_path)
+            || self.module_source_conflicts.contains(&module_path)
+        {
+            bail!(
+                "Duplicate or already resolved module source for canonical module {}",
+                module_path.join(".")
+            );
+        }
+
         self.module_sources.insert(module_path, source);
+        Ok(())
     }
 
     pub fn add_module_source_key(&mut self, module_key: &str, source: String) -> Result<()> {
         let module_path = parse_module_source_key(module_key)?;
-        self.add_module_source(module_path, source);
-        Ok(())
+        self.try_add_module_source(module_path, source)
     }
 
     pub fn resolve_module(&mut self, module_path: &[String]) -> Result<Vec<String>> {
+        let mut visiting = Vec::new();
+        let mut staged_modules = HashMap::new();
+        self.resolve_module_transaction(module_path, &mut visiting, &mut staged_modules)?;
+        self.modules.extend(staged_modules);
+        Ok(module_path.to_vec())
+    }
+
+    fn resolve_module_transaction(
+        &self,
+        module_path: &[String],
+        visiting: &mut Vec<Vec<String>>,
+        staged_modules: &mut HashMap<Vec<String>, Module>,
+    ) -> Result<()> {
         if is_reserved_std_module_path(module_path) {
             bail!("{UNSUPPORTED_STD_SOURCE_IMPORT_ERROR}");
         }
 
-        // Check if already loaded
-        if self.modules.contains_key(module_path) {
-            return Ok(module_path.to_vec());
+        if self.module_source_conflicts.contains(module_path) {
+            bail!(
+                "Duplicate module source for canonical module {}",
+                module_path.join(".")
+            );
         }
+
+        if self.modules.contains_key(module_path) || staged_modules.contains_key(module_path) {
+            return Ok(());
+        }
+
+        if let Some(cycle_start) = visiting.iter().position(|path| path == module_path) {
+            let mut cycle = visiting[cycle_start..]
+                .iter()
+                .map(|path| path.join("."))
+                .collect::<Vec<_>>();
+            cycle.push(module_path.join("."));
+            bail!("Cyclic module import detected: {}", cycle.join(" -> "));
+        }
+
+        visiting.push(module_path.to_vec());
 
         let (source_path, content) = self.load_module_source(module_path)?;
 
@@ -88,14 +152,46 @@ impl ModuleResolver {
         // Build export table
         let mut exports = HashMap::new();
         let mut regular_decls = Vec::new();
+        let mut declared_names = HashSet::new();
 
         for decl in program.declarations {
             match decl {
                 TopDecl::Export(export_decl) => {
                     let name = get_decl_name(&export_decl.item)?;
+                    if exports.contains_key(&name) {
+                        bail!(
+                            "Duplicate export '{}' in module {}",
+                            name,
+                            module_path.join(".")
+                        );
+                    }
+                    if !declared_names.insert(name.clone()) {
+                        bail!(
+                            "Duplicate declaration '{}' in module {}",
+                            name,
+                            module_path.join(".")
+                        );
+                    }
                     exports.insert(name, *export_decl.item);
                 }
-                decl => regular_decls.push(decl),
+                decl => {
+                    // Multiple impl blocks for one receiver are legal and do
+                    // not declare the receiver again.
+                    let declared_name = match &decl {
+                        TopDecl::Impl(_) => None,
+                        _ => get_top_decl_name_for_collision(&decl)?,
+                    };
+                    if let Some(name) = declared_name {
+                        if !declared_names.insert(name.clone()) {
+                            bail!(
+                                "Duplicate declaration '{}' in module {}",
+                                name,
+                                module_path.join(".")
+                            );
+                        }
+                    }
+                    regular_decls.push(decl);
+                }
             }
         }
 
@@ -108,14 +204,16 @@ impl ModuleResolver {
             exports,
         };
 
-        self.modules.insert(module_path.to_vec(), module);
-
-        // Process imports after storing the module
+        // Resolve the complete dependency closure before committing anything
+        // to the resolver cache. A failed parse/load therefore remains
+        // retryable on the same resolver instance.
         for import in &imports {
-            self.resolve_module(&import.module_path)?;
+            self.resolve_module_transaction(&import.module_path, visiting, staged_modules)?;
         }
 
-        Ok(module_path.to_vec())
+        visiting.pop();
+        staged_modules.insert(module_path.to_vec(), module);
+        Ok(())
     }
 
     fn load_module_source(&self, module_path: &[String]) -> Result<(PathBuf, String)> {
@@ -143,6 +241,7 @@ impl ModuleResolver {
         let mut emitted_names = HashSet::new();
         let mut imported_names = HashMap::new();
         let mut declared_names = HashMap::new();
+        let mut root_aliases = HashMap::<ModuleSymbol, String>::new();
 
         for decl in &program.declarations {
             if let Some(name) = get_top_decl_name_for_collision(decl)? {
@@ -172,12 +271,23 @@ impl ModuleResolver {
                 }
 
                 imported_names.insert(name.clone(), import.module_path.join("."));
+                root_aliases.insert((import.module_path.clone(), name.clone()), name.clone());
             }
+        }
 
-            for decl in self.get_import_closure_decls(&import.module_path, &requested_names)? {
+        // The root-visible alias plan is complete before traversing any
+        // dependency. Every reference to one source declaration therefore
+        // receives the same name, regardless of split or transitive imports.
+        let mut emitted_modules = HashSet::new();
+        for import in &program.imports {
+            for decl in self.get_import_closure_decls(
+                &import.module_path,
+                &root_aliases,
+                &mut emitted_modules,
+            )? {
                 if let Some(key) = get_top_decl_emit_key(&decl)? {
-                    if !emitted_names.insert(key) {
-                        continue;
+                    if !emitted_names.insert(key.clone()) {
+                        bail!("Resolved module declaration collision for {key}");
                     }
                 }
 
@@ -199,12 +309,48 @@ impl ModuleResolver {
 
     fn find_module_file(&self, module_path: &[String]) -> Result<PathBuf> {
         let relative_path = module_path.join("/") + ".rl";
+        let mut explicit_candidates = Vec::new();
 
         for search_path in &self.search_paths {
             let full_path = search_path.join(&relative_path);
-            if full_path.exists() {
-                return Ok(full_path);
+            if full_path.is_file() {
+                let canonical = fs::canonicalize(&full_path).with_context(|| {
+                    format!(
+                        "Failed to canonicalize module file: {}",
+                        full_path.display()
+                    )
+                })?;
+                if !explicit_candidates.contains(&canonical) {
+                    explicit_candidates.push(canonical);
+                }
             }
+        }
+
+        match explicit_candidates.as_slice() {
+            [candidate] => return Ok(candidate.clone()),
+            [] => {}
+            candidates => {
+                let mut paths = candidates
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>();
+                paths.sort();
+                bail!(
+                    "Ambiguous module {} found in configured search roots: {}",
+                    module_path.join("."),
+                    paths.join(", ")
+                );
+            }
+        }
+
+        let cwd_candidate = PathBuf::from(".").join(&relative_path);
+        if cwd_candidate.is_file() {
+            return fs::canonicalize(&cwd_candidate).with_context(|| {
+                format!(
+                    "Failed to canonicalize module file: {}",
+                    cwd_candidate.display()
+                )
+            });
         }
 
         bail!("Module not found: {}", module_path.join("."))
@@ -281,27 +427,40 @@ impl ModuleResolver {
     fn get_import_closure_decls(
         &self,
         module_path: &[String],
-        requested_names: &[String],
+        root_aliases: &HashMap<ModuleSymbol, String>,
+        emitted_modules: &mut HashSet<Vec<String>>,
     ) -> Result<Vec<TopDecl>> {
-        let requested_aliases = requested_names
-            .iter()
-            .map(|name| (name.clone(), name.clone()))
-            .collect::<HashMap<_, _>>();
-        let mut visiting = HashSet::new();
+        let mut visiting = Vec::new();
 
-        self.get_import_closure_decls_with_aliases(module_path, &requested_aliases, &mut visiting)
+        self.get_import_closure_decls_with_aliases(
+            module_path,
+            root_aliases,
+            &mut visiting,
+            emitted_modules,
+        )
     }
 
     fn get_import_closure_decls_with_aliases(
         &self,
         module_path: &[String],
-        requested_aliases: &HashMap<String, String>,
-        visiting: &mut HashSet<Vec<String>>,
+        root_aliases: &HashMap<ModuleSymbol, String>,
+        visiting: &mut Vec<Vec<String>>,
+        emitted_modules: &mut HashSet<Vec<String>>,
     ) -> Result<Vec<TopDecl>> {
         let module_key = module_path.to_vec();
-        if !visiting.insert(module_key.clone()) {
-            bail!("Cyclic module import detected at {}", module_path.join("."));
+        if emitted_modules.contains(&module_key) {
+            return Ok(Vec::new());
         }
+
+        if let Some(cycle_start) = visiting.iter().position(|path| path == module_path) {
+            let mut cycle = visiting[cycle_start..]
+                .iter()
+                .map(|path| path.join("."))
+                .collect::<Vec<_>>();
+            cycle.push(module_path.join("."));
+            bail!("Cyclic module import detected: {}", cycle.join(" -> "));
+        }
+        visiting.push(module_key.clone());
 
         let module = self
             .modules
@@ -316,13 +475,19 @@ impl ModuleResolver {
                 self.get_requested_import_names(&import.module_path, &import.items)?;
             let dependency_aliases = imported_names
                 .iter()
-                .map(|name| (name.clone(), mangle_module_name(&import.module_path, name)))
+                .map(|name| {
+                    (
+                        name.clone(),
+                        module_symbol_alias(root_aliases, &import.module_path, name),
+                    )
+                })
                 .collect::<HashMap<_, _>>();
 
             declarations.extend(self.get_import_closure_decls_with_aliases(
                 &import.module_path,
-                &dependency_aliases,
+                root_aliases,
                 visiting,
+                emitted_modules,
             )?);
 
             for (name, alias) in dependency_aliases {
@@ -332,19 +497,13 @@ impl ModuleResolver {
 
         for decl in &module.program.declarations {
             if let Some(name) = get_top_decl_name_for_collision(decl)? {
-                let alias = requested_aliases
-                    .get(&name)
-                    .cloned()
-                    .unwrap_or_else(|| mangle_module_name(module_path, &name));
+                let alias = module_symbol_alias(root_aliases, module_path, &name);
                 insert_rename(&mut rename_map, name.clone(), alias, module_path)?;
             }
         }
 
         for name in module.exports.keys() {
-            let alias = requested_aliases
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| mangle_module_name(module_path, name));
+            let alias = module_symbol_alias(root_aliases, module_path, name);
             insert_rename(&mut rename_map, name.clone(), alias, module_path)?;
         }
 
@@ -369,7 +528,8 @@ impl ModuleResolver {
             }
         }
 
-        visiting.remove(&module_key);
+        visiting.pop();
+        emitted_modules.insert(module_key);
         Ok(declarations)
     }
 }
@@ -458,8 +618,33 @@ fn insert_rename(
     Ok(())
 }
 
+fn module_symbol_alias(
+    root_aliases: &HashMap<ModuleSymbol, String>,
+    module_path: &[String],
+    name: &str,
+) -> String {
+    root_aliases
+        .get(&(module_path.to_vec(), name.to_string()))
+        .cloned()
+        .unwrap_or_else(|| mangle_module_name(module_path, name))
+}
+
 fn mangle_module_name(module_path: &[String], name: &str) -> String {
-    format!("__rl_mod_{}_{}", module_path.join("_"), name)
+    // `$` is valid in a WAT identifier but cannot be written by the Restrict
+    // lexer, so source declarations cannot collide with this namespace.
+    let mut mangled = String::from(INTERNAL_MODULE_NAME_PREFIX);
+    for part in module_path.iter().map(String::as_str).chain([name]) {
+        mangled.push('_');
+        mangled.push_str(&part.len().to_string());
+        mangled.push('_');
+        mangled.push_str(part);
+    }
+    mangled
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn is_internal_module_name(name: &str) -> bool {
+    name.starts_with(INTERNAL_MODULE_NAME_PREFIX)
 }
 
 fn rename_name(name: String, rename_map: &HashMap<String, String>) -> String {

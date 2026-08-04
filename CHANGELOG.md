@@ -19,6 +19,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   records, collections, sum types, generics, temporal values, composite
   globals, WIT, and Component Model output remain outside `flat-record-v1`.
 
+### Fixed
+
+- Keep one canonical declaration identity across split, direct, transitive,
+  and diamond source imports; use collision-proof internal names and emit each
+  dependency module once.
+- Reject duplicate exports, duplicate normalized virtual modules, ambiguous
+  explicit search roots, and complete import cycles without poisoning the
+  resolver cache after a failed attempt.
+
 ## [0.0.1] - 2026-08-04
 
 ### Added

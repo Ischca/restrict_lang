@@ -1,7 +1,7 @@
 # Module System Roadmap
 
 **Created**: 2025-01-11
-**Last Updated**: 2025-01-11
+**Last Updated**: 2026-08-04
 **Status**: Phase 4 Complete, Phase 5 In Progress
 **Target**: v1.0 Release
 
@@ -68,7 +68,9 @@
 - [x] import文のパース (既存のパーサー使用)
 - [x] モジュールパス → ファイルパス解決
 - [x] インポートされた名前をスコープに追加
-- [ ] 名前衝突の検出とエラー (TODO: 将来の改善)
+- [x] 名前衝突の検出とエラー
+- [x] split/direct/transitive import で canonical declaration identity を共有
+- [x] 失敗した依存解決を cache せず retry 可能にする
 
 ### 2.4 型チェッカー統合 ✅
 - [x] インポートされた関数の型情報取得 (register_imported_decl)
@@ -78,7 +80,7 @@
 ### 2.5 循環依存検出 ✅
 - [x] resolving set による依存追跡
 - [x] 循環検出アルゴリズム
-- [x] 明確なエラーメッセージ ("Import chain involves: ...")
+- [x] 完全な循環 chain を含むエラーメッセージ
 
 ### 2.6 Codegen統合 ✅
 - [x] インポートした関数のWASM生成
@@ -108,9 +110,9 @@ fun main: () -> Int = { 5 double }  // → 10
 - [ ] 未使用モジュールの除外 (dead code elimination)
 
 ### 3.2 名前マングリング
-- [ ] モジュール間での名前衝突回避
-- [ ] 内部関数名の生成規則
-- [ ] エクスポート名の保持
+- [x] モジュール間での名前衝突回避
+- [x] 長さ付き canonical internal name の生成規則
+- [x] エクスポート名の保持
 
 ### 3.3 コード結合
 - [x] 全モジュールのWASM関数を結合 (インライン展開)

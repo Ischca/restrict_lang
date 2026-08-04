@@ -328,9 +328,14 @@ fn flat_record_v1_accepts_an_imported_public_record() -> Result<(), Box<dyn std:
     let (_, root) = parse_program(
         r#"
 import schema.{Pair}
+import schema.{make_pair}
 
 pub fun keep_pair: (pair: Pair) -> Pair = {
     pair
+}
+
+pub fun build_pair: (left: Int32, right: Int32) -> Pair = {
+    (left, right) make_pair
 }
 "#,
     )
@@ -342,6 +347,13 @@ pub fun keep_pair: (pair: Pair) -> Pair = {
 pub record Pair {
     left: Int32,
     right: Int32
+}
+
+pub fun make_pair: (left: Int32, right: Int32) -> Pair = {
+    Pair {
+        left: left,
+        right: right
+    }
 }
 "#
         .to_string(),
@@ -360,6 +372,8 @@ pub record Pair {
     let (mut store, instance) = instantiate(&wasm)?;
     let keep_pair = instance.get_typed_func::<(i32, i32), (i32, i32)>(&store, "keep_pair")?;
     assert_eq!(keep_pair.call(&mut store, (11, 12))?, (11, 12));
+    let build_pair = instance.get_typed_func::<(i32, i32), (i32, i32)>(&store, "build_pair")?;
+    assert_eq!(build_pair.call(&mut store, (13, 14))?, (13, 14));
     Ok(())
 }
 

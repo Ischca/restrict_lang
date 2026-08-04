@@ -48,6 +48,26 @@ export function parse_only(source) {
     const ret = wasm.parse_only(ptr0, len0);
     return ret;
 }
+
+/**
+ * Convert compiler-generated WebAssembly text into an executable binary.
+ *
+ * Keeping this conversion in the compiler bundle lets the playground run
+ * programs locally without loading a third-party WAT parser from a CDN.
+ * @param {string} wat_source
+ * @returns {Uint8Array}
+ */
+export function wat_to_wasm(wat_source) {
+    const ptr0 = passStringToWasm0(wat_source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.wat_to_wasm(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -373,6 +393,12 @@ function passStringToWasm0(arg, malloc, realloc) {
 
     WASM_VECTOR_LEN = offset;
     return ptr;
+}
+
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__externref_table_dealloc(idx);
+    return value;
 }
 
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });

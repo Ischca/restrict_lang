@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Playground · Restrict Language</title>
-  <meta name="description" content="Compile, tokenize, and parse Restrict Language locally in your browser.">
+  <meta name="description" content="Run, compile, tokenize, and parse Restrict Language locally in your browser.">
   <meta name="theme-color" content="#ff6b35">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <style>
@@ -170,9 +170,9 @@
       <div>
         <p class="eyebrow">v0.0.1 browser compiler</p>
         <h1>See every stage.</h1>
-        <p class="intro-copy">Write Restrict, then inspect WebAssembly-oriented output, tokens, the parsed tree, or an exact diagnostic.</p>
+        <p class="intro-copy">Write Restrict, run it locally, then inspect program output, WebAssembly, tokens, the parsed tree, or an exact diagnostic.</p>
       </div>
-      <p class="privacy-note">Compilation stays in this browser. Source is only added to a URL when you choose Share.</p>
+      <p class="privacy-note">Compilation and execution stay in this browser. Source is only added to a URL when you choose Share.</p>
     </section>
 
     <section class="workspace" id="workspace" aria-label="Restrict Language playground">
@@ -194,40 +194,44 @@ fun add: (left: Int32, right: Int32) -> Int32 = {
     left + right
 }
 
-fun main: () -> Int32 = {
-    (20, 22) add
+fun main: () -> () = {
+    val result = (20, 22) add
+    result |> print_int
 }</textarea>
         </div>
 
         <div class="editor-actions">
           <div class="action-group">
-            <button class="action-button primary" type="button" id="compileBtn">Compile</button>
+            <button class="action-button primary" type="button" id="runBtn">Run</button>
+            <button class="action-button" type="button" id="compileBtn">Compile</button>
             <button class="action-button" type="button" id="lexBtn">Tokenize</button>
             <button class="action-button" type="button" id="parseBtn">Parse</button>
           </div>
-          <span class="shortcut"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to compile</span>
+          <span class="shortcut"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run</span>
         </div>
       </div>
 
       <div class="workspace-panel">
         <div class="panel-heading">
-          <div class="panel-title"><strong>Inspector</strong><small>Compiler output is plain text and safe to copy.</small></div>
+          <div class="panel-title"><strong>Inspector</strong><small>Program and compiler output stay in this browser.</small></div>
           <button class="tool-button" type="button" id="copyOutputBtn">Copy output</button>
         </div>
         <div class="status-bar" id="compilerStatus" role="status" aria-live="polite" data-tone="working"><span class="status-dot" aria-hidden="true"></span><span id="statusText">Loading compiler…</span></div>
-        <div class="output-tabs" role="tablist" aria-label="Compiler results">
-          <button class="tab" type="button" id="tab-wasm" role="tab" aria-selected="true" aria-controls="wasm" data-tab="wasm">Wasm</button>
+        <div class="output-tabs" role="tablist" aria-label="Program and compiler results">
+          <button class="tab" type="button" id="tab-output" role="tab" aria-selected="true" aria-controls="output" data-tab="output">Output</button>
+          <button class="tab" type="button" id="tab-wasm" role="tab" aria-selected="false" aria-controls="wasm" data-tab="wasm" tabindex="-1">Wasm</button>
           <button class="tab" type="button" id="tab-tokens" role="tab" aria-selected="false" aria-controls="tokens" data-tab="tokens" tabindex="-1">Tokens</button>
           <button class="tab" type="button" id="tab-ast" role="tab" aria-selected="false" aria-controls="ast" data-tab="ast" tabindex="-1">AST</button>
           <button class="tab" type="button" id="tab-error" role="tab" aria-selected="false" aria-controls="error" data-tab="error" tabindex="-1">Errors</button>
         </div>
         <div class="output-stack">
-          <div id="wasm" class="output-content" role="tabpanel" aria-labelledby="tab-wasm"><pre id="wasmOutput">The compiler is loading…</pre></div>
+          <div id="output" class="output-content" role="tabpanel" aria-labelledby="tab-output"><pre id="outputOutput">The runtime is loading…</pre></div>
+          <div id="wasm" class="output-content" role="tabpanel" aria-labelledby="tab-wasm" hidden><pre id="wasmOutput">The compiler is loading…</pre></div>
           <div id="tokens" class="output-content" role="tabpanel" aria-labelledby="tab-tokens" hidden><pre id="tokensOutput">No tokens yet.</pre></div>
           <div id="ast" class="output-content" role="tabpanel" aria-labelledby="tab-ast" hidden><pre id="astOutput">No AST yet.</pre></div>
           <div id="error" class="output-content" role="tabpanel" aria-labelledby="tab-error" hidden><pre id="errorOutput">No errors.</pre></div>
         </div>
-        <div class="output-footer"><span>Runs with the same Rust compiler compiled to WebAssembly.</span><span id="activeOutputLabel">Wasm output</span></div>
+        <div class="output-footer"><span>Compiles and runs locally with WebAssembly and a browser WASI bridge.</span><span id="activeOutputLabel">Program output</span></div>
       </div>
     </section>
 

@@ -6,6 +6,31 @@ use crate::ir::{HostAbi, InternalOnlyReason, ScalarRepr};
 use crate::parser::parse_program;
 use crate::type_checker::TypedType;
 
+const FLAT_RECORD_V1_SOURCE: &str = r#"
+export record FlatScore {
+    int32_value: Int32,
+    int64_value: Int64,
+    float64_value: Float64,
+    boolean_value: Boolean,
+    char_value: Char,
+    int32_2: Int32,
+    int64_2: Int64,
+    float64_2: Float64,
+    boolean_2: Boolean,
+    char_2: Char,
+    int32_3: Int32,
+    int64_3: Int64,
+    float64_3: Float64,
+    boolean_3: Boolean,
+    char_3: Char,
+    int32_4: Int32
+}
+
+export fun keep_flat_score: (score: FlatScore) -> FlatScore = {
+    score
+}
+"#;
+
 fn checked_ir(source: &str) -> CheckedProgramIr {
     let (remaining, program) = parse_program(source).expect("source should parse");
     assert!(remaining.trim().is_empty(), "unparsed input: {remaining:?}");
@@ -27,6 +52,7 @@ fn scalar_test_lowering_summary() -> CheckedFunctionLoweringSummary {
         required_layouts: Vec::new(),
         readiness: LoweringReadiness {
             v001_host_abi_eligible: true,
+            flat_record_v1_host_abi_eligible: true,
             internal_layout_ready: false,
             host_abi_blockers: Vec::new(),
             internal_lowering_blockers: vec![InternalLoweringBlocker::MissingBodyResult],
@@ -104,6 +130,7 @@ fun keep_box: <T>(item: Box<T>) -> Box<T> = {
     assert!(!function.monomorphic);
     assert!(function.lowering.required_layouts.contains(&layout_id));
     assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
 }
 
 #[test]
@@ -201,6 +228,7 @@ export fun public_score: (value: Int32) -> Int32 = {
     assert_eq!(summary.return_host_abi, HostAbi::Scalar(ScalarRepr::I32));
     assert!(summary.body_result.is_some());
     assert!(summary.readiness.v001_host_abi_eligible);
+    assert!(summary.readiness.flat_record_v1_host_abi_eligible);
     assert!(summary.readiness.internal_layout_ready);
     assert!(summary.readiness.host_abi_blockers.is_empty());
     assert!(summary.readiness.internal_lowering_blockers.is_empty());
@@ -221,6 +249,7 @@ fun tagged: <T>(value: Int32) -> Int32 = {
     assert!(function.monomorphic);
     assert_eq!(function.lowering.declared_type_params, vec!["T"]);
     assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
     assert!(function
         .lowering
         .readiness
@@ -242,6 +271,7 @@ fun keep_scores: (items: List<Int32>) -> List<Int32> = {
     let composite = InternalOnlyReason::CompositeHostAbiUnstable;
 
     assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
     assert!(function.lowering.readiness.internal_layout_ready);
     assert!(!function.lowering.required_layouts.is_empty());
     assert_eq!(function.params[0].repr, function.return_repr);
@@ -304,6 +334,7 @@ fun main: () -> Range<Int32> = {
     assert_eq!(layout.align, 4);
     assert!(function.lowering.required_layouts.contains(&layout_id));
     assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
     assert!(function.lowering.readiness.internal_layout_ready);
 }
 
@@ -353,6 +384,7 @@ export fun keep_score: (score: ReleaseScore) -> ReleaseScore = {
     assert!(function.lowering.required_layouts.contains(&string_layout));
     assert!(function.lowering.source_exported);
     assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
     assert!(function.lowering.readiness.internal_layout_ready);
     assert_eq!(
         function.lowering.param_host_abis,
@@ -376,6 +408,158 @@ export fun keep_score: (score: ReleaseScore) -> ReleaseScore = {
 }
 
 #[test]
+fn builder_resolves_opt_in_flat_record_v1_host_abi_from_layout() {
+    let ir = checked_ir(FLAT_RECORD_V1_SOURCE);
+    let function = &ir.functions[0];
+    let expected_fields = vec![
+        ScalarRepr::I32,
+        ScalarRepr::I64,
+        ScalarRepr::F64,
+        ScalarRepr::I32,
+        ScalarRepr::I32,
+        ScalarRepr::I32,
+        ScalarRepr::I64,
+        ScalarRepr::F64,
+        ScalarRepr::I32,
+        ScalarRepr::I32,
+        ScalarRepr::I32,
+        ScalarRepr::I64,
+        ScalarRepr::F64,
+        ScalarRepr::I32,
+        ScalarRepr::I32,
+        ScalarRepr::I32,
+    ];
+    let expected_abi = HostAbi::FlatRecord {
+        fields: expected_fields,
+    };
+
+    assert!(function.lowering.source_exported);
+    assert_eq!(
+        function.params[0].final_type.host_abi(),
+        HostAbi::InternalOnly(InternalOnlyReason::CompositeHostAbiUnstable)
+    );
+    assert_eq!(
+        function.lowering.param_host_abis,
+        vec![expected_abi.clone()]
+    );
+    assert_eq!(function.lowering.return_host_abi, expected_abi);
+    assert!(!function.lowering.return_host_abi.is_v001_exportable());
+    assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    assert!(function.lowering.readiness.flat_record_v1_host_abi_eligible);
+    assert!(function.lowering.readiness.host_abi_blockers.is_empty());
+    assert!(function.lowering.readiness.internal_layout_ready);
+}
+
+#[test]
+fn builder_applies_flat_record_v1_aggregate_slot_limit_to_readiness() {
+    let mut ir = checked_ir(
+        r#"
+pub fun too_many: (
+    p01: Int32, p02: Int32, p03: Int32, p04: Int32,
+    p05: Int32, p06: Int32, p07: Int32, p08: Int32,
+    p09: Int32, p10: Int32, p11: Int32, p12: Int32,
+    p13: Int32, p14: Int32, p15: Int32, p16: Int32,
+    p17: Int32
+) -> Int32 = {
+    1
+}
+"#,
+    );
+
+    let function = &ir.functions[0];
+    assert!(function.lowering.readiness.v001_host_abi_eligible);
+    assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
+
+    ir.functions[0]
+        .lowering
+        .readiness
+        .flat_record_v1_host_abi_eligible = true;
+    assert!(matches!(
+        ir.validate_lowering_summaries(),
+        Err(IrBuildError::LoweringInvariantViolation(_))
+    ));
+}
+
+#[test]
+fn builder_keeps_ineligible_record_shapes_internal_only_for_flat_record_v1() {
+    let ir = checked_ir(
+        r#"
+record Empty {
+}
+
+record UnitField {
+    value: ()
+}
+
+record Inner {
+    value: Int32
+}
+
+record Nested {
+    value: Inner
+}
+
+record Composite {
+    value: String
+}
+
+record Generic<T> {
+    value: T
+}
+
+record TooWide {
+    value_01: Int32,
+    value_02: Int32,
+    value_03: Int32,
+    value_04: Int32,
+    value_05: Int32,
+    value_06: Int32,
+    value_07: Int32,
+    value_08: Int32,
+    value_09: Int32,
+    value_10: Int32,
+    value_11: Int32,
+    value_12: Int32,
+    value_13: Int32,
+    value_14: Int32,
+    value_15: Int32,
+    value_16: Int32,
+    value_17: Int32
+}
+
+fun keep_empty: (value: Empty) -> Empty = { value }
+fun keep_unit_field: (value: UnitField) -> UnitField = { value }
+fun keep_nested: (value: Nested) -> Nested = { value }
+fun keep_composite: (value: Composite) -> Composite = { value }
+fun keep_closed_generic: (value: Generic<Int32>) -> Generic<Int32> = { value }
+fun keep_too_wide: (value: TooWide) -> TooWide = { value }
+"#,
+    );
+
+    let expected_names = [
+        "keep_empty",
+        "keep_unit_field",
+        "keep_nested",
+        "keep_composite",
+        "keep_closed_generic",
+        "keep_too_wide",
+    ];
+    let internal_only = HostAbi::InternalOnly(InternalOnlyReason::CompositeHostAbiUnstable);
+
+    assert_eq!(ir.functions.len(), expected_names.len());
+    for (function, expected_name) in ir.functions.iter().zip(expected_names) {
+        assert_eq!(function.name, expected_name);
+        assert_eq!(
+            function.lowering.param_host_abis,
+            vec![internal_only.clone()]
+        );
+        assert_eq!(function.lowering.return_host_abi, internal_only);
+        assert!(!function.lowering.readiness.v001_host_abi_eligible);
+        assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
+    }
+}
+
+#[test]
 fn builder_keeps_scalar_sum_layouts_internal_only_for_host_abi() {
     let ir = checked_ir(
         r#"
@@ -394,6 +578,11 @@ fun keep_result: (value: Result<Int32, Int32>) -> Result<Int32, Int32> = {
         assert!(
             !function.lowering.readiness.v001_host_abi_eligible,
             "{} should not become host ABI eligible from scalar sum candidates",
+            function.name
+        );
+        assert!(
+            !function.lowering.readiness.flat_record_v1_host_abi_eligible,
+            "{} should not become flat-record-v1 eligible from scalar sum candidates",
             function.name
         );
         assert!(function.lowering.readiness.internal_layout_ready);
@@ -451,6 +640,36 @@ fun keep_scores: (items: List<Int32>) -> List<Int32> = {
         .required_layouts
         .push(LayoutId(999));
 
+    assert!(matches!(
+        ir.validate_lowering_summaries(),
+        Err(IrBuildError::LoweringInvariantViolation(_))
+    ));
+}
+
+#[test]
+fn builder_rejects_stale_flat_record_v1_host_abi_summary_and_breaks_seal() {
+    let mut ir = checked_ir(FLAT_RECORD_V1_SOURCE);
+    assert!(ir.is_unmodified());
+
+    ir.functions[0].lowering.param_host_abis[0] =
+        HostAbi::InternalOnly(InternalOnlyReason::CompositeHostAbiUnstable);
+
+    assert!(!ir.is_unmodified());
+    assert!(matches!(
+        ir.validate_lowering_summaries(),
+        Err(IrBuildError::LoweringInvariantViolation(_))
+    ));
+}
+
+#[test]
+fn builder_rejects_stale_flat_record_v1_readiness_summary() {
+    let mut ir = checked_ir(FLAT_RECORD_V1_SOURCE);
+    ir.functions[0]
+        .lowering
+        .readiness
+        .flat_record_v1_host_abi_eligible = false;
+
+    assert!(!ir.is_unmodified());
     assert!(matches!(
         ir.validate_lowering_summaries(),
         Err(IrBuildError::LoweringInvariantViolation(_))

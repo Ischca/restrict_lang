@@ -532,6 +532,61 @@ constants with `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()` ABI.
 Composite constants such as `String`, records, lists, `Option`, and `Result`
 remain source-level values unless a concrete host ABI is designed.
 
+### 12.3 Experimental Flat Record Host ABI (Opt-in)
+
+The default v0.0.1 host ABI remains the scalar-only surface described above. A
+compiler invocation may explicitly select the experimental core-WebAssembly
+profile `--host-abi flat-record-v1`. This opt-in does not change what an
+invocation without the flag accepts, and it is not part of the published
+v0.0.1 compatibility boundary.
+
+`flat-record-v1` extends function exports with a deliberately narrow record
+adapter. A record used in an exported function parameter or result is eligible
+only when all of the following hold:
+
+- the function and record are concrete and non-generic;
+- the record declaration itself is source-exported with `pub record`;
+- neither the function nor the record has temporal parameters or constraints;
+- the record declares between 1 and 16 fields, inclusive; and
+- every field is directly `Int32`, `Int64`, `Float64`, `Boolean`, or `Char`.
+
+`()` fields, nested records, and every other composite field type are not part
+of this profile. A generic declaration does not become eligible merely because
+one call site could be monomorphized.
+
+The generated host wrapper flattens parameters in function parameter order.
+Each record parameter contributes its fields in source declaration order, and
+each ordinary scalar parameter contributes one value. A `()` parameter keeps
+the existing one-dummy-`i32` convention; a `()` result contributes no value.
+The complete flattened
+parameter vector must contain at most 16 core-WebAssembly value slots. `i64`
+and `f64` each count as one slot, not two 32-bit words.
+
+A record result is returned as core-WebAssembly multi-value results in source
+field order. The complete flattened result vector must also contain at most 16
+slots. Scalar and unit results retain their existing one-slot and zero-slot
+representations.
+
+Only the generated wrapper is exported under the source export name. The
+Restrict implementation body and its internal calling convention remain
+private. In particular, the wrapper must not expose an arena pointer,
+`LayoutId`, record byte offset, or any other internal representation detail.
+The external field order therefore remains source-defined even if the internal
+record layout changes.
+
+Unsupported signatures are rejected rather than silently falling back to an
+internal pointer ABI. This initial profile does not cover `String`, `List`,
+`Array`, `Option`, `Result`, range, nested-record, function, generic, temporal,
+or global composite values. It does not generate WIT or a WebAssembly
+Component Model interface. Source-level `pub record` declarations continue to
+be module metadata and do not by themselves create a host-visible Wasm export.
+
+A core-WebAssembly trap that escapes a `flat-record-v1` wrapper bypasses its
+normal arena restoration. The host must treat that module instance as invalid
+for subsequent `flat-record-v1` calls and instantiate a fresh module. A nested
+same-export call that traps may be caught by the host only when the outer call
+then returns normally, allowing the outer wrapper to restore its entry state.
+
 ## 13. Operator Precedence (Highest to Lowest)
 
 1. Field access and grouped direct OSV calls: `.field`, `.clone`, `freeze`, `(value) f`, `() f`

@@ -436,7 +436,6 @@ fn mise_check_examples(task_body: &str) -> Vec<String> {
         if trimmed.starts_with("examples/") {
             let path = trimmed
                 .trim_end_matches('\\')
-                .trim()
                 .split_whitespace()
                 .next()
                 .expect("example line should contain a path");

@@ -8,6 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
+const FLAT_RECORD_V1_MAX_SLOTS: usize = 16;
+
 use crate::ast::*;
 use crate::type_checker::{CheckedFunctionSignature, TypeChecker, TypedType};
 
@@ -285,7 +287,9 @@ impl CheckedFunctionIr {
         }
 
         for (index, param) in self.params.iter().enumerate() {
-            let expected = param.final_type.host_abi();
+            let expected = param
+                .final_type
+                .flat_record_v1_host_abi(param.repr, layout_table);
             if self.lowering.param_host_abis[index] != expected {
                 return Err(lowering_invariant_violation(format!(
                     "{} parameter '{}' host ABI summary is stale",
@@ -294,7 +298,10 @@ impl CheckedFunctionIr {
             }
         }
 
-        if self.lowering.return_host_abi != self.return_type.host_abi() {
+        let expected_return_host_abi = self
+            .return_type
+            .flat_record_v1_host_abi(self.return_repr, layout_table);
+        if self.lowering.return_host_abi != expected_return_host_abi {
             return Err(lowering_invariant_violation(format!(
                 "{} return host ABI summary is stale",
                 self.name
@@ -321,6 +328,37 @@ impl CheckedFunctionIr {
                     self.name, layout
                 )));
             }
+        }
+
+        let signature_surface_ready = self.monomorphic
+            && self.lowering.declared_type_params.is_empty()
+            && self.lowering.temporal_constraints.is_empty();
+        let expected_v001_host_abi_eligible = signature_surface_ready
+            && self
+                .lowering
+                .param_host_abis
+                .iter()
+                .all(HostAbi::is_v001_exportable)
+            && self.lowering.return_host_abi.is_v001_exportable();
+        if self.lowering.readiness.v001_host_abi_eligible != expected_v001_host_abi_eligible {
+            return Err(lowering_invariant_violation(format!(
+                "{} v0.0.1 host ABI readiness summary is stale",
+                self.name
+            )));
+        }
+
+        let expected_flat_record_v1_host_abi_eligible = signature_surface_ready
+            && flat_record_v1_signature_is_eligible(
+                &self.lowering.param_host_abis,
+                &self.lowering.return_host_abi,
+            );
+        if self.lowering.readiness.flat_record_v1_host_abi_eligible
+            != expected_flat_record_v1_host_abi_eligible
+        {
+            return Err(lowering_invariant_violation(format!(
+                "{} flat-record-v1 host ABI readiness summary is stale",
+                self.name
+            )));
         }
 
         Ok(())
@@ -373,6 +411,7 @@ pub struct CheckedTemporalConstraintIr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoweringReadiness {
     pub v001_host_abi_eligible: bool,
+    pub flat_record_v1_host_abi_eligible: bool,
     pub internal_layout_ready: bool,
     pub host_abi_blockers: Vec<HostAbiBlocker>,
     pub internal_lowering_blockers: Vec<InternalLoweringBlocker>,
@@ -487,9 +526,13 @@ fn build_lowering_summary(
         .collect::<Vec<_>>();
     let param_host_abis = params
         .iter()
-        .map(|param| param.final_type.host_abi())
+        .map(|param| {
+            param
+                .final_type
+                .flat_record_v1_host_abi(param.repr, layout_table)
+        })
         .collect::<Vec<_>>();
-    let return_host_abi = return_type.host_abi();
+    let return_host_abi = return_type.flat_record_v1_host_abi(return_repr, layout_table);
     let required_layouts = collect_required_layouts(params, return_repr, typed_exprs, layout_table);
 
     let mut host_abi_blockers = Vec::new();
@@ -550,6 +593,14 @@ fn build_lowering_summary(
         }
     }
 
+    let v001_host_abi_eligible = host_abi_blockers.is_empty()
+        && monomorphic
+        && param_host_abis.iter().all(HostAbi::is_v001_exportable)
+        && return_host_abi.is_v001_exportable();
+    let flat_record_v1_host_abi_eligible = host_abi_blockers.is_empty()
+        && monomorphic
+        && flat_record_v1_signature_is_eligible(&param_host_abis, &return_host_abi);
+
     CheckedFunctionLoweringSummary {
         source_exported,
         declared_type_params,
@@ -559,17 +610,46 @@ fn build_lowering_summary(
         body_result,
         required_layouts,
         readiness: LoweringReadiness {
-            v001_host_abi_eligible: host_abi_blockers.is_empty()
-                && monomorphic
-                && params
-                    .iter()
-                    .all(|param| param.final_type.host_abi().is_v001_exportable())
-                && return_type.host_abi().is_v001_exportable(),
+            v001_host_abi_eligible,
+            flat_record_v1_host_abi_eligible,
             internal_layout_ready: internal_lowering_blockers.is_empty(),
             host_abi_blockers,
             internal_lowering_blockers,
         },
     }
+}
+
+fn flat_record_v1_signature_is_eligible(params: &[HostAbi], result: &HostAbi) -> bool {
+    let parameter_slots = params.iter().try_fold(0usize, |total, abi| {
+        total.checked_add(match abi {
+            // Preserve the existing dummy-i32 Unit parameter convention.
+            HostAbi::Unit | HostAbi::Scalar(_) => 1,
+            HostAbi::FlatRecord { fields }
+                if (1..=FLAT_RECORD_V1_MAX_SLOTS).contains(&fields.len()) =>
+            {
+                fields.len()
+            }
+            HostAbi::FlatRecord { .. } | HostAbi::InternalOnly(_) => return None,
+        })
+    });
+    let Some(parameter_slots) = parameter_slots else {
+        return false;
+    };
+    if parameter_slots > FLAT_RECORD_V1_MAX_SLOTS {
+        return false;
+    }
+
+    let result_slots = match result {
+        HostAbi::Unit => 0,
+        HostAbi::Scalar(_) => 1,
+        HostAbi::FlatRecord { fields }
+            if (1..=FLAT_RECORD_V1_MAX_SLOTS).contains(&fields.len()) =>
+        {
+            fields.len()
+        }
+        HostAbi::FlatRecord { .. } | HostAbi::InternalOnly(_) => return false,
+    };
+    result_slots <= FLAT_RECORD_V1_MAX_SLOTS
 }
 
 fn format_type_param_name(param: &TypeParam) -> String {

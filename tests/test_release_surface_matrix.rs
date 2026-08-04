@@ -161,6 +161,20 @@ fn v001_release_surface_and_spec_keep_unsupported_forms_outside_default_gate() {
 }
 
 #[test]
+fn flat_record_v1_spec_requires_reinstantiation_after_an_escaping_trap() {
+    let language_spec = read_fixture(LANGUAGE_SPEC);
+    for phrase in [
+        "must treat that module instance as invalid",
+        "instantiate a fresh module",
+    ] {
+        assert!(
+            language_spec.contains(phrase),
+            "{LANGUAGE_SPEC} should define the escaping-trap instance boundary: {phrase}"
+        );
+    }
+}
+
+#[test]
 fn v001_release_surface_supported_section_does_not_promote_reserved_work() {
     let doc = read_fixture(RELEASE_SURFACE_DOC);
     let supported = section_between(

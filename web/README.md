@@ -48,17 +48,18 @@ npx serve .
 ## Usage
 
 1. **Write Code**: Enter your Restrict Language code in the text area
-2. **Compile**: Click "Compile" to run the full compilation pipeline
-3. **Analyze**: Use "Lex Only" or "Parse Only" for step-by-step analysis
-4. **View Results**: Switch between tabs to see WASM output, tokens, AST, or errors
-5. **Try Examples**: Click on the example programs to load them
+2. **Run**: Click "Run" to compile and execute a zero-argument `main` function locally
+3. **Compile**: Click "Compile" when you only want to inspect the generated WebAssembly text
+4. **Analyze**: Use "Tokenize" or "Parse" for step-by-step analysis
+5. **View Results**: Switch between tabs to see program output, WebAssembly, tokens, AST, or errors
+6. **Try Examples**: Choose an example program to load it
 
 ## Architecture
 
 The web compiler consists of:
 
-- **Rust Backend**: The core compiler compiled to WebAssembly
-- **JavaScript Frontend**: Web interface that calls the WASM module and keeps the source editor highlight layer in sync
+- **Rust Backend**: The core compiler and WAT assembler compiled to WebAssembly
+- **JavaScript Frontend**: Web interface that calls the compiler, instantiates generated WebAssembly, captures WASI stdout/stderr, and keeps the source editor highlight layer in sync
 - **HTML/CSS**: User interface and styling
 
 ## Supported v0.0.1 Syntax Surface
@@ -74,6 +75,15 @@ browser demo.
 - OSV calls such as `value |> function` and `(left, right) add`
 - Record declarations and literals with colon-delimited fields
 - `then`/`else` expressions, pattern matching, type checking, and WASM-oriented output where implemented
+
+## Browser Runtime
+
+`Run` assembles the generated WAT inside the compiler bundle, instantiates the
+program with a small browser-side WASI bridge, invokes the generated `_start`
+entry point, and displays stdout and stderr in the Output tab. A runnable
+program needs a zero-argument `main`; use `print`, `println`, `print_int`, or
+`print_float` to produce visible output. The source and generated program stay
+in the browser.
 
 ## Browser Compatibility
 

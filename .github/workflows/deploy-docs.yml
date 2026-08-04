@@ -54,6 +54,9 @@ jobs:
       - name: Build online compiler
         run: wasm-pack build --target web --out-dir web/pkg
 
+      - name: Smoke test online compiler runtime
+        run: node scripts/smoke-web-runtime.mjs
+
       - name: Assemble Pages site
         run: bash scripts/build-pages.sh
 

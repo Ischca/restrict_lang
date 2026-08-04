@@ -11,6 +11,14 @@ export function lex_only(source: string): any;
 
 export function parse_only(source: string): any;
 
+/**
+ * Convert compiler-generated WebAssembly text into an executable binary.
+ *
+ * Keeping this conversion in the compiler bundle lets the playground run
+ * programs locally without loading a third-party WAT parser from a CDN.
+ */
+export function wat_to_wasm(wat_source: string): Uint8Array;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -19,6 +27,7 @@ export interface InitOutput {
     readonly compile_restrict_lang_with_modules: (a: number, b: number, c: any) => any;
     readonly lex_only: (a: number, b: number) => any;
     readonly parse_only: (a: number, b: number) => any;
+    readonly wat_to_wasm: (a: number, b: number) => [number, number, number, number];
     readonly init: () => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
@@ -26,6 +35,7 @@ export interface InitOutput {
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

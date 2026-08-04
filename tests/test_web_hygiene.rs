@@ -42,6 +42,45 @@ fn web_readme_does_not_advertise_removed_or_complete_language_support() {
 }
 
 #[test]
+fn playground_runs_generated_wasm_and_surfaces_program_output() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let html = read_fixture(root, "web/index.html");
+    let app = read_fixture(root, "web/app.js");
+    let readme = read_fixture(root, "web/README.md");
+
+    for required in [
+        r#"id="runBtn""#,
+        r#"id="tab-output""#,
+        r#"id="outputOutput""#,
+        "Program output",
+    ] {
+        assert!(
+            html.contains(required),
+            "playground UI should expose `{required}`"
+        );
+    }
+
+    for required in [
+        "wat_to_wasm",
+        "WebAssembly.instantiate",
+        "wasi_snapshot_preview1",
+        "fd_write",
+        "programInstance.exports._start",
+        "result |> print_int",
+    ] {
+        assert!(
+            app.contains(required),
+            "playground runtime should include `{required}`"
+        );
+    }
+
+    assert!(
+        readme.contains("## Browser Runtime") && readme.contains("Output tab"),
+        "web README should explain how browser execution and output work"
+    );
+}
+
+#[test]
 fn pages_shell_hosts_docs_blog_and_compiler_routes() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
@@ -91,6 +130,10 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
     assert!(
         workflow.contains("wasm-pack build --target web --out-dir web/pkg"),
         "Pages workflow should build the browser compiler bundle"
+    );
+    assert!(
+        workflow.contains("node scripts/smoke-web-runtime.mjs"),
+        "Pages workflow should execute the generated compiler and capture its output before deployment"
     );
     assert!(
         workflow.contains("bash scripts/build-pages.sh") && workflow.contains("path: ./site/dist"),

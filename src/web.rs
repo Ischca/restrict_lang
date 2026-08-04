@@ -20,6 +20,21 @@ pub fn compile_restrict_lang(source: &str) -> JsValue {
     serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
 }
 
+/// Convert compiler-generated WebAssembly text into an executable binary.
+///
+/// Keeping this conversion in the compiler bundle lets the playground run
+/// programs locally without loading a third-party WAT parser from a CDN.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn wat_to_wasm(wat_source: &str) -> Result<Vec<u8>, JsValue> {
+    wat_to_wasm_internal(wat_source).map_err(|error| JsValue::from_str(&error))
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn wat_to_wasm_internal(wat_source: &str) -> Result<Vec<u8>, String> {
+    wat::parse_str(wat_source).map_err(|error| format!("WebAssembly assembly error: {error}"))
+}
+
 #[wasm_bindgen]
 pub fn compile_restrict_lang_with_modules(source: &str, modules: JsValue) -> JsValue {
     let module_sources = match serde_wasm_bindgen::from_value::<HashMap<String, String>>(modules) {
@@ -267,6 +282,22 @@ pub fn init() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wat_to_wasm_internal_emits_executable_binary() {
+        let wasm = wat_to_wasm_internal("(module (func (export \"main\")))")
+            .expect("valid WAT should assemble");
+
+        assert_eq!(&wasm[..4], b"\0asm");
+    }
+
+    #[test]
+    fn wat_to_wasm_internal_reports_assembly_errors() {
+        let message = wat_to_wasm_internal("(module (func")
+            .expect_err("invalid WAT should report an assembly error");
+
+        assert!(message.starts_with("WebAssembly assembly error:"));
+    }
 
     #[test]
     fn compile_internal_formats_lex_errors_without_nom_debug() {

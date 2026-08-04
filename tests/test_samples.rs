@@ -39,7 +39,7 @@ fn all_samples_compile() {
     let mut entries: Vec<_> = fs::read_dir(&samples_dir)
         .expect("Failed to read samples/ directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "rl"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rl"))
         .collect();
 
     entries.sort_by_key(|e| e.file_name());
@@ -111,7 +111,7 @@ fn samples_manifest_matches_files() {
 
     for entry in fs::read_dir(&samples_dir).unwrap().filter_map(|e| e.ok()) {
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "rl") {
+        if path.extension().is_some_and(|ext| ext == "rl") {
             let filename = path.file_name().unwrap().to_string_lossy();
             assert!(
                 manifest_files.contains(&filename.as_ref()),

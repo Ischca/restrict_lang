@@ -77,7 +77,7 @@
     .tool-button:disabled, .action-button:disabled { cursor: wait; opacity: 0.55; }
 
     .editor-wrap { position: relative; flex: 1; min-height: 440px; background: var(--paper); }
-    textarea, .source-highlight { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 22px; overflow: auto; border: 0; border-radius: 0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13.5px; line-height: 1.72; tab-size: 4; white-space: pre; }
+    textarea, .source-highlight { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 22px; overflow: auto; overflow-wrap: normal; border: 0; border-radius: 0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13.5px; font-style: normal; font-weight: 400; font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; letter-spacing: 0; line-height: 1.72; tab-size: 4; white-space: pre; word-break: normal; }
     textarea { z-index: 2; resize: none; background: transparent; color: transparent; caret-color: var(--logo-deep); }
     textarea::selection { background: rgba(255, 107, 53, 0.22); color: transparent; }
     textarea:focus { outline-offset: -3px; }
@@ -90,6 +90,12 @@
     .hljs-string, .hljs-number { color: var(--syntax-soft); }
     .hljs-comment { color: var(--syntax-muted); font-style: italic; }
     .hljs-operator { color: var(--syntax-primary); font-weight: 700; }
+    .source-highlight .hljs-keyword,
+    .source-highlight .hljs-title,
+    .source-highlight .hljs-type,
+    .source-highlight .hljs-literal,
+    .source-highlight .hljs-operator { font-weight: inherit; }
+    .source-highlight .hljs-comment { font-style: inherit; }
 
     .editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--surface); }
     .action-group { display: flex; flex-wrap: wrap; gap: 8px; }

@@ -81,6 +81,45 @@ fn playground_runs_generated_wasm_and_surfaces_program_output() {
 }
 
 #[test]
+fn playground_editor_overlay_keeps_caret_and_highlight_metrics_aligned() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let html = read_fixture(root, "web/index.html");
+
+    for required in [
+        "overflow-wrap: normal",
+        "font-variant-ligatures: none",
+        r#"font-feature-settings: "liga" 0, "calt" 0"#,
+        "letter-spacing: 0",
+        ".source-highlight .hljs-operator { font-weight: inherit; }",
+        ".source-highlight .hljs-comment { font-style: inherit; }",
+    ] {
+        assert!(
+            html.contains(required),
+            "playground editor layers should share the text metric rule `{required}`"
+        );
+    }
+}
+
+#[test]
+fn playground_explains_type_specific_print_functions() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let app = read_fixture(root, "web/app.js");
+
+    for required in [
+        "function formatCompilerDiagnostic(message, source)",
+        "Type mismatch: expected String, found (Int32|Float64)",
+        "print accepts String",
+        "print_int",
+        "print_float",
+    ] {
+        assert!(
+            app.contains(required),
+            "playground print diagnostic should include `{required}`"
+        );
+    }
+}
+
+#[test]
 fn pages_shell_hosts_docs_blog_and_compiler_routes() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 

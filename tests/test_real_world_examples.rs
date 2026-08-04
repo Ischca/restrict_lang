@@ -16,6 +16,17 @@ const PROMOTED_DOGFOOD_RELEASE_EXAMPLES: &[&str] = &[
     "examples/dogfood_array_range_window_inference.rl",
 ];
 
+fn internal_module_name(module_path: &[&str], name: &str) -> String {
+    let mut mangled = String::from("__rl$mod");
+    for part in module_path.iter().copied().chain([name]) {
+        mangled.push('_');
+        mangled.push_str(&part.len().to_string());
+        mangled.push('_');
+        mangled.push_str(part);
+    }
+    mangled
+}
+
 fn compile_to_wat(source: &str) -> Result<String, String> {
     let (remaining, ast) = parse_program(source).map_err(|e| format!("Parse error: {:?}", e))?;
     if !remaining.trim().is_empty() {
@@ -629,10 +640,11 @@ fn modular_release_gate_example_compiles_with_imports() {
     );
 
     let wat = fs::read_to_string(&output_path).expect("compiled WAT should be readable");
+    let internal_score = internal_module_name(&["modules", "release_scores"], "score_signal");
     assert!(wat.contains("(func $evaluate_release"));
-    assert!(wat.contains("(func $__rl_mod_modules_release_scores_score_signal"));
+    assert!(wat.contains(&format!("(func ${internal_score}")));
     assert!(wat.contains("call $evaluate_release"));
-    assert!(wat.contains("call $__rl_mod_modules_release_scores_score_signal"));
+    assert!(wat.contains(&format!("call ${internal_score}")));
     assert!(wat.contains(";; map(list, mapper)"));
     assert!(wat.contains(";; fold(list, initial, reducer)"));
 
@@ -673,9 +685,9 @@ fn modular_release_import_surface_example_compiles_with_whole_module_and_wildcar
 
     let wat = fs::read_to_string(&output_path).expect("compiled WAT should be readable");
     assert!(wat.contains("(func $evaluate_release"));
-    assert!(wat.contains("(func $__rl_mod_modules_release_scores_score_signal"));
+    assert!(wat.contains("(func $score_signal"));
     assert!(wat.contains("call $evaluate_release"));
-    assert!(wat.contains("call $__rl_mod_modules_release_scores_score_signal"));
+    assert!(wat.contains("call $score_signal"));
 
     let (mut store, instance) = instantiate_wat("modular release import surface runtime", &wat);
     let modular_release_import_surface_score = instance

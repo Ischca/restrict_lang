@@ -263,6 +263,12 @@ import release.policy.{score}
 import release.policy.*
 ```
 
+A declaration keeps the same module identity across split named imports and
+transitive imports. Each dependency module is included once. Duplicate exports,
+ambiguous configured module roots, normalized virtual-module duplicates, and
+import cycles are reported as errors. For file-based compilation, modules next
+to the source file take precedence over the process working directory fallback.
+
 ## Precedence
 
 The practical precedence order is:

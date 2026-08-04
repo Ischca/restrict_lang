@@ -80,6 +80,25 @@ fn temp_module_dir(name: &str) -> PathBuf {
     dir
 }
 
+fn internal_module_name(module_path: &[&str], name: &str) -> String {
+    let mut mangled = String::from("__rl$mod");
+    for part in module_path.iter().copied().chain([name]) {
+        mangled.push('_');
+        mangled.push_str(&part.len().to_string());
+        mangled.push('_');
+        mangled.push_str(part);
+    }
+    mangled
+}
+
+struct RemoveFileOnDrop(PathBuf);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 #[test]
 fn resolver_collects_named_function_exports() {
     let dir = temp_module_dir("named_exports");
@@ -566,9 +585,10 @@ export fun score: (value: Int32) -> Int32 = {
     let wat = codegen
         .generate(&resolved)
         .expect("virtual-module-resolved program should generate WAT");
-    assert!(wat.contains("(func $__rl_mod_modules_release_scores_score"));
+    let internal_score = internal_module_name(&["modules", "release_scores"], "score");
+    assert!(wat.contains(&format!("(func ${internal_score}")));
     assert!(wat.contains("(func $score"));
-    assert!(wat.contains("call $__rl_mod_modules_release_scores_score"));
+    assert!(wat.contains(&format!("call ${internal_score}")));
     assert!(wat.contains("call $public_score"));
 }
 
@@ -782,7 +802,7 @@ fun main: () -> Int32 = {
         .resolve_program_imports(root)
         .expect("imports should resolve without leaking private helper names");
 
-    let internal_name = "__rl_mod_release_score";
+    let internal_name = internal_module_name(&["release"], "score");
     assert!(
         resolved
             .declarations
@@ -800,9 +820,9 @@ fun main: () -> Int32 = {
     let wat = codegen
         .generate(&resolved)
         .expect("resolved program should generate WAT");
-    assert!(wat.contains("(func $__rl_mod_release_score"));
+    assert!(wat.contains(&format!("(func ${internal_name}")));
     assert!(wat.contains("(func $score"));
-    assert!(wat.contains("call $__rl_mod_release_score"));
+    assert!(wat.contains(&format!("call ${internal_name}")));
     assert!(wat.contains("call $public_score"));
 
     let _ = fs::remove_dir_all(dir);
@@ -861,9 +881,10 @@ fun main: () -> Int32 = {
     let wat = codegen
         .generate(&resolved)
         .expect("resolved program should generate WAT");
-    assert!(wat.contains("(func $__rl_mod_score_util_score"));
+    let internal_score = internal_module_name(&["score_util"], "score");
+    assert!(wat.contains(&format!("(func ${internal_score}")));
     assert!(wat.contains("(func $score"));
-    assert!(wat.contains("call $__rl_mod_score_util_score"));
+    assert!(wat.contains(&format!("call ${internal_score}")));
     assert!(wat.contains("call $public_score"));
 
     let _ = fs::remove_dir_all(dir);
@@ -920,15 +941,17 @@ fun main: () -> Int32 = {
         .resolve_program_imports(root)
         .expect("private context dependency should resolve");
 
+    let internal_policy = internal_module_name(&["release"], "Policy");
+    let internal_limits = internal_module_name(&["release"], "PolicyLimits");
     assert!(
         resolved.declarations.iter().any(|decl| {
-            matches!(decl, TopDecl::Context(context) if context.name == "__rl_mod_release_Policy")
+            matches!(decl, TopDecl::Context(context) if context.name == internal_policy)
         }),
         "private context should be emitted under an internal module name"
     );
     assert!(
         resolved.declarations.iter().any(|decl| {
-            matches!(decl, TopDecl::Record(record) if record.name == "__rl_mod_release_PolicyLimits")
+            matches!(decl, TopDecl::Record(record) if record.name == internal_limits)
         }),
         "private context field record should be emitted under an internal module name"
     );
@@ -940,7 +963,7 @@ fun main: () -> Int32 = {
                     if context.fields.iter().any(|field| {
                         matches!(
                             &field.ty,
-                            Type::Named(name) if name == "__rl_mod_release_PolicyLimits"
+                            Type::Named(name) if name == &internal_limits
                         )
                     })
             )
@@ -957,7 +980,7 @@ fun main: () -> Int32 = {
     let wat = codegen
         .generate(&resolved)
         .expect("resolved program with private context should generate WAT");
-    assert!(wat.contains(";; With context: __rl_mod_release_Policy"));
+    assert!(wat.contains(&format!(";; With context: {internal_policy}")));
     assert!(wat.contains("call $public_score"));
 
     let _ = fs::remove_dir_all(dir);
@@ -1024,9 +1047,10 @@ fun main: () -> Int32 = {
         .resolve_program_imports(root)
         .expect("private impl dependency should resolve");
 
+    let internal_signal = internal_module_name(&["release"], "Signal");
     assert!(
         resolved.declarations.iter().any(|decl| {
-            matches!(decl, TopDecl::Record(record) if record.name == "__rl_mod_release_Signal")
+            matches!(decl, TopDecl::Record(record) if record.name == internal_signal)
         }),
         "private method receiver record should be emitted under an internal module name"
     );
@@ -1035,7 +1059,7 @@ fun main: () -> Int32 = {
             .declarations
             .iter()
             .filter(|decl| {
-                matches!(decl, TopDecl::Impl(impl_block) if impl_block.target == "__rl_mod_release_Signal")
+                matches!(decl, TopDecl::Impl(impl_block) if impl_block.target == internal_signal)
             })
             .count()
             >= 2,
@@ -1051,10 +1075,10 @@ fun main: () -> Int32 = {
     let wat = codegen
         .generate(&resolved)
         .expect("resolved program with private impl should generate WAT");
-    assert!(wat.contains("(func $__rl_mod_release_Signal_risk_score"));
-    assert!(wat.contains("(func $__rl_mod_release_Signal_risk_bucket"));
-    assert!(wat.contains("call $__rl_mod_release_Signal_risk_score"));
-    assert!(wat.contains("call $__rl_mod_release_Signal_risk_bucket"));
+    assert!(wat.contains(&format!("(func ${internal_signal}_risk_score")));
+    assert!(wat.contains(&format!("(func ${internal_signal}_risk_bucket")));
+    assert!(wat.contains(&format!("call ${internal_signal}_risk_score")));
+    assert!(wat.contains(&format!("call ${internal_signal}_risk_bucket")));
     assert!(wat.contains("call $public_score"));
 
     let _ = fs::remove_dir_all(dir);
@@ -1335,5 +1359,717 @@ export fun widen: (value: Int32) -> Int64 = {
     assert_eq!(
         target, &pad_name,
         "range endpoints must follow module renaming"
+    );
+}
+
+#[test]
+fn split_named_imports_preserve_one_nominal_record_identity() {
+    let root = parse_complete(
+        r#"
+import release_model.{ReleaseSlice}
+import release_model.{make_slice}
+
+export fun split_import_score: () -> Int32 = {
+    val ReleaseSlice { base, bonus } = (40, 2) make_slice;
+    base + bonus
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "release_model".to_string(),
+        r#"
+export record ReleaseSlice {
+    base: Int32,
+    bonus: Int32
+}
+
+export fun make_slice: (base: Int32, bonus: Int32) -> ReleaseSlice = {
+    ReleaseSlice {
+        base: base,
+        bonus: bonus
+    }
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("split named imports should resolve to one module identity");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("the imported record and factory signature should share one nominal type");
+
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("split named imports should generate WAT");
+    let (mut store, instance) = instantiate_wat("split named record imports", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "split_import_score")
+        .expect("split import regression export should be host-callable");
+
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("split import regression export should execute"),
+        42
+    );
+}
+
+#[test]
+fn direct_and_transitive_imports_share_one_nominal_record_identity() {
+    let root = parse_complete(
+        r#"
+import release_model.{ReleaseSlice}
+import release_policy.{evaluate_slice}
+
+export fun transitive_import_score: () -> Int32 = {
+    val slice = ReleaseSlice {
+        base: 40,
+        bonus: 2
+    };
+    slice |> evaluate_slice
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "release_model".to_string(),
+        r#"
+export record ReleaseSlice {
+    base: Int32,
+    bonus: Int32
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "release_policy".to_string(),
+        r#"
+import release_model.{ReleaseSlice}
+
+export fun evaluate_slice: (slice: ReleaseSlice) -> Int32 = {
+    val ReleaseSlice { base, bonus } = slice;
+    base + bonus
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("direct and transitive imports should resolve");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("direct and transitive references should share one nominal record type");
+
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("direct and transitive imports should generate WAT");
+    let (mut store, instance) = instantiate_wat("direct and transitive record imports", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "transitive_import_score")
+        .expect("transitive identity regression export should be host-callable");
+
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("transitive identity regression export should execute"),
+        42
+    );
+}
+
+#[test]
+fn internal_module_names_are_collision_proof_across_path_segments() {
+    let root = parse_complete(
+        r#"
+import left_adapter.{left_score}
+import right_adapter.{right_score}
+
+export fun mangling_collision_score: () -> Int32 = {
+    val left = () left_score;
+    val right = () right_score;
+    left + right
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "a_b.c".to_string(),
+        r#"
+export fun score: () -> Int32 = {
+    10
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "a.b_c".to_string(),
+        r#"
+export fun score: () -> Int32 = {
+    20
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "left_adapter".to_string(),
+        r#"
+import a_b.c.{score}
+
+export fun left_score: () -> Int32 = {
+    () score
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "right_adapter".to_string(),
+        r#"
+import a.b_c.{score}
+
+export fun right_score: () -> Int32 = {
+    () score
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("modules whose underscore-joined paths collide should still resolve");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("collision-proof internal module names should type check");
+
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("collision-proof internal module names should generate WAT");
+    let (mut store, instance) = instantiate_wat("collision-proof module names", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "mangling_collision_score")
+        .expect("mangling regression export should be host-callable");
+
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("mangling regression export should execute"),
+        30,
+        "both colliding module paths must retain their own implementation"
+    );
+}
+
+#[test]
+fn internal_module_namespace_cannot_collide_with_source_identifiers() {
+    let root = parse_complete(
+        r#"
+import policy.{public_score}
+
+fun __rl_mod_6_policy_5_score: () -> Int32 = {
+    1
+}
+
+export fun source_namespace_score: () -> Int32 = {
+    val public = () public_score;
+    val local = () __rl_mod_6_policy_5_score;
+    public + local
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "policy".to_string(),
+        r#"
+fun score: () -> Int32 = {
+    41
+}
+
+export fun public_score: () -> Int32 = {
+    () score
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("source identifiers must not collide with the internal namespace");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("source/internal namespace separation should type check");
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("source/internal namespace separation should generate WAT");
+    assert!(wat.contains("$__rl$mod_6_policy_5_score"));
+    assert!(wat.contains("$__rl_mod_6_policy_5_score"));
+
+    let (mut store, instance) = instantiate_wat("source/internal module namespace", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "source_namespace_score")
+        .expect("namespace regression export should be host-callable");
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("namespace regression export should execute"),
+        42
+    );
+}
+
+#[test]
+fn failed_module_resolution_does_not_poison_retry_cache() {
+    let root = parse_complete(
+        r#"
+import release_parent.{parent_score}
+
+export fun retry_score: () -> Int32 = {
+    () parent_score
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .try_add_module_source(
+            vec!["release_parent".to_string()],
+            r#"
+import release_child.{child_score}
+
+export fun parent_score: () -> Int32 = {
+    () child_score
+}
+"#
+            .to_string(),
+        )
+        .expect("parent module source should be registered");
+
+    let first_error = resolver
+        .resolve_program_imports(root.clone())
+        .expect_err("the first resolution should fail while the child is missing");
+    assert!(
+        first_error.to_string().contains("release_child"),
+        "the initial error should identify the missing child module: {first_error}"
+    );
+
+    resolver
+        .try_add_module_source(
+            vec!["release_child".to_string()],
+            r#"
+export fun child_score: () -> Int32 = {
+    42
+}
+"#
+            .to_string(),
+        )
+        .expect("child module source should be registered");
+
+    let resolved = resolver
+        .resolve_program_imports(root)
+        .expect("retry should resolve after the missing child is supplied");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("a successful retry should produce a complete program");
+}
+
+#[test]
+fn cyclic_import_error_reports_the_complete_chain() {
+    let root = parse_complete(
+        r#"
+import cycle_a.{a_score}
+
+fun main: () -> Int32 = {
+    () a_score
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "cycle_a".to_string(),
+        r#"
+import cycle_b.{b_score}
+
+export fun a_score: () -> Int32 = {
+    1
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "cycle_b".to_string(),
+        r#"
+import cycle_c.{c_score}
+
+export fun b_score: () -> Int32 = {
+    2
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "cycle_c".to_string(),
+        r#"
+import cycle_a.{a_score}
+
+export fun c_score: () -> Int32 = {
+    3
+}
+"#
+        .to_string(),
+    );
+
+    let error = resolve_program_imports_with_module_source_map(root, sources)
+        .expect_err("cyclic imports should be rejected");
+    let message = error.to_string();
+    assert!(
+        message.contains("cycle_a -> cycle_b -> cycle_c -> cycle_a"),
+        "cycle diagnostic should include the complete import chain, got: {message}"
+    );
+}
+
+#[test]
+fn resolver_rejects_duplicate_exports_in_one_module() {
+    let root = parse_complete(
+        r#"
+import duplicate_policy.{score}
+
+fun main: () -> Int32 = {
+    () score
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "duplicate_policy".to_string(),
+        r#"
+export fun score: () -> Int32 = {
+    1
+}
+
+export fun score: () -> Int32 = {
+    2
+}
+"#
+        .to_string(),
+    );
+
+    let error = resolve_program_imports_with_module_source_map(root, sources)
+        .expect_err("duplicate exports should be rejected instead of overwritten");
+    let message = error.to_string();
+    assert!(
+        message.to_lowercase().contains("duplicate export")
+            && message.contains("score")
+            && message.contains("duplicate_policy"),
+        "duplicate export diagnostic should name the module and export, got: {message}"
+    );
+}
+
+#[test]
+fn resolver_rejects_duplicate_normalized_virtual_module_sources() {
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_module_source_key(
+            "policy.rules",
+            r#"
+export fun score: () -> Int32 = {
+    1
+}
+"#
+            .to_string(),
+        )
+        .expect("the first virtual module spelling should be accepted");
+
+    let error = resolver
+        .add_module_source_key(
+            "policy/rules.rl",
+            r#"
+export fun score: () -> Int32 = {
+    2
+}
+"#
+            .to_string(),
+        )
+        .expect_err("equivalent virtual module spellings must not overwrite each other");
+    let message = error.to_string();
+    assert!(
+        message.to_lowercase().contains("duplicate") && message.contains("policy.rules"),
+        "duplicate virtual module diagnostic should name its canonical identity, got: {message}"
+    );
+}
+
+#[test]
+fn infallible_module_source_registration_reports_duplicates_during_resolution() {
+    let module_path = vec!["release_policy".to_string()];
+    let mut resolver = ModuleResolver::new();
+    resolver.add_module_source(
+        module_path.clone(),
+        r#"
+export fun score: () -> Int32 = {
+    1
+}
+"#
+        .to_string(),
+    );
+    resolver.add_module_source(
+        module_path.clone(),
+        r#"
+export fun score: () -> Int32 = {
+    2
+}
+"#
+        .to_string(),
+    );
+
+    let error = resolver
+        .resolve_module(&module_path)
+        .expect_err("the compatibility API must not silently accept a duplicate identity");
+    let message = error.to_string();
+    assert!(
+        message.to_lowercase().contains("duplicate") && message.contains("release_policy"),
+        "deferred duplicate diagnostic should name the module, got: {message}"
+    );
+}
+
+#[test]
+fn checked_module_source_registration_rejects_an_already_resolved_identity() {
+    let dir = temp_module_dir("late_module_source_registration");
+    fs::write(
+        dir.join("release_policy.rl"),
+        r#"
+export fun score: () -> Int32 = {
+    1
+}
+"#,
+    )
+    .expect("filesystem module should be written");
+
+    let mut resolver = ModuleResolver::new();
+    resolver.add_search_path(dir.clone());
+    resolver
+        .resolve_module(&["release_policy".to_string()])
+        .expect("filesystem module should resolve");
+
+    let error = resolver
+        .try_add_module_source(
+            vec!["release_policy".to_string()],
+            r#"
+export fun score: () -> Int32 = {
+    2
+}
+"#
+            .to_string(),
+        )
+        .expect_err("checked registration must not silently shadow a cached module");
+    let message = error.to_string();
+    assert!(
+        message.contains("already resolved") && message.contains("release_policy"),
+        "late registration diagnostic should identify the cached module, got: {message}"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn resolver_rejects_ambiguous_files_across_explicit_search_paths() {
+    let first = temp_module_dir("ambiguous_module_first");
+    let second = temp_module_dir("ambiguous_module_second");
+    fs::create_dir_all(first.join("release")).expect("first module namespace should be created");
+    fs::create_dir_all(second.join("release")).expect("second module namespace should be created");
+    fs::write(
+        first.join("release/policy.rl"),
+        r#"
+export fun score: () -> Int32 = {
+    1
+}
+"#,
+    )
+    .expect("first ambiguous module should be written");
+    fs::write(
+        second.join("release/policy.rl"),
+        r#"
+export fun score: () -> Int32 = {
+    2
+}
+"#,
+    )
+    .expect("second ambiguous module should be written");
+
+    let mut resolver = ModuleResolver::new();
+    resolver.add_search_path(first.clone());
+    resolver.add_search_path(second.clone());
+    let error = resolver
+        .resolve_module(&["release".to_string(), "policy".to_string()])
+        .expect_err("distinct files for one module identity should be ambiguous");
+    let message = error.to_string();
+    assert!(
+        message.to_lowercase().contains("ambiguous")
+            && message.contains("release.policy")
+            && message.contains(&first.display().to_string())
+            && message.contains(&second.display().to_string()),
+        "ambiguity diagnostic should name the module and both candidates, got: {message}"
+    );
+
+    let _ = fs::remove_dir_all(first);
+    let _ = fs::remove_dir_all(second);
+}
+
+#[test]
+fn source_parent_module_takes_precedence_over_process_cwd() {
+    let base = temp_module_dir("source_parent_precedence");
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    let module_name = format!("source_parent_policy_{}_{}", std::process::id(), unique);
+    let cwd_module = std::env::current_dir()
+        .expect("current directory should be readable")
+        .join(format!("{module_name}.rl"));
+    fs::write(
+        &cwd_module,
+        r#"
+export fun selected_score: () -> Int32 = {
+    1
+}
+"#,
+    )
+    .expect("cwd shadow module should be written");
+    let _cwd_cleanup = RemoveFileOnDrop(cwd_module);
+
+    fs::write(
+        base.join(format!("{module_name}.rl")),
+        r#"
+export fun selected_score: () -> Int32 = {
+    42
+}
+"#,
+    )
+    .expect("source-parent module should be written");
+
+    let root = parse_complete(&format!(
+        r#"
+import {module_name}.{{selected_score}}
+
+export fun source_parent_score: () -> Int32 = {{
+    () selected_score
+}}
+"#
+    ));
+    let resolved = resolve_program_imports_for_file(root, &base.join("app.rl"))
+        .expect("source-relative import should resolve");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("source-parent precedence program should type check");
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("source-parent precedence program should generate WAT");
+    let (mut store, instance) = instantiate_wat("source-parent precedence", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "source_parent_score")
+        .expect("source-parent precedence export should be host-callable");
+
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("source-parent precedence export should execute"),
+        42,
+        "the source file's parent directory must take precedence over process cwd"
+    );
+
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn diamond_dependency_is_emitted_once_with_one_identity() {
+    let root = parse_complete(
+        r#"
+import left_policy.{left_score}
+import right_policy.{right_score}
+
+export fun diamond_score: () -> Int32 = {
+    val left = () left_score;
+    val right = () right_score;
+    left + right
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "shared_score".to_string(),
+        r#"
+export fun base_score: () -> Int32 = {
+    10
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "left_policy".to_string(),
+        r#"
+import shared_score.{base_score}
+
+export fun left_score: () -> Int32 = {
+    val base = () base_score;
+    base + 1
+}
+"#
+        .to_string(),
+    );
+    sources.insert(
+        "right_policy".to_string(),
+        r#"
+import shared_score.{base_score}
+
+export fun right_score: () -> Int32 = {
+    val base = () base_score;
+    base + 2
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("diamond imports should resolve one shared module identity");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("diamond imports should type check");
+
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("diamond imports should generate WAT");
+    let internal_base = internal_module_name(&["shared_score"], "base_score");
+    assert_eq!(
+        wat.matches(&format!("(func ${internal_base}")).count(),
+        1,
+        "the shared diamond dependency must be emitted once"
+    );
+
+    let (mut store, instance) = instantiate_wat("diamond dependency identity", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "diamond_score")
+        .expect("diamond regression export should be host-callable");
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("diamond regression export should execute"),
+        23
     );
 }

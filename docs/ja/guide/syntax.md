@@ -263,6 +263,13 @@ import release.policy
 
 文字列パス、別名付き import、再 export、標準ライブラリ集約 import は、今後のモジュール設計で扱います。
 
+同じ宣言は、named import を複数の文に分けた場合や推移的な import を
+経由した場合でも、同一のモジュール identity を保ちます。依存モジュールは
+1回だけ取り込まれます。重複 export、同じパスに正規化される仮想モジュール、
+複数の明示的検索ルートにある曖昧なモジュール、循環 import はエラーです。
+ファイルをコンパイルする場合は、ソースファイルの親ディレクトリを process
+working directory の fallback より優先します。
+
 ## pub 宣言
 
 ```restrict

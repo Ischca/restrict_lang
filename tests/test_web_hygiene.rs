@@ -120,6 +120,22 @@ fn playground_explains_type_specific_print_functions() {
 }
 
 #[test]
+fn shell_installer_uses_portable_checksum_flags() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let installer = read_fixture(root, "install.sh");
+
+    assert!(
+        installer.contains("sha256sum -c -") && installer.contains("shasum -a 256 -c -"),
+        "install.sh should explicitly read checksum lists from stdin on macOS and GNU implementations"
+    );
+    assert!(
+        !installer.contains("sha256sum --check --status")
+            && !installer.contains("shasum --algorithm 256 --check --status"),
+        "install.sh should not rely on GNU-style long checksum options"
+    );
+}
+
+#[test]
 fn pages_shell_hosts_docs_blog_and_compiler_routes() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 

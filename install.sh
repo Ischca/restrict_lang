@@ -49,9 +49,9 @@ checksum_line="$(grep "  ${archive}$" SHA256SUMS || true)"
 [ -n "$checksum_line" ] || fail "${archive} is missing from SHA256SUMS"
 
 if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s\n' "$checksum_line" | sha256sum --check --status
+    printf '%s\n' "$checksum_line" | sha256sum -c -
 elif command -v shasum >/dev/null 2>&1; then
-    printf '%s\n' "$checksum_line" | shasum --algorithm 256 --check --status
+    printf '%s\n' "$checksum_line" | shasum -a 256 -c -
 else
     fail "sha256sum or shasum is required to verify the download"
 fi

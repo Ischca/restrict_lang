@@ -2,9 +2,6 @@ use restrict_lang::parser::parse_program;
 use std::env;
 use std::fs;
 fn main() {
-    // Enable nom tracing
-    nom_trace::activate_trace!();
-
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: trace_parser <file.rl>");
@@ -19,8 +16,7 @@ fn main() {
     println!("{}", content);
     println!();
 
-    // Parse with tracing enabled
-    println!("=== Parsing with Trace ===");
+    println!("=== Parsing ===");
     match parse_program(&content) {
         Ok((remaining, ast)) => {
             println!("\n=== Result ===");

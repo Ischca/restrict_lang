@@ -81,6 +81,99 @@ fun add_one: (value: Int32) -> Int32 = {
 }
 
 #[test]
+fn builder_records_payload_free_enum_constructor_and_sum_layout() {
+    let ir = checked_ir(
+        r#"
+enum ParseState {
+    Empty
+    Message(String)
+}
+
+fun empty: () -> ParseState = {
+    () ParseState::Empty
+}
+"#,
+    );
+
+    let function = ir
+        .functions
+        .iter()
+        .find(|function| function.name == "empty")
+        .expect("empty IR should be present");
+    let site = function
+        .apply_sites
+        .first()
+        .expect("enum constructor Apply should be present");
+    assert_eq!(site.apply.flavor, ApplyFlavor::EnumConstructor);
+    assert_eq!(site.callee_hint.as_deref(), Some("ParseState::Empty"));
+    assert!(matches!(
+        &site.apply.callee_provenance,
+        CalleeProvenance::EnumVariant(variant)
+            if variant.enum_name == "ParseState" && variant.variant_name == "Empty"
+    ));
+
+    let ValueRepr::Ref(layout_id) = function.return_repr else {
+        panic!("ParseState should use a typed sum ref");
+    };
+    let LayoutKind::Sum(layout) = &ir
+        .layout_table
+        .get(layout_id)
+        .expect("enum layout should be present")
+        .kind
+    else {
+        panic!("expected Sum layout");
+    };
+    assert_eq!(layout.type_name, "ParseState");
+    assert_eq!(
+        layout
+            .variants
+            .iter()
+            .map(|variant| (variant.tag, variant.name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(0, "Empty"), (1, "Message")]
+    );
+    assert!(layout.variants[0].payload.is_none());
+    assert!(layout.variants[1].payload.is_some());
+}
+
+#[test]
+fn builder_records_piped_enum_payload_constructor_provenance() {
+    let ir = checked_ir(
+        r#"
+enum ParseState {
+    Empty
+    Message(String)
+}
+
+fun message: (text: String) -> ParseState = {
+    text |> ParseState::Message
+}
+"#,
+    );
+
+    let function = ir
+        .functions
+        .iter()
+        .find(|function| function.name == "message")
+        .expect("message IR should be present");
+    let site = function
+        .apply_sites
+        .first()
+        .expect("piped enum constructor Apply should be present");
+    assert_eq!(site.apply.flavor, ApplyFlavor::Pipe);
+    assert_eq!(site.callee_hint.as_deref(), Some("ParseState::Message"));
+    assert!(matches!(
+        &site.apply.callee_provenance,
+        CalleeProvenance::EnumVariant(variant)
+            if variant.enum_name == "ParseState" && variant.variant_name == "Message"
+    ));
+    assert_eq!(site.apply.args.len(), 1);
+    assert!(function.lowering.readiness.internal_layout_ready);
+    assert!(!function.lowering.readiness.v001_host_abi_eligible);
+    assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
+}
+
+#[test]
 fn builder_keeps_generic_signature_non_monomorphic() {
     let ir = checked_ir(
         r#"
@@ -714,6 +807,7 @@ fun main: () -> Int32 = {
         .iter()
         .map(|site| match &site.apply.callee_provenance {
             CalleeProvenance::TopLevelFunction(callee) => callee.name.as_str(),
+            CalleeProvenance::EnumVariant(_) => "<enum-variant>",
             CalleeProvenance::Value => "<value>",
         })
         .collect::<Vec<_>>();

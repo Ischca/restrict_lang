@@ -27,13 +27,18 @@ const REQUIRED_PHRASES: &[&str] = &[
     "Program entry `main` emitted as `_start`",
     "main` is the source entry point",
     "TAT outside default gate",
-    "User enum/ADT reserved unsupported",
+    "Closed user-defined enums",
+    "non-generic, non-recursive enums",
+    "qualified `Type::Variant` names",
+    "`pub enum` crosses source-module boundaries only",
+    "no host-visible enum ABI",
+    "Generic/recursive enums and `?`",
+    "ergonomic `?` propagation is not implemented",
     "Exported generic/composite host ABI as design gap",
     "before `--check` success or code generation",
     "Source-level record exports no host ABI",
     "string import paths and import aliases are unsupported in v0.0.1",
     "re-exports are unsupported in v0.0.1",
-    "enum declarations are unsupported in v0.0.1",
     "traditional calls like `add(1, 2)` are not valid Restrict",
 ];
 
@@ -67,19 +72,6 @@ const OUTSIDE_GATE_SURFACES: &[OutsideGateSurface] = &[
             "reserved design-space",
             "terminology for later type-system work",
             "outside the default v0.0.1",
-        ],
-    },
-    OutsideGateSurface {
-        label: "user-defined enum/ADT",
-        release_phrases: &[
-            "User enum/ADT reserved unsupported",
-            "User-defined ADTs",
-            "user-defined enum/ADT declarations remain unsupported",
-        ],
-        spec_phrases: &[
-            "User-defined `enum`/ADT declarations",
-            "outside default v0.0.1",
-            "only compiler-provided `Option<T>` and `Result<T, E>` sum types are current",
         ],
     },
     OutsideGateSurface {
@@ -158,6 +150,74 @@ fn v001_release_surface_and_spec_keep_unsupported_forms_outside_default_gate() {
             assert_doc_contains(LANGUAGE_SPEC, &language_spec, phrase, surface.label);
         }
     }
+}
+
+#[test]
+fn release_surface_and_spec_define_the_post_v001_closed_enum_boundary() {
+    let release_surface = read_fixture(RELEASE_SURFACE_DOC);
+    let language_spec = read_fixture(LANGUAGE_SPEC);
+    let normalized_language_spec = normalize_whitespace(&language_spec);
+    let post_v001 = section_after(&release_surface, "## Experimental/Post-v0.0.1");
+
+    for phrase in [
+        "Closed user-defined enums",
+        "non-generic, non-recursive enums",
+        "zero or one payload",
+        "qualified `Type::Variant` names",
+        "matches are exhaustive",
+        "`pub enum` crosses source-module boundaries only",
+        "no host-visible enum ABI",
+        "Generic/recursive enums and `?`",
+        "`Result<T, CustomError>`",
+        "ergonomic `?` propagation is not implemented",
+    ] {
+        assert_doc_contains(
+            RELEASE_SURFACE_DOC,
+            post_v001,
+            phrase,
+            "post-v0.0.1 closed user-defined enums",
+        );
+    }
+
+    for phrase in [
+        "closed, non-generic user-defined `enum` slice",
+        "Generic enums, recursive enums",
+        "variants are scoped under their enum name",
+        "pub enum PublicError",
+        "Post-v0.0.1 exported enums have the same source-module-only meaning",
+        "do not emit direct host-visible WebAssembly exports",
+        "user-defined enums are rejected by both the default ABI and `flat-record-v1`",
+        "A postfix `?` operator remains future work",
+    ] {
+        assert_doc_contains(
+            LANGUAGE_SPEC,
+            &normalized_language_spec,
+            phrase,
+            "post-v0.0.1 closed user-defined enums",
+        );
+    }
+}
+
+#[test]
+fn any_historical_enum_rejection_is_scoped_to_v001() {
+    let release_surface = read_fixture(RELEASE_SURFACE_DOC);
+    let rejected = section_between(
+        &release_surface,
+        "## Rejected With Explicit Diagnostics",
+        "## Experimental/Post-v0.0.1",
+    );
+    let post_v001 = section_after(&release_surface, "## Experimental/Post-v0.0.1");
+
+    if rejected.contains("enum declarations are unsupported") {
+        assert!(
+            rejected.contains("enum declarations are unsupported in v0.0.1"),
+            "historical enum rejection must be explicitly scoped to v0.0.1"
+        );
+    }
+    assert!(
+        !post_v001.contains("enum declarations remain unsupported"),
+        "the current post-v0.0.1 enum surface must not be described as unsupported"
+    );
 }
 
 #[test]
@@ -252,7 +312,7 @@ fn read_fixture(path: &str) -> String {
 fn assert_doc_contains(path: &str, doc: &str, phrase: &str, label: &str) {
     assert!(
         doc.contains(phrase),
-        "{path} should mark {label} outside default v0.0.1 with phrase: {phrase}"
+        "{path} should document {label} with phrase: {phrase}"
     );
 }
 
@@ -267,4 +327,16 @@ fn section_between<'a>(doc: &'a str, start: &str, end: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing section end marker: {end}"));
 
     &doc[content_start..section_end]
+}
+
+fn section_after<'a>(doc: &'a str, start: &str) -> &'a str {
+    let section_start = doc
+        .find(start)
+        .unwrap_or_else(|| panic!("missing section start marker: {start}"));
+
+    &doc[section_start + start.len()..]
+}
+
+fn normalize_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }

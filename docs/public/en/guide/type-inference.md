@@ -5,13 +5,16 @@ boundaries. Function parameters, exported APIs, and record fields should keep
 clear types. Function bodies, local bindings, generic call sites, and lambdas can
 then use inference without drifting away from OSV syntax.
 
-v0.0.1 note: this page documents the inference surface that is suitable for the
-default release gate. User-defined `enum`/ADT syntax and the WebAssembly ABI for
-exported generic functions are still design-decision gaps, so examples here
-avoid them. Temporal Affine Types (TAT) remain outside the default v0.0.1 gate.
-Exported records are source-level module metadata only and emit no direct
-host-visible Wasm export. Built-in `Option` and `Result` remain supported and
-are covered below.
+This page documents the current inference surface while noting historical
+v0.0.1 boundaries. The current user-defined enum slice is closed, non-generic,
+and non-recursive. Constructors and patterns use qualified `Type::Variant`
+names; a constructor payload is checked against its declared type.
+Temporal Affine Types (TAT) remain outside the default v0.0.1 gate. Exported
+records and `pub enum` declarations are source-level module metadata only and
+emit no direct host-visible Wasm export, so user enums have no host-visible enum
+ABI. Built-in `Option` and `Result` remain
+supported, including `Result<T, CustomError>` with a closed user enum; postfix
+`?` propagation remains future work.
 
 ## Local Bindings
 

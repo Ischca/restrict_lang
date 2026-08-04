@@ -735,11 +735,11 @@ impl ModuleResolver {
         exports.sort_by(|left, right| left.0.cmp(right.0));
         for (_, decl) in exports {
             let renamed = rename_top_decl(decl.clone(), &rename_map)?;
-            if matches!(decl, TopDecl::Record(_)) {
-                // Imported public records stay non-re-exported at the module
+            if matches!(decl, TopDecl::Record(_) | TopDecl::Enum(_)) {
+                // Imported public source types stay non-re-exported at the module
                 // graph level, but the flattened compiler program must retain
-                // their source-public provenance for host-schema validation.
-                // A source-level record export has no direct Wasm export.
+                // their source-public provenance for downstream validation.
+                // A source-level type export has no direct Wasm export.
                 declarations.push(TopDecl::Export(crate::ast::ExportDecl {
                     item: Box::new(renamed),
                 }));
@@ -924,6 +924,7 @@ fn rename_type(
 fn rename_top_decl(decl: TopDecl, rename_map: &HashMap<String, String>) -> Result<TopDecl> {
     match decl {
         TopDecl::Record(record) => Ok(TopDecl::Record(rename_record_decl(record, rename_map))),
+        TopDecl::Enum(enum_decl) => Ok(TopDecl::Enum(rename_enum_decl(enum_decl, rename_map))),
         TopDecl::Function(function) => Ok(TopDecl::Function(rename_fun_decl(function, rename_map))),
         TopDecl::Binding(binding) => {
             Ok(TopDecl::Binding(rename_bind_decl_top(binding, rename_map)))
@@ -934,6 +935,21 @@ fn rename_top_decl(decl: TopDecl, rename_map: &HashMap<String, String>) -> Resul
             item: Box::new(rename_top_decl(*export_decl.item, rename_map)?),
         })),
     }
+}
+
+fn rename_enum_decl(
+    mut enum_decl: crate::ast::EnumDecl,
+    rename_map: &HashMap<String, String>,
+) -> crate::ast::EnumDecl {
+    let type_params = HashSet::new();
+    enum_decl.name = rename_name(enum_decl.name, rename_map);
+    for variant in &mut enum_decl.variants {
+        variant.payload = variant
+            .payload
+            .take()
+            .map(|payload| rename_type(payload, rename_map, &type_params));
+    }
+    enum_decl
 }
 
 fn rename_record_decl(mut record: RecordDecl, rename_map: &HashMap<String, String>) -> RecordDecl {
@@ -1097,6 +1113,10 @@ fn rename_expr(
     match expr.kind {
         ExprKind::Ident(name) if bound.contains(&name) => Expr::new(ExprKind::Ident(name)),
         ExprKind::Ident(name) => Expr::new(ExprKind::Ident(rename_name(name, rename_map))),
+        ExprKind::VariantRef(mut path) => {
+            path.enum_name = rename_name(path.enum_name, rename_map);
+            Expr::new(ExprKind::VariantRef(path))
+        }
         ExprKind::RecordLit(record) => Expr::new(ExprKind::RecordLit(rename_record_lit(
             record,
             rename_map,
@@ -1504,6 +1524,17 @@ fn rename_pattern_type_names(
             rename_map,
             type_params,
         ))),
+        Pattern::EnumVariant {
+            enum_name,
+            variant_name,
+            payload,
+        } => Pattern::EnumVariant {
+            enum_name: rename_name(enum_name, rename_map),
+            variant_name,
+            payload: payload.map(|pattern| {
+                Box::new(rename_pattern_type_names(*pattern, rename_map, type_params))
+            }),
+        },
         Pattern::ListCons(head, tail) => Pattern::ListCons(
             Box::new(rename_pattern_type_names(*head, rename_map, type_params)),
             Box::new(rename_pattern_type_names(*tail, rename_map, type_params)),
@@ -1541,6 +1572,11 @@ fn collect_pattern_bindings(pattern: &Pattern, bindings: &mut HashSet<String>) {
         Pattern::Some(pattern) | Pattern::Ok(pattern) | Pattern::Err(pattern) => {
             collect_pattern_bindings(pattern, bindings);
         }
+        Pattern::EnumVariant {
+            payload: Some(pattern),
+            ..
+        } => collect_pattern_bindings(pattern, bindings),
+        Pattern::EnumVariant { payload: None, .. } => {}
         Pattern::ListCons(head, tail) => {
             collect_pattern_bindings(head, bindings);
             collect_pattern_bindings(tail, bindings);
@@ -1584,6 +1620,7 @@ fn get_decl_name(decl: &TopDecl) -> Result<String> {
     match decl {
         TopDecl::Function(fun) => Ok(fun.name.clone()),
         TopDecl::Record(rec) => Ok(rec.name.clone()),
+        TopDecl::Enum(enum_decl) => Ok(enum_decl.name.clone()),
         TopDecl::Context(ctx) => Ok(ctx.name.clone()),
         TopDecl::Binding(bind) => {
             // Complex top-level binding exports need a public naming design before

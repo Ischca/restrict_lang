@@ -89,7 +89,7 @@ fun main: () -> Int32 = {
 
     let err = compile_to_wat(source).expect_err("context exports should not have a Wasm ABI");
     assert!(
-        err.contains("Only concrete function exports, source-level record exports, and constant global exports are supported by codegen"),
+        err.contains("Only concrete function exports, source-level record or enum exports, and constant global exports are supported by codegen"),
         "error should list the current export support surface, got: {err}"
     );
 }

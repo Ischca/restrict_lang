@@ -8,6 +8,7 @@ Restrict Languageは、以下のユニークな特徴を持つ静的型付けコ
 
 - 日本語の構文に着想を得た**OSV（目的語-主語-動詞）語順**
 - 各値が最大1回しか使用されないことを保証する**アフィン型システム**
+- 修飾されたバリアントと網羅的な`match`を持つ**閉じたユーザー定義enum**
 - `freeze`と`clone`操作を持つ**プロトタイプベースのレコード**
 - ガベージコレクタを持たない**WebAssemblyファースト**設計
 - WebAssemblyコンポーネントモデルとWITによる**相互運用性**
@@ -53,7 +54,33 @@ fun main: () = {
 }
 ```
 
-### 3. プロトタイプベース継承
+### 3. 閉じたユーザー定義enum
+
+現在のpost-v0.0.1 compilerでは、非ジェネリックかつ非再帰のenumを定義できます。各バリアントはpayloadなし、または1つのpayloadを持ち、名前は必ず`型名::バリアント名`で修飾します。構築もOSV語順です。
+
+```restrict
+enum ParseError {
+    Empty
+    Message(String)
+}
+
+fun fail: (message: String) -> Result<Int32, ParseError> = {
+    Err(message |> ParseError::Message)
+}
+
+fun error_code: (error: ParseError) -> Int32 = {
+    error match {
+        ParseError::Empty => { 1 }
+        ParseError::Message(message) => { 2 }
+    }
+}
+```
+
+payloadなしの値は`() ParseError::Empty`のように構築します。`match`はすべてのバリアントを扱う必要があります。`pub enum`はRestrictソースモジュール間で公開できますが、ユーザー定義enumを直接渡すhost-visible WebAssembly ABIはまだありません。エラー伝播は`match`で明示し、`?`演算子は未実装です。
+
+v0.0.1の公開リリースにはユーザー定義enumは含まれていませんでした。この節は現在のpost-v0.0.1追加分を説明しています。
+
+### 4. プロトタイプベース継承
 
 クラスの代わりに、Restrictは明示的なクローンとフリーズを持つプロトタイプを使用します：
 
@@ -71,7 +98,7 @@ fun main: () = {
 }
 ```
 
-### 4. WebAssembly統合
+### 5. WebAssembly統合
 
 Restrictは以下のファーストクラスサポートを持つWebAssemblyに直接コンパイルされます：
 

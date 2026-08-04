@@ -66,6 +66,37 @@ fun result_or_zero: (result: Result<Int32, String>) -> Int32 = {
 }
 ```
 
+## ユーザー定義enumパターン（post-v0.0.1）
+
+現在のcompilerでは、非ジェネリックかつ非再帰の閉じたユーザー定義enumを`match`できます。各バリアントはpayloadなし、または1つのpayloadを持ちます。
+
+```restrict
+enum ParseError {
+    Empty
+    Message(String)
+}
+
+fun error_code: (error: ParseError) -> Int32 = {
+    error match {
+        ParseError::Empty => { 1 }
+        ParseError::Message(message) => { 2 }
+    }
+}
+
+fun result_or_code: (result: Result<Int32, ParseError>) -> Int32 = {
+    result match {
+        Ok(value) => { value }
+        Err(error) => { error |> error_code }
+    }
+}
+```
+
+enumバリアントパターンは必ず`ParseError::Empty`のようにenum名で修飾します。payloadなしのパターンには括弧を書かず、payloadありのパターンは`ParseError::Message(message)`のように1つのネストしたパターンを取ります。
+
+enumの`match`は全バリアントを扱う必要があります。バリアントパターンは反駁可能なので、単独の`val`束縛パターンには使えません。payload束縛とscrutineeの消費には通常のアフィン規則が適用されます。
+
+値の構築は`() ParseError::Empty`または`message |> ParseError::Message`というOSV語順です。`pub enum`はRestrictソースモジュール間だけの公開で、host-visible WebAssembly enum ABIはありません。`Result<T, ParseError>`のエラー伝播は明示的な`match`で行い、`?`演算子はまだ使えません。
+
 ## リストパターン
 
 リストは空、正確な長さ、先頭と残りに分ける形でマッチできます。
@@ -194,6 +225,8 @@ fun safe_value: (value: Option<Int32>) -> Int32 = {
 }
 ```
 
+ユーザー定義enumでは、宣言されたすべてのバリアントを列挙することでも網羅性を満たせます。enumに新しいバリアントを追加したとき、`_`を使わず列挙していた`match`は不足したアームをコンパイルエラーとして検出できます。
+
 ## 重要な注意事項
 
 - `match`は`value match { ... }`の形で書きます。
@@ -201,3 +234,4 @@ fun safe_value: (value: Option<Int32>) -> Int32 = {
 - フィールドパターンとフィールド初期化は`:`を使います。
 - アフィン型システムにより、束縛した値も最大1回の使用に従います。
 - パターンガードやタプルパターンの詳細は、v0.0.1の公開範囲外です。
+- ユーザー定義enumはv0.0.1公開時点では未対応で、このページのenum節は現在のpost-v0.0.1追加分です。

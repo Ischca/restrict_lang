@@ -154,6 +154,9 @@ impl HostAbi {
             | TypedType::Temporal { .. } => {
                 HostAbi::InternalOnly(InternalOnlyReason::CompositeHostAbiUnstable)
             }
+            TypedType::Enum { .. } => {
+                HostAbi::InternalOnly(InternalOnlyReason::UserDefinedEnumHostAbiUnsupported)
+            }
             TypedType::TypeParam(_) => HostAbi::InternalOnly(InternalOnlyReason::GenericType),
             TypedType::InferVar(_) | TypedType::Projection { .. } => {
                 HostAbi::InternalOnly(InternalOnlyReason::UnfinalizedType)
@@ -222,6 +225,7 @@ impl HostAbi {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InternalOnlyReason {
     CompositeHostAbiUnstable,
+    UserDefinedEnumHostAbiUnsupported,
     GenericType,
     UnfinalizedType,
 }
@@ -289,6 +293,7 @@ pub enum ApplyFlavor {
     Pipe,
     TupleCall,
     UnitCall,
+    EnumConstructor,
     FunctionValue,
     ImmediateLambda,
     MethodResolution,
@@ -297,7 +302,14 @@ pub enum ApplyFlavor {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CalleeProvenance {
     TopLevelFunction(FunctionCalleeIr),
+    EnumVariant(EnumVariantCalleeIr),
     Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumVariantCalleeIr {
+    pub enum_name: String,
+    pub variant_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -520,6 +532,12 @@ mod tests {
                     temporals: vec!["t".to_string()],
                 },
                 composite,
+            ),
+            (
+                TypedType::Enum {
+                    name: "ReleaseError".to_string(),
+                },
+                InternalOnlyReason::UserDefinedEnumHostAbiUnsupported,
             ),
             (
                 TypedType::TypeParam("T".to_string()),

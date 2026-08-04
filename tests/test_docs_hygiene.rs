@@ -274,37 +274,64 @@ fn ebnf_documents_impl_as_reachable_top_level_syntax() {
 }
 
 #[test]
-fn ebnf_marks_user_defined_enum_as_reserved_not_reachable() {
+fn ebnf_documents_closed_user_enums_as_reachable_qualified_syntax() {
     let ebnf = read_fixture("RESTRICT_LANG_EBNF.md");
     let top_decl = ebnf
-        .split("top_decl")
-        .nth(1)
+        .split_once("top_decl            =")
+        .map(|(_, after)| after)
         .and_then(|after| after.split("(* Function Declaration *)").next())
         .expect("RESTRICT_LANG_EBNF.md should contain top_decl before function declarations");
 
     assert!(
-        !top_decl.contains("| enum_decl"),
-        "RESTRICT_LANG_EBNF.md should not expose user-defined enum declarations as current top_decl syntax"
+        top_decl.contains("| enum_decl"),
+        "RESTRICT_LANG_EBNF.md should make enum_decl reachable from top_decl"
     );
     assert!(
-        ebnf.contains("reserved: enum_decl")
-            && ebnf.contains("Reserved Enum Declaration: post-v0.0.1"),
-        "RESTRICT_LANG_EBNF.md should keep enum_decl visible as reserved post-v0.0.1 syntax"
+        ebnf.contains("namespace_op")
+            && ebnf.contains(r#"namespace_op      = "::""#)
+            && ebnf.contains("variant_ref         = identifier namespace_op identifier"),
+        "RESTRICT_LANG_EBNF.md should define qualified Type::Variant references"
+    );
+    assert!(
+        ebnf.contains("| variant_ref")
+            && ebnf.contains(r#"enum_pattern        = variant_ref [ "(" pattern ")" ] ;"#),
+        "RESTRICT_LANG_EBNF.md should make qualified variants reachable from expressions and patterns"
+    );
+
+    let enum_decl = ebnf
+        .split("(* Closed user enums:")
+        .nth(1)
+        .and_then(|after| after.split("(* Import Declaration *)").next())
+        .expect("RESTRICT_LANG_EBNF.md should contain the closed enum grammar");
+    assert!(
+        enum_decl.contains("non-generic and non-recursive")
+            && enum_decl.contains(r#"enum_decl           = [ "pub" ] "enum" identifier "{""#)
+            && enum_decl.contains(r#"variant             = identifier [ "(" type ")" ]"#),
+        "RESTRICT_LANG_EBNF.md should define non-generic, non-recursive enums with zero or one payload"
+    );
+    assert!(
+        !enum_decl.contains("type_params") && !enum_decl.contains("{ \",\" type }"),
+        "RESTRICT_LANG_EBNF.md should not admit generic enums or multiple direct payloads"
     );
 }
 
 #[test]
-fn type_inference_docs_keep_post_v001_features_outside_default_gate() {
+fn type_inference_docs_distinguish_current_enums_from_future_features() {
     let markdown = read_fixture("docs/public/en/guide/type-inference.md");
+    let normalized = normalize_markdown_whitespace(&markdown);
 
     for required_claim in [
-        "User-defined `enum`/ADT syntax",
+        "current user-defined enum slice is closed, non-generic, and non-recursive",
+        "qualified `Type::Variant` names",
+        "`pub enum` declarations are source-level module metadata only",
+        "no host-visible enum ABI",
+        "postfix `?` propagation remains future work",
         "Temporal Affine Types (TAT) remain outside the default v0.0.1 gate",
-        "User-defined `form`, `takes`, `of`, and associated-type declarations are\nfuture design work, not current source syntax",
+        "User-defined `form`, `takes`, `of`, and associated-type declarations are future design work, not current source syntax",
     ] {
         assert!(
-            markdown.contains(required_claim),
-            "docs/public/en/guide/type-inference.md should keep `{required_claim}` clearly outside default v0.0.1"
+            normalized.contains(required_claim),
+            "docs/public/en/guide/type-inference.md should document the current enum and future-feature boundary with: {required_claim}"
         );
     }
 }
@@ -601,7 +628,6 @@ fn assert_no_removed_v001_syntax_patterns(label: &str, source: &str) {
         ("lowercase i32", "i32"),
         ("lowercase f64", "f64"),
         ("lowercase bool", "bool"),
-        ("user enum declaration", "enum "),
         ("bracket-bar array literal", "[|"),
     ];
 

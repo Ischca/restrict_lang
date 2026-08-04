@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add closed, non-generic, non-recursive user-defined enums. Variants carry
+  zero or one payload; constructors use qualified `Type::Variant` names in OSV
+  order, patterns use the same qualified names, and matches are exhaustive,
+  including when a custom enum is a `Result` error.
 - Add end-to-end Warder builds and test checks for direct local path
   dependencies. Manifest dependency keys bind compiler package namespaces,
   package roots map to `src/lib.rl`, and submodules map below `src/`.
@@ -25,6 +29,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Compatibility
 
+- Keep `pub enum` source-module-only. User enums have no host-visible
+  WebAssembly ABI; generic and recursive enums and `?` propagation remain
+  outside the current slice.
 - Keep registry, Git, foreign-WASM, and transitive package graphs outside the
   direct-local v0.0.1 slice. Warder rejects them before writing placeholder
   lock entries; source-level import aliases and re-exports remain unsupported.

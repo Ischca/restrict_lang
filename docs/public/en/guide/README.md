@@ -1,13 +1,14 @@
 # Language Guide Overview
 
-Welcome to the Restrict Language guide. These pages describe the release-facing
-v0.0.1 syntax and the design rules that shape it.
+Welcome to the Restrict Language guide. These pages describe the current
+release-facing syntax, including the closed enum slice added after v0.0.1, and
+mark historical v0.0.1 boundaries where they matter.
 
 ## What You'll Learn
 
 - **[OSV Word Order](./osv-order.md)** - Calls put arguments before functions
 - **[Syntax Reference](./syntax.md)** - Current declarations, expressions, and literals
-- **[Type System](./types.md)** - Built-in types, generics, and affine ownership
+- **[Type System](./types.md)** - Built-ins, closed user enums, generics, and affine ownership
 - **[Ownership](./ownership.md)** - Memory management without GC
 - **[Pattern Matching](./patterns.md)** - Exhaustive `match` expressions
 - **[Warder Package Manager](./warder.md)** - Managing dependencies
@@ -54,7 +55,8 @@ OSV. Use `(receiver, args...) function_name`, not object-style method calls.
 
 ### Pattern Matching
 `match` is also OSV: the value being matched appears before the `match`
-keyword, and each branch body is wrapped in braces.
+keyword, and each branch body is wrapped in braces. Closed user enums use
+qualified `Type::Variant` patterns and must be matched exhaustively.
 
 ### Zero GC
 Restrict targets deterministic memory management through compile-time checks

@@ -114,7 +114,7 @@ fn check_export_decl(
 
     match export_decl.item.as_ref() {
         TopDecl::Function(func) => check_exported_function(program, func, checker, profile),
-        TopDecl::Record(_) => Ok(()),
+        TopDecl::Record(_) | TopDecl::Enum(_) => Ok(()),
         TopDecl::Binding(binding) => check_exported_binding(binding, checker, profile),
         TopDecl::Export(_) => Err(ReleaseSurfaceError::new(match profile {
             HostAbiProfile::V001Scalar => "Nested exports are unsupported in v0.0.1".to_string(),
@@ -124,8 +124,8 @@ fn check_export_decl(
         })),
         TopDecl::Impl(_) | TopDecl::Context(_) => {
             Err(ReleaseSurfaceError::new(match profile {
-                HostAbiProfile::V001Scalar => "Only concrete function exports, source-level record exports, and constant global exports are supported in v0.0.1".to_string(),
-                HostAbiProfile::FlatRecordV1 => "Only concrete function exports, source-level record exports, and constant scalar global exports are supported by host ABI profile flat-record-v1".to_string(),
+                HostAbiProfile::V001Scalar => "Only concrete function exports, source-level record or enum exports, and constant global exports are supported in v0.0.1".to_string(),
+                HostAbiProfile::FlatRecordV1 => "Only concrete function exports, source-level record or enum exports, and constant scalar global exports are supported by host ABI profile flat-record-v1".to_string(),
             }))
         }
     }
@@ -278,6 +278,14 @@ fn flat_record_v1_source_slots(
     match ty {
         Type::Named(name) if name == "Unit" => Ok(slot_position.unit_slots()),
         Type::Named(name) if is_direct_record_scalar_name(name) => Ok(1),
+        Type::Named(name) if find_enum_declaration(program, name).is_some() => {
+            Err(flat_record_v1_unsupported_type(
+                export_name,
+                position,
+                name,
+                "user-defined enum values do not have a host ABI",
+            ))
+        }
         Type::Named(name) => flat_record_v1_record_slots(program, export_name, position, name),
         Type::Generic(_, _) => Err(flat_record_v1_unsupported_type(
             export_name,
@@ -324,6 +332,12 @@ fn flat_record_v1_checked_slots(
             position,
             &format_typed_type(ty),
             "generic records are not supported",
+        )),
+        TypedType::Enum { .. } => Err(flat_record_v1_unsupported_type(
+            export_name,
+            position,
+            &format_typed_type(ty),
+            "user-defined enum values do not have a host ABI",
         )),
         TypedType::String
         | TypedType::Option(_)
@@ -451,6 +465,24 @@ fn find_record_declaration<'a>(
                 unreachable!("record export match should preserve the record declaration")
             };
             Some((record, true))
+        }
+        _ => None,
+    })
+}
+
+fn find_enum_declaration<'a>(
+    program: &'a Program,
+    enum_name: &str,
+) -> Option<(&'a EnumDecl, bool)> {
+    program.declarations.iter().find_map(|decl| match decl {
+        TopDecl::Enum(enum_decl) if enum_decl.name == enum_name => Some((enum_decl, false)),
+        TopDecl::Export(export)
+            if matches!(export.item.as_ref(), TopDecl::Enum(enum_decl) if enum_decl.name == enum_name) =>
+        {
+            let TopDecl::Enum(enum_decl) = export.item.as_ref() else {
+                unreachable!("enum export match should preserve the enum declaration")
+            };
+            Some((enum_decl, true))
         }
         _ => None,
     })
@@ -658,6 +690,16 @@ fn reject_tat_top_decl(decl: &TopDecl) -> Result<(), ReleaseSurfaceError> {
                 reject_tat_type(&format!("record '{}'", record.name), &field.ty)?;
             }
         }
+        TopDecl::Enum(enum_decl) => {
+            for variant in &enum_decl.variants {
+                if let Some(payload) = &variant.payload {
+                    reject_tat_type(
+                        &format!("enum variant '{}::{}'", enum_decl.name, variant.name),
+                        payload,
+                    )?;
+                }
+            }
+        }
         TopDecl::Function(func) => reject_tat_function(func)?,
         TopDecl::Binding(binding) => reject_tat_binding(binding)?,
         TopDecl::Impl(impl_block) => {
@@ -856,6 +898,7 @@ fn reject_tat_expr(expr: &Expr) -> Result<(), ReleaseSurfaceError> {
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
         | ExprKind::Ident(_)
+        | ExprKind::VariantRef(_)
         | ExprKind::None => Ok(()),
     }
 }

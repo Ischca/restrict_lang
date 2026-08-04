@@ -2,9 +2,9 @@
 
 Restrict is a small, WebAssembly-oriented programming language built around
 object-subject-verb calls, affine ownership, and explicit release boundaries.
-The current documentation tracks the v0.0.1 surface: what is implemented and
-intended for public use, what is intentionally rejected, and what remains
-reserved design space.
+The current documentation distinguishes the historical v0.0.1 surface from
+the small post-v0.0.1 additions: what is implemented and intended for public
+use, what is intentionally rejected, and what remains reserved design space.
 
 ## What Restrict Is Today
 
@@ -17,11 +17,15 @@ WebAssembly text and binary output. Its current stable-facing shape is compact:
 - affine ownership for heap-backed values and function values
 - built-in `List`, `Array`, `Option`, `Result`, and `Range<Int32>` support
 - record declarations and record values inside Restrict programs
+- closed, non-generic, non-recursive user enums with qualified variants and
+  exhaustive matching
 - scalar monomorphic WebAssembly exports for the host boundary
 
 Some keywords and design documents describe future work. Temporal Affine Types,
-source-level `form`/`takes` declarations, user-defined ADTs, and exported
-generic or composite host ABIs are outside the default v0.0.1 gate.
+source-level `form`/`takes` declarations, generic or recursive user enums, and
+exported generic or composite host ABIs remain outside the current compiler
+surface. User enums may be used inside `Result<T, CustomError>`, but the `?`
+propagation operator is not implemented yet.
 
 ## Why OSV
 

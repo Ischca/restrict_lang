@@ -48,7 +48,7 @@ pub enum Token {
     Impl,
     /// `context` keyword for context declarations
     Context,
-    /// `enum` keyword reserved for future enum declarations
+    /// `enum` keyword for closed user-defined sum declarations
     Enum,
     /// `form` keyword reserved for future source-level form declarations
     Form,
@@ -147,18 +147,19 @@ pub enum Token {
     Tilde, // ~ (for temporal type variables)
 
     // Delimiters
-    LBrace,    // {
-    RBrace,    // }
-    LParen,    // (
-    RParen,    // )
-    LBracket,  // [
-    RBracket,  // ]
-    Comma,     // ,
-    Colon,     // :
-    Dot,       // .
-    DotDot,    // .. (range literal separator)
-    DotDotDot, // ... (for spread destructuring)
-    Semicolon, // ;
+    LBrace,     // {
+    RBrace,     // }
+    LParen,     // (
+    RParen,     // )
+    LBracket,   // [
+    RBracket,   // ]
+    Comma,      // ,
+    ColonColon, // :: (qualified enum variant separator)
+    Colon,      // :
+    Dot,        // .
+    DotDot,     // .. (range literal separator)
+    DotDotDot,  // ... (for spread destructuring)
+    Semicolon,  // ;
 
     // Special
     Eof,
@@ -234,6 +235,7 @@ impl fmt::Display for Token {
             Token::LBracket => write!(f, "["),
             Token::RBracket => write!(f, "]"),
             Token::Comma => write!(f, ","),
+            Token::ColonColon => write!(f, "::"),
             Token::Colon => write!(f, ":"),
             Token::Dot => write!(f, "."),
             Token::DotDot => write!(f, ".."),
@@ -530,6 +532,7 @@ fn delimiter(input: &str) -> IResult<&str, Token> {
         value(Token::LBracket, char('[')),
         value(Token::RBracket, char(']')),
         value(Token::Comma, char(',')),
+        value(Token::ColonColon, tag("::")),
         value(Token::Colon, char(':')),
         value(Token::Dot, char('.')),
         value(Token::Semicolon, char(';')),
@@ -628,6 +631,14 @@ mod tests {
         assert_eq!(lex("||").unwrap().1, vec![Token::Or]);
         assert_eq!(lex("!").unwrap().1, vec![Token::Not]);
         assert_eq!(lex("=>").unwrap().1, vec![Token::Arrow]);
+        assert_eq!(
+            lex("Result::Ok").unwrap().1,
+            vec![
+                Token::Ident("Result".to_string()),
+                Token::ColonColon,
+                Token::Ident("Ok".to_string()),
+            ]
+        );
     }
 
     #[test]

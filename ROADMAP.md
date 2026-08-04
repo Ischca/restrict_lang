@@ -281,14 +281,17 @@ After:  Affine type violation: variable 'p' has already been used.
   - Pattern matching with Ok(x) and Err(e)
   - Type inference for Result types
   - WASM codegen with tagged unions
-- [x] std/result.rl utility functions
-  - is_ok, is_err predicates
-  - unwrap_or, unwrap_err_or extraction
-  - map_ok, map_err, and_then transformations
-  - ok, err conversion to Option
+- [x] Closed user-defined error enums
+  - Non-generic, non-recursive declarations
+  - Zero- or one-payload variants through qualified `Type::Variant` names
+  - OSV constructors and exhaustive matching
+  - `Result<T, CustomError>` within Restrict programs
+- [x] `std/result.rl` constructor and match boundary
 
 **Remaining Tasks**:
+- [ ] Higher-level `std/result.rl` helpers such as predicates, transforms, and Option conversion
 - [ ] Error propagation operator (? or similar)
+- [ ] Generic or recursive user enums and a host-visible enum ABI
 - [ ] Error context and stack traces
 - [ ] Panic handling in WASM
 - [ ] Graceful error recovery

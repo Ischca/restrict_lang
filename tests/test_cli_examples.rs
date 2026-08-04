@@ -937,53 +937,29 @@ fun main: () -> Int32 = {
 }
 
 #[test]
-fn cli_enum_gap_reports_unsupported_feature_cleanly() {
-    let source_path = std::env::temp_dir().join(format!(
-        "restrict_lang_cli_enum_gap_{}.rl",
-        std::process::id()
-    ));
+fn cli_checks_user_defined_enum_programs() {
+    let (source_path, output) = run_check_temp_source(
+        "user_enum",
+        r#"enum ReviewState {
+    Ready
+    Failed(String)
+}
 
-    fs::write(
-        &source_path,
-        r#"enum ReviewState { Ready }
+fun score: (state: ReviewState) -> Int32 = {
+    state match {
+        ReviewState::Ready => { 1 }
+        ReviewState::Failed(message) => { 0 }
+    }
+}
 
 fun main: () -> Int32 = {
-    0
+    () ReviewState::Ready |> score
 }
 "#,
-    )
-    .expect("enum gap source should be writable");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
-        .arg("--check")
-        .arg(&source_path)
-        .output()
-        .expect("restrict_lang binary should run");
-
-    assert!(!output.status.success(), "enum gap check should fail");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("enum declarations are unsupported in v0.0.1"),
-        "stderr should preserve the unsupported enum message, got: {stderr}"
     );
-    assert!(
-        stderr.contains("user-defined enum declarations are not implemented"),
-        "stderr should identify the enum declaration gap, got: {stderr}"
-    );
-    for internal in [
-        "unexpected input near",
-        "Error(",
-        "ErrorKind",
-        "nom::",
-        "Tag",
-        "Alt",
-    ] {
-        assert!(
-            !stderr.contains(internal),
-            "stderr should not expose parser internals ({internal}), got: {stderr}"
-        );
-    }
 
+    assert!(output.status.success(), "enum check should pass");
+    assert_check_success_streams("user enum check", &output, &source_path);
     let _ = fs::remove_file(source_path);
 }
 

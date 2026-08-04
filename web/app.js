@@ -45,6 +45,35 @@ fun choose: (value: Option<Int32>) -> Int32 = {
 
 fun main: () -> () = {
     Some(42) |> choose |> print_int
+}`,
+    enumResult: `// Closed enums make Result errors domain-specific.
+enum CustomError {
+    Empty
+    Invalid(String)
+}
+
+fun decode: (code: Int32) -> Result<Int32, CustomError> = {
+    code == 0 then {
+        Ok(42)
+    } else {
+        Err("invalid code" |> CustomError::Invalid)
+    }
+}
+
+fun collapse: (result: Result<Int32, CustomError>) -> Int32 = {
+    result match {
+        Ok(value) => { value }
+        Err(error) => {
+            error match {
+                CustomError::Empty => { -1 }
+                CustomError::Invalid(message) => { -2 }
+            }
+        }
+    }
+}
+
+fun main: () -> () = {
+    1 |> decode |> collapse |> print_int
 }`
 };
 

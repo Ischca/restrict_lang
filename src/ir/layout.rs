@@ -63,6 +63,19 @@ impl LayoutTable {
     where
         F: Fn(&str, &[TypedType]) -> Option<Vec<(String, TypedType)>> + ?Sized,
     {
+        self.value_repr_for_type_with_metadata(final_type, record_fields, &|_| None)
+    }
+
+    pub fn value_repr_for_type_with_metadata<F, E>(
+        &mut self,
+        final_type: &FinalType,
+        record_fields: &F,
+        enum_variants: &E,
+    ) -> ValueRepr
+    where
+        F: Fn(&str, &[TypedType]) -> Option<Vec<(String, TypedType)>> + ?Sized,
+        E: Fn(&str) -> Option<Vec<(String, Option<TypedType>)>> + ?Sized,
+    {
         match final_type.as_typed_type() {
             TypedType::Unit => ValueRepr::Unit,
             TypedType::Int32 | TypedType::Boolean | TypedType::Char => {
@@ -78,12 +91,14 @@ impl LayoutTable {
                 ValueRepr::Ref(id)
             }
             TypedType::List(inner) => {
-                let element = self.element_layout_with_record_fields(inner, record_fields);
+                let element =
+                    self.element_layout_with_metadata(inner, record_fields, enum_variants);
                 let id = self.insert(LayoutKind::List(ListLayout { element }));
                 ValueRepr::Ref(id)
             }
             TypedType::Array(inner, length) => {
-                let element = self.element_layout_with_record_fields(inner, record_fields);
+                let element =
+                    self.element_layout_with_metadata(inner, record_fields, enum_variants);
                 let id = self.insert(LayoutKind::Array(ArrayLayout {
                     element,
                     length: *length,
@@ -91,7 +106,8 @@ impl LayoutTable {
                 ValueRepr::Ref(id)
             }
             TypedType::Option(inner) => {
-                let payload = self.element_layout_with_record_fields(inner, record_fields);
+                let payload =
+                    self.element_layout_with_metadata(inner, record_fields, enum_variants);
                 let variants = vec![
                     SumVariantLayout {
                         tag: 0,
@@ -106,6 +122,7 @@ impl LayoutTable {
                 ];
                 let optimization_candidates = sum_optimization_candidates(&variants);
                 let id = self.insert(LayoutKind::Sum(SumLayout {
+                    type_name: format!("Option<{}>", format_type_arg(inner)),
                     variants,
                     strategy: SumStrategy::TaggedPayload,
                     optimization_candidates,
@@ -113,8 +130,10 @@ impl LayoutTable {
                 ValueRepr::Ref(id)
             }
             TypedType::Result(ok, err) => {
-                let ok_payload = self.element_layout_with_record_fields(ok, record_fields);
-                let err_payload = self.element_layout_with_record_fields(err, record_fields);
+                let ok_payload =
+                    self.element_layout_with_metadata(ok, record_fields, enum_variants);
+                let err_payload =
+                    self.element_layout_with_metadata(err, record_fields, enum_variants);
                 let variants = vec![
                     SumVariantLayout {
                         tag: 0,
@@ -129,6 +148,44 @@ impl LayoutTable {
                 ];
                 let optimization_candidates = sum_optimization_candidates(&variants);
                 let id = self.insert(LayoutKind::Sum(SumLayout {
+                    type_name: format!("Result<{}, {}>", format_type_arg(ok), format_type_arg(err)),
+                    variants,
+                    strategy: SumStrategy::TaggedPayload,
+                    optimization_candidates,
+                }));
+                ValueRepr::Ref(id)
+            }
+            TypedType::Enum { name } => {
+                let Some(variants) = enum_variants(name) else {
+                    let id = self.insert(LayoutKind::Opaque(OpaqueLayout {
+                        reason: OpaqueReason::MissingTypeMetadata,
+                    }));
+                    return ValueRepr::Ref(id);
+                };
+                if variants.is_empty() {
+                    let id = self.insert(LayoutKind::Opaque(OpaqueLayout {
+                        reason: OpaqueReason::MissingTypeMetadata,
+                    }));
+                    return ValueRepr::Ref(id);
+                }
+                let variants = variants
+                    .into_iter()
+                    .enumerate()
+                    .map(|(tag, (variant_name, payload))| SumVariantLayout {
+                        tag: tag as u32,
+                        name: variant_name,
+                        payload: payload.map(|payload| {
+                            self.element_layout_with_metadata(
+                                &payload,
+                                record_fields,
+                                enum_variants,
+                            )
+                        }),
+                    })
+                    .collect::<Vec<_>>();
+                let optimization_candidates = sum_optimization_candidates(&variants);
+                let id = self.insert(LayoutKind::Sum(SumLayout {
+                    type_name: name.clone(),
                     variants,
                     strategy: SumStrategy::TaggedPayload,
                     optimization_candidates,
@@ -144,7 +201,13 @@ impl LayoutTable {
                 }
 
                 let fields = record_fields(name, type_args)
-                    .map(|fields| self.record_field_layouts(fields))
+                    .map(|fields| {
+                        self.record_field_layouts_with_metadata(
+                            fields,
+                            record_fields,
+                            enum_variants,
+                        )
+                    })
                     .unwrap_or_default();
                 let type_args = type_args.iter().map(format_type_arg).collect();
                 let id = self.insert(LayoutKind::Record(RecordLayout {
@@ -161,10 +224,15 @@ impl LayoutTable {
             } => {
                 let params = params
                     .iter()
-                    .map(|param| self.element_layout_with_record_fields(param, record_fields))
+                    .map(|param| {
+                        self.element_layout_with_metadata(param, record_fields, enum_variants)
+                    })
                     .collect();
-                let result =
-                    Box::new(self.element_layout_with_record_fields(return_type, record_fields));
+                let result = Box::new(self.element_layout_with_metadata(
+                    return_type,
+                    record_fields,
+                    enum_variants,
+                ));
                 let id = self.insert(LayoutKind::Closure(ClosureLayout {
                     abi: AbiId(0),
                     params,
@@ -179,7 +247,7 @@ impl LayoutTable {
             TypedType::Temporal { base_type, .. } => {
                 let wrapped = FinalType::new((**base_type).clone())
                     .expect("temporal final type should contain a finalized base type");
-                self.value_repr_for_type_with_record_fields(&wrapped, record_fields)
+                self.value_repr_for_type_with_metadata(&wrapped, record_fields, enum_variants)
             }
             TypedType::TypeParam(_) | TypedType::InferVar(_) | TypedType::Projection { .. } => {
                 let id = self.insert(LayoutKind::Opaque(OpaqueLayout {
@@ -190,21 +258,19 @@ impl LayoutTable {
         }
     }
 
-    fn element_layout(&mut self, ty: &TypedType) -> ElementLayout {
-        self.element_layout_with_record_fields(ty, &|_, _| None)
-    }
-
-    fn element_layout_with_record_fields<F>(
+    fn element_layout_with_metadata<F, E>(
         &mut self,
         ty: &TypedType,
         record_fields: &F,
+        enum_variants: &E,
     ) -> ElementLayout
     where
         F: Fn(&str, &[TypedType]) -> Option<Vec<(String, TypedType)>> + ?Sized,
+        E: Fn(&str) -> Option<Vec<(String, Option<TypedType>)>> + ?Sized,
     {
         let repr = match FinalType::new(ty.clone()) {
             Ok(final_type) => {
-                self.value_repr_for_type_with_record_fields(&final_type, record_fields)
+                self.value_repr_for_type_with_metadata(&final_type, record_fields, enum_variants)
             }
             Err(_) => {
                 let id = self.insert(LayoutKind::Opaque(OpaqueLayout {
@@ -221,12 +287,21 @@ impl LayoutTable {
         }
     }
 
-    fn record_field_layouts(&mut self, fields: Vec<(String, TypedType)>) -> Vec<FieldLayout> {
+    fn record_field_layouts_with_metadata<F, E>(
+        &mut self,
+        fields: Vec<(String, TypedType)>,
+        record_fields: &F,
+        enum_variants: &E,
+    ) -> Vec<FieldLayout>
+    where
+        F: Fn(&str, &[TypedType]) -> Option<Vec<(String, TypedType)>> + ?Sized,
+        E: Fn(&str) -> Option<Vec<(String, Option<TypedType>)>> + ?Sized,
+    {
         let mut offset = 0;
         fields
             .into_iter()
             .map(|(name, ty)| {
-                let element = self.element_layout(&ty);
+                let element = self.element_layout_with_metadata(&ty, record_fields, enum_variants);
                 let field = FieldLayout {
                     name,
                     offset,
@@ -407,6 +482,7 @@ pub enum RecordStrategy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SumLayout {
+    pub type_name: String,
     pub variants: Vec<SumVariantLayout>,
     pub strategy: SumStrategy,
     pub optimization_candidates: Vec<SumOptimizationCandidate>,
@@ -460,6 +536,7 @@ pub struct OpaqueLayout {
 pub enum OpaqueReason {
     UnfinalizedType,
     UnloweredGeneric,
+    MissingTypeMetadata,
 }
 
 #[cfg(test)]
@@ -520,6 +597,88 @@ mod tests {
             .contains(&SumOptimizationCandidate::ScalarLocal {
                 payload_variants: vec![sum_variant(1, "Some")]
             }));
+    }
+
+    #[test]
+    fn user_enum_layout_uses_declaration_order_and_payload_metadata() {
+        let final_type = FinalType::new(TypedType::Enum {
+            name: "ParseError".to_string(),
+        })
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type_with_metadata(&final_type, &|_, _| None, &|name| {
+            assert_eq!(name, "ParseError");
+            Some(vec![
+                ("Empty".to_string(), None),
+                ("Message".to_string(), Some(TypedType::String)),
+            ])
+        });
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("a user enum should lower to a typed sum ref");
+        };
+
+        let descriptor = table.get(layout_id).unwrap();
+        let LayoutKind::Sum(layout) = &descriptor.kind else {
+            panic!("expected Sum layout");
+        };
+        assert_eq!(layout.type_name, "ParseError");
+        assert_eq!(layout.variants[0].name, "Empty");
+        assert_eq!(layout.variants[0].tag, 0);
+        assert!(layout.variants[0].payload.is_none());
+        assert_eq!(layout.variants[1].name, "Message");
+        assert_eq!(layout.variants[1].tag, 1);
+        assert!(matches!(
+            layout.variants[1]
+                .payload
+                .as_ref()
+                .expect("Message payload")
+                .repr,
+            ValueRepr::Ref(_)
+        ));
+    }
+
+    #[test]
+    fn nominally_distinct_user_enums_do_not_share_sum_layout_ids() {
+        let mut table = LayoutTable::new();
+        let variants = |_: &str| Some(vec![("Ready".to_string(), None)]);
+        let first = table.value_repr_for_type_with_metadata(
+            &FinalType::new(TypedType::Enum {
+                name: "FirstState".to_string(),
+            })
+            .unwrap(),
+            &|_, _| None,
+            &variants,
+        );
+        let second = table.value_repr_for_type_with_metadata(
+            &FinalType::new(TypedType::Enum {
+                name: "SecondState".to_string(),
+            })
+            .unwrap(),
+            &|_, _| None,
+            &variants,
+        );
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn user_enum_without_metadata_is_not_lowered_as_an_empty_sum() {
+        let final_type = FinalType::new(TypedType::Enum {
+            name: "MissingMetadata".to_string(),
+        })
+        .unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type(&final_type);
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("missing enum metadata should use an opaque ref");
+        };
+
+        assert!(matches!(
+            table.get(layout_id).map(|descriptor| &descriptor.kind),
+            Some(LayoutKind::Opaque(OpaqueLayout {
+                reason: OpaqueReason::MissingTypeMetadata
+            }))
+        ));
     }
 
     #[test]

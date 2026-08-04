@@ -375,6 +375,9 @@ pub enum TypedType {
         hash: Option<String>,
         parent_hash: Option<String>,
     },
+    Enum {
+        name: String,
+    },
     Function {
         params: Vec<TypedType>,
         return_type: Box<TypedType>,
@@ -420,6 +423,7 @@ pub fn format_typed_type(ty: &TypedType) -> String {
                 format!("{}<{}>", name, args)
             }
         }
+        TypedType::Enum { name } => name.clone(),
         TypedType::Function {
             params,
             return_type,
@@ -637,6 +641,12 @@ struct RecordDef {
     parent_hash: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct EnumDef {
+    variants: HashMap<String, Option<TypedType>>,
+    variant_order: Vec<String>,
+}
+
 type RecordDefSnapshot = (
     HashMap<String, TypedType>,
     Vec<TypeParam>,
@@ -679,6 +689,8 @@ pub struct TypeChecker {
     trait_impls: HashMap<String, HashSet<String>>,
     // Record definitions
     records: HashMap<String, RecordDef>,
+    // Closed user-defined enum definitions
+    enums: HashMap<String, EnumDef>,
     // Function definitions
     functions: HashMap<String, FunctionDef>,
     // Checked expression types, keyed by stable AST node id.
@@ -717,6 +729,7 @@ impl TypeChecker {
             type_bounds_env: vec![HashMap::new()],
             trait_impls: HashMap::new(),
             records: HashMap::new(),
+            enums: HashMap::new(),
             functions: HashMap::new(),
             checked_expr_types: HashMap::new(),
             methods: HashMap::new(),
@@ -782,6 +795,31 @@ impl TypeChecker {
                         Self::apply_type_arg_bindings(field_ty, &bindings),
                     )
                 })
+            })
+            .collect()
+    }
+
+    /// Return a closed enum's variants in declaration order.
+    ///
+    /// Backends may assign internal numeric tags from this order. Those tag
+    /// values are an implementation detail and are not part of the source ABI.
+    pub fn checked_enum_variants_for_type(
+        &self,
+        ty: &TypedType,
+    ) -> Option<Vec<(String, Option<TypedType>)>> {
+        let TypedType::Enum { name } = ty else {
+            return None;
+        };
+        let enum_def = self.enums.get(name)?;
+        enum_def
+            .variant_order
+            .iter()
+            .map(|variant_name| {
+                enum_def
+                    .variants
+                    .get(variant_name)
+                    .cloned()
+                    .map(|payload| (variant_name.clone(), payload))
             })
             .collect()
     }
@@ -2026,6 +2064,12 @@ impl TypeChecker {
             TypedType::Option(inner) => self.is_copyable(inner),
             TypedType::Result(ok, err) => self.is_copyable(ok) && self.is_copyable(err),
             TypedType::Array(inner, _) => self.is_copyable(inner),
+            TypedType::Enum { name } => self.enums.get(name).is_some_and(|enum_def| {
+                enum_def
+                    .variants
+                    .values()
+                    .all(|payload| payload.as_ref().is_none_or(|ty| self.is_copyable(ty)))
+            }),
             // Lists are always heap-allocated, so not copyable
             TypedType::List(_) => false,
             // Strings are heap-allocated, so not copyable
@@ -2969,6 +3013,8 @@ impl TypeChecker {
                             hash: None,
                             parent_hash: None,
                         })
+                    } else if self.enums.contains_key(name) {
+                        Ok(TypedType::Enum { name: name.clone() })
                     } else {
                         Err(TypeError::UnknownType(name.clone()))
                     }
@@ -3047,6 +3093,11 @@ impl TypeChecker {
                         parent_hash: None,
                     })
                 }
+                _ if self.enums.contains_key(name) => Err(TypeError::UnsupportedFeature(format!(
+                    "generic enum types are not supported: {}<{}>",
+                    name,
+                    params.len()
+                ))),
                 _ => Err(TypeError::UnknownType(format!(
                     "{}<{}>",
                     name,
@@ -3074,6 +3125,280 @@ impl TypeChecker {
         }
     }
 
+    fn register_enum_header(&mut self, enum_decl: &EnumDecl) -> Result<(), TypeError> {
+        const BUILTIN_TYPES: &[&str] = &[
+            "Int32", "Int64", "Float64", "Boolean", "String", "Char", "Unit", "Option", "Result",
+            "List", "Range", "Array",
+        ];
+
+        if enum_decl.variants.is_empty() {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "enum '{}' must declare at least one variant",
+                enum_decl.name
+            )));
+        }
+        if BUILTIN_TYPES.contains(&enum_decl.name.as_str())
+            || self.enums.contains_key(&enum_decl.name)
+            || self.records.contains_key(&enum_decl.name)
+        {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "duplicate type declaration '{}'",
+                enum_decl.name
+            )));
+        }
+
+        let mut variant_names = HashSet::new();
+        let mut variants = HashMap::new();
+        let mut variant_order = Vec::with_capacity(enum_decl.variants.len());
+        for variant in &enum_decl.variants {
+            if !variant_names.insert(variant.name.clone()) {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "duplicate variant '{}::{}'",
+                    enum_decl.name, variant.name
+                )));
+            }
+            variants.insert(variant.name.clone(), None);
+            variant_order.push(variant.name.clone());
+        }
+
+        self.enums.insert(
+            enum_decl.name.clone(),
+            EnumDef {
+                variants,
+                variant_order,
+            },
+        );
+        Ok(())
+    }
+
+    fn validate_enum_payload_source_type(
+        &self,
+        enum_name: &str,
+        variant_name: &str,
+        ty: &Type,
+    ) -> Result<(), TypeError> {
+        match ty {
+            Type::Function(_, _) => Err(TypeError::UnsupportedFeature(format!(
+                "enum variant '{}::{}' cannot carry a function payload",
+                enum_name, variant_name
+            ))),
+            Type::Temporal(_, _) => Err(TypeError::UnsupportedFeature(format!(
+                "enum variant '{}::{}' cannot carry a temporal payload",
+                enum_name, variant_name
+            ))),
+            Type::Generic(name, args) => {
+                if self.enums.contains_key(name) {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "generic enum types are not supported: {}<{}>",
+                        name,
+                        args.len()
+                    )));
+                }
+                if self
+                    .records
+                    .get(name)
+                    .is_some_and(|record| record.type_params.iter().any(|param| param.is_temporal))
+                {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "enum variant '{}::{}' cannot carry a temporal record payload '{}'; enum payloads must be concrete and non-temporal",
+                        enum_name, variant_name, name
+                    )));
+                }
+                for arg in args {
+                    self.validate_enum_payload_source_type(enum_name, variant_name, arg)?;
+                }
+                Ok(())
+            }
+            Type::Named(name) => {
+                if let Some(record) = self.records.get(name) {
+                    if record.type_params.iter().any(|param| param.is_temporal) {
+                        return Err(TypeError::UnsupportedFeature(format!(
+                            "enum variant '{}::{}' cannot carry a temporal record payload '{}'; enum payloads must be concrete and non-temporal",
+                            enum_name, variant_name, name
+                        )));
+                    }
+                    if record.type_params.iter().any(|param| !param.is_temporal) {
+                        return Err(TypeError::UnsupportedFeature(format!(
+                            "enum variant '{}::{}' payload type '{}' is not concrete; supply all generic record type arguments",
+                            enum_name, variant_name, name
+                        )));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn collect_source_type_dependencies(
+        ty: &Type,
+        type_names: &HashSet<String>,
+        dependencies: &mut HashSet<String>,
+    ) {
+        match ty {
+            Type::Named(name) | Type::Temporal(name, _) => {
+                if type_names.contains(name) {
+                    dependencies.insert(name.clone());
+                }
+            }
+            Type::Generic(name, args) => {
+                if type_names.contains(name) {
+                    dependencies.insert(name.clone());
+                }
+                for arg in args {
+                    Self::collect_source_type_dependencies(arg, type_names, dependencies);
+                }
+            }
+            Type::Function(params, return_type) => {
+                for param in params {
+                    Self::collect_source_type_dependencies(param, type_names, dependencies);
+                }
+                Self::collect_source_type_dependencies(return_type, type_names, dependencies);
+            }
+        }
+    }
+
+    fn collect_typed_type_dependencies(
+        ty: &TypedType,
+        type_names: &HashSet<String>,
+        dependencies: &mut HashSet<String>,
+    ) {
+        match ty {
+            TypedType::Enum { name } => {
+                if type_names.contains(name) {
+                    dependencies.insert(name.clone());
+                }
+            }
+            TypedType::Record {
+                name, type_args, ..
+            } => {
+                if type_names.contains(name) {
+                    dependencies.insert(name.clone());
+                }
+                for type_arg in type_args {
+                    Self::collect_typed_type_dependencies(type_arg, type_names, dependencies);
+                }
+            }
+            TypedType::Option(inner)
+            | TypedType::List(inner)
+            | TypedType::Array(inner, _)
+            | TypedType::Temporal {
+                base_type: inner, ..
+            } => Self::collect_typed_type_dependencies(inner, type_names, dependencies),
+            TypedType::Result(ok, err) => {
+                Self::collect_typed_type_dependencies(ok, type_names, dependencies);
+                Self::collect_typed_type_dependencies(err, type_names, dependencies);
+            }
+            TypedType::Function {
+                params,
+                return_type,
+            } => {
+                for param in params {
+                    Self::collect_typed_type_dependencies(param, type_names, dependencies);
+                }
+                Self::collect_typed_type_dependencies(return_type, type_names, dependencies);
+            }
+            TypedType::Projection { base, args, .. } => {
+                Self::collect_typed_type_dependencies(base, type_names, dependencies);
+                for arg in args {
+                    Self::collect_typed_type_dependencies(arg, type_names, dependencies);
+                }
+            }
+            TypedType::Int32
+            | TypedType::Int64
+            | TypedType::Float64
+            | TypedType::Boolean
+            | TypedType::String
+            | TypedType::Char
+            | TypedType::Unit
+            | TypedType::TypeParam(_)
+            | TypedType::InferVar(_) => {}
+        }
+    }
+
+    fn dependency_reaches(
+        current: &str,
+        target: &str,
+        graph: &HashMap<String, HashSet<String>>,
+        visited: &mut HashSet<String>,
+    ) -> bool {
+        let Some(dependencies) = graph.get(current) else {
+            return false;
+        };
+        for dependency in dependencies {
+            if dependency == target {
+                return true;
+            }
+            if visited.insert(dependency.clone())
+                && Self::dependency_reaches(dependency, target, graph, visited)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn validate_enum_recursion(&self, program: &Program) -> Result<(), TypeError> {
+        let enum_names = self.enums.keys().cloned().collect::<HashSet<_>>();
+        let type_names = enum_names
+            .iter()
+            .cloned()
+            .chain(self.records.keys().cloned())
+            .collect::<HashSet<_>>();
+        let mut graph = HashMap::<String, HashSet<String>>::new();
+        for decl in &program.declarations {
+            let TopDecl::Enum(enum_decl) = Self::decl_registration_item(decl) else {
+                continue;
+            };
+            let dependencies = graph.entry(enum_decl.name.clone()).or_default();
+            for variant in &enum_decl.variants {
+                if let Some(payload) = &variant.payload {
+                    Self::collect_source_type_dependencies(payload, &type_names, dependencies);
+                }
+            }
+        }
+        for (record_name, record_def) in &self.records {
+            let dependencies = graph.entry(record_name.clone()).or_default();
+            for field_type in record_def.fields.values() {
+                Self::collect_typed_type_dependencies(field_type, &type_names, dependencies);
+            }
+        }
+
+        for name in &enum_names {
+            let mut visited = HashSet::from([name.clone()]);
+            if Self::dependency_reaches(name, name, &graph, &mut visited) {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "recursive enum definitions are not supported (cycle includes '{}')",
+                    name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn register_enum_payloads(&mut self, enum_decl: &EnumDecl) -> Result<(), TypeError> {
+        let mut payloads = Vec::with_capacity(enum_decl.variants.len());
+        for variant in &enum_decl.variants {
+            let payload = if let Some(payload) = &variant.payload {
+                self.validate_enum_payload_source_type(&enum_decl.name, &variant.name, payload)?;
+                Some(self.convert_type(payload)?)
+            } else {
+                None
+            };
+            payloads.push((variant.name.clone(), payload));
+        }
+
+        let enum_def = self.enums.get_mut(&enum_decl.name).ok_or_else(|| {
+            TypeError::UnknownType(format!(
+                "enum '{}' was not registered before its payloads",
+                enum_decl.name
+            ))
+        })?;
+        for (variant_name, payload) in payloads {
+            enum_def.variants.insert(variant_name, payload);
+        }
+        Ok(())
+    }
+
     pub fn check_program(&mut self, program: &Program) -> Result<(), TypeError> {
         self.checked_expr_types.clear();
         self.reject_unresolved_imports(&program.imports)?;
@@ -3093,7 +3418,16 @@ impl TypeChecker {
             }
         }
 
-        // First pass: register record/context shapes before any signature that
+        // First pass: register enum names and variant names. Payloads are
+        // resolved only after record shapes exist, while records may already
+        // refer to these enum headers.
+        for decl in &program.declarations {
+            if let TopDecl::Enum(enum_decl) = Self::decl_registration_item(decl) {
+                self.register_enum_header(enum_decl)?;
+            }
+        }
+
+        // Second pass: register record/context shapes before any signature that
         // may mention them, regardless of source order.
         for decl in &program.declarations {
             match Self::decl_registration_item(decl) {
@@ -3107,14 +3441,22 @@ impl TypeChecker {
             }
         }
 
-        // Second pass: register function signatures for forward references.
+        // Third pass: reject recursive enum graphs, then resolve each payload.
+        self.validate_enum_recursion(program)?;
+        for decl in &program.declarations {
+            if let TopDecl::Enum(enum_decl) = Self::decl_registration_item(decl) {
+                self.register_enum_payloads(enum_decl)?;
+            }
+        }
+
+        // Fourth pass: register function signatures for forward references.
         for decl in &program.declarations {
             if let TopDecl::Function(func) = Self::decl_registration_item(decl) {
                 self.register_function_signature(func)?;
             }
         }
 
-        // Third pass: register impl method signatures before checking bodies,
+        // Fifth pass: register impl method signatures before checking bodies,
         // so OSV method calls can refer to impl blocks declared later.
         for decl in &program.declarations {
             if let TopDecl::Impl(impl_block) = Self::decl_registration_item(decl) {
@@ -3122,7 +3464,7 @@ impl TypeChecker {
             }
         }
 
-        // Fourth pass: check impl bodies before ordinary functions. This turns
+        // Sixth pass: check impl bodies before ordinary functions. This turns
         // unannotated method returns from provisional signatures into inferred
         // concrete method signatures before function bodies call them.
         for decl in &program.declarations {
@@ -3131,7 +3473,7 @@ impl TypeChecker {
             }
         }
 
-        // Fifth pass: infer unannotated ordinary function returns before
+        // Seventh pass: infer unannotated ordinary function returns before
         // annotated functions and top-level bindings use those functions.
         self.infer_unannotated_function_returns(program)?;
 
@@ -3140,6 +3482,9 @@ impl TypeChecker {
             match Self::decl_registration_item(decl) {
                 TopDecl::Record(_) => {
                     // Already processed in first pass
+                }
+                TopDecl::Enum(_) => {
+                    // Header and payload were already processed before signatures.
                 }
                 TopDecl::Context(_) => {
                     // Already processed in first pass
@@ -3517,7 +3862,8 @@ impl TypeChecker {
                     unannotated_names,
                 ));
             }
-            ExprKind::IntLit(_)
+            ExprKind::VariantRef(_)
+            | ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)
             | ExprKind::CharLit(_)
@@ -3625,6 +3971,7 @@ impl TypeChecker {
     fn check_top_decl(&mut self, decl: &TopDecl) -> Result<(), TypeError> {
         match decl {
             TopDecl::Record(record) => self.check_record_decl(record),
+            TopDecl::Enum(_) => Ok(()),
             TopDecl::Function(func) => self.check_function_decl(func),
             TopDecl::Binding(bind) => self.check_bind_decl(bind),
             TopDecl::Impl(impl_block) => self.check_impl_block(impl_block),
@@ -3634,6 +3981,13 @@ impl TypeChecker {
     }
 
     fn check_record_decl(&mut self, record: &RecordDecl) -> Result<(), TypeError> {
+        if self.enums.contains_key(&record.name) {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "duplicate type declaration '{}'",
+                record.name
+            )));
+        }
+
         // Register temporal type parameters
         for type_param in &record.type_params {
             if type_param.is_temporal {
@@ -4451,6 +4805,7 @@ impl TypeChecker {
 
     fn expr_is_replay_safe_for_deferred_callable(&self, expr: &Expr) -> bool {
         match &expr.kind {
+            ExprKind::VariantRef(_) => false,
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)
@@ -4715,6 +5070,16 @@ impl TypeChecker {
                 }
                 _ => return Err(expected_type_mismatch("Result", ty)),
             },
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                ..
+            } => {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "refutable enum pattern '{}::{}' is not allowed in a val binding; use match",
+                    enum_name, variant_name
+                )));
+            }
             Pattern::None | Pattern::EmptyList | Pattern::Wildcard | Pattern::Literal(_) => {
                 // These patterns don't bind variables
             }
@@ -4911,6 +5276,13 @@ impl TypeChecker {
     }
 
     fn check_context_decl(&mut self, context: &ContextDecl) -> Result<(), TypeError> {
+        if self.enums.contains_key(&context.name) {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "duplicate type declaration '{}'",
+                context.name
+            )));
+        }
+
         // Store context definition
         let mut fields = HashMap::new();
         let mut field_order = Vec::new();
@@ -5040,6 +5412,10 @@ impl TypeChecker {
                         }
                     }
                 }
+                ExprKind::VariantRef(path) => Err(TypeError::UnsupportedFeature(format!(
+                    "enum constructor '{}::{}' must be called directly with OSV syntax",
+                    path.enum_name, path.variant_name
+                ))),
                 ExprKind::RecordLit(record_lit) => {
                     self.check_record_lit_with_expected(record_lit, expected)
                 }
@@ -6409,6 +6785,9 @@ impl TypeChecker {
     ) -> Result<TypedType, TypeError> {
         // First check the function expression type
         match &call.function.kind {
+            ExprKind::VariantRef(path) => {
+                self.check_enum_constructor_call(path, &call.args, expected_return)
+            }
             ExprKind::Ident(name) => {
                 // First check if it's a variable that holds a function
                 match self.lookup_var(name) {
@@ -6521,6 +6900,60 @@ impl TypeChecker {
                 )
             }
         }
+    }
+
+    fn enum_variant_payload(&self, path: &VariantPath) -> Result<Option<TypedType>, TypeError> {
+        let enum_def = self
+            .enums
+            .get(&path.enum_name)
+            .ok_or_else(|| TypeError::UnknownType(path.enum_name.clone()))?;
+        enum_def
+            .variants
+            .get(&path.variant_name)
+            .cloned()
+            .ok_or_else(|| {
+                TypeError::UnsupportedFeature(format!(
+                    "unknown enum variant '{}::{}'",
+                    path.enum_name, path.variant_name
+                ))
+            })
+    }
+
+    fn check_enum_constructor_call(
+        &mut self,
+        path: &VariantPath,
+        args: &[Box<Expr>],
+        expected_return: Option<&TypedType>,
+    ) -> Result<TypedType, TypeError> {
+        let payload = self.enum_variant_payload(path)?;
+        let enum_ty = TypedType::Enum {
+            name: path.enum_name.clone(),
+        };
+
+        if let Some(expected) = expected_return {
+            if !matches!(expected, TypedType::InferVar(_))
+                && !self.type_matches_expected(expected, &enum_ty)
+            {
+                return Err(typed_type_mismatch(expected, &enum_ty));
+            }
+        }
+
+        let expected_arity = usize::from(payload.is_some());
+        if args.len() != expected_arity {
+            return Err(TypeError::ArityMismatch {
+                expected: expected_arity,
+                found: args.len(),
+            });
+        }
+
+        if let (Some(payload_ty), Some(arg)) = (payload.as_ref(), args.first()) {
+            let actual = self.check_expr_with_expected(arg, Some(payload_ty))?;
+            if !self.type_matches_expected(payload_ty, &actual) {
+                return Err(typed_type_mismatch(payload_ty, &actual));
+            }
+        }
+
+        Ok(enum_ty)
     }
 
     fn check_block_expr(&mut self, block: &BlockExpr) -> Result<TypedType, TypeError> {
@@ -7326,8 +7759,22 @@ impl TypeChecker {
                 }
             }
             BinaryOp::Eq | BinaryOp::Ne => {
-                // Equality operators work on same types
-                if left_ty == right_ty {
+                // Enum values use an internal pointer representation. Until
+                // structural tag/payload equality is specified and lowered,
+                // accepting equality here would silently compare allocation
+                // addresses rather than enum values.
+                if matches!(
+                    (&left_ty, &right_ty),
+                    (
+                        TypedType::Enum { name: left_name },
+                        TypedType::Enum { name: right_name }
+                    ) if left_name == right_name
+                ) {
+                    Err(TypeError::UnsupportedFeature(
+                        "user-defined enum equality is not supported; use match on qualified variants"
+                            .to_string(),
+                    ))
+                } else if left_ty == right_ty {
                     Ok(TypedType::Boolean)
                 } else {
                     Err(TypeError::TypeMismatch {
@@ -8200,6 +8647,47 @@ impl TypeChecker {
                     Err(expected_type_mismatch("Result type", expected_type))
                 }
             }
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload,
+            } => {
+                let TypedType::Enum {
+                    name: expected_enum,
+                } = expected_type
+                else {
+                    return Err(expected_type_mismatch(
+                        format!("enum type '{}'", enum_name),
+                        expected_type,
+                    ));
+                };
+                if expected_enum != enum_name {
+                    return Err(TypeError::TypeMismatch {
+                        expected: expected_enum.clone(),
+                        found: enum_name.clone(),
+                    });
+                }
+
+                let path = VariantPath {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                };
+                let declared_payload = self.enum_variant_payload(&path)?;
+                match (declared_payload.as_ref(), payload.as_deref()) {
+                    (None, None) => Ok(()),
+                    (Some(payload_ty), Some(payload_pattern)) => {
+                        self.check_pattern(payload_pattern, payload_ty)
+                    }
+                    (None, Some(_)) => Err(TypeError::ArityMismatch {
+                        expected: 0,
+                        found: 1,
+                    }),
+                    (Some(_), None) => Err(TypeError::ArityMismatch {
+                        expected: 1,
+                        found: 0,
+                    }),
+                }
+            }
             Pattern::EmptyList => {
                 if matches!(expected_type, TypedType::List(_)) {
                     Ok(())
@@ -8321,6 +8809,28 @@ impl TypeChecker {
                     Ok(())
                 }
             }
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload,
+            } => {
+                let TypedType::Enum { name } = ty else {
+                    return Ok(());
+                };
+                if name != enum_name {
+                    return Ok(());
+                }
+                let path = VariantPath {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                };
+                if let (Some(payload_ty), Some(payload_pattern)) =
+                    (self.enum_variant_payload(&path)?, payload.as_deref())
+                {
+                    self.bind_pattern_vars(payload_pattern, &payload_ty)?;
+                }
+                Ok(())
+            }
             Pattern::EmptyList => Ok(()),
             Pattern::ListCons(head_pattern, tail_pattern) => {
                 if let TypedType::List(element_type) = ty {
@@ -8439,6 +8949,7 @@ impl TypeChecker {
             TypedType::Result(ok_ty, err_ty) => {
                 self.find_uncovered_result_patterns(patterns, ok_ty, err_ty)
             }
+            TypedType::Enum { name } => self.find_uncovered_enum_patterns(patterns, name),
             TypedType::Unit => self.find_uncovered_unit_patterns(patterns),
             TypedType::List(elem_ty) => self.find_uncovered_list_patterns(patterns, elem_ty),
             TypedType::Record { name, .. } => self.find_uncovered_record_patterns(patterns, name),
@@ -8561,6 +9072,56 @@ impl TypeChecker {
         } else {
             for err_pattern in self.find_uncovered_patterns(&err_patterns, err_ty) {
                 uncovered.push(format!("Err({})", err_pattern));
+            }
+        }
+
+        uncovered
+    }
+
+    fn find_uncovered_enum_patterns(&self, patterns: &[&Pattern], enum_name: &str) -> Vec<String> {
+        let Some(enum_def) = self.enums.get(enum_name) else {
+            return vec![format!("_ (unknown enum type '{}')", enum_name)];
+        };
+        let mut uncovered = Vec::new();
+
+        for variant_name in &enum_def.variant_order {
+            let declared_payload = enum_def
+                .variants
+                .get(variant_name)
+                .expect("enum variant order and payload table stay synchronized");
+            let matching_payload_patterns = patterns
+                .iter()
+                .filter_map(|pattern| match pattern {
+                    Pattern::EnumVariant {
+                        enum_name: pattern_enum,
+                        variant_name: pattern_variant,
+                        payload,
+                    } if pattern_enum == enum_name && pattern_variant == variant_name => {
+                        Some(payload.as_deref())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+
+            match declared_payload {
+                None => {
+                    if matching_payload_patterns.is_empty() {
+                        uncovered.push(format!("{}::{}", enum_name, variant_name));
+                    }
+                }
+                Some(payload_ty) => {
+                    let nested_patterns = matching_payload_patterns
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    if nested_patterns.is_empty() {
+                        uncovered.push(format!("{}::{}(_)", enum_name, variant_name));
+                    } else {
+                        for missing in self.find_uncovered_patterns(&nested_patterns, payload_ty) {
+                            uncovered.push(format!("{}::{}({})", enum_name, variant_name, missing));
+                        }
+                    }
+                }
             }
         }
 
@@ -8722,6 +9283,7 @@ impl TypeChecker {
             | Pattern::None
             | Pattern::Ok(_)
             | Pattern::Err(_)
+            | Pattern::EnumVariant { .. }
             | Pattern::EmptyList
             | Pattern::ListCons(_, _)
             | Pattern::ListExact(_) => false,
@@ -10047,6 +10609,7 @@ impl TypeChecker {
             ExprKind::Spawn(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
+            ExprKind::VariantRef(_) => {}
             // Literals and None have no free variables
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
@@ -10111,6 +10674,11 @@ impl TypeChecker {
             }
             Pattern::Ok(p) | Pattern::Err(p) => {
                 self.collect_pattern_bindings(p, bindings);
+            }
+            Pattern::EnumVariant { payload, .. } => {
+                if let Some(payload) = payload {
+                    self.collect_pattern_bindings(payload, bindings);
+                }
             }
             Pattern::ListCons(head, tail) => {
                 self.collect_pattern_bindings(head, bindings);

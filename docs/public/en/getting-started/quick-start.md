@@ -112,14 +112,30 @@ surface such as `println` and `print_int`.
 ## Dependencies
 
 ```bash
-warder add math
-warder add json@1.0.0
-warder add local-utils --path ../local-utils
-warder add json@v1.0.0 --git https://example.com/json.git
-warder remove math
+warder add local_utils --path ../local-utils
+warder remove local_utils
 ```
 
-`warder build` refreshes `restrict-lock.toml` from `package.rl.toml`.
+The dependency directory must contain `package.rl.toml` and `src/lib.rl`. The
+alias `local_utils` is also its source namespace, so an exported `score`
+function from the library root is imported with:
+
+```restrict
+import local_utils.{score}
+```
+
+Submodules follow the same mapping: `import local_utils.numbers.{double}` loads
+`../local-utils/src/numbers.rl`. Aliases must be non-keyword Restrict
+identifiers, `std` is reserved, and hyphens are not converted automatically.
+
+`warder build` refreshes `restrict-lock.toml` with the dependency manifest
+version and a deterministic source SHA-256. `warder test` uses the same local
+package roots. Registry, Git, foreign WASM, and transitive dependencies fail
+explicitly in the current direct-local slice.
+
+Builds compile immutable application and dependency snapshots. Concurrent
+builds of one project are serialized, and the generated WAT, WASM, Cage, and
+lock file replace the previous set only after the full build succeeds.
 
 ## Local Cage Files
 

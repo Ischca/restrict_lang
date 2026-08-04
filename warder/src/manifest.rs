@@ -1,18 +1,19 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::Path;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub package: Package,
     #[serde(default)]
-    pub dependencies: HashMap<String, Dependency>,
+    pub dependencies: BTreeMap<String, Dependency>,
     #[serde(default)]
     pub build: Build,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Package {
     pub name: String,
     pub version: String,
@@ -24,7 +25,7 @@ pub struct Package {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Dependency {
     Version(String),
@@ -42,7 +43,7 @@ pub enum Dependency {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Build {
     #[serde(default = "default_target")]
     pub target: String,
@@ -85,7 +86,7 @@ impl Manifest {
                 authors: None,
                 description: None,
             },
-            dependencies: HashMap::new(),
+            dependencies: BTreeMap::new(),
             build: Build::default(),
         }
     }
@@ -99,8 +100,38 @@ impl Manifest {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         let content = toml::to_string_pretty(self).context("Failed to serialize manifest")?;
-        std::fs::write(path, content)
-            .with_context(|| format!("Failed to write manifest to {:?}", path))
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    anyhow::bail!(
+                        "Refusing to replace non-regular package manifest {}",
+                        path.display()
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to inspect package manifest {}", path.display())
+                });
+            }
+        }
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut staged = tempfile::NamedTempFile::new_in(parent)
+            .with_context(|| format!("Failed to stage manifest next to {}", path.display()))?;
+        staged
+            .write_all(content.as_bytes())
+            .with_context(|| format!("Failed to write staged manifest for {}", path.display()))?;
+        staged
+            .as_file_mut()
+            .sync_all()
+            .with_context(|| format!("Failed to flush staged manifest for {}", path.display()))?;
+        staged.persist(path).map(|_| ()).with_context(|| {
+            format!(
+                "Failed to atomically replace manifest at {}",
+                path.display()
+            )
+        })
     }
 
     pub fn add_dependency(&mut self, name: String, dep: Dependency) {
@@ -109,6 +140,56 @@ impl Manifest {
 
     pub fn remove_dependency(&mut self, name: &str) -> Option<Dependency> {
         self.dependencies.remove(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn manifest_serialization_orders_dependencies_by_alias() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("package.rl.toml");
+        let mut manifest = Manifest::new("app");
+        manifest.add_dependency(
+            "zeta".to_string(),
+            Dependency::Local {
+                path: "../zeta".to_string(),
+            },
+        );
+        manifest.add_dependency(
+            "alpha".to_string(),
+            Dependency::Local {
+                path: "../alpha".to_string(),
+            },
+        );
+
+        manifest.save(&path).unwrap();
+        let serialized = std::fs::read_to_string(path).unwrap();
+
+        assert!(
+            serialized.find("[dependencies.alpha]").unwrap()
+                < serialized.find("[dependencies.zeta]").unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_save_does_not_follow_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let outside = temp.path().join("outside.toml");
+        let path = temp.path().join("package.rl.toml");
+        std::fs::write(&outside, "keep\n").unwrap();
+        symlink(&outside, &path).unwrap();
+
+        let error = Manifest::new("app").save(&path).unwrap_err();
+
+        assert!(error.to_string().contains("non-regular package manifest"));
+        assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep\n");
     }
 }
 

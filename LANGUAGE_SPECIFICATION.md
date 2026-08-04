@@ -513,8 +513,11 @@ import release.policy
 
 Imports are source-level declarations. The current v0.0.1 implementation
 supports dotted module paths with named imports, wildcard imports, or whole
-module imports. String paths, import aliases, re-exports, and package-level
-standard-library aggregators are reserved for a later module-design pass.
+module imports. String paths, source-level import aliases, re-exports, and
+package-level standard-library aggregators are reserved for a later
+module-design pass. A build tool may bind the first dotted path segment to a
+package source root; that manifest/compiler binding is not an `import ... as`
+source alias.
 
 Within one compilation, a source declaration has one canonical identity: its
 dotted module path plus its declaration name. Splitting named imports across
@@ -526,6 +529,30 @@ resolver errors. A failed resolution is not cached as a complete module and
 may be retried after the missing source becomes available. When compiling a
 source file, its parent directory is searched before the process working
 directory fallback.
+
+The native compiler accepts repeatable `--module-root ALIAS=DIR` bindings for
+package builds. `ALIAS` must be one complete, non-keyword Restrict identifier;
+`std` is reserved. A configured namespace has these mappings:
+
+- `import ALIAS.{item}` loads `DIR/lib.rl`;
+- `import ALIAS.foo.bar.{item}` loads `DIR/foo/bar.rl`;
+- an unqualified import inside a mounted package is resolved inside the same
+  `ALIAS` namespace;
+- `ALIAS.lib` is rejected because it would give `lib.rl` two canonical module
+  identities;
+- a missing file under a configured namespace does not fall back to an
+  application source directory.
+
+Explicit application search roots and package source roots are canonicalized
+and must be pairwise disjoint: equal, ancestor, and descendant roots are
+rejected. This keeps one physical source file from acquiring both an
+application identity and a package-qualified identity.
+
+Warder v0.0.1 uses this binding for direct local path dependencies. A local
+dependency needs `package.rl.toml` and `src/lib.rl`; its dependency-table key is
+the source namespace. Registry, Git, foreign-Wasm, and transitive package
+graphs remain outside this buildable slice and must fail explicitly rather
+than producing unresolved lock entries.
 
 ### 12.2 Exports
 ```rust

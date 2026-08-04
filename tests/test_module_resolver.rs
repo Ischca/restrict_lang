@@ -113,7 +113,9 @@ export fun public_score: (value: Int32) -> Int32 = {
     .expect("module source should be written");
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     resolver
         .resolve_module(&["release".to_string()])
         .expect("module should resolve");
@@ -161,7 +163,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("record and function imports should resolve");
@@ -208,7 +212,9 @@ export val Pair { left, right } = Pair { left: 1, right: 2 }
     .expect("module source should be written");
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let err = resolver
         .resolve_module(&["bad_export".to_string()])
         .expect_err("complex binding export should be a resolver error");
@@ -246,7 +252,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("imports should resolve");
@@ -797,7 +805,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("imports should resolve without leaking private helper names");
@@ -867,7 +877,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("nested imports should resolve without leaking dependency names");
@@ -936,7 +948,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("private context dependency should resolve");
@@ -1042,7 +1056,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("private impl dependency should resolve");
@@ -1113,7 +1129,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("wildcard import should resolve");
@@ -1166,7 +1184,9 @@ fun main: () -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let resolved = resolver
         .resolve_program_imports(root)
         .expect("whole-module import should resolve");
@@ -1214,7 +1234,9 @@ fun score: (value: Int32) -> Int32 = {
     );
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     let err = resolver
         .resolve_program_imports(root)
         .expect_err("colliding import should be rejected");
@@ -1857,7 +1879,9 @@ export fun score: () -> Int32 = {
     .expect("filesystem module should be written");
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(dir.clone());
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
     resolver
         .resolve_module(&["release_policy".to_string()])
         .expect("filesystem module should resolve");
@@ -1908,17 +1932,23 @@ export fun score: () -> Int32 = {
     .expect("second ambiguous module should be written");
 
     let mut resolver = ModuleResolver::new();
-    resolver.add_search_path(first.clone());
-    resolver.add_search_path(second.clone());
+    resolver
+        .add_search_path(first.clone())
+        .expect("first module search root should be registered");
+    resolver
+        .add_search_path(second.clone())
+        .expect("second module search root should be registered");
     let error = resolver
         .resolve_module(&["release".to_string(), "policy".to_string()])
         .expect_err("distinct files for one module identity should be ambiguous");
     let message = error.to_string();
+    let canonical_first = fs::canonicalize(&first).expect("first root should canonicalize");
+    let canonical_second = fs::canonicalize(&second).expect("second root should canonicalize");
     assert!(
         message.to_lowercase().contains("ambiguous")
             && message.contains("release.policy")
-            && message.contains(&first.display().to_string())
-            && message.contains(&second.display().to_string()),
+            && message.contains(&canonical_first.display().to_string())
+            && message.contains(&canonical_second.display().to_string()),
         "ambiguity diagnostic should name the module and both candidates, got: {message}"
     );
 
@@ -2072,4 +2102,673 @@ export fun right_score: () -> Int32 = {
             .expect("diamond regression export should execute"),
         23
     );
+}
+
+#[test]
+fn package_root_maps_root_and_submodule_imports_to_source_files() {
+    let package_source = temp_module_dir("package_root_and_submodule");
+    fs::write(
+        package_source.join("lib.rl"),
+        r#"
+pub fun root_score: () -> Int32 = {
+    40
+}
+"#,
+    )
+    .expect("package root module should be written");
+    fs::write(
+        package_source.join("math.rl"),
+        r#"
+pub fun add_two: (value: Int32) -> Int32 = {
+    value + 2
+}
+"#,
+    )
+    .expect("package submodule should be written");
+
+    let root = parse_complete(
+        r#"
+import local_utils.{root_score}
+import local_utils.math.{add_two}
+
+pub fun package_root_score: () -> Int32 = {
+    val score = () root_score;
+    score |> add_two
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("valid package namespace should be registered");
+    let resolved = resolver
+        .resolve_program_imports(root)
+        .expect("package root and submodule imports should resolve");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("package root and submodule imports should type check");
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("package root and submodule imports should generate WAT");
+    let (mut store, instance) = instantiate_wat("package root and submodule", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "package_root_score")
+        .expect("package root regression export should be host-callable");
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("package root regression export should execute"),
+        42
+    );
+
+    let _ = fs::remove_dir_all(package_source);
+}
+
+#[test]
+fn package_local_imports_stay_inside_the_registered_namespace() {
+    let app_source = temp_module_dir("package_local_app_source");
+    let package_source = temp_module_dir("package_local_dependency_source");
+    fs::write(
+        app_source.join("detail.rl"),
+        r#"
+pub fun package_bonus: () -> Int32 = {
+    99
+}
+"#,
+    )
+    .expect("application shadow module should be written");
+    fs::write(
+        package_source.join("lib.rl"),
+        r#"
+import detail.{package_bonus}
+
+pub fun package_score: () -> Int32 = {
+    () package_bonus
+}
+"#,
+    )
+    .expect("package root module should be written");
+    fs::write(
+        package_source.join("detail.rl"),
+        r#"
+pub fun package_bonus: () -> Int32 = {
+    7
+}
+"#,
+    )
+    .expect("package-local detail module should be written");
+
+    let root = parse_complete(
+        r#"
+import local_utils.{package_score}
+
+pub fun package_local_score: () -> Int32 = {
+    () package_score
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_search_path(app_source.clone())
+        .expect("application search root should be registered");
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("valid package namespace should be registered");
+    let resolved = resolver
+        .resolve_program_imports(root)
+        .expect("package-local import should resolve under the package namespace");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("package-local import should type check");
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("package-local import should generate WAT");
+    let canonical_bonus = internal_module_name(&["local_utils", "detail"], "package_bonus");
+    assert_eq!(
+        wat.matches(&format!("(func ${canonical_bonus}")).count(),
+        1,
+        "package-local declarations should use their package-qualified canonical identity:\n{wat}"
+    );
+
+    let (mut store, instance) = instantiate_wat("package-local import", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "package_local_score")
+        .expect("package-local regression export should be host-callable");
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("package-local regression export should execute"),
+        7,
+        "an unqualified import in a package must not resolve from the application source tree"
+    );
+
+    let _ = fs::remove_dir_all(app_source);
+    let _ = fs::remove_dir_all(package_source);
+}
+
+#[test]
+fn configured_package_namespace_does_not_fall_back_to_application_sources() {
+    let app_source = temp_module_dir("package_missing_app_source");
+    let package_source = temp_module_dir("package_missing_dependency_source");
+    fs::create_dir_all(app_source.join("local_utils"))
+        .expect("application shadow namespace should be created");
+    fs::write(
+        app_source.join("local_utils/missing.rl"),
+        r#"
+pub fun fallback_score: () -> Int32 = {
+    99
+}
+"#,
+    )
+    .expect("application fallback module should be written");
+    fs::write(
+        package_source.join("lib.rl"),
+        r#"
+pub fun available_score: () -> Int32 = {
+    1
+}
+"#,
+    )
+    .expect("package root module should be written");
+
+    let root = parse_complete(
+        r#"
+import local_utils.missing.{fallback_score}
+
+fun main: () -> Int32 = {
+    () fallback_score
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_search_path(app_source.clone())
+        .expect("application search root should be registered");
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("valid package namespace should be registered");
+    let error = resolver
+        .resolve_program_imports(root)
+        .expect_err("missing package module must not fall back to application sources");
+    assert!(
+        error.to_string().contains("local_utils.missing"),
+        "missing package module diagnostic should retain its canonical identity, got: {error}"
+    );
+
+    let _ = fs::remove_dir_all(app_source);
+    let _ = fs::remove_dir_all(package_source);
+}
+
+#[test]
+fn package_root_registration_rejects_invalid_and_duplicate_namespaces() {
+    let package_source = temp_module_dir("invalid_package_namespaces");
+
+    for namespace in ["bad-name", "fun", "std", "two.parts", "1package"] {
+        let mut resolver = ModuleResolver::new();
+        let error = resolver
+            .add_package_root(namespace.to_string(), package_source.clone())
+            .expect_err("invalid or reserved package namespace should be rejected");
+        assert!(
+            error.to_string().contains(namespace),
+            "invalid package namespace diagnostic should name {namespace:?}, got: {error}"
+        );
+    }
+
+    let other_source = temp_module_dir("duplicate_package_namespace");
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("first package namespace registration should succeed");
+    let error = resolver
+        .add_package_root("local_utils".to_string(), other_source.clone())
+        .expect_err("duplicate package namespace registration should be rejected");
+    assert!(
+        error.to_string().contains("local_utils")
+            && error.to_string().to_lowercase().contains("duplicate"),
+        "duplicate package namespace diagnostic should name the namespace, got: {error}"
+    );
+
+    let _ = fs::remove_dir_all(package_source);
+    let _ = fs::remove_dir_all(other_source);
+}
+
+#[test]
+fn separate_package_roots_keep_distinct_deterministic_module_identities() {
+    let alpha_source = temp_module_dir("package_identity_alpha");
+    let beta_source = temp_module_dir("package_identity_beta");
+    for (source, export_name, value) in [
+        (&alpha_source, "alpha_score", 20),
+        (&beta_source, "beta_score", 22),
+    ] {
+        fs::write(
+            source.join("lib.rl"),
+            format!(
+                r#"
+import detail.{{shared_score}}
+
+pub fun {export_name}: () -> Int32 = {{
+    () shared_score
+}}
+"#
+            ),
+        )
+        .expect("package root module should be written");
+        fs::write(
+            source.join("detail.rl"),
+            format!(
+                r#"
+pub fun shared_score: () -> Int32 = {{
+    {value}
+}}
+"#
+            ),
+        )
+        .expect("package detail module should be written");
+    }
+
+    let root = parse_complete(
+        r#"
+import alpha_pkg.{alpha_score}
+import beta_pkg.{beta_score}
+
+pub fun combined_package_score: () -> Int32 = {
+    val alpha = () alpha_score;
+    val beta = () beta_score;
+    alpha + beta
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("alpha_pkg".to_string(), alpha_source.clone())
+        .expect("alpha package namespace should be registered");
+    resolver
+        .add_package_root("beta_pkg".to_string(), beta_source.clone())
+        .expect("beta package namespace should be registered");
+    let resolved = resolver
+        .resolve_program_imports(root)
+        .expect("separate package roots should resolve");
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("separate package roots should type check");
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("separate package roots should generate WAT");
+    for namespace in ["alpha_pkg", "beta_pkg"] {
+        let internal_shared = internal_module_name(&[namespace, "detail"], "shared_score");
+        assert_eq!(
+            wat.matches(&format!("(func ${internal_shared}")).count(),
+            1,
+            "each package should emit one distinct canonical declaration for shared_score:\n{wat}"
+        );
+    }
+
+    let (mut store, instance) = instantiate_wat("separate package identities", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "combined_package_score")
+        .expect("combined package regression export should be host-callable");
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("combined package regression export should execute"),
+        42
+    );
+
+    let _ = fs::remove_dir_all(alpha_source);
+    let _ = fs::remove_dir_all(beta_source);
+}
+
+#[test]
+fn package_lib_path_cannot_duplicate_the_namespace_root_identity() {
+    let package_source = temp_module_dir("package_lib_identity_alias");
+    fs::write(
+        package_source.join("lib.rl"),
+        r#"
+pub record Marker {
+    value: Int32
+}
+"#,
+    )
+    .expect("package root module should be written");
+    let root = parse_complete(
+        r#"
+import local_utils.lib.{Marker}
+
+fun main: () -> Int32 = {
+    1
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("valid package namespace should be registered");
+    let error = resolver
+        .resolve_program_imports(root)
+        .expect_err("alias.lib must not load lib.rl under a second identity");
+
+    assert!(
+        error.to_string().contains("aliases the namespace root")
+            && error.to_string().contains("local_utils.lib"),
+        "root identity diagnostic should explain the alias, got: {error}"
+    );
+    let _ = fs::remove_dir_all(package_source);
+}
+
+#[test]
+fn one_package_source_root_cannot_be_registered_under_multiple_aliases() {
+    let package_source = temp_module_dir("duplicate_package_source_root");
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("first_pkg".to_string(), package_source.clone())
+        .expect("first package alias should be registered");
+    let error = resolver
+        .add_package_root("second_pkg".to_string(), package_source.clone())
+        .expect_err("one package source root must have one canonical alias");
+
+    assert!(
+        error
+            .to_string()
+            .contains("overlaps the source root registered as namespace 'first_pkg'"),
+        "duplicate source-root diagnostic should name the canonical alias, got: {error}"
+    );
+    let _ = fs::remove_dir_all(package_source);
+}
+
+#[cfg(unix)]
+#[test]
+fn package_module_symlink_cannot_escape_the_registered_source_root() {
+    use std::os::unix::fs::symlink;
+
+    let package_source = temp_module_dir("package_symlink_escape_source");
+    let outside_source = temp_module_dir("package_symlink_escape_outside");
+    let outside_module = outside_source.join("escape.rl");
+    fs::write(
+        &outside_module,
+        r#"
+pub fun escaped_score: () -> Int32 = {
+    99
+}
+"#,
+    )
+    .expect("outside module should be written");
+    symlink(&outside_module, package_source.join("escape.rl"))
+        .expect("package escape symlink should be created");
+    let root = parse_complete(
+        r#"
+import local_utils.escape.{escaped_score}
+
+fun main: () -> Int32 = {
+    () escaped_score
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("valid package namespace should be registered");
+    let error = resolver
+        .resolve_program_imports(root)
+        .expect_err("package module symlinks must stay below the registered source root");
+
+    assert!(
+        error.to_string().contains("escapes source root"),
+        "symlink escape diagnostic should identify the boundary, got: {error}"
+    );
+    let _ = fs::remove_dir_all(package_source);
+    let _ = fs::remove_dir_all(outside_source);
+}
+
+#[test]
+fn package_namespace_registration_is_order_independent_with_virtual_sources() {
+    let package_source = temp_module_dir("package_virtual_registration_order");
+    fs::write(
+        package_source.join("lib.rl"),
+        "pub fun package_score: () -> Int32 = { 42 }\n",
+    )
+    .expect("package root module should be written");
+
+    let mut virtual_first = ModuleResolver::new();
+    virtual_first
+        .try_add_module_source(
+            vec!["local_utils".to_string(), "detail".to_string()],
+            "pub fun virtual_score: () -> Int32 = { 99 }".to_string(),
+        )
+        .expect("initial virtual source should be registered");
+    let error = virtual_first
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect_err("a package root must not capture an existing virtual namespace");
+    assert!(error
+        .to_string()
+        .contains("already used by a resolved or virtual source module"));
+
+    let mut package_first = ModuleResolver::new();
+    package_first
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("package root should be registered first");
+    let error = package_first
+        .try_add_module_source(
+            vec!["local_utils".to_string(), "detail".to_string()],
+            "pub fun virtual_score: () -> Int32 = { 99 }".to_string(),
+        )
+        .expect_err("a virtual source must not override a package namespace");
+    assert!(error
+        .to_string()
+        .contains("conflicts with its configured package namespace"));
+
+    let _ = fs::remove_dir_all(package_source);
+}
+
+#[test]
+fn overlapping_package_source_roots_are_rejected() {
+    let outer_source = temp_module_dir("overlapping_package_roots");
+    let nested_source = outer_source.join("nested");
+    fs::create_dir_all(&nested_source).expect("nested package source should be created");
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("outer_pkg".to_string(), outer_source.clone())
+        .expect("outer package root should be registered");
+    let error = resolver
+        .add_package_root("nested_pkg".to_string(), nested_source)
+        .expect_err("overlapping package roots could alias one module file");
+
+    assert!(error.to_string().contains("overlaps the source root"));
+    let _ = fs::remove_dir_all(outer_source);
+}
+
+#[test]
+fn canonical_equivalent_search_roots_are_deduplicated() {
+    let search_root = temp_module_dir("canonical_search_root_deduplication");
+    let nested = search_root.join("nested");
+    fs::create_dir_all(&nested).expect("nested directory should be created");
+    fs::write(
+        search_root.join("policy.rl"),
+        "pub fun score: () -> Int32 = { 42 }\n",
+    )
+    .expect("module should be written");
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_search_path(search_root.clone())
+        .expect("first search-root spelling should be registered");
+    resolver
+        .add_search_path(nested.join(".."))
+        .expect("canonical-equivalent search root should be deduplicated");
+    resolver
+        .resolve_module(&["policy".to_string()])
+        .expect("one canonical search root should resolve without ambiguity");
+
+    let _ = fs::remove_dir_all(search_root);
+}
+
+#[test]
+fn search_and_package_root_containment_is_rejected_in_both_orders() {
+    let outer = temp_module_dir("search_package_root_overlap");
+    let nested = outer.join("nested");
+    fs::create_dir_all(&nested).expect("nested source directory should be created");
+
+    let mut outer_search_first = ModuleResolver::new();
+    outer_search_first
+        .add_search_path(outer.clone())
+        .expect("outer search root should be registered");
+    let error = outer_search_first
+        .add_package_root("nested_pkg".to_string(), nested.clone())
+        .expect_err("a package root nested below a search root must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("overlaps configured module search root"),
+        "search-first diagnostic should identify the overlap, got: {error}"
+    );
+
+    let mut nested_package_first = ModuleResolver::new();
+    nested_package_first
+        .add_package_root("nested_pkg".to_string(), nested.clone())
+        .expect("nested package root should be registered");
+    let error = nested_package_first
+        .add_search_path(outer.clone())
+        .expect_err("a search root containing a package root must be rejected");
+    assert!(
+        error.to_string().contains("overlaps package source root"),
+        "package-first diagnostic should identify the overlap, got: {error}"
+    );
+
+    let mut nested_search_first = ModuleResolver::new();
+    nested_search_first
+        .add_search_path(nested.clone())
+        .expect("nested search root should be registered");
+    let error = nested_search_first
+        .add_package_root("outer_pkg".to_string(), outer.clone())
+        .expect_err("a package root containing a search root must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("overlaps configured module search root"),
+        "nested search-first diagnostic should identify the overlap, got: {error}"
+    );
+
+    let mut outer_package_first = ModuleResolver::new();
+    outer_package_first
+        .add_package_root("outer_pkg".to_string(), outer.clone())
+        .expect("outer package root should be registered");
+    let error = outer_package_first
+        .add_search_path(nested)
+        .expect_err("a search root nested below a package root must be rejected");
+    assert!(
+        error.to_string().contains("overlaps package source root"),
+        "outer package-first diagnostic should identify the overlap, got: {error}"
+    );
+
+    let _ = fs::remove_dir_all(outer);
+}
+
+#[cfg(unix)]
+#[test]
+fn one_package_file_cannot_resolve_under_two_module_paths() {
+    use std::os::unix::fs::symlink;
+
+    let package_source = temp_module_dir("package_internal_symlink_identity");
+    fs::write(
+        package_source.join("actual.rl"),
+        "pub fun shared_score: () -> Int32 = { 42 }\n",
+    )
+    .expect("canonical package module should be written");
+    symlink(
+        package_source.join("actual.rl"),
+        package_source.join("alias.rl"),
+    )
+    .expect("internal package symlink should be created");
+    let root = parse_complete(
+        r#"
+import local_utils.actual.{shared_score}
+import local_utils.alias.{shared_score}
+
+fun main: () -> Int32 = {
+    1
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("package root should be registered");
+    let error = resolver
+        .resolve_program_imports(root)
+        .expect_err("one physical module file must have one canonical logical identity");
+
+    assert!(
+        error.to_string().contains("multiple canonical identities")
+            && error.to_string().contains("local_utils.actual")
+            && error.to_string().contains("local_utils.alias"),
+        "file identity diagnostic should name both module paths, got: {error}"
+    );
+    let _ = fs::remove_dir_all(package_source);
+}
+
+#[cfg(unix)]
+#[test]
+fn package_owned_files_cannot_be_imported_through_physical_search_paths() {
+    use std::os::unix::fs::symlink;
+
+    let app_source = temp_module_dir("package_physical_path_app");
+    let package_source = temp_module_dir("package_physical_path_dependency");
+    let physical_alias = app_source.join("vendor/local_utils/src");
+    fs::create_dir_all(&package_source).expect("vendored package source should be created");
+    fs::create_dir_all(&physical_alias).expect("physical alias directory should be created");
+    fs::write(
+        package_source.join("detail.rl"),
+        "pub fun hidden_alias_score: () -> Int32 = { 99 }\n",
+    )
+    .expect("vendored package module should be written");
+    symlink(
+        package_source.join("detail.rl"),
+        physical_alias.join("detail.rl"),
+    )
+    .expect("physical module alias should be created");
+    let root = parse_complete(
+        r#"
+import vendor.local_utils.src.detail.{hidden_alias_score}
+
+fun main: () -> Int32 = {
+    () hidden_alias_score
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_search_path(app_source.clone())
+        .expect("application search root should be registered");
+    resolver
+        .add_package_root("local_utils".to_string(), package_source.clone())
+        .expect("vendored package root should be registered");
+    let error = resolver
+        .resolve_program_imports(root)
+        .expect_err("package files must only be reachable through their canonical alias");
+
+    assert!(
+        error
+            .to_string()
+            .contains("inside package namespace 'local_utils'")
+            && error.to_string().contains("vendor.local_utils.src.detail"),
+        "physical-path diagnostic should require the canonical package alias, got: {error}"
+    );
+    let _ = fs::remove_dir_all(app_source);
+    let _ = fs::remove_dir_all(package_source);
 }

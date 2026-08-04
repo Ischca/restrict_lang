@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use colored::*;
 use std::path::PathBuf;
 
@@ -30,8 +30,25 @@ pub fn find_project_root() -> Result<PathBuf> {
 
     loop {
         let manifest_path = path.join("package.rl.toml");
-        if manifest_path.exists() {
-            return Ok(path.to_path_buf());
+        match std::fs::symlink_metadata(&manifest_path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    bail!(
+                        "Project manifest must be a regular file, not a symlink or directory: {}",
+                        manifest_path.display()
+                    );
+                }
+                return Ok(path.to_path_buf());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to inspect project manifest {}",
+                        manifest_path.display()
+                    )
+                });
+            }
         }
 
         match path.parent() {

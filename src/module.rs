@@ -28,6 +28,7 @@ pub struct Module {
 pub struct ModuleResolver {
     modules: HashMap<Vec<String>, Module>,
     search_paths: Vec<PathBuf>,
+    package_roots: HashMap<String, PathBuf>,
     module_sources: HashMap<Vec<String>, String>,
     module_source_conflicts: HashSet<Vec<String>>,
 }
@@ -45,16 +46,126 @@ impl ModuleResolver {
             // Explicit roots take precedence over the process working
             // directory. The latter remains a fallback for direct CLI use.
             search_paths: Vec::new(),
+            package_roots: HashMap::new(),
             module_sources: HashMap::new(),
             module_source_conflicts: HashSet::new(),
         }
     }
 
-    pub fn add_search_path(&mut self, path: PathBuf) {
-        self.search_paths.push(path);
+    pub fn add_search_path(&mut self, path: PathBuf) -> Result<()> {
+        if !path.is_dir() {
+            bail!("Module search root is not a directory: {}", path.display());
+        }
+
+        let canonical_path = fs::canonicalize(&path).with_context(|| {
+            format!(
+                "Failed to canonicalize module search root: {}",
+                path.display()
+            )
+        })?;
+        if self.search_paths.contains(&canonical_path) {
+            return Ok(());
+        }
+        if let Some((namespace, package_root)) = self
+            .package_roots
+            .iter()
+            .find(|(_, package_root)| roots_overlap(&canonical_path, package_root))
+        {
+            bail!(
+                "Module search root {} overlaps package source root {} registered as namespace '{}'",
+                canonical_path.display(),
+                package_root.display(),
+                namespace
+            );
+        }
+
+        self.search_paths.push(canonical_path);
+        Ok(())
+    }
+
+    /// Bind one source-level namespace to a package's `src/` directory.
+    ///
+    /// The namespace root resolves to `lib.rl`; subsequent path segments map
+    /// to sibling files and directories below the registered source root.
+    pub fn add_package_root(&mut self, namespace: String, source_dir: PathBuf) -> Result<()> {
+        if !crate::lexer::is_source_identifier(&namespace) {
+            bail!(
+                "Invalid package namespace '{}': expected a non-keyword Restrict identifier",
+                namespace
+            );
+        }
+        if namespace == "std" {
+            bail!("Package namespace 'std' is reserved for the standard library");
+        }
+        if self.package_roots.contains_key(&namespace) {
+            bail!(
+                "Duplicate package namespace '{}': already registered",
+                namespace
+            );
+        }
+        if self
+            .modules
+            .keys()
+            .chain(self.module_sources.keys())
+            .chain(self.module_source_conflicts.iter())
+            .any(|module_path| module_path.first() == Some(&namespace))
+        {
+            bail!(
+                "Package namespace '{}' is already used by a resolved or virtual source module",
+                namespace
+            );
+        }
+        if !source_dir.is_dir() {
+            bail!(
+                "Package source root for '{}' is not a directory: {}",
+                namespace,
+                source_dir.display()
+            );
+        }
+
+        let canonical_source_dir = fs::canonicalize(&source_dir).with_context(|| {
+            format!(
+                "Failed to canonicalize package source root for '{}': {}",
+                namespace,
+                source_dir.display()
+            )
+        })?;
+        if let Some(search_root) = self
+            .search_paths
+            .iter()
+            .find(|search_root| roots_overlap(&canonical_source_dir, search_root))
+        {
+            bail!(
+                "Package source root {} for namespace '{}' overlaps configured module search root {}",
+                canonical_source_dir.display(),
+                namespace,
+                search_root.display()
+            );
+        }
+        if let Some((existing_namespace, _)) = self
+            .package_roots
+            .iter()
+            .find(|(_, existing_root)| roots_overlap(&canonical_source_dir, existing_root))
+        {
+            bail!(
+                "Package source root {} overlaps the source root registered as namespace '{}'",
+                canonical_source_dir.display(),
+                existing_namespace
+            );
+        }
+
+        self.package_roots.insert(namespace, canonical_source_dir);
+        Ok(())
     }
 
     pub fn add_module_source(&mut self, module_path: Vec<String>, source: String) {
+        if module_path
+            .first()
+            .is_some_and(|namespace| self.package_roots.contains_key(namespace))
+        {
+            self.module_source_conflicts.insert(module_path);
+            return;
+        }
         let already_resolved = self.modules.contains_key(&module_path);
         let replaced = self
             .module_sources
@@ -72,6 +183,15 @@ impl ModuleResolver {
         module_path: Vec<String>,
         source: String,
     ) -> Result<()> {
+        if module_path
+            .first()
+            .is_some_and(|namespace| self.package_roots.contains_key(namespace))
+        {
+            bail!(
+                "Virtual module {} conflicts with its configured package namespace",
+                module_path.join(".")
+            );
+        }
         if self.module_sources.contains_key(&module_path)
             || self.modules.contains_key(&module_path)
             || self.module_source_conflicts.contains(&module_path)
@@ -132,6 +252,19 @@ impl ModuleResolver {
         visiting.push(module_path.to_vec());
 
         let (source_path, content) = self.load_module_source(module_path)?;
+        if let Some(existing_module) = self
+            .modules
+            .values()
+            .chain(staged_modules.values())
+            .find(|module| module.path == source_path && module.name != module_path)
+        {
+            bail!(
+                "Module file {} would have multiple canonical identities: {} and {}",
+                source_path.display(),
+                existing_module.name.join("."),
+                module_path.join(".")
+            );
+        }
 
         let (remaining, mut program) = parse_program(&content).map_err(|e| {
             anyhow::anyhow!(
@@ -145,6 +278,8 @@ impl ModuleResolver {
         if !remaining.trim().is_empty() {
             bail!("Unexpected content after module: {}", remaining);
         }
+
+        self.qualify_package_local_imports(module_path, &mut program);
 
         // Collect imports to process later
         let imports = program.imports.clone();
@@ -308,6 +443,51 @@ impl ModuleResolver {
     }
 
     fn find_module_file(&self, module_path: &[String]) -> Result<PathBuf> {
+        if let Some((namespace, source_root)) = module_path
+            .first()
+            .and_then(|namespace| self.package_roots.get_key_value(namespace))
+        {
+            if module_path.len() == 2 && module_path[1] == "lib" {
+                bail!(
+                    "Package module {} aliases the namespace root; import '{}' instead",
+                    module_path.join("."),
+                    namespace
+                );
+            }
+            let relative_path = if module_path.len() == 1 {
+                PathBuf::from("lib.rl")
+            } else {
+                let mut path = module_path[1..].iter().collect::<PathBuf>();
+                path.set_extension("rl");
+                path
+            };
+            let candidate = source_root.join(relative_path);
+            if candidate.is_file() {
+                let canonical_candidate = fs::canonicalize(&candidate).with_context(|| {
+                    format!(
+                        "Failed to canonicalize package module file: {}",
+                        candidate.display()
+                    )
+                })?;
+                if !canonical_candidate.starts_with(source_root) {
+                    bail!(
+                        "Package module {} escapes source root {} through {}",
+                        module_path.join("."),
+                        source_root.display(),
+                        candidate.display()
+                    );
+                }
+                return Ok(canonical_candidate);
+            }
+
+            bail!(
+                "Package module {} was not found in namespace '{}'; expected {}",
+                module_path.join("."),
+                namespace,
+                candidate.display()
+            );
+        }
+
         let relative_path = module_path.join("/") + ".rl";
         let mut explicit_candidates = Vec::new();
 
@@ -320,6 +500,7 @@ impl ModuleResolver {
                         full_path.display()
                     )
                 })?;
+                self.reject_package_owned_file(module_path, &canonical)?;
                 if !explicit_candidates.contains(&canonical) {
                     explicit_candidates.push(canonical);
                 }
@@ -345,15 +526,54 @@ impl ModuleResolver {
 
         let cwd_candidate = PathBuf::from(".").join(&relative_path);
         if cwd_candidate.is_file() {
-            return fs::canonicalize(&cwd_candidate).with_context(|| {
+            let canonical = fs::canonicalize(&cwd_candidate).with_context(|| {
                 format!(
                     "Failed to canonicalize module file: {}",
                     cwd_candidate.display()
                 )
-            });
+            })?;
+            self.reject_package_owned_file(module_path, &canonical)?;
+            return Ok(canonical);
         }
 
         bail!("Module not found: {}", module_path.join("."))
+    }
+
+    fn reject_package_owned_file(&self, module_path: &[String], file: &Path) -> Result<()> {
+        if let Some((namespace, _)) = self
+            .package_roots
+            .iter()
+            .find(|(_, source_root)| file.starts_with(source_root))
+        {
+            bail!(
+                "Module {} resolves to {} inside package namespace '{}'; import it through the '{}' namespace",
+                module_path.join("."),
+                file.display(),
+                namespace,
+                namespace
+            );
+        }
+        Ok(())
+    }
+
+    fn qualify_package_local_imports(&self, module_path: &[String], program: &mut Program) {
+        let Some(namespace) = module_path
+            .first()
+            .filter(|namespace| self.package_roots.contains_key(*namespace))
+        else {
+            return;
+        };
+
+        for import in &mut program.imports {
+            let is_explicit_self_import = import
+                .module_path
+                .first()
+                .is_some_and(|root| root == namespace);
+            let is_reserved_std_import = is_reserved_std_module_path(&import.module_path);
+            if !is_explicit_self_import && !is_reserved_std_import {
+                import.module_path.insert(0, namespace.clone());
+            }
+        }
     }
 
     pub fn get_imported_items(
@@ -534,12 +754,36 @@ impl ModuleResolver {
     }
 }
 
+fn roots_overlap(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}
+
 pub fn resolve_program_imports_for_file(program: Program, source_file: &Path) -> Result<Program> {
+    resolve_program_imports_for_file_with_package_roots(program, source_file, &[])
+}
+
+pub fn resolve_program_imports_for_file_with_package_roots(
+    program: Program,
+    source_file: &Path,
+    package_roots: &[(String, PathBuf)],
+) -> Result<Program> {
     let base_dir = source_file
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());
 
-    resolve_program_imports_with_base_dir(program, base_dir)
+    let mut resolver = ModuleResolver::new();
+    if let Some(base_dir) = base_dir {
+        resolver.add_search_path(base_dir.to_path_buf())?;
+    }
+    for (namespace, source_dir) in package_roots {
+        resolver.add_package_root(namespace.clone(), source_dir.clone())?;
+    }
+
+    if program.imports.is_empty() {
+        return Ok(program);
+    }
+
+    resolver.resolve_program_imports(program)
 }
 
 pub fn resolve_program_imports_with_base_dir(
@@ -552,7 +796,7 @@ pub fn resolve_program_imports_with_base_dir(
 
     let mut resolver = ModuleResolver::new();
     if let Some(base_dir) = base_dir {
-        resolver.add_search_path(base_dir.to_path_buf());
+        resolver.add_search_path(base_dir.to_path_buf())?;
     }
 
     resolver.resolve_program_imports(program)

@@ -10,7 +10,7 @@ CageはWarderのパッケージ成果物です。`warder build`は既定で`dist
 
 ### ヴォールト（restrict-lock.toml）
 
-`restrict-lock.toml`は依存関係のロックファイルです。Warderは依存関係を解決した結果をここに記録します。
+`restrict-lock.toml`は依存関係のロックファイルです。直接ローカル依存関係について、依存先マニフェストのバージョンと、マニフェストおよびRestrictソースから決定的に計算したSHA-256を記録します。
 
 ## プロジェクトの作成
 
@@ -55,48 +55,62 @@ entry = "src/main.rl"
 edition = "2025"
 
 [dependencies]
-http = "0.8.0"
-local-utils = { path = "../local-utils" }
-json = { git = "https://github.com/example/json.git", tag = "v1.2.3" }
-foreign-math = { wasm = "https://example.com/math.wasm", wit = "https://example.com/math.wit" }
+local_utils = { path = "../local-utils" }
 
 [build]
 target = "wasm32"
-output_dir = "dist"
-optimization = true
+output = "dist/"
+optimize = true
 ```
 
 ## 依存関係の管理
 
-レジストリ依存関係：
+v0.0.1でビルドできる依存関係は、直接参照するローカルパス依存関係だけです。`[dependencies]`のキーがRestrictソースで使う名前空間になります。この別名は予約語ではない単一のRestrict識別子である必要があります。`local-utils`は暗黙に変換されないため、`local_utils`のように記述してください。`std`は予約済みです。
+
+ローカル依存関係を追加します：
 
 ```bash
-warder add http
-warder add json@1.0.0
+warder add local_utils --path ../local-utils
 ```
 
-ローカル依存関係：
+依存先には`package.rl.toml`と`src/lib.rl`が必要です：
 
-```bash
-warder add local-utils --path ../local-utils
+```text
+local-utils/
+├── package.rl.toml
+└── src/
+    ├── lib.rl
+    └── numbers.rl
 ```
 
-Git依存関係：
+依存先の`src/lib.rl`は、たとえば次のように公開関数を定義できます：
 
-```bash
-warder add json@v1.2.3 --git https://github.com/example/json.git
+```restrict
+pub fun score: () -> Int32 = {
+    42
+}
 ```
 
-外部WASM依存関係：
+アプリケーション側のインポートとファイルの対応は次のとおりです：
 
-```bash
-warder add foreign-math --wasm https://example.com/math.wasm --wit https://example.com/math.wit
-```
+| ソースのインポート | 依存先ファイル |
+|--------------------|----------------|
+| `import local_utils.{score}` | `../local-utils/src/lib.rl` |
+| `import local_utils` | `../local-utils/src/lib.rl` |
+| `import local_utils.numbers.{double}` | `../local-utils/src/numbers.rl` |
+
+依存パッケージ内の修飾なしインポートは、その依存パッケージ内で解決されます。たとえば`local-utils/src/lib.rl`内の`import numbers.{double}`は、アプリケーション側ではなく同じパッケージの`src/numbers.rl`を参照します。
+
+これはマニフェストとコンパイラ間の名前空間バインドです。ソース構文としての`import ... as`やre-exportは引き続き未対応です。
+
+レジストリ、Git、外部WASM、推移的依存関係はまだ解決しません。`warder add`、`warder build`、`warder test`はこれらを明示的にエラーにし、見せかけのロックエントリを生成しません。外部WASMのローカル評価には、別機能の`warder wrap`を使用してください。
+
+Warderはアプリケーションと各依存パッケージのソースを不変スナップショットへコピーしてからコンパイルします。アプリケーション、依存先、出力先のルートが重なる構成は拒否します。同じプロジェクトの並行ビルドは直列化され、WAT、WASM、Cage、ロックファイルは復旧可能な一括更新として公開されます。コンパイル失敗時は以前の成果物一式を維持します。
 
 依存関係の削除：
 
 ```bash
-warder remove http
+warder remove local_utils
 ```
 
 ## ビルド
@@ -139,7 +153,7 @@ warder run -- arg1 arg2
 warder test
 ```
 
-v0.0.1には専用のテスト宣言構文がないため、`warder test`は`tests/`以下の`.rl`ファイルを型チェック用のスモークテストとして扱います。ファイル名で絞り込む場合：
+v0.0.1には専用のテスト宣言構文がないため、`warder test`は`tests/`以下の`.rl`ファイルを型チェック用のスモークテストとして扱います。`warder build`と同じ直接ローカル依存関係のルートを使用するため、テストからも同じパッケージをインポートできます。コンパイラのフォールバック解決はWarderを起動したサブディレクトリではなくプロジェクトルートに固定されます。ファイル名で絞り込む場合：
 
 ```bash
 warder test main
@@ -180,7 +194,7 @@ warder unwrap foreign-math.rgc --output extracted
 warder doctor
 ```
 
-`doctor`はプロジェクトルート、`package.rl.toml`、エントリーポイント、依存関係ロック、基本的な設定問題を確認します。一部の詳細解析はv0.0.1ではスキップされます。
+`doctor`はプロジェクトルート、`package.rl.toml`、エントリーポイント、依存関係ロック、基本的な設定問題を確認します。直接ローカル依存関係については、ロックの欠落、形式不正、ソース変更による古さも検出します。一部の詳細解析はv0.0.1ではスキップされます。
 
 ## コマンドリファレンス
 
@@ -188,7 +202,7 @@ warder doctor
 |---------|------|
 | `warder new <name>` | 新しいプロジェクトを作成 |
 | `warder init` | 現在のディレクトリを初期化 |
-| `warder add <dep>` | 依存関係を追加 |
+| `warder add <alias> --path <dir>` | 直接ローカル依存関係を追加 |
 | `warder remove <name>` | 依存関係を削除 |
 | `warder build` | WAT、WASM、Cageを生成 |
 | `warder run` | ビルドして実行 |

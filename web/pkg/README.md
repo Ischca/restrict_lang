@@ -314,6 +314,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [x] Result types with expected-type inference
 - [x] Type-directed `impl` method dispatch through grouped OSV calls
 - [x] Source import resolution through the CLI
+- [x] Direct local Warder dependencies with manifest-bound namespaces and deterministic lock hashes
 - [x] Affine checking across complex expressions, OSV calls, field access, and branching
 - [x] Conditional expressions with chained/nested runtime coverage
 - [x] Recursive functions with direct and mutual runtime coverage
@@ -322,7 +323,8 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - [ ] Temporal Affine Types (TAT) outside the default v0.0.1 gate
 - [ ] User-defined enum/ADT declarations (`enum` is reserved; built-in `Option`/`Result` are supported)
-- [ ] Package-level module aliases, re-exports, and std aggregators beyond source-file import resolution
+- [ ] Registry, Git, foreign-WASM, and transitive Warder dependency resolution
+- [ ] Source-level import aliases, re-exports, and std aggregators
 - [ ] Direct WebAssembly ABI for exported generic functions and host-visible record values
 
 ### 📋 Planned Features
@@ -337,8 +339,9 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - Pattern guards and tuple patterns are future/design gaps; v0.0.1 covers
   Option, Result, List, Record, nested, and spread record patterns
-- Source-file imports are implemented; package-level module aliases, re-exports,
-  and std aggregators still need a concrete design
+- Source-file imports and manifest-bound namespaces for direct local Warder
+  dependencies are implemented. Source `import ... as`, re-exports, std
+  aggregators, and non-local or transitive package graphs remain future work
 - String interpolation is not part of the v0.0.1 syntax; use concatenation today
 - User-defined `enum`/ADT declarations are an intentional v0.0.1 design gap;
   use built-in `Option` and `Result` today

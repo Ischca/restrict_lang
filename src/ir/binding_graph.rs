@@ -322,6 +322,7 @@ fun main: (items: List<Int32>) -> List<Int32> = {
                 required_layouts: Vec::new(),
                 readiness: LoweringReadiness {
                     v001_host_abi_eligible: true,
+                    flat_record_v1_host_abi_eligible: true,
                     internal_layout_ready: true,
                     host_abi_blockers: Vec::new(),
                     internal_lowering_blockers: Vec::new(),

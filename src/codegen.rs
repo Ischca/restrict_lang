@@ -35,7 +35,8 @@
 
 use crate::ast::*;
 use crate::ir::builder::{CheckedFunctionIr, CheckedProgramIr};
-use crate::ir::{FinalType, ScalarRepr, ValueRepr};
+use crate::ir::{FinalType, HostAbi, ScalarRepr, ValueRepr};
+use crate::release_surface::HostAbiProfile;
 use crate::type_checker::{ArrayLength, TypedType};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -43,6 +44,9 @@ use thiserror::Error;
 const RECORD_TMP_MIN_COUNT: usize = 8;
 const ARENA_SIZE_BYTES: u32 = 0x1000;
 const WITH_ARENA_TMP_COUNT: usize = 8;
+const FLAT_RECORD_V1_MAX_SLOTS: usize = 16;
+const WASM_PAGE_SIZE_BYTES: u64 = 65_536;
+const MEMORY_DECLARATION_PLACEHOLDER: &str = "  (memory __restrict_initial_memory_pages__)\n";
 
 /// Code generation errors.
 #[derive(Debug, Error)]
@@ -118,6 +122,14 @@ pub struct WasmCodeGen {
     specialized_functions: HashSet<String>,
     /// Functions declared through `export fun`.
     exported_functions: HashSet<String>,
+    /// Checked host ABI summaries for source-level functions.
+    function_host_abis: HashMap<String, CheckedHostFunctionAbi>,
+    /// Internal function identifiers reserved for generated host adapters.
+    generated_host_adapter_functions: HashSet<String>,
+    /// Internal global identifiers reserved for generated host adapters.
+    generated_host_adapter_globals: HashSet<String>,
+    /// Host ABI surface selected by the caller. v0.0.1 remains the default.
+    host_abi_profile: HostAbiProfile,
     /// Top-level immutable globals and their Wasm ABI types.
     global_types: HashMap<String, WasmType>,
     /// Top-level immutable globals and their source-level Restrict types.
@@ -192,6 +204,12 @@ struct FunctionSourceSig {
 }
 
 #[derive(Debug, Clone)]
+struct CheckedHostFunctionAbi {
+    params: Vec<HostAbi>,
+    result: HostAbi,
+}
+
+#[derive(Debug, Clone)]
 struct LambdaAbiContext {
     params: Vec<WasmType>,
     result: WasmType,
@@ -239,6 +257,10 @@ impl WasmCodeGen {
             function_decls: HashMap::new(),
             specialized_functions: HashSet::new(),
             exported_functions: HashSet::new(),
+            function_host_abis: HashMap::new(),
+            generated_host_adapter_functions: HashSet::new(),
+            generated_host_adapter_globals: HashSet::new(),
+            host_abi_profile: HostAbiProfile::V001Scalar,
             global_types: HashMap::new(),
             global_source_types: HashMap::new(),
             methods: HashMap::new(),
@@ -271,6 +293,16 @@ impl WasmCodeGen {
         }
     }
 
+    /// Construct a generator for an explicit host ABI surface.
+    ///
+    /// The default remains the released v0.0.1 scalar-only contract. Preview
+    /// profiles must be selected explicitly by embedders or the CLI.
+    pub fn with_host_abi_profile(profile: HostAbiProfile) -> Self {
+        let mut codegen = Self::new();
+        codegen.host_abi_profile = profile;
+        codegen
+    }
+
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
         self.generate_internal(program, None)
     }
@@ -292,6 +324,11 @@ impl WasmCodeGen {
         program: &Program,
         checked_functions: Option<&HashMap<String, &CheckedFunctionIr>>,
     ) -> Result<String, CodeGenError> {
+        Self::validate_explicit_host_abi_profile(
+            program,
+            checked_functions,
+            self.host_abi_profile,
+        )?;
         self.output.push_str("(module\n");
 
         // Process module imports first
@@ -306,7 +343,7 @@ impl WasmCodeGen {
 
         // Memory
         self.output.push_str("\n  ;; Memory\n");
-        self.output.push_str("  (memory 1)\n");
+        self.output.push_str(MEMORY_DECLARATION_PLACEHOLDER);
         self.output.push_str("  (export \"memory\" (memory 0))\n");
 
         self.generate_indirect_call_types();
@@ -315,6 +352,7 @@ impl WasmCodeGen {
 
         // Collect string constants first
         self.collect_strings(program)?;
+        self.place_arena_region_after_static_data()?;
 
         // Generate string data section
         if !self.strings.is_empty() {
@@ -476,8 +514,287 @@ impl WasmCodeGen {
         }
 
         self.output.push_str(")\n");
+        self.finalize_initial_memory_size()?;
 
         Ok(self.output.clone())
+    }
+
+    fn place_arena_region_after_static_data(&mut self) -> Result<(), CodeGenError> {
+        let aligned_static_end = u64::from(self.next_mem_offset)
+            .div_ceil(u64::from(ARENA_SIZE_BYTES))
+            .checked_mul(u64::from(ARENA_SIZE_BYTES))
+            .ok_or_else(|| {
+                CodeGenError::UnsupportedFeature(
+                    "static data exceeds the WebAssembly linear-memory address space".to_string(),
+                )
+            })?;
+        let aligned_static_end = u32::try_from(aligned_static_end).map_err(|_| {
+            CodeGenError::UnsupportedFeature(
+                "static data exceeds the WebAssembly linear-memory address space".to_string(),
+            )
+        })?;
+        self.next_arena_addr = self.next_arena_addr.max(aligned_static_end);
+        Ok(())
+    }
+
+    fn reserve_arena(&mut self) -> Result<u32, CodeGenError> {
+        let arena_addr = self.next_arena_addr;
+        self.next_arena_addr = self
+            .next_arena_addr
+            .checked_add(ARENA_SIZE_BYTES)
+            .ok_or_else(|| {
+                CodeGenError::UnsupportedFeature(
+                    "arena layout exceeds the WebAssembly linear-memory address space".to_string(),
+                )
+            })?;
+        Ok(arena_addr)
+    }
+
+    fn finalize_initial_memory_size(&mut self) -> Result<(), CodeGenError> {
+        let required_bytes = u64::from(self.next_mem_offset.max(self.next_arena_addr));
+        let pages = required_bytes.div_ceil(WASM_PAGE_SIZE_BYTES).max(1);
+        if pages > 65_536 {
+            return Err(CodeGenError::UnsupportedFeature(
+                "module requires more than the WebAssembly maximum of 65536 memory pages"
+                    .to_string(),
+            ));
+        }
+
+        let marker = self
+            .output
+            .find(MEMORY_DECLARATION_PLACEHOLDER)
+            .ok_or_else(|| {
+                CodeGenError::InvalidCheckedIr(
+                    "generated module is missing its initial memory declaration".to_string(),
+                )
+            })?;
+        self.output.replace_range(
+            marker..marker + MEMORY_DECLARATION_PLACEHOLDER.len(),
+            &format!("  (memory {})\n", pages),
+        );
+        Ok(())
+    }
+
+    fn validate_explicit_host_abi_profile(
+        program: &Program,
+        checked_functions: Option<&HashMap<String, &CheckedFunctionIr>>,
+        profile: HostAbiProfile,
+    ) -> Result<(), CodeGenError> {
+        if profile == HostAbiProfile::V001Scalar {
+            return Ok(());
+        }
+
+        let exported_functions = program
+            .declarations
+            .iter()
+            .filter_map(|declaration| {
+                let TopDecl::Export(export) = declaration else {
+                    return None;
+                };
+                let TopDecl::Function(function) = export.item.as_ref() else {
+                    return None;
+                };
+                Some(function)
+            })
+            .collect::<Vec<_>>();
+        if exported_functions.is_empty() {
+            return Ok(());
+        }
+
+        let checked_functions = checked_functions.ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr(
+                "flat-record-v1 host ABI generation requires Checked IR".to_string(),
+            )
+        })?;
+
+        let mut records = HashMap::new();
+        for declaration in &program.declarations {
+            let source_exported = matches!(declaration, TopDecl::Export(_));
+            let TopDecl::Record(record) = Self::decl_codegen_item(declaration) else {
+                continue;
+            };
+            records.insert(record.name.as_str(), (record, source_exported));
+        }
+
+        for function in exported_functions {
+            let checked = checked_functions.get(&function.name).ok_or_else(|| {
+                CodeGenError::InvalidCheckedIr(format!(
+                    "missing top-level function '{}'",
+                    function.name
+                ))
+            })?;
+            if !checked.lowering.readiness.flat_record_v1_host_abi_eligible {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "Exported function '{}' is not eligible for the flat-record-v1 host ABI",
+                    function.name
+                )));
+            }
+            if checked.lowering.param_host_abis.len() != function.params.len() {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' checked host ABI parameter count does not match the source",
+                    function.name
+                )));
+            }
+
+            let mut parameter_slots = 0usize;
+            for (parameter, host_abi) in function
+                .params
+                .iter()
+                .zip(&checked.lowering.param_host_abis)
+            {
+                let slots = Self::flat_record_v1_parameter_slots(host_abi).ok_or_else(|| {
+                    CodeGenError::UnsupportedFeature(format!(
+                        "Exported function '{}' parameter '{}' is not supported by the flat-record-v1 host ABI",
+                        function.name, parameter.name
+                    ))
+                })?;
+                parameter_slots = parameter_slots.checked_add(slots).ok_or_else(|| {
+                    CodeGenError::UnsupportedFeature(format!(
+                        "Exported function '{}' flattened parameter count exceeds platform limits",
+                        function.name
+                    ))
+                })?;
+                if let HostAbi::FlatRecord { fields } = host_abi {
+                    Self::validate_flat_record_source_contract(
+                        &function.name,
+                        &format!("parameter '{}'", parameter.name),
+                        &parameter.ty,
+                        fields,
+                        &records,
+                    )?;
+                }
+            }
+            if parameter_slots > FLAT_RECORD_V1_MAX_SLOTS {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "Exported function '{}' requires {} flattened parameter slots; flat-record-v1 supports at most {}",
+                    function.name, parameter_slots, FLAT_RECORD_V1_MAX_SLOTS
+                )));
+            }
+
+            let result_slots =
+                Self::flat_record_v1_result_slots(&checked.lowering.return_host_abi).ok_or_else(
+                    || {
+                        CodeGenError::UnsupportedFeature(format!(
+                            "Exported function '{}' return type is not supported by the flat-record-v1 host ABI",
+                            function.name
+                        ))
+                    },
+                )?;
+            if result_slots > FLAT_RECORD_V1_MAX_SLOTS {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "Exported function '{}' requires {} flattened result slots; flat-record-v1 supports at most {}",
+                    function.name, result_slots, FLAT_RECORD_V1_MAX_SLOTS
+                )));
+            }
+            if let HostAbi::FlatRecord { fields } = &checked.lowering.return_host_abi {
+                let return_type = match &function.return_type {
+                    Some(return_type) => return_type.clone(),
+                    None => Self::source_type_from_final(&checked.return_type, &function.name)?,
+                };
+                Self::validate_flat_record_source_contract(
+                    &function.name,
+                    "return",
+                    &return_type,
+                    fields,
+                    &records,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn flat_record_v1_parameter_slots(host_abi: &HostAbi) -> Option<usize> {
+        match host_abi {
+            // The current internal convention represents a Unit parameter as
+            // one dummy i32, and the preview keeps that convention stable.
+            HostAbi::Unit | HostAbi::Scalar(_) => Some(1),
+            HostAbi::FlatRecord { fields }
+                if (1..=FLAT_RECORD_V1_MAX_SLOTS).contains(&fields.len()) =>
+            {
+                Some(fields.len())
+            }
+            HostAbi::FlatRecord { .. } | HostAbi::InternalOnly(_) => None,
+        }
+    }
+
+    fn flat_record_v1_result_slots(host_abi: &HostAbi) -> Option<usize> {
+        match host_abi {
+            HostAbi::Unit => Some(0),
+            HostAbi::Scalar(_) => Some(1),
+            HostAbi::FlatRecord { fields }
+                if (1..=FLAT_RECORD_V1_MAX_SLOTS).contains(&fields.len()) =>
+            {
+                Some(fields.len())
+            }
+            HostAbi::FlatRecord { .. } | HostAbi::InternalOnly(_) => None,
+        }
+    }
+
+    fn validate_flat_record_source_contract(
+        export_name: &str,
+        position: &str,
+        source_type: &Type,
+        flattened_fields: &[ScalarRepr],
+        records: &HashMap<&str, (&RecordDecl, bool)>,
+    ) -> Result<(), CodeGenError> {
+        let Type::Named(record_name) = source_type else {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' {} flat-record-v1 summary does not match source type {}",
+                export_name, position, source_type
+            )));
+        };
+        let (record, source_exported) = records.get(record_name.as_str()).ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' {} references record '{}' without source layout metadata",
+                export_name, position, record_name
+            ))
+        })?;
+        if !source_exported {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Exported function '{}' {} uses record '{}'; flat-record-v1 requires the record declaration to be source-exported",
+                export_name, position, record_name
+            )));
+        }
+        if !record.type_params.is_empty() || !record.temporal_constraints.is_empty() {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Exported function '{}' {} uses generic or temporal record '{}', which flat-record-v1 does not support",
+                export_name, position, record_name
+            )));
+        }
+        if record.fields.len() != flattened_fields.len() {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' {} flat-record-v1 field count does not match record '{}'",
+                export_name, position, record_name
+            )));
+        }
+        for (field, flattened) in record.fields.iter().zip(flattened_fields) {
+            let expected = Self::source_scalar_repr(&field.ty).ok_or_else(|| {
+                CodeGenError::UnsupportedFeature(format!(
+                    "Record '{}' field '{}' has type {}; flat-record-v1 fields must be Int32, Int64, Float64, Boolean, or Char",
+                    record_name, field.name, field.ty
+                ))
+            })?;
+            if expected != *flattened {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' {} flat-record-v1 field representation does not match '{}.{}'",
+                    export_name, position, record_name, field.name
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn source_scalar_repr(ty: &Type) -> Option<ScalarRepr> {
+        match ty {
+            Type::Named(name) if matches!(name.as_str(), "Int32" | "Boolean" | "Char") => {
+                Some(ScalarRepr::I32)
+            }
+            Type::Named(name) if name == "Int64" => Some(ScalarRepr::I64),
+            Type::Named(name) if name == "Float64" => Some(ScalarRepr::F64),
+            _ => None,
+        }
     }
 
     fn validate_checked_codegen_handoff<'a>(
@@ -4118,16 +4435,34 @@ impl WasmCodeGen {
         Ok(())
     }
 
-    fn intern_string_literal(&mut self, s: &str) {
+    fn next_string_memory_offset(offset: u32, byte_len: usize) -> Result<u32, CodeGenError> {
+        let byte_len = u32::try_from(byte_len).map_err(|_| {
+            CodeGenError::UnsupportedFeature(
+                "string literal exceeds the WebAssembly linear-memory address space".to_string(),
+            )
+        })?;
+        let end = offset
+            .checked_add(4)
+            .and_then(|value| value.checked_add(byte_len))
+            .and_then(|value| value.checked_add(3))
+            .ok_or_else(|| {
+                CodeGenError::UnsupportedFeature(
+                    "static string data exceeds the WebAssembly linear-memory address space"
+                        .to_string(),
+                )
+            })?;
+        Ok(end & !3)
+    }
+
+    fn intern_string_literal(&mut self, s: &str) -> Result<(), CodeGenError> {
         if !self.string_offsets.contains_key(s) {
             let offset = self.next_mem_offset;
+            let next_mem_offset = Self::next_string_memory_offset(offset, s.len())?;
             self.string_offsets.insert(s.to_string(), offset);
             self.strings.push(s.to_string());
-            // Account for length prefix (4 bytes) + string data.
-            self.next_mem_offset += 4 + s.len() as u32;
-            // Align to 4 bytes.
-            self.next_mem_offset = (self.next_mem_offset + 3) & !3;
+            self.next_mem_offset = next_mem_offset;
         }
+        Ok(())
     }
 
     fn collect_strings_from_block(&mut self, block: &BlockExpr) -> Result<(), CodeGenError> {
@@ -4155,7 +4490,7 @@ impl WasmCodeGen {
     fn collect_strings_from_expr(&mut self, expr: &Expr) -> Result<(), CodeGenError> {
         match &expr.kind {
             ExprKind::StringLit(s) => {
-                self.intern_string_literal(s);
+                self.intern_string_literal(s)?;
             }
             ExprKind::Block(block) => {
                 self.collect_strings_from_block(block)?;
@@ -4282,7 +4617,7 @@ impl WasmCodeGen {
     fn collect_strings_from_pattern(&mut self, pattern: &Pattern) -> Result<(), CodeGenError> {
         match pattern {
             Pattern::Literal(Literal::String(s)) => {
-                self.intern_string_literal(s);
+                self.intern_string_literal(s)?;
             }
             Pattern::Record(_, fields) => {
                 for (_, pattern) in fields {
@@ -4353,6 +4688,13 @@ impl WasmCodeGen {
                 type_params,
                 params: source_params,
                 result: Some(source_result),
+            },
+        );
+        self.function_host_abis.insert(
+            func.name.clone(),
+            CheckedHostFunctionAbi {
+                params: checked.lowering.param_host_abis.clone(),
+                result: checked.lowering.return_host_abi.clone(),
             },
         );
         self.function_decls.insert(func.name.clone(), func.clone());
@@ -5567,8 +5909,7 @@ impl WasmCodeGen {
             return Ok(());
         }
         let main_returns_value = main_sig.result.is_some();
-        let start_arena = self.next_arena_addr;
-        self.next_arena_addr += ARENA_SIZE_BYTES;
+        let start_arena = self.reserve_arena()?;
 
         self.output.push_str("\n  ;; Program entry wrapper\n");
         self.output.push_str("  (func $__restrict_start\n");
@@ -5598,6 +5939,20 @@ impl WasmCodeGen {
             .push_str("  (export \"_start\" (func $__restrict_start))\n");
 
         Ok(())
+    }
+
+    fn function_requires_flat_record_adapter(&self, function_name: &str) -> bool {
+        self.host_abi_profile == HostAbiProfile::FlatRecordV1
+            && self
+                .function_host_abis
+                .get(function_name)
+                .is_some_and(|host_abi| {
+                    host_abi
+                        .params
+                        .iter()
+                        .any(|param| matches!(param, HostAbi::FlatRecord { .. }))
+                        || matches!(&host_abi.result, HostAbi::FlatRecord { .. })
+                })
     }
 
     fn generate_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
@@ -5640,7 +5995,8 @@ impl WasmCodeGen {
         self.record_tmp_count =
             RECORD_TMP_MIN_COUNT.max(Self::max_record_tmp_depth_in_block(&func.body));
         self.current_function = Some(func.name.clone());
-        let is_host_entry = self.exported_functions.contains(&func.name);
+        let is_host_entry = self.exported_functions.contains(&func.name)
+            && !self.function_requires_flat_record_adapter(&func.name);
         self.push_scope();
 
         for (idx, (param, (wasm_type, source_type))) in func
@@ -5875,8 +6231,7 @@ impl WasmCodeGen {
         // Initialize a default arena for host entry points. Internal helper
         // functions inherit their caller's arena unless they enter `with Arena`.
         let function_default_arena = if is_host_entry {
-            let arena_addr = self.next_arena_addr;
-            self.next_arena_addr += ARENA_SIZE_BYTES;
+            let arena_addr = self.reserve_arena()?;
             self.default_arena = Some(arena_addr);
             Some(arena_addr)
         } else {
@@ -7565,8 +7920,7 @@ impl WasmCodeGen {
         body: &BlockExpr,
     ) -> Result<(), CodeGenError> {
         // Create a new arena for this temporal scope
-        let arena_addr = self.next_arena_addr;
-        self.next_arena_addr += 0x1000; // Reserve 4KB for each arena
+        let arena_addr = self.reserve_arena()?;
 
         // Push arena onto stack and track temporal scope
         self.arena_stack.push(arena_addr);
@@ -15122,8 +15476,7 @@ impl WasmCodeGen {
         let depth = self.with_arena_depth;
         self.with_arena_depth += 1;
 
-        let arena_addr = self.next_arena_addr;
-        self.next_arena_addr += ARENA_SIZE_BYTES;
+        let arena_addr = self.reserve_arena()?;
         self.arena_stack.push(arena_addr);
 
         self.output.push_str("    ;; Enter with Arena scope\n");
@@ -15490,6 +15843,385 @@ impl WasmCodeGen {
         )))
     }
 
+    fn scalar_repr_wasm_type(repr: ScalarRepr) -> WasmType {
+        match repr {
+            ScalarRepr::I32 => WasmType::I32,
+            ScalarRepr::I64 => WasmType::I64,
+            ScalarRepr::F64 => WasmType::F64,
+        }
+    }
+
+    fn flat_record_codegen_layout(
+        &self,
+        function_name: &str,
+        position: &str,
+        source_type: &Type,
+        flattened_fields: &[ScalarRepr],
+    ) -> Result<(usize, Vec<(u32, WasmType)>), CodeGenError> {
+        let record_name = self.source_record_name(source_type).ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' {} flat-record-v1 summary has no codegen record type",
+                function_name, position
+            ))
+        })?;
+        let source_fields = self
+            .instantiated_record_fields(record_name, Some(source_type))
+            .ok_or_else(|| {
+                CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' {} record '{}' has no codegen layout",
+                    function_name, position, record_name
+                ))
+            })?;
+        if source_fields.len() != flattened_fields.len() {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' {} flat-record-v1 field count does not match record '{}'",
+                function_name, position, record_name
+            )));
+        }
+
+        let mut layout = Vec::with_capacity(source_fields.len());
+        for ((field_name, source_field_type), flattened) in
+            source_fields.iter().zip(flattened_fields)
+        {
+            let wasm_type = self.convert_type(source_field_type)?;
+            if wasm_type != Self::scalar_repr_wasm_type(*flattened) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "function '{}' {} flat-record-v1 field representation does not match '{}.{}'",
+                    function_name, position, record_name, field_name
+                )));
+            }
+            let offset =
+                self.instantiated_record_field_offset(record_name, Some(source_type), field_name)?;
+            layout.push((offset, wasm_type));
+        }
+
+        Ok((
+            self.instantiated_record_size(record_name, Some(source_type), source_fields.len()),
+            layout,
+        ))
+    }
+
+    fn generate_flat_record_export_adapter(
+        &mut self,
+        function: &FunDecl,
+        source_signature: &FunctionSourceSig,
+        host_abi: &CheckedHostFunctionAbi,
+    ) -> Result<String, CodeGenError> {
+        if source_signature.params.len() != host_abi.params.len()
+            || function.params.len() != host_abi.params.len()
+        {
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "function '{}' host adapter signature is inconsistent",
+                function.name
+            )));
+        }
+
+        let mut wrapper_name = format!("__restrict_flat_record_v1_{}", function.name);
+        while self.functions.contains_key(&wrapper_name)
+            || self
+                .generated_host_adapter_functions
+                .contains(&wrapper_name)
+        {
+            wrapper_name.push('_');
+        }
+        let mut depth_global_name = format!("{}_depth", wrapper_name);
+        while self.global_types.contains_key(&depth_global_name)
+            || self
+                .generated_host_adapter_globals
+                .contains(&depth_global_name)
+            || matches!(
+                depth_global_name.as_str(),
+                "current_arena" | "resource_list_head"
+            )
+        {
+            depth_global_name.push('_');
+        }
+
+        let mut external_parameters = Vec::<Vec<(String, WasmType)>>::new();
+        let mut record_parameter_layouts =
+            Vec::<Option<(String, usize, Vec<(u32, WasmType)>)>>::new();
+        for (parameter_index, ((source_type, source_parameter), parameter_abi)) in source_signature
+            .params
+            .iter()
+            .zip(&function.params)
+            .zip(&host_abi.params)
+            .enumerate()
+        {
+            match parameter_abi {
+                HostAbi::Unit => {
+                    external_parameters.push(vec![(
+                        format!("host_arg_{}", parameter_index),
+                        WasmType::I32,
+                    )]);
+                    record_parameter_layouts.push(None);
+                }
+                HostAbi::Scalar(repr) => {
+                    external_parameters.push(vec![(
+                        format!("host_arg_{}", parameter_index),
+                        Self::scalar_repr_wasm_type(*repr),
+                    )]);
+                    record_parameter_layouts.push(None);
+                }
+                HostAbi::FlatRecord { fields } => {
+                    let layout = self.flat_record_codegen_layout(
+                        &function.name,
+                        &format!("parameter '{}'", source_parameter.name),
+                        source_type,
+                        fields,
+                    )?;
+                    external_parameters.push(
+                        fields
+                            .iter()
+                            .enumerate()
+                            .map(|(field_index, repr)| {
+                                (
+                                    format!("host_arg_{}_{}", parameter_index, field_index),
+                                    Self::scalar_repr_wasm_type(*repr),
+                                )
+                            })
+                            .collect(),
+                    );
+                    record_parameter_layouts.push(Some((
+                        format!("host_record_{}", parameter_index),
+                        layout.0,
+                        layout.1,
+                    )));
+                }
+                HostAbi::InternalOnly(_) => {
+                    return Err(CodeGenError::UnsupportedFeature(format!(
+                        "Exported function '{}' parameter '{}' is not supported by flat-record-v1",
+                        function.name, source_parameter.name
+                    )));
+                }
+            }
+        }
+
+        let (result_types, result_record_layout) = match &host_abi.result {
+            HostAbi::Unit => (Vec::new(), None),
+            HostAbi::Scalar(repr) => (vec![Self::scalar_repr_wasm_type(*repr)], None),
+            HostAbi::FlatRecord { fields } => {
+                let source_result = source_signature.result.as_ref().ok_or_else(|| {
+                    CodeGenError::InvalidCheckedIr(format!(
+                        "function '{}' has no source result for its flat-record-v1 adapter",
+                        function.name
+                    ))
+                })?;
+                let layout = self.flat_record_codegen_layout(
+                    &function.name,
+                    "return",
+                    source_result,
+                    fields,
+                )?;
+                (
+                    fields
+                        .iter()
+                        .map(|repr| Self::scalar_repr_wasm_type(*repr))
+                        .collect(),
+                    Some(layout.1),
+                )
+            }
+            HostAbi::InternalOnly(_) => {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "Exported function '{}' return type is not supported by flat-record-v1",
+                    function.name
+                )));
+            }
+        };
+
+        let arena_addr = self.reserve_arena()?;
+        self.generated_host_adapter_functions
+            .insert(wrapper_name.clone());
+        self.generated_host_adapter_globals
+            .insert(depth_global_name.clone());
+
+        self.output.push_str("\n  ;; flat-record-v1 host adapter\n");
+        self.output.push_str(&format!(
+            "  (global ${} (mut i32) (i32.const 0))\n",
+            depth_global_name
+        ));
+        self.output.push_str(&format!("  (func ${}", wrapper_name));
+        for parameter_group in &external_parameters {
+            for (name, wasm_type) in parameter_group {
+                self.output.push_str(&format!(
+                    " (param ${} {})",
+                    name,
+                    self.wasm_type_str(*wasm_type)
+                ));
+            }
+        }
+        if !result_types.is_empty() {
+            self.output.push_str(" (result");
+            for result_type in &result_types {
+                self.output
+                    .push_str(&format!(" {}", self.wasm_type_str(*result_type)));
+            }
+            self.output.push(')');
+        }
+        self.output.push('\n');
+        self.output
+            .push_str("    (local $host_entry_prev_arena i32)\n");
+        self.output.push_str("    (local $host_entry_depth i32)\n");
+        self.output
+            .push_str("    (local $host_entry_arena_mark i32)\n");
+        for record_layout in record_parameter_layouts.iter().flatten() {
+            self.output
+                .push_str(&format!("    (local ${} i32)\n", record_layout.0));
+        }
+        if result_record_layout.is_some() {
+            self.output
+                .push_str("    (local $host_result_record i32)\n");
+        }
+        for (index, result_type) in result_types.iter().enumerate() {
+            self.output.push_str(&format!(
+                "    (local $host_result_{} {})\n",
+                index,
+                self.wasm_type_str(*result_type)
+            ));
+        }
+
+        self.output
+            .push_str("    ;; Own all pointer-backed values until results are copied out\n");
+        self.output.push_str("    global.get $current_arena\n");
+        self.output
+            .push_str("    local.set $host_entry_prev_arena\n");
+        self.output
+            .push_str(&format!("    global.get ${}\n", depth_global_name));
+        self.output.push_str("    local.tee $host_entry_depth\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output
+            .push_str(&format!("        i32.const {}\n", arena_addr));
+        self.output.push_str("        call $arena_init\n");
+        self.output.push_str("        drop\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output
+            .push_str(&format!("        i32.const {}\n", arena_addr));
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i32.load\n");
+        self.output
+            .push_str("        local.set $host_entry_arena_mark\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.get $host_entry_depth\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.add\n");
+        self.output
+            .push_str(&format!("    global.set ${}\n", depth_global_name));
+        self.output
+            .push_str(&format!("    i32.const {}\n", arena_addr));
+        self.output.push_str("    global.set $current_arena\n");
+
+        for (parameter_index, record_layout) in record_parameter_layouts.iter().enumerate() {
+            let Some((pointer_local, record_size, fields)) = record_layout else {
+                continue;
+            };
+            self.output
+                .push_str(&format!("    i32.const {}\n", record_size));
+            self.output.push_str("    call $allocate\n");
+            self.output
+                .push_str(&format!("    local.set ${}\n", pointer_local));
+            for (field_index, (offset, wasm_type)) in fields.iter().enumerate() {
+                self.output
+                    .push_str(&format!("    local.get ${}\n", pointer_local));
+                if *offset != 0 {
+                    self.output.push_str(&format!("    i32.const {}\n", offset));
+                    self.output.push_str("    i32.add\n");
+                }
+                self.output.push_str(&format!(
+                    "    local.get ${}\n",
+                    external_parameters[parameter_index][field_index].0
+                ));
+                self.output.push_str(&format!(
+                    "    {}\n",
+                    self.wasm_store_op_for_wasm_type(*wasm_type)
+                ));
+            }
+        }
+
+        for (parameter_index, parameter_abi) in host_abi.params.iter().enumerate() {
+            match parameter_abi {
+                HostAbi::Unit | HostAbi::Scalar(_) => self.output.push_str(&format!(
+                    "    local.get ${}\n",
+                    external_parameters[parameter_index][0].0
+                )),
+                HostAbi::FlatRecord { .. } => {
+                    let (pointer_local, _, _) = record_parameter_layouts[parameter_index]
+                        .as_ref()
+                        .expect("validated flat-record parameter adapter");
+                    self.output
+                        .push_str(&format!("    local.get ${}\n", pointer_local));
+                }
+                HostAbi::InternalOnly(_) => unreachable!("validated before adapter emission"),
+            }
+        }
+        self.output
+            .push_str(&format!("    call ${}\n", function.name));
+
+        match &host_abi.result {
+            HostAbi::Unit => {}
+            HostAbi::Scalar(_) => self.output.push_str("    local.set $host_result_0\n"),
+            HostAbi::FlatRecord { .. } => {
+                self.output.push_str("    local.set $host_result_record\n");
+                for (index, (offset, wasm_type)) in result_record_layout
+                    .as_ref()
+                    .expect("validated flat-record result layout")
+                    .iter()
+                    .enumerate()
+                {
+                    self.output.push_str("    local.get $host_result_record\n");
+                    if *offset != 0 {
+                        self.output.push_str(&format!("    i32.const {}\n", offset));
+                        self.output.push_str("    i32.add\n");
+                    }
+                    self.output.push_str(&format!(
+                        "    {}\n",
+                        self.wasm_load_op_for_wasm_type(*wasm_type)
+                    ));
+                    self.output
+                        .push_str(&format!("    local.set $host_result_{}\n", index));
+                }
+            }
+            HostAbi::InternalOnly(_) => unreachable!("validated before adapter emission"),
+        }
+
+        self.output
+            .push_str("    ;; Pointer-backed values must not escape this arena reset\n");
+        self.output.push_str("    local.get $host_entry_depth\n");
+        self.output
+            .push_str(&format!("    global.set ${}\n", depth_global_name));
+        self.output.push_str("    local.get $host_entry_depth\n");
+        self.output.push_str("    i32.eqz\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output
+            .push_str(&format!("        i32.const {}\n", arena_addr));
+        self.output.push_str("        call $arena_reset\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output
+            .push_str(&format!("        i32.const {}\n", arena_addr));
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output
+            .push_str("        local.get $host_entry_arena_mark\n");
+        self.output.push_str("        i32.store\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output
+            .push_str("    local.get $host_entry_prev_arena\n");
+        self.output.push_str("    global.set $current_arena\n");
+        for index in 0..result_types.len() {
+            self.output
+                .push_str(&format!("    local.get $host_result_{}\n", index));
+        }
+        self.output.push_str("  )\n");
+
+        Ok(wrapper_name)
+    }
+
     fn generate_exports(&mut self, program: &Program) -> Result<(), CodeGenError> {
         let mut has_exports = false;
 
@@ -15508,16 +16240,46 @@ impl WasmCodeGen {
                                 func.name
                             )));
                         }
-                        Self::ensure_scalar_host_export_function(
-                            func,
-                            self.function_source_sigs.get(&func.name),
-                        )?;
-
-                        // Export function
-                        self.output.push_str(&format!(
-                            "  (export \"{}\" (func ${}))\n",
-                            func.name, func.name
-                        ));
+                        if self.function_requires_flat_record_adapter(&func.name) {
+                            let source_signature = self
+                                .function_source_sigs
+                                .get(&func.name)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    CodeGenError::InvalidCheckedIr(format!(
+                                        "function '{}' has no source signature for its host adapter",
+                                        func.name
+                                    ))
+                                })?;
+                            let host_abi = self
+                                .function_host_abis
+                                .get(&func.name)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    CodeGenError::InvalidCheckedIr(format!(
+                                        "function '{}' has no checked host ABI summary",
+                                        func.name
+                                    ))
+                                })?;
+                            let wrapper = self.generate_flat_record_export_adapter(
+                                func,
+                                &source_signature,
+                                &host_abi,
+                            )?;
+                            self.output.push_str(&format!(
+                                "  (export \"{}\" (func ${}))\n",
+                                func.name, wrapper
+                            ));
+                        } else {
+                            Self::ensure_scalar_host_export_function(
+                                func,
+                                self.function_source_sigs.get(&func.name),
+                            )?;
+                            self.output.push_str(&format!(
+                                "  (export \"{}\" (func ${}))\n",
+                                func.name, func.name
+                            ));
+                        }
                     }
                     TopDecl::Record(record) => {
                         self.output.push_str(&format!(
@@ -15588,5 +16350,19 @@ impl WasmCodeGen {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod memory_layout_tests {
+    use super::WasmCodeGen;
+
+    #[test]
+    fn string_memory_offsets_align_and_reject_address_overflow() {
+        assert_eq!(
+            WasmCodeGen::next_string_memory_offset(1024, 5).expect("small strings should fit"),
+            1036
+        );
+        assert!(WasmCodeGen::next_string_memory_offset(u32::MAX - 4, 1).is_err());
     }
 }

@@ -355,7 +355,18 @@ impl ModuleResolver {
         let mut exports = module.exports.iter().collect::<Vec<_>>();
         exports.sort_by(|left, right| left.0.cmp(right.0));
         for (_, decl) in exports {
-            declarations.push(rename_top_decl(decl.clone(), &rename_map)?);
+            let renamed = rename_top_decl(decl.clone(), &rename_map)?;
+            if matches!(decl, TopDecl::Record(_)) {
+                // Imported public records stay non-re-exported at the module
+                // graph level, but the flattened compiler program must retain
+                // their source-public provenance for host-schema validation.
+                // A source-level record export has no direct Wasm export.
+                declarations.push(TopDecl::Export(crate::ast::ExportDecl {
+                    item: Box::new(renamed),
+                }));
+            } else {
+                declarations.push(renamed);
+            }
         }
 
         visiting.remove(&module_key);

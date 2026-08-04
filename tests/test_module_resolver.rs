@@ -150,7 +150,8 @@ fun main: () -> Int32 = {
     assert!(resolved.imports.is_empty());
     assert!(matches!(
         resolved.declarations.first(),
-        Some(TopDecl::Record(record)) if record.name == "ReleaseSlice"
+        Some(TopDecl::Export(export))
+            if matches!(export.item.as_ref(), TopDecl::Record(record) if record.name == "ReleaseSlice")
     ));
 
     let mut checker = TypeChecker::new();

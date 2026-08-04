@@ -10,7 +10,7 @@ pub mod layout;
 pub mod optimize;
 
 use crate::type_checker::{format_typed_type, TypedType};
-use layout::LayoutId;
+use layout::{LayoutId, LayoutKind, LayoutTable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ExprId(pub u32);
@@ -54,6 +54,12 @@ impl FinalType {
 
     pub fn host_abi(&self) -> HostAbi {
         HostAbi::for_type(&self.ty)
+    }
+
+    /// Resolve the opt-in flat-record-v1 host ABI without changing the
+    /// v0.0.1 type-only host ABI contract.
+    pub fn flat_record_v1_host_abi(&self, repr: ValueRepr, layout_table: &LayoutTable) -> HostAbi {
+        HostAbi::resolve_flat_record_v1(self, repr, layout_table)
     }
 }
 
@@ -125,6 +131,7 @@ impl ValueRepr {
 pub enum HostAbi {
     Unit,
     Scalar(ScalarRepr),
+    FlatRecord { fields: Vec<ScalarRepr> },
     InternalOnly(InternalOnlyReason),
 }
 
@@ -156,6 +163,59 @@ impl HostAbi {
 
     pub fn is_v001_exportable(&self) -> bool {
         matches!(self, HostAbi::Unit | HostAbi::Scalar(_))
+    }
+
+    /// Resolve the opt-in flat-record-v1 ABI from a finalized type and its
+    /// concrete layout. `for_type` intentionally remains the narrower v0.0.1
+    /// contract and therefore never returns `FlatRecord`.
+    pub fn resolve_flat_record_v1(
+        final_type: &FinalType,
+        repr: ValueRepr,
+        layout_table: &LayoutTable,
+    ) -> Self {
+        let fallback = final_type.host_abi();
+        let TypedType::Record {
+            name, type_args, ..
+        } = final_type.as_typed_type()
+        else {
+            return fallback;
+        };
+        if !type_args.is_empty() || !final_type.is_monomorphic() {
+            return fallback;
+        }
+
+        let ValueRepr::Ref(layout_id) = repr else {
+            return fallback;
+        };
+        let Some(descriptor) = layout_table.get(layout_id) else {
+            return fallback;
+        };
+        let LayoutKind::Record(record) = &descriptor.kind else {
+            return fallback;
+        };
+        if record.name != *name
+            || !record.type_args.is_empty()
+            || !(1..=16).contains(&record.fields.len())
+        {
+            return fallback;
+        }
+
+        let mut fields = Vec::with_capacity(record.fields.len());
+        for field in &record.fields {
+            let ValueRepr::Scalar(scalar) = field.element.repr else {
+                return fallback;
+            };
+            fields.push(scalar);
+        }
+
+        HostAbi::FlatRecord { fields }
+    }
+
+    pub fn is_flat_record_v1_exportable(&self) -> bool {
+        matches!(
+            self,
+            HostAbi::Unit | HostAbi::Scalar(_) | HostAbi::FlatRecord { .. }
+        )
     }
 }
 

@@ -1,7 +1,9 @@
 use restrict_lang::diagnostics::{format_lex_error, format_parse_error};
 use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::module::resolve_program_imports_for_file;
-use restrict_lang::{check_v001_release_surface, lex, parse_program, TypeChecker, WasmCodeGen};
+use restrict_lang::{
+    check_release_surface, lex, parse_program, HostAbiProfile, TypeChecker, WasmCodeGen,
+};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -17,7 +19,9 @@ fn usage_text() -> String {
 Usage: {BIN_NAME} [OPTIONS] <source_file> [output_file]
 Options:
   --version     Show compiler version
-  --check       Check imports, types, and v0.0.1 release surface without code generation
+  --check       Check imports, types, and the selected host ABI surface without code generation
+  --host-abi <PROFILE>
+                Select host ABI profile: v0.0.1 (default) or flat-record-v1
   --ast         Show AST only (no compilation)
   --verbose     Show lexing, parsing, and codegen progress details
   --lsp         Start Language Server Protocol mode
@@ -40,6 +44,7 @@ async fn main() {
     let mut show_ast = false;
     let mut lsp_mode = false;
     let mut verbose = false;
+    let mut host_abi_profile = HostAbiProfile::V001Scalar;
     let mut source_file = String::new();
     let mut output_file = None;
 
@@ -51,6 +56,24 @@ async fn main() {
                 std::process::exit(0);
             }
             "--check" => check_only = true,
+            "--host-abi" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("--host-abi requires a value; expected 'v0.0.1' or 'flat-record-v1'");
+                    std::process::exit(1);
+                };
+                if value.starts_with("--") {
+                    eprintln!("--host-abi requires a value; expected 'v0.0.1' or 'flat-record-v1'");
+                    std::process::exit(1);
+                }
+                host_abi_profile = match value.parse() {
+                    Ok(profile) => profile,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                };
+                i += 1;
+            }
             "--ast" => show_ast = true,
             "--verbose" => verbose = true,
             "--lsp" => lsp_mode = true,
@@ -178,7 +201,7 @@ async fn main() {
     let mut type_checker = TypeChecker::new();
     match type_checker.check_program(&ast) {
         Ok(()) => {
-            if let Err(e) = check_v001_release_surface(&ast, &type_checker) {
+            if let Err(e) = check_release_surface(&ast, &type_checker, host_abi_profile) {
                 eprintln!("Release surface error: {}", e);
                 std::process::exit(1);
             }
@@ -208,7 +231,7 @@ async fn main() {
     if verbose {
         println!("\n=== WASM Code Generation ===");
     }
-    let mut codegen = WasmCodeGen::new();
+    let mut codegen = WasmCodeGen::with_host_abi_profile(host_abi_profile);
     let wat = match codegen.generate_checked(&ast, &checked_ir) {
         Ok(wat) => {
             if verbose {

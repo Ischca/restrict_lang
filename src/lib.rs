@@ -94,7 +94,7 @@ pub mod module;
 /// User-facing diagnostic formatting helpers
 pub mod diagnostics;
 
-/// v0.0.1 release-surface validation
+/// Default and opt-in host ABI release-surface validation
 pub mod release_surface;
 
 /// Development tools for debugging and analysis (non-WASM only)
@@ -113,7 +113,9 @@ pub use ast::*;
 pub use codegen::{CodeGenError, WasmCodeGen};
 pub use lexer::*;
 pub use parser::*;
-pub use release_surface::{check_v001_release_surface, ReleaseSurfaceError};
+pub use release_surface::{
+    check_release_surface, check_v001_release_surface, HostAbiProfile, ReleaseSurfaceError,
+};
 pub use type_checker::{
     format_typed_type, type_check, TemporalConstraint as TypeCheckerTemporalConstraint,
     TemporalContext, TypeChecker, TypeError, TypeSubstitution, TypedType,

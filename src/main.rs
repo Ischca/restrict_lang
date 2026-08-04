@@ -1,4 +1,5 @@
 use restrict_lang::diagnostics::{format_lex_error, format_parse_error};
+use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::module::resolve_program_imports_for_file;
 use restrict_lang::{check_v001_release_surface, lex, parse_program, TypeChecker, WasmCodeGen};
 use std::env;
@@ -195,12 +196,20 @@ async fn main() {
         }
     }
 
+    let checked_ir = match build_checked_ir(&ast, &type_checker) {
+        Ok(checked_ir) => checked_ir,
+        Err(_) => {
+            eprintln!("Code generation error: Invalid checked compiler state: construction failed");
+            std::process::exit(1);
+        }
+    };
+
     // Generate WASM
     if verbose {
         println!("\n=== WASM Code Generation ===");
     }
     let mut codegen = WasmCodeGen::new();
-    let wat = match codegen.generate(&ast) {
+    let wat = match codegen.generate_checked(&ast, &checked_ir) {
         Ok(wat) => {
             if verbose {
                 println!("WASM generation successful!");

@@ -1,6 +1,7 @@
 use crate::diagnostics::{format_lex_error, format_parse_error};
+use crate::ir::builder::build_checked_ir;
 use crate::module::resolve_program_imports_with_module_source_map;
-use crate::{lex, parse_program, TypeChecker, WasmCodeGen};
+use crate::{check_v001_release_surface, lex, parse_program, TypeChecker, WasmCodeGen};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -157,9 +158,35 @@ fn compile_internal(
         };
     }
 
+    if let Err(e) = check_v001_release_surface(&ast, &type_checker) {
+        return CompilationResult {
+            success: false,
+            output: None,
+            error: Some(format!("Release surface error: {}", e)),
+            tokens: Some(tokens_debug),
+            ast: Some(ast_debug),
+        };
+    }
+
+    let checked_ir = match build_checked_ir(&ast, &type_checker) {
+        Ok(checked_ir) => checked_ir,
+        Err(_) => {
+            return CompilationResult {
+                success: false,
+                output: None,
+                error: Some(
+                    "Code generation error: Invalid checked compiler state: construction failed"
+                        .to_string(),
+                ),
+                tokens: Some(tokens_debug),
+                ast: Some(ast_debug),
+            };
+        }
+    };
+
     // Step 4: Code generation
     let mut codegen = WasmCodeGen::new();
-    let wat = match codegen.generate(&ast) {
+    let wat = match codegen.generate_checked(&ast, &checked_ir) {
         Ok(wat) => wat,
         Err(e) => {
             return CompilationResult {
@@ -297,6 +324,73 @@ mod tests {
             .expect_err("invalid WAT should report an assembly error");
 
         assert!(message.starts_with("WebAssembly assembly error:"));
+    }
+
+    #[test]
+    fn compile_internal_uses_checked_forward_float64_signature() {
+        let source = r#"
+fun adjusted: (value: Float64) = {
+    value |> risk
+}
+
+fun risk: (value: Float64) = {
+    value + 0.5
+}
+
+fun main: () -> Float64 = {
+    41.5 |> adjusted
+}
+"#;
+        let result = compile_internal(source, None);
+        assert!(result.success, "browser compile failed: {:?}", result.error);
+        let wat = result.output.expect("successful compile should return WAT");
+        assert!(wat.contains("(func $adjusted (param $value f64) (result f64)"));
+        wat_to_wasm_internal(&wat).expect("browser WAT should assemble");
+    }
+
+    #[test]
+    fn compile_internal_uses_checked_ir_after_module_resolution() {
+        let source = r#"
+import release.{adjusted}
+
+fun main: () -> Float64 = {
+    41.5 |> adjusted
+}
+"#;
+        let mut modules = HashMap::new();
+        modules.insert(
+            "release".to_string(),
+            r#"
+export fun adjusted: (value: Float64) = {
+    value + 0.5
+}
+"#
+            .to_string(),
+        );
+
+        let result = compile_internal(source, Some(modules));
+        assert!(result.success, "browser compile failed: {:?}", result.error);
+        let wat = result.output.expect("successful compile should return WAT");
+        assert!(wat.contains("(func $adjusted (param $value f64) (result f64)"));
+        wat_to_wasm_internal(&wat).expect("resolved browser WAT should assemble");
+    }
+
+    #[test]
+    fn compile_internal_applies_release_surface_before_checked_codegen() {
+        let source = r#"
+export fun identity: <T>(value: T) -> T = {
+    value
+}
+"#;
+        let result = compile_internal(source, None);
+        let message = result.error.expect("generic export should fail");
+
+        assert!(!result.success);
+        assert!(message.starts_with("Release surface error:"), "{message}");
+        assert!(
+            !message.contains("Invalid checked compiler state"),
+            "{message}"
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub fn build_checked_ir(
 
 struct CheckedIrBuilder<'a> {
     checker: &'a TypeChecker,
+    source_function_names: HashSet<String>,
     layout_table: LayoutTable,
     value_reprs: HashMap<ValueId, ValueRepr>,
     binding_scopes: Vec<HashMap<String, BindingScopeEntry>>,
@@ -24,6 +25,7 @@ impl<'a> CheckedIrBuilder<'a> {
     fn new(checker: &'a TypeChecker) -> Self {
         Self {
             checker,
+            source_function_names: HashSet::new(),
             layout_table: LayoutTable::new(),
             value_reprs: HashMap::new(),
             binding_scopes: Vec::new(),
@@ -35,17 +37,37 @@ impl<'a> CheckedIrBuilder<'a> {
     }
 
     fn build(mut self, program: &Program) -> Result<CheckedProgramIr, IrBuildError> {
+        for decl in &program.declarations {
+            self.register_source_function_name(decl);
+        }
+
         let mut functions = Vec::new();
         for decl in &program.declarations {
             self.collect_function_ir_from_decl(decl, &mut functions, false)?;
         }
 
+        let sealed_functions = functions.clone();
+        let sealed_layout_table = self.layout_table.clone();
         let program_ir = CheckedProgramIr {
             functions,
             layout_table: self.layout_table,
+            source_program: program.clone(),
+            source_node_ids: collect_node_ids(program),
+            sealed_functions,
+            sealed_layout_table,
         };
         program_ir.validate_lowering_summaries()?;
         Ok(program_ir)
+    }
+
+    fn register_source_function_name(&mut self, decl: &TopDecl) {
+        match decl {
+            TopDecl::Function(func) => {
+                self.source_function_names.insert(func.name.clone());
+            }
+            TopDecl::Export(export) => self.register_source_function_name(export.item.as_ref()),
+            TopDecl::Impl(_) | TopDecl::Record(_) | TopDecl::Context(_) | TopDecl::Binding(_) => {}
+        }
     }
 
     fn value_repr_for_type(&mut self, final_type: &FinalType) -> ValueRepr {
@@ -102,6 +124,10 @@ impl<'a> CheckedIrBuilder<'a> {
         signature: CheckedFunctionSignature,
         source_exported: bool,
     ) -> Result<CheckedFunctionIr, IrBuildError> {
+        // Apply source indices are function-local provenance. Keeping the
+        // counter across declarations makes the second function's first Apply
+        // look stale to the invariant validator.
+        self.next_apply = 0;
         let return_type = FinalType::new(signature.return_type.clone())?;
         let return_repr = self.value_repr_for_type(&return_type);
         self.start_function_binding_scope();
@@ -546,6 +572,17 @@ impl<'a> CheckedIrBuilder<'a> {
         &mut self,
         name: &str,
     ) -> Result<Option<CalleeProvenance>, IrBuildError> {
+        // The checker also stores builtins such as `map`, whose declaration
+        // signatures intentionally contain symbolic associated-type
+        // projections (`C.Item`, `C.Mapped<U>`). Builtins remain outside the
+        // current Checked IR ownership boundary, so do not misclassify them as
+        // source top-level functions or force those symbolic types through
+        // `FinalType`. The concrete Apply result and argument facts are still
+        // recorded at the call site.
+        if !self.source_function_names.contains(name) {
+            return Ok(None);
+        }
+
         let Some(signature) = self.checker.checked_function_signature(name) else {
             return Ok(None);
         };

@@ -1,8 +1,8 @@
 //! Typed IR foundation for Restrict.
 //!
-//! This module is intentionally not wired into code generation yet. It defines
-//! the boundary we want between finalized type inference, affine flow checking,
-//! layout selection, and later WebAssembly lowering.
+//! Top-level function signatures now cross this boundary into production
+//! codegen. Function bodies and Apply lowering remain on the AST path while the
+//! remaining migration proceeds one boundary at a time.
 
 pub mod binding_graph;
 pub mod builder;

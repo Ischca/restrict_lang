@@ -6,7 +6,7 @@ fn test_record_then_simple_function() {
     x: Int32
 }
 
-fun test = {
+fun test: () = {
     ()
 }"#;
 
@@ -49,7 +49,7 @@ fn test_record_with_temporal_then_function() {
     handle: Int32
 }
 
-fun test = {
+fun test: () = {
     ()
 }"#;
 

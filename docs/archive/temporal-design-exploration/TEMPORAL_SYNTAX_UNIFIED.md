@@ -31,7 +31,7 @@ with lifetime<'db> {
 }  // cleanup at scope end
 
 // Implicit lifetime (inferred)
-fun processFile = filename: String {
+fun processFile: (filename: String) = {
     val file = fs.open(filename);  // lifetime inferred
     file.read()
 }  // cleanup at function end
@@ -59,7 +59,7 @@ record File<'f> {
 }
 
 // Lifetime inferred from usage
-fun copyFile = source: String dest: String {
+fun copyFile: (source: String, dest: String) = {
     val src = fs.open(source);    // src: File<'1>
     val dst = fs.create(dest);     // dst: File<'2>
     
@@ -72,7 +72,7 @@ fun copyFile = source: String dest: String {
 ### Approach B: **Scope-Driven (Explicit)**
 ```restrict
 // Explicit lifetime management
-fun copyFile = source: String dest: String {
+fun copyFile: (source: String, dest: String) = {
     with lifetime<'io> {
         val src = fs.open(source);   // src: File<'io>
         val dst = fs.create(dest);    // dst: File<'io>
@@ -87,7 +87,7 @@ fun copyFile = source: String dest: String {
 ### Simple Cases: Type-Driven
 ```restrict
 // For simple resource management, let the compiler infer
-fun readConfig = {
+fun readConfig: () = {
     val file = fs.open("config.json");  // File<'inferred>
     file.read() |> parseJson
 }  // file cleaned up automatically
@@ -124,7 +124,7 @@ record Transaction<'tx, 'db> where 'tx ⊆ 'db {
 }
 
 // Implicit lifetime approach
-fun transferMoney = from: AccountId to: AccountId amount: Money {
+fun transferMoney: (from: AccountId, to: AccountId, amount: Money) = {
     val db = Database.connect("postgres://localhost");
     val tx = db.beginTransaction();
     
@@ -140,7 +140,7 @@ fun transferMoney = from: AccountId to: AccountId amount: Money {
 }
 
 // Explicit lifetime approach  
-fun transferMoneyExplicit = from: AccountId to: AccountId amount: Money {
+fun transferMoneyExplicit: (from: AccountId, to: AccountId, amount: Money) = {
     with lifetime<'db> {
         val db = Database.connect("postgres://localhost");
         

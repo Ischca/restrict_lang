@@ -1,6 +1,6 @@
 record Point { x: Int, y: Int }
 
-fun makePoint = x: Int y: Int {
+fun makePoint: (x: Int, y: Int) = {
     Point { x = x, y = y }
 }
 

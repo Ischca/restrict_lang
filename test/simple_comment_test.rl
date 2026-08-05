@@ -1,12 +1,12 @@
 // Single line comment at start
-fun add = a: Int b: Int {
+fun add: (a: Int, b: Int) = {
     // Comment inside function
     a + b /* inline comment */
 }
 
 /* Multi-line comment
    spanning multiple lines */
-fun main = {
+fun main: () = {
     // Test comment handling
     (10, 20) add
 }

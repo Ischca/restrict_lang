@@ -7,7 +7,7 @@ fun increment: (value: Int32) -> Int32 = {
     value + 1
 }
 
-fun main: () -> () = {
+fun main: () = {
     val total = (20, 21) add
     total |> increment |> println
 }

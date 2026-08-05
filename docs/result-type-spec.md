@@ -22,7 +22,7 @@ val z = Err("not found")  // Result<T, String>
 
 ### パターンマッチング
 ```restrict
-fun unwrap_or = (result: Result<Int, String>, default: Int) -> Int {
+fun unwrap_or: (result: Result<Int, String>, default: Int) -> Int = {
     result match {
         Ok(n) => { n }
         Err(_) => { default }
@@ -33,7 +33,7 @@ fun unwrap_or = (result: Result<Int, String>, default: Int) -> Int {
 ### 推奨される使用方法
 ```restrict
 // 失敗する可能性のある関数
-fun safe_divide = (a: Int, b: Int) -> Result<Int, String> {
+fun safe_divide: (a: Int, b: Int) -> Result<Int, String> = {
     b == 0 then {
         Err("Division by zero")
     } else {
@@ -42,7 +42,7 @@ fun safe_divide = (a: Int, b: Int) -> Result<Int, String> {
 }
 
 // 使用例
-fun main = {
+fun main: () = {
     val result = (10, 2) safe_divide;
     result match {
         Ok(n) => { n println }
@@ -134,7 +134,7 @@ i32.add
 ### エラー伝播演算子 `?`
 ```restrict
 // 将来実装予定
-fun process = (data: String) -> Result<Int, Error> {
+fun process: (data: String) -> Result<Int, Error> = {
     val parsed = data parse?  // エラー時は早期リターン
     Ok(parsed * 2)
 }
@@ -148,5 +148,5 @@ record ParseError {
     column: Int
 }
 
-fun parse = (input: String) -> Result<AST, ParseError>
+fun parse: (input: String) -> Result<AST, ParseError>
 ```

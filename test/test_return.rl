@@ -1,3 +1,3 @@
-fun identity = x: Int {
+fun identity: (x: Int) = {
     x
 }

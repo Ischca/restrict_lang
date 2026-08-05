@@ -1,4 +1,4 @@
-fun is_positive = x: Int {
+fun is_positive: (x: Int) = {
     x > 0 then {
         1
     } else {
@@ -6,7 +6,7 @@ fun is_positive = x: Int {
     }
 }
 
-fun main = {
+fun main: () = {
     val result = (42) is_positive
     result
 }

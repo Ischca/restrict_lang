@@ -38,7 +38,7 @@ fn assert_arena_escape_rejected(source: &str) {
 #[test]
 fn test_basic_arena() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             with Arena {
                 // For now, just test that arena block compiles
                 42
@@ -66,7 +66,7 @@ fn test_basic_arena() {
 #[test]
 fn test_nested_arena() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             with Arena {
                 val x = 1;
                 with Arena {
@@ -84,7 +84,7 @@ fn test_nested_arena() {
 #[test]
 fn test_arena_with_other_context_error() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             with NonExistentContext {
                 42
             }
@@ -116,7 +116,7 @@ fn test_arena_value_escape() {
     // Values created in arena should not escape the block
     // This is a semantic test - the type system should catch this
     let source = r#"
-        fun main = {
+        fun main: () = {
             val x = with Arena {
                 42  // This is fine - integers are copied
             };

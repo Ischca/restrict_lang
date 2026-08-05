@@ -221,7 +221,7 @@ with FileSystem {
 ### Week 5-6: Simple Async
 ```restrict
 // Basic futures
-fun fetchUrl = url: String {
+fun fetchUrl: (url: String) = {
     with Async {
         (url) http.get |> await
     }

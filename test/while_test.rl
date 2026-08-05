@@ -1,4 +1,4 @@
-fun test_while = {
+fun test_while: () = {
     val x = 5
     x > 3 while {
         42
@@ -6,6 +6,6 @@ fun test_while = {
     10
 }
 
-fun main = {
+fun main: () = {
     test_while
 }

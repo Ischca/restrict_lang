@@ -1,3 +1,3 @@
-fun main = {
+fun main: () = {
     boss luke.attack
 }

@@ -890,6 +890,8 @@ The following syntax is **NO LONGER SUPPORTED** and will cause compilation error
 
 ### 15.3 Removed Syntax Patterns
 - `val mut x = 5` (use `mut val x = 5`)
+- `fun name = ...` (use `fun name: (...) = ...`)
+- `fun name: param: Type ...` (function parameter lists require parentheses)
 - `[|1, 2, 3|]` array literals (use `[1, 2, 3]`)
 - `if condition { ... }` (use `condition then { ... }`)
 - `while condition { ... }` (use `condition while { ... }`)

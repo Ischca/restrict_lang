@@ -3,7 +3,7 @@ record Point { x: Int, y: Int }
 
 /* This is a 
    multi-line comment */
-fun main = {
+fun main: () = {
     // Create a point
     val p = Point { x = 10, y = 20 } /* inline comment */
     

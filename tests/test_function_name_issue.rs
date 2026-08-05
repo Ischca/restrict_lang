@@ -30,7 +30,7 @@ fn test_different_function_names() {
 #[ignore = "TAT (Temporal Affine Types) syntax - deferred to v2.0"]
 fn test_leakfile_variations() {
     let cases = [
-        "fun leakFile = { () }",
+        "fun leakFile: () = { () }",
         "fun leakFile: () -> () = { () }",
         "fun leakFile: (handle: Int32) -> Int32 = { handle }",
     ];

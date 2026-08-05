@@ -9,10 +9,10 @@ context Logger {
 }
 
 // Simple function
-fun add = a: Int b: Int { a + b }
+fun add: (a: Int, b: Int) = { a + b }
 
 // Function with no parameters
-fun get_answer = { 42 }
+fun get_answer: () = { 42 }
 
 // Variable bindings
 val immutable_var = 10
@@ -26,7 +26,7 @@ val moved_point = origin.clone { x = 5 } freeze
 
 // Implementation block
 impl Point {
-    fun distance = self: Point { 
+    fun distance: (self: Point) = {
         self.x * self.x + self.y * self.y
     }
 }
@@ -53,7 +53,8 @@ val loop_result = {
 val piped = 42 |> add 10
 
 // With context
-fun with_logging = @logger ctx: Logger {
+@logger
+fun with_logging: (ctx: Logger) = {
     with (logger) {
         // Use logger context here
         42

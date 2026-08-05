@@ -33,7 +33,7 @@ fn test_temporal_scope_race_condition() {
         resource.value
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~shared> {
             val resource = SharedResource {
                 value = 0,
@@ -67,7 +67,7 @@ fn test_temporal_lifetime_early_destruction() {
         })
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~temp> {
             val file = TempFile {
                 path = "/tmp/test",
@@ -130,7 +130,7 @@ fn test_nested_temporal_deadlock() {
         // Classic deadlock: T1 has db1, wants db2; T2 has db2, wants db1
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~db1> {
         with lifetime<~db2> {
             val database1 = Database { name = "DB1", lock = Mutex::new(()) };
@@ -172,7 +172,7 @@ fn test_temporal_scope_migration() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~broad> {
             with lifetime<~narrow> where ~narrow within ~broad {
                 val resource = MigratableResource {
@@ -226,7 +226,7 @@ fn test_temporal_ordering_confusion() {
         timeline.past_events[0]  // Data race with future task?
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~future> {
             with lifetime<~present> where ~present within ~future {
                 with lifetime<~past> where ~past within ~present {
@@ -274,7 +274,7 @@ fn test_async_temporal_leak() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         val leaked_future = leak_through_async();
         leaked_future.await  // Access after temporal scope ended
     }"#;
@@ -312,7 +312,7 @@ fn test_channel_temporal_smuggling() {
         rx.recv()  // Got data that should have died with ~short
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~long> {
             smuggle_data()  // Returns short-lived data in long scope
         }
@@ -361,7 +361,7 @@ fn test_temporal_memory_barrier_violation() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         racy_counter()
     }"#;
 
@@ -396,7 +396,7 @@ fn test_temporal_scope_fork_bomb() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~root> {
             val bomb = ForkBomb { depth = 20, scope = ~root };
             fork_temporal(bomb);  // 2^20 temporal scopes!
@@ -445,7 +445,7 @@ fn test_temporal_aba_problem() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         with lifetime<~test> {
             val resource = VersionedResource {
                 value = "A",

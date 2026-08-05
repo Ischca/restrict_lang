@@ -33,12 +33,12 @@ type PollResult<T> =
     | Pending(Future<T>)  // Returns new future for next poll
 
 // Usage with OSV syntax
-fun fetchUser = userId: Int32 {
+fun fetchUser: (userId: Int32) = {
     val future = (userId) http.get("/users/{id}");
     future  // Future is returned, not yet executed
 }
 
-fun main = {
+fun main: () = {
     val userFuture = (123) fetchUser;
     val user = userFuture await;  // Future consumed here
     user print;
@@ -60,7 +60,7 @@ fun createChannel<T> = {
 }
 
 // Usage
-fun worker = receiver: Receiver<Int32> {
+fun worker: (receiver: Receiver<Int32>) = {
     receiver receive match {
         Some(value) => {
             value process;
@@ -70,7 +70,7 @@ fun worker = receiver: Receiver<Int32> {
     }
 }
 
-fun main = {
+fun main: () = {
     val (sender, receiver) = createChannel();
     
     // Spawn worker (consumes receiver)
@@ -99,7 +99,7 @@ handler AsyncHandler for Async {
 }
 
 // Usage combines with existing context system
-fun fetchData = {
+fun fetchData: () = {
     with Async {
         val user = ("/users/123") http.get |> await;
         val posts = ("/posts?user=123") http.get |> await;
@@ -120,7 +120,7 @@ type AwaitResponse =
     | ReceiveResponse(Response) -> ClientSession
 
 // Usage ensures protocol is followed
-fun httpClient = session: ClientSession {
+fun httpClient: (session: ClientSession) = {
     session match {
         SendRequest(cont) => {
             val request = Request { method: "GET", path: "/" };
@@ -143,7 +143,7 @@ context Coroutine {
 }
 
 // Structured concurrency via context nesting
-fun processItems = items: List<Item> {
+fun processItems: (items: List<Item>) = {
     with Coroutine {
         items |> forEach(|item| {
             with Coroutine {  // Child coroutine
@@ -180,7 +180,7 @@ fun createActor<State, Msg> =
 }
 
 // Usage
-fun counter = {
+fun counter: () = {
     val counterActor = (0, |state, msg| {
         msg match {
             Increment => (state + 1, Ok)
@@ -211,7 +211,7 @@ Combine the best aspects:
 
 ```restrict
 // Sequential async with OSV
-fun fetchUserWithPosts = userId: Int32 {
+fun fetchUserWithPosts: (userId: Int32) = {
     with Async {
         val user = ("/users/{userId}") http.get |> await;
         val posts = ("/posts?user={userId}") http.get |> await;
@@ -220,7 +220,7 @@ fun fetchUserWithPosts = userId: Int32 {
 }
 
 // Parallel async with OSV
-fun fetchParallel = urls: List<String> {
+fun fetchParallel: (urls: List<String>) = {
     with Async {
         urls 
         |> map(|url| (url) http.get)  // Create futures
@@ -230,7 +230,7 @@ fun fetchParallel = urls: List<String> {
 }
 
 // Actor-style with OSV
-fun startServer = port: Int32 {
+fun startServer: (port: Int32) = {
     val server = (port) tcp.listen;
     
     server.accept 
@@ -272,7 +272,7 @@ temporal<'t> record Connection {
     socket: Socket
 }
 
-fun handleRequest = conn: Connection<'t> {
+fun handleRequest: (conn: Connection<'t>) = {
     with lifetime<'t> {
         // Connection only valid within this scope
         conn.read |> process |> conn.write
@@ -302,7 +302,7 @@ type Flow<T> = {
     wait: Unit -> T      // Blocks until bound
 }
 
-fun dataflow = {
+fun dataflow: () = {
     val (flow, binder) = createFlow();
     
     spawn(|| {

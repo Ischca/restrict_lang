@@ -153,7 +153,7 @@ record Database<~db> {
 }
 
 // Direct ownership
-fun processData = {
+fun processData: () = {
     val db = Database.connect("postgres://localhost");
     db.connection.query("SELECT * FROM users");
 }  // db automatically dropped
@@ -375,7 +375,7 @@ Error: Temporal ~a does not outlive ~b
 **Use case**: Single resource, automatic cleanup
 
 ```rust
-fun readConfig = {
+fun readConfig: () = {
     with lifetime<~f> {
         val file = openFile("config.json");
         file.read() |> parseJson

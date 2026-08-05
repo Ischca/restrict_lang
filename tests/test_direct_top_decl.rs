@@ -42,7 +42,7 @@ fn test_top_decl_on_function() {
 
 #[test]
 fn test_top_decl_simple_function() {
-    let simple_func = "fun test = { 42 }";
+    let simple_func = "fun test: () = { 42 }";
 
     eprintln!("\nTesting top_decl on simple function:");
     eprintln!("{}", simple_func);

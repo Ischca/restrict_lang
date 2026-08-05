@@ -24,7 +24,7 @@ fun fetchUser<~async> = userId: Int32 -> Future<User, ~async> {
     http.get("/users/{userId}")
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~async> {
         val userFuture = (123) fetchUser;
         
@@ -57,7 +57,7 @@ async fun fetchUser<~async> = userId: Int32 -> User {
     response.parseUser()
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~async> {
         // await consumes the async computation
         val user = (123) fetchUser |> await;
@@ -124,7 +124,7 @@ fun worker<~ch> = input: Channel<Task, ~ch>, output: Channel<Result, ~ch> {
     }
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~work> {
         val (taskSend, taskRecv) = Channel.create();
         val (resultSend, resultRecv) = Channel.create();

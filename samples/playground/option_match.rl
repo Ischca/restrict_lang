@@ -6,6 +6,6 @@ fun choose: (value: Option<Int32>) -> Int32 = {
     }
 }
 
-fun main: () -> () = {
+fun main: () = {
     Some(42) |> choose |> println
 }

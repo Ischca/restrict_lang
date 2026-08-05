@@ -1,4 +1,4 @@
-fun main = {
+fun main: () = {
     val outer = {
         val inner = 10
         val result = inner + 5

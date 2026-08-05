@@ -1,1 +1,1 @@
-fun main = { 123 }
+fun main: () = { 123 }

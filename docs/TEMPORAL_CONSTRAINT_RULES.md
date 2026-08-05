@@ -116,7 +116,7 @@ At end of scope for ~t:
 
 ### Example 1: Basic File I/O
 ```restrict
-fun readFile = filename: String {
+fun readFile: (filename: String) = {
     val file = fs.open(filename);  // T-Create: file : File<~1>
     val content = file.read();      // T-App: read : File<~1> → String
     content                         // OK: String has no temporal
@@ -125,7 +125,7 @@ fun readFile = filename: String {
 
 ### Example 2: Transaction within Database
 ```restrict
-fun transfer = {
+fun transfer: () = {
     with Database {                    // T-Context: creates ~db
         Database.connect { conn ->     // conn : Connection<~db>
             conn.beginTx { tx ->       // T-Create: tx : Transaction<~tx>
@@ -139,7 +139,7 @@ fun transfer = {
 
 ### Example 3: Escape Error
 ```restrict
-fun leak = {
+fun leak: () = {
     with FileSystem {              // T-Context: creates ~fs
         val file = open("test");   // file : File<~fs>
         file                       // T-NoEscape: ERROR!

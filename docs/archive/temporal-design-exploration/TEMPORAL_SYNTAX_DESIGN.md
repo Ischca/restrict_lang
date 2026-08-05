@@ -63,7 +63,7 @@ temporal<'t> record Connection {
     socket: Socket
 }
 
-fun handleRequest = conn: Connection<'t> {
+fun handleRequest: (conn: Connection<'t>) = {
     // ...
 }
 ```
@@ -75,7 +75,7 @@ record Connection {
     socket: Socket
 }
 
-fun handleRequest = conn: @temporal('t) Connection {
+fun handleRequest: (conn: @temporal('t) Connection) = {
     // ...
 }
 ```
@@ -86,7 +86,7 @@ record Connection lifetime<'t> {
     socket: Socket
 }
 
-fun handleRequest = conn: Connection lifetime<'t> {
+fun handleRequest: (conn: Connection lifetime<'t>) = {
     // ...
 }
 ```
@@ -97,7 +97,7 @@ record Connection {
     socket: Socket
 } with lifetime<'t>
 
-fun handleRequest = conn: Connection with lifetime<'t> {
+fun handleRequest: (conn: Connection with lifetime<'t>) = {
     // ...
 }
 ```
@@ -121,7 +121,7 @@ fun processData<'a: 'b, 'b> = data: Data<'a> buffer: Buffer<'b> {
 
 #### Option C: Explicit relationships
 ```restrict
-fun processData = data: Data<'a> buffer: Buffer<'b>
+fun processData: (data: Data<'a>, buffer: Buffer<'b>)
 requires 'a ⊆ 'b {
     // explicit requirement
 }
@@ -129,7 +129,7 @@ requires 'a ⊆ 'b {
 
 #### Option D: Natural language
 ```restrict
-fun processData = data: Data<'a> buffer: Buffer<'b>
+fun processData: (data: Data<'a>, buffer: Buffer<'b>)
 where 'a within 'b {
     // more readable
 }
@@ -279,7 +279,7 @@ record Connection<'t> {
     socket: Socket
 }
 
-fun handleRequest = conn: Connection<'t> {
+fun handleRequest: (conn: Connection<'t>) = {
     // ...
 }
 ```
@@ -325,7 +325,7 @@ record FileProcessor<'t> {
     buffer: Array<u8, 1024>
 }
 
-fun processFile = inputPath: String outputPath: String {
+fun processFile: (inputPath: String, outputPath: String) = {
     scope<'files> {
         val processor = FileProcessor {
             input: (inputPath) fs.open,
@@ -346,7 +346,7 @@ fun processFile = inputPath: String outputPath: String {
 }
 
 // Async integration
-fun processFileAsync = inputPath: String outputPath: String {
+fun processFileAsync: (inputPath: String, outputPath: String) = {
     scope<'files> {
         with Async {
             val processor = FileProcessor {

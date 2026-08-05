@@ -9,7 +9,8 @@ context Logger {
 }
 
 // Function that requires Database context
-fun connect = @Database url: String {
+@Database
+fun connect: (url: String) = {
     val host = Database.host
     val port = Database.port
     42

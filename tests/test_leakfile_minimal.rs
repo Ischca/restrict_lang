@@ -5,7 +5,7 @@ use restrict_lang::parse_program;
 #[test]
 fn test_minimal_leakfile() {
     // Start with the absolute minimal version
-    let minimal = "fun leakFile = { Unit }";
+    let minimal = "fun leakFile: () = { Unit }";
 
     eprintln!("=== Minimal (no type params) ===");
     match parse_program(minimal) {

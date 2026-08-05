@@ -1,1 +1,1 @@
-fun main = { 42 }
+fun main: () = { 42 }

@@ -35,7 +35,7 @@ fn test_affine_field_double_inheritance() {
         resource: Resource
     }
 
-    fun main = {
+    fun main: () = {
         val parent = Parent { resource = Resource { token = "secret" } };
 
         // Clone parent twice - do both children get the affine resource?
@@ -62,7 +62,7 @@ fn test_prototype_field_shadowing_chaos() {
         value: String  // Same field name, different type!
     }
 
-    fun main = {
+    fun main: () = {
         val base = Base { value = 42 };
 
         // What happens when we try to shadow with wrong type?
@@ -105,7 +105,7 @@ fn test_cyclic_prototype_inheritance() {
         current
     }
 
-    fun main = {
+    fun main: () = {
         create_cycle().name
     }"#;
 
@@ -126,7 +126,7 @@ fn test_differential_update_type_escape() {
         clone cont with { value = new_val }  // Type error!
     }
 
-    fun main = {
+    fun main: () = {
         val int_cont = Container { value = 42, tag = "number" };
         val string_cont = smuggle_type(int_cont, "not a number");
 
@@ -150,7 +150,7 @@ fn test_frozen_prototype_mutation_backdoor() {
         config: Config
     }
 
-    fun main = {
+    fun main: () = {
         val frozen_config = Config { host = "localhost", port = 8080 };
         val wrapper = Wrapper { config = frozen_config };
 
@@ -201,7 +201,7 @@ fn test_prototype_method_dispatch_ambiguity() {
         dog2.speak()
     }
 
-    fun main = {
+    fun main: () = {
         test_dispatch()
     }"#;
 
@@ -228,7 +228,7 @@ fn test_differential_field_deletion() {
         clone full with { }  // What happens to fields b and c?
     }
 
-    fun main = {
+    fun main: () = {
         val full = Full { a = "test", b = 42, c = true };
         val partial = shrink_record(full);
 
@@ -261,7 +261,7 @@ fn test_prototype_hash_collision_attack() {
         child1 === child2  // Prototype identity comparison
     }
 
-    fun main = {
+    fun main: () = {
         create_collision()
     }"#;
 
@@ -299,7 +299,7 @@ fn test_deep_prototype_chain_performance() {
         node.value
     }
 
-    fun main = {
+    fun main: () = {
         val deep = create_deep_chain(1000);
         walk_chain(deep)
     }"#;
@@ -330,7 +330,7 @@ fn test_affine_prototype_field_tracking() {
         partial.token2  // Should this be allowed?
     }
 
-    fun main = {
+    fun main: () = {
         val mr = MultiResource {
             token1 = "secret1",
             token2 = "secret2",

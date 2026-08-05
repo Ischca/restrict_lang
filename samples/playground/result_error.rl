@@ -22,6 +22,6 @@ fun explain: (result: Result<Int32, DecodeError>) -> String = {
     }
 }
 
-fun main: () -> () = {
+fun main: () = {
     1 |> decode |> explain |> println
 }

@@ -146,7 +146,7 @@ import std.encoding.json.{toJson, fromJson}
 
 record User { id: Int32, name: String }
 
-fun main = {
+fun main: () = {
     val router = Router.new()
         |> Router.get("/users/:id", getUser)
         |> Router.post("/users", createUser)
@@ -158,7 +158,7 @@ fun main = {
         |> Server.start()
 }
 
-fun getUser = req: Request {
+fun getUser: (req: Request) = {
     val userId = req.params.get("id") |> unwrap |> parseInt
 
     // Fetch user from database...

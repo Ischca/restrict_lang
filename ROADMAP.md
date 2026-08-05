@@ -473,7 +473,7 @@ Priority order:
 #### Issue 1: Incorrect Syntax Used ❌
 ```
 # WRONG - Not EBNF v-1.0 compliant:
-fun use_twice = p: Point { val a = p.x; val b = p.x; a }
+fun use_twice: (p: Point) = { val a = p.x; val b = p.x; a }
 
 # CORRECT - EBNF v-1.0 syntax:
 fun use_twice: (p: Point) -> Unit = { val a = p.x; val b = p.x; () }

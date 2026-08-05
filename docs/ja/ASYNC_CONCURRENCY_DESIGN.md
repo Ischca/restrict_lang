@@ -33,12 +33,12 @@ type PollResult<T> =
     | Pending(Future<T>)  // 次のpoll用の新しいfutureを返す
 
 // OSV構文での使用
-fun fetchUser = userId: Int32 {
+fun fetchUser: (userId: Int32) = {
     val future = (userId) http.get("/users/{id}");
     future  // Futureが返される、まだ実行されていない
 }
 
-fun main = {
+fun main: () = {
     val userFuture = (123) fetchUser;
     val user = userFuture await;  // Futureがここで消費される
     user print;
@@ -60,7 +60,7 @@ fun createChannel<T> = {
 }
 
 // 使用例
-fun worker = receiver: Receiver<Int32> {
+fun worker: (receiver: Receiver<Int32>) = {
     receiver receive match {
         Some(value) => {
             value process;
@@ -70,7 +70,7 @@ fun worker = receiver: Receiver<Int32> {
     }
 }
 
-fun main = {
+fun main: () = {
     val (sender, receiver) = createChannel();
     
     // ワーカーを起動（receiverを消費）
@@ -99,7 +99,7 @@ handler AsyncHandler for Async {
 }
 
 // 使用は既存のコンテキストシステムと組み合わせる
-fun fetchData = {
+fun fetchData: () = {
     with Async {
         val user = ("/users/123") http.get |> await;
         val posts = ("/posts?user=123") http.get |> await;
@@ -120,7 +120,7 @@ type AwaitResponse =
     | ReceiveResponse(Response) -> ClientSession
 
 // 使用はプロトコルが守られることを保証
-fun httpClient = session: ClientSession {
+fun httpClient: (session: ClientSession) = {
     session match {
         SendRequest(cont) => {
             val request = Request { method: "GET", path: "/" };
@@ -143,7 +143,7 @@ context Coroutine {
 }
 
 // コンテキストネスティングによる構造化並行性
-fun processItems = items: List<Item> {
+fun processItems: (items: List<Item>) = {
     with Coroutine {
         items |> forEach(|item| {
             with Coroutine {  // 子コルーチン
@@ -173,7 +173,7 @@ fun processItems = items: List<Item> {
 
 ```restrict
 // OSVでの順次非同期
-fun fetchUserWithPosts = userId: Int32 {
+fun fetchUserWithPosts: (userId: Int32) = {
     with Async {
         val user = ("/users/{userId}") http.get |> await;
         val posts = ("/posts?user={userId}") http.get |> await;
@@ -182,7 +182,7 @@ fun fetchUserWithPosts = userId: Int32 {
 }
 
 // OSVでの並列非同期
-fun fetchParallel = urls: List<String> {
+fun fetchParallel: (urls: List<String>) = {
     with Async {
         urls 
         |> map(|url| (url) http.get)  // Futureを作成
@@ -201,7 +201,7 @@ temporal<'t> record Connection {
     socket: Socket
 }
 
-fun handleRequest = conn: Connection<'t> {
+fun handleRequest: (conn: Connection<'t>) = {
     with lifetime<'t> {
         // 接続はこのスコープ内でのみ有効
         conn.read |> process |> conn.write
@@ -217,7 +217,7 @@ type Flow<T> = {
     wait: Unit -> T      // バインドまでブロック
 }
 
-fun dataflow = {
+fun dataflow: () = {
     val (flow, binder) = createFlow();
     
     spawn(|| {
@@ -279,7 +279,7 @@ record Task {
 }
 
 // ランタイムのメインループ
-fun runEventLoop = {
+fun runEventLoop: () = {
     with EventLoop {
         loop {
             // 準備完了タスクを実行
@@ -310,14 +310,14 @@ fun runEventLoop = {
 
 ```restrict
 // ソース（提案構文）
-async fun fetchUserData = userId: Int32 {
+async fun fetchUserData: (userId: Int32) = {
     val user = await http.get("/users/{userId}");
     val profile = await http.get("/profiles/{userId}");
     UserData { user: user, profile: profile }
 }
 
 // 変換後（脱糖）
-fun fetchUserData = userId: Int32 -> Future<UserData> {
+fun fetchUserData: (userId: Int32) -> Future<UserData> = {
     // ステートマシンとして実装
     enum State {
         Start
@@ -396,7 +396,7 @@ context TaskScope {
 }
 
 // 使用例
-fun processItems = items: List<Item> {
+fun processItems: (items: List<Item>) = {
     with TaskScope {
         val handles = items |> map(|item| {
             spawn(async {
@@ -446,7 +446,7 @@ fun map<T, U> = stream: Stream<T>, f: T -> U -> Stream<U> {
 }
 
 // 非同期ストリーム処理
-async fun processStream = stream: Stream<Data> {
+async fun processStream: (stream: Stream<Data>) = {
     stream.next match {
         Item(data, rest) => {
             await processData(data);
@@ -492,7 +492,7 @@ handler WasmAsyncIO for AsyncIO {
 
 ```restrict
 // コンパイル時に最適化可能な非同期チェーン
-fun optimizedChain = {
+fun optimizedChain: () = {
     // これは中間Futureを作らずに単一のステートマシンにコンパイルされる
     async {
         val a = await computeA();
@@ -514,7 +514,7 @@ context TaskArena {
     runTask: Future<T> -> T
 }
 
-fun efficientAsyncProcessing = {
+fun efficientAsyncProcessing: () = {
     with TaskArena {
         async {
             // このタスク内のすべてのアロケーションは同じアリーナを使用

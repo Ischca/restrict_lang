@@ -62,6 +62,8 @@ const NONE_TYPE_ARGUMENT_ERROR: &str =
     "stale syntax `None<T>` is not valid Restrict; write `None` and provide an expected `Option<T>` type through an annotation or typed context";
 const STALE_UNIT_ERROR: &str =
     "stale syntax `Unit` is not valid Restrict; use `()` for the unit value or unit type";
+const STALE_FUNCTION_DECL_ERROR: &str =
+    "stale function declaration syntax is not valid Restrict; write `fun name: (param: Type, ...) = { ... }` and use `()` for no parameters";
 
 /// Expects a specific token and consumes it.
 ///
@@ -486,63 +488,38 @@ fn fun_decl(input: &str) -> ParseResult<'_, FunDecl> {
     let (input, _) = expect_token(Token::Fun)(input)?;
     let (input, name) = ident(input)?;
 
-    // Try to parse either simple syntax (fun main = {...}) or complex syntax (fun main : (...) -> ... = {...})
-    // Check if we have a colon (complex syntax) or equals (simple syntax)
-    let (input, has_signature) = alt((
-        map(expect_token(Token::Colon), |_| true),
-        map(expect_token(Token::Assign), |_| false),
-    ))(input)?;
+    if matches!(lex_token(input), Ok((_, Token::Assign))) {
+        return user_syntax_failure(STALE_FUNCTION_DECL_ERROR);
+    }
+    let (input, _) = expect_token(Token::Colon)(input)?;
 
-    let (input, type_params, params, return_type, temporal_constraints) = if has_signature {
-        // Complex syntax: parse type parameters, parameters, return type, temporal constraints
-        let (input, type_params) = opt(|input| {
-            let (input, _) = expect_token(Token::Lt)(input)?;
-            let (input, params) = separated_list1(expect_token(Token::Comma), type_param)(input)?;
-            let (input, _) = expect_token(Token::Gt)(input)?;
-            Ok((input, params))
-        })(input)?;
-        let type_params = type_params.unwrap_or_default();
+    let (input, type_params) = opt(|input| {
+        let (input, _) = expect_token(Token::Lt)(input)?;
+        let (input, params) = separated_list1(expect_token(Token::Comma), type_param)(input)?;
+        let (input, _) = expect_token(Token::Gt)(input)?;
+        Ok((input, params))
+    })(input)?;
+    let type_params = type_params.unwrap_or_default();
 
-        // Parse parameter list: (x: Int32, y: Int32) or inline params: x: Int32 y: Int32
-        let (input, params) = if let Ok((input2, _)) = expect_token(Token::LParen)(input) {
-            // Parenthesized parameters
-            let (input, params) = separated_list0(expect_token(Token::Comma), param)(input2)?;
-            let (input, _) = expect_token(Token::RParen)(input)?;
-            (input, params)
-        } else {
-            // Inline parameters: x: Int32 y: Int32
-            separated_list0(skip, param)(input)?
-        };
+    if !matches!(lex_token(input), Ok((_, Token::LParen))) {
+        return user_syntax_failure(STALE_FUNCTION_DECL_ERROR);
+    }
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, params) = separated_list0(expect_token(Token::Comma), param)(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
 
-        // Parse optional return type: -> ReturnType
-        let (input, return_type) = opt(|input| {
-            let (input, _) = expect_token(Token::ThinArrow)(input)?;
-            parse_type(input)
-        })(input)?;
+    let (input, return_type) = opt(|input| {
+        let (input, _) = expect_token(Token::ThinArrow)(input)?;
+        parse_type(input)
+    })(input)?;
 
-        // Parse optional temporal constraints: where ~tx within ~db
-        let (input, temporal_constraints) = opt(|input| {
-            let (input, _) = expect_token(Token::Where)(input)?;
-            separated_list1(expect_token(Token::Comma), temporal_constraint)(input)
-        })(input)?;
-        let temporal_constraints = temporal_constraints.unwrap_or_default();
+    let (input, temporal_constraints) = opt(|input| {
+        let (input, _) = expect_token(Token::Where)(input)?;
+        separated_list1(expect_token(Token::Comma), temporal_constraint)(input)
+    })(input)?;
+    let temporal_constraints = temporal_constraints.unwrap_or_default();
 
-        // Now expect the assignment
-        let (input, _) = expect_token(Token::Assign)(input)?;
-
-        (
-            input,
-            type_params,
-            params,
-            return_type,
-            temporal_constraints,
-        )
-    } else {
-        // Simple syntax with possible inline parameters: fun name = param: Type param2: Type { ... }
-        let (input, params) = separated_list0(skip, param)(input)?;
-
-        (input, Vec::new(), params, None, Vec::new())
-    };
+    let (input, _) = expect_token(Token::Assign)(input)?;
 
     let (input, body) = block_expr(input)?;
 

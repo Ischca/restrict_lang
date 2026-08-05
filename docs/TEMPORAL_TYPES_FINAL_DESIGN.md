@@ -68,7 +68,7 @@ context FileSystem<~fs> {
     open: (String, File<~fs> -> R) -> R
 }
 
-fun copyFile = source: String dest: String {
+fun copyFile: (source: String, dest: String) = {
     with FileSystem {
         FileSystem.open(source) { input ->     // input: File<~fs>
             FileSystem.open(dest) { output ->  // output: File<~fs>
@@ -90,7 +90,7 @@ record Transaction<~tx, ~db> where ~tx within ~db {
     id: TransactionId
 }
 
-fun transferMoney = amount: Money {
+fun transferMoney: (amount: Money) = {
     with DatabaseContext {
         DatabaseContext.connect { db ->          // db: Database<~ctx>
             db.beginTransaction { tx ->          // tx: Transaction<~tx, ~ctx>
@@ -115,7 +115,7 @@ record Request<~req, ~server> where ~req within ~server {
     body: Stream<~req>
 }
 
-fun startServer = port: Int {
+fun startServer: (port: Int) = {
     with ServerContext {
         ServerContext.listen(port) { server ->   // server: Server<~ctx>
             server.onRequest { request ->        // request: Request<~req, ~ctx>

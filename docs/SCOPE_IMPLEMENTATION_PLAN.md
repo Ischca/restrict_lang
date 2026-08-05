@@ -134,7 +134,7 @@ fn generate_expr(&mut self, expr: &TypedExpr) -> String {
 **テストケース**:
 ```rust
 // test_it_keyword.rl
-fun main = {
+fun main: () = {
     // Simple it usage
     val result = 5 |> |it| { it + 1 }
 
@@ -185,7 +185,7 @@ pub enum Expr {
 #### 2.5 テスト
 ```rust
 // test_lazy_blocks.rl
-fun main = {
+fun main: () = {
     // Eager (statement position)
     {
         print("executed immediately")
@@ -257,7 +257,7 @@ pub enum TypedType {
 #### 3.5 テスト
 ```rust
 // test_scope_composition.rl
-fun main = {
+fun main: () = {
     val scopeA = {
         val x = 10
         val y = 20
@@ -300,7 +300,7 @@ fun main = {
 #### 4.4 テスト
 ```rust
 // test_scope_concatenation.rl
-fun main = {
+fun main: () = {
     { 42 } { it + 1 }  // 43
 
     {
@@ -347,7 +347,7 @@ context Logger {
     fun log: (String) -> Unit
 }
 
-fun main = {
+fun main: () = {
     with FileSystem + Logger {
         "Starting" |> log
         val data = "data.txt" |> readFile

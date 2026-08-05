@@ -67,7 +67,7 @@ with lifetime<'conn> {
 ### 3. **Automatic Lifetime Inference**
 ```restrict
 // Compiler infers lifetimes
-fun processFile = filename: String {
+fun processFile: (filename: String) = {
     with lifetime {  // Anonymous lifetime
         val file = (filename) fs.open;
         val content = file.read;
@@ -246,7 +246,7 @@ fun withDatabase<T> = f: (Database<'db>) -> T {
 }
 
 // Usage
-fun getUser = userId: Int32 {
+fun getUser: (userId: Int32) = {
     withDatabase(|db| {
         db.query("SELECT * FROM users WHERE id = $1", [userId])
           .fetchOne()
@@ -261,7 +261,7 @@ temporal<'server> record Server {
     connections: List<Connection<'conn>> where 'conn ⊆ 'server
 }
 
-fun startServer = port: Int32 {
+fun startServer: (port: Int32) = {
     with lifetime<'server> {
         val server = Server.bind(port);
         

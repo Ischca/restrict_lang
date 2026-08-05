@@ -728,9 +728,10 @@ fn assert_current_function_declaration(
         has_parameter_list,
         "{label}:{line_number} should use `fun name: (...) -> Type =` or generic `fun name: <T>(...) -> Type =` syntax:\n{source}"
     );
+    let is_inferred_main = before_body.trim() == "main: ()";
     assert!(
-        before_body.contains(" -> "),
-        "{label}:{line_number} should include an explicit return type:\n{source}"
+        before_body.contains(" -> ") || is_inferred_main,
+        "{label}:{line_number} should include an explicit return type, except for the canonical `fun main: () =` entry point:\n{source}"
     );
 
     if in_form_contract {

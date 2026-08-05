@@ -84,7 +84,7 @@ fn test_lambda_with_comments() {
 #[test]
 fn test_comments_between_tokens() {
     let input = r#"
-    fun /* function */ test /* name */ = /* equals */ {
+    fun /* function */ test /* name */ : /* signature */ ( /* parameters */ ) = /* equals */ {
         val /* val keyword */ x /* var name */ = /* equals */ 42 /* value */;
         x /* return */
     }

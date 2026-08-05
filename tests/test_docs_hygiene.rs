@@ -884,6 +884,15 @@ fn tracked_sources_do_not_reintroduce_legacy_function_declarations() {
         "html", "js", "json", "md", "rl", "rs", "sh", "toml", "yaml", "yml",
     ];
 
+    let commented_simple = ["fun /* keyword */", " test /* name */", " = { () }"].concat();
+    assert!(has_legacy_function_declaration(&commented_simple));
+    let commented_inline = [
+        "fun identity /* name */",
+        " : /* signature */ value: Int32 = { value }",
+    ]
+    .concat();
+    assert!(has_legacy_function_declaration(&commented_inline));
+
     let mut failures = Vec::new();
     for relative_path in tracked_workspace_files() {
         if ALLOWED_MIGRATION_OR_REJECTION_FILES.contains(&relative_path.as_str()) {
@@ -916,6 +925,7 @@ fn tracked_sources_do_not_reintroduce_legacy_function_declarations() {
 }
 
 fn has_legacy_function_declaration(line: &str) -> bool {
+    let line = strip_inline_block_comments(line);
     for (fun_index, _) in line.match_indices("fun ") {
         let after_fun = &line[fun_index + "fun ".len()..];
         let chars = after_fun.chars().collect::<Vec<_>>();
@@ -974,6 +984,24 @@ fn has_legacy_function_declaration(line: &str) -> bool {
         }
     }
     false
+}
+
+fn strip_inline_block_comments(line: &str) -> String {
+    let mut code = String::with_capacity(line.len());
+    let mut remaining = line;
+
+    while let Some(comment_start) = remaining.find("/*") {
+        code.push_str(&remaining[..comment_start]);
+        let comment = &remaining[comment_start + "/*".len()..];
+        let Some(comment_end) = comment.find("*/") else {
+            return code;
+        };
+        code.push(' ');
+        remaining = &comment[comment_end + "*/".len()..];
+    }
+
+    code.push_str(remaining);
+    code
 }
 
 fn assert_no_removed_binding_pipe_or_record_initializer(label: &str, source: &str) {

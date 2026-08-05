@@ -19,15 +19,20 @@ This document is the **single authoritative specification** for Restrict Languag
 fun val mut record context enum match then else while
 temporal within where clone freeze pub import export
 impl as fatal true false Some None with lifetime await spawn
+form takes of
 ```
 
 Some reserved words are for planned or experimental features. A word being
 reserved does not imply that every related syntax form is part of the current
 v0.0.1 implementation.
 
-Source-level declarations spelled `form` / `takes` are reserved design-space
-terminology for later type-system work and are outside the default v0.0.1
-gate. The v0.0.1 release included only compiler-provided `Option<T>` and
+The v0.0.1 release did not expose source-level `form` / `takes` / `of` syntax.
+The current post-v0.0.1 compiler exposes the deliberately small, method-only
+form slice specified below. Generic forms, associated types, default methods,
+generic or conditional adoptions, enum adoptions, and dynamic dispatch remain
+future work.
+
+The v0.0.1 release included only compiler-provided `Option<T>` and
 `Result<T, E>` sum types. The current post-v0.0.1 compiler additionally
 supports the closed, non-generic user-defined `enum` slice specified below.
 Generic enums, recursive enums, and variants with more than one direct payload
@@ -115,6 +120,9 @@ fun main: () = {  // No parameters
 }
 ```
 
+Parameter binders within one function or method signature must be unique.
+The same rule applies to form contracts and their `takes` implementations.
+
 ### 3.2 Generic Functions
 ```rust
 fun identity: <T>(value: T) -> T = {
@@ -124,7 +132,22 @@ fun identity: <T>(value: T) -> T = {
 fun map: <T, U>(list: List<T>, f: T -> U) -> List<U> = {
     // implementation
 }
+
+// `of` requires explicit form adoptions. Multiple forms use `+`.
+fun render: <T of Display>(value: T) -> String = {
+    value |> display
+}
+
+fun compare_rendered: <T of Display + Comparable>(left: T, right: T) -> Int32 = {
+    (left, right) compare
+}
 ```
+
+`of` appears on a declared type parameter, not on an individual value
+parameter. A concrete argument must have a matching adoption for every listed
+form. Prelude adoptions may be compiler-provided; source records adopt forms
+explicitly. Form bounds do not introduce subtyping or implicit structural
+conformance.
 
 ### 3.3 Temporal Functions (Experimental / Outside v0.0.1 Default Gate)
 ```rust
@@ -508,6 +531,92 @@ Rules:
   They are a scoped, type-directed function namespace that preserves Restrict's
   value-flow-first OSV model.
 
+### 8.4 Forms, Adoptions, and Form Bounds (Post-v0.0.1)
+
+A `form` is an explicit, compile-time behavioral contract. The initial source
+surface is intentionally method-only: forms are non-generic, every method has
+a fully typed signature, and form declarations do not contain method bodies.
+
+```rust
+pub form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = {
+        self.text
+    }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+```
+
+Rules:
+
+- A form method must declare `self: Self` as its first parameter and must have
+  an explicit return type. `Self` is available only in the form contract.
+- A `takes` declaration targets one concrete, non-generic record. It provides
+  exactly the methods required by the form using fully typed `fun`
+  declarations with bodies. Missing, extra, duplicate, generic, temporal, or
+  signature-incompatible methods are errors.
+- `takes` declarations cannot be marked `pub`. Export the form and nominal
+  record instead. A `pub form` is source-module metadata and can be imported by
+  other Restrict modules; it does not create a host-visible WebAssembly export.
+- A type parameter may require one or more forms with `<T of A + B>`. The
+  concrete argument must have one compiler-provided or explicit adoption for
+  every bound. An ordinary `impl` method with a matching name does not satisfy
+  a form.
+- Calls remain OSV: `receiver |> method` for one argument and
+  `(receiver, args...) method` for multiple arguments. Traditional object calls
+  such as `receiver.method()` remain invalid.
+- Form resolution is closed-world and static. A canonical type may adopt a
+  canonical form at most once. In the initial slice, ordinary `impl` methods
+  and all form adoptions for one concrete type share one selector namespace:
+  the type cannot expose the same method name through two declarations. A
+  generic parameter with multiple bounds that expose the same selector is
+  likewise ambiguous. Compilation fails rather than choosing by priority.
+- The compiler monomorphizes form-bounded generic calls and emits a direct call
+  to the selected adoption. Forms do not use vtables, runtime dictionaries,
+  type-tag dispatch, or dynamic dispatch.
+- Form calls use ordinary affine function semantics. Passing a non-Copy value
+  as `self` consumes it; compiler-provided Copy scalars remain reusable. Form
+  lookup itself is type inference and must not consume or replay an expression.
+
+The initial form slice does not include associated types, generic forms,
+generic or conditional `takes`, form default bodies, negative bounds,
+first-class existential form values, selective adoption imports, or enum
+adoptions. Form method compatibility is positional: parameter names may differ,
+but arity and parameter and return types must match after replacing `Self` with
+the target record. The compiler-internal `Container.Item` /
+`Container.Mapped<U>` machinery used by current collection builtins does not
+make `Container` or associated-type syntax source-visible.
+
+The compiler prelude provides this method-only form:
+
+```rust
+pub form Display {
+    fun display: (self: Self) -> String
+}
+```
+
+`String`, `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `()` have
+compiler-provided `Display` adoptions. A user record adopts the form explicitly
+with a `RecordName takes Display` declaration. Its `display`
+method consumes a non-Copy `self` in the same way
+as any other affine call.
+
+`display`, `print`, and `println` are compiler-reserved call targets in this
+initial slice. They cannot be redeclared as source functions or ordinary method
+selectors; `display` inside `RecordName takes Display` is the sole method
+exception. These three polymorphic builtins must be called directly and cannot
+yet be captured as first-class function values.
+
 ## 9. Context Declarations
 
 ### 9.1 Basic Context
@@ -629,15 +738,17 @@ than producing unresolved lock entries.
 pub fun publicFunction: () = { ... }
 pub record PublicType { ... }
 pub enum PublicError { Missing Invalid(String) }
+pub form PublicContract { fun render: (self: Self) -> String }
 pub val release_bias: Int32 = 3
 ```
 
 For the v0.0.1 implementation, exported records are source-level module
 metadata. Post-v0.0.1 exported enums have the same source-module-only meaning.
-Records and enums can be imported and used by other Restrict source modules,
+Records, enums, and forms can be imported and used by other Restrict source modules,
 but they do not emit direct host-visible WebAssembly exports. Importing an enum
 imports its type namespace; callers continue to spell constructors and patterns
-as `EnumName::Variant`. Exported generic functions also remain outside the
+as `EnumName::Variant`. Importing a form makes its canonical contract available
+to `of` bounds and concrete record adoptions. Exported generic functions also remain outside the
 current concrete WebAssembly ABI surface.
 Host-visible exported top-level bindings are limited to scalar literal
 constants with `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()` ABI.
@@ -750,16 +861,19 @@ cleanup of arena and temporal resources.
 
 ### 14.3 Basic Functions
 ```rust
-println: (String) -> ()
-print: (String) -> ()
+println: <T of Display>(T) -> ()
+print: <T of Display>(T) -> ()
+display: <T of Display>(T) -> String
 print_int: (Int32) -> ()
 print_float: (Float64) -> ()
 eprint: (String) -> ()
 eprintln: (String) -> ()
 ```
 
-Generic string conversion such as `toString: (T) -> String` is outside the
-current v0.0.1 compiler-registered standard-library surface.
+`print` and `println` statically select the argument type's `Display` adoption.
+`print_int` and `print_float` remain available as compatibility helpers;
+`eprint` and `eprintln` remain String-only. No runtime type tag or dynamic
+dispatch is used.
 
 ## 15. DEPRECATED AND REMOVED SYNTAX
 
@@ -797,11 +911,30 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 
 fun main: () = {
     val result = (10, 20) add
-    result |> print_int
+    result |> println
 }
 ```
 
-### 16.3 Pattern Matching
+### 16.3 Forms and Display
+```rust
+record Notice {
+    text: String
+}
+
+Notice takes Display {
+    fun display: (self: Notice) -> String = {
+        self.text
+    }
+}
+
+fun main: () -> () = {
+    42 |> print
+    " · " |> print
+    Notice { text: "records too" } |> println
+}
+```
+
+### 16.4 Pattern Matching
 ```rust
 fun describe: (x: Option<Int32>) -> String = {
     x match {
@@ -811,7 +944,7 @@ fun describe: (x: Option<Int32>) -> String = {
 }
 ```
 
-### 16.4 Comprehensive Pattern Matching Examples
+### 16.5 Comprehensive Pattern Matching Examples
 ```rust
 // Advanced Option pattern matching
 fun process_maybe: (data: Option<User>) -> String = {

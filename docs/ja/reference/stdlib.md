@@ -1,6 +1,6 @@
 # 標準ライブラリリファレンス
 
-このページは、v0.0.1 の current standard-library surface を説明します。現在の標準関数は主にコンパイラへ登録された組み込み surface として提供され、`std/*.rl` は読者とテスト向けの参照インデックスです。
+このページは、v0.0.1互換helperとpost-v0.0.1のDisplay追加を含む、現在のstandard-library surfaceを説明します。
 
 ## import について
 
@@ -38,9 +38,14 @@ fun prelude_example: () -> Boolean = {
 
 現在の I/O surface はコンソール出力に限定されています。
 
+`Display`は値を`String`へ変換する標準formです。コンパイラは`String`、
+`Int32`、`Int64`、`Float64`、`Boolean`、`Char`、`()`のadoptionを提供し、
+ユーザーrecordは`takes`で明示的に採用します。
+
 ```text
-println: (String) -> ()
-print: (String) -> ()
+display: <T of Display>(T) -> String
+println: <T of Display>(T) -> ()
+print: <T of Display>(T) -> ()
 print_int: (Int32) -> ()
 print_float: (Float64) -> ()
 eprint: (String) -> ()
@@ -51,11 +56,16 @@ eprintln: (String) -> ()
 fun io_example: () -> () = {
     "Hello" |> print
     "World" |> println
-    42 |> print_int
+    42 |> print
     3.14 |> print_float
     "error" |> eprintln
 }
 ```
+
+`print_int`と`print_float`は互換helperとして残り、`eprint`と`eprintln`は
+String専用です。`display`、`print`、`println` はコンパイラ予約の直接呼び出し先で、
+トップレベル関数や通常/custom form の method selector として宣言できません。
+組み込み自体を first-class 関数値として捕捉することもまだできません。
 
 標準入力、ファイル読み書き、ディレクトリ操作は current standard-library surface には含まれていません。
 
@@ -215,7 +225,9 @@ fun standard_library_flow: () -> Boolean = {
 - 標準入力とファイルシステム
 - 時刻、乱数、ネットワーク、プロセス管理
 - 反復子 trait とカスタム iterator
-- Display、Debug、Hash などの trait 実装
+- Debug、Hash など Display 以外の標準 form
+- associated type、generic form、default method、conditional/generic/enum
+  adoption、dynamic dispatch
 - macro ベースのフォーマット API
 - try-style early return operator
 

@@ -104,8 +104,12 @@ fun main: () -> Float64 = {
 "#,
     );
 
+    let specialization = wat
+        .lines()
+        .find(|line| line.contains("(func $id_local__Float64$sid$"))
+        .expect("generic specialization should carry its injective identity suffix");
     assert!(
-        wat.contains("(func $id_local__Float64 (param $value f64) (result f64)"),
+        specialization.contains("(param $value f64) (result f64)"),
         "generic specialization should use the checked Float64 result:\n{wat}"
     );
     assert_valid_wat(&wat);

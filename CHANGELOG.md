@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add the first source-level form slice: non-generic method-only `form`
+  contracts, concrete non-generic record `takes` declarations, and
+  `<T of A + B>` bounds with static monomorphized dispatch.
+- Add compiler-provided `Display` adoptions for `String`, scalar values, and
+  `()`. Make `print` and `println` Display-polymorphic while retaining
+  `print_int` and `print_float` as compatibility helpers.
 - Add closed, non-generic, non-recursive user-defined enums. Variants carry
   zero or one payload; constructors use qualified `Type::Variant` names in OSV
   order, patterns use the same qualified names, and matches are exhaustive,
@@ -29,6 +35,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Compatibility
 
+- Keep associated form types, generic or conditional `takes`, default methods,
+  enum adoptions, selective adoption imports, and dynamic dispatch outside the
+  initial source-level form slice.
 - Keep `pub enum` source-module-only. User enums have no host-visible
   WebAssembly ABI; generic and recursive enums and `?` propagation remain
   outside the current slice.

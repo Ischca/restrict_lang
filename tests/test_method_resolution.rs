@@ -105,6 +105,59 @@ fun main: () -> Int32 = {
 }
 
 #[test]
+fn parenthesized_impl_method_pipe_dispatch_is_not_current_release_surface() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun total: (self: Score) -> Int32 = {
+        self.value
+    }
+}
+
+fun main: () -> Int32 = {
+    val score = Score { value: 42 };
+    score |> (total)
+}
+"#;
+
+    let err = type_check(input).expect_err("parentheses must not enable impl method pipes");
+    assert!(
+        err.contains("total"),
+        "error should reject parenthesized impl method pipe dispatch, got: {}",
+        err
+    );
+}
+
+#[test]
+fn global_function_pipe_is_not_hijacked_by_same_named_impl_method() {
+    let input = r#"
+record Score {
+    value: Int32
+}
+
+impl Score {
+    fun total: (self: Score) -> Int32 = {
+        self.value
+    }
+}
+
+fun total: (score: Score) -> Boolean = {
+    true
+}
+
+fun main: () -> Boolean = {
+    val score = Score { value: 42 };
+    score |> total
+}
+"#;
+
+    type_check(input).expect("pipe syntax should resolve the same-named global function");
+}
+
+#[test]
 fn impl_method_receiver_must_be_self_with_target_record_type() {
     let input = r#"
 record Score {

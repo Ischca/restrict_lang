@@ -964,44 +964,75 @@ fun main: () -> Int32 = {
 }
 
 #[test]
-fn cli_form_takes_gap_reports_unsupported_container_boundary_cleanly() {
+fn cli_checks_method_only_forms_and_concrete_adoptions() {
+    let (source_path, output) = run_check_temp_source(
+        "forms_current",
+        r#"form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = {
+        self.text
+    }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+
+fun main: () -> String = {
+    Badge { text: "ready" } |> read_label
+}
+"#,
+    );
+
+    assert!(output.status.success(), "current form check should pass");
+    assert_check_success_streams("current form check", &output, &source_path);
+    let _ = fs::remove_file(source_path);
+}
+
+#[test]
+fn cli_deferred_form_features_report_clean_diagnostics() {
     let cases = [
         (
-            "form_gap",
-            r#"form Container<T> {
-    Item
+            "generic_form_gap",
+            r#"form Labelled<T> {
+    fun label: (self: Self) -> String
 }
 
 fun main: () -> Int32 = {
     0
 }
 "#,
+            "generic forms are not supported yet",
         ),
         (
-            "takes_gap",
-            r#"takes List<T> Container {
-    Item = T
+            "associated_type_gap",
+            r#"form Container {
+    type Item
 }
 
 fun main: () -> Int32 = {
     0
 }
 "#,
+            "source-level associated form types are not supported yet",
         ),
     ];
 
-    for (stem, source) in cases {
+    for (stem, source, expected) in cases {
         let (source_path, output) = run_check_temp_source(stem, source);
 
         assert!(!output.status.success(), "{stem} check should fail");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("source-level `form` / `takes` syntax is unsupported in v0.0.1"),
-            "{stem} diagnostic should explain the v0.0.1 form/takes boundary, got: {stderr}"
-        );
-        assert!(
-            stderr.contains("compiler-internal Container behavior"),
-            "{stem} diagnostic should identify the Container-only internal behavior, got: {stderr}"
+            stderr.contains(expected),
+            "{stem} diagnostic should explain the deferred form feature, got: {stderr}"
         );
         assert!(
             !stderr.contains("unexpected input near"),

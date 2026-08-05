@@ -16,6 +16,7 @@ const CURRENT_CORE_DOCS: &[&str] = &[
     "docs/public/en/guide/types.md",
     "docs/public/en/guide/type-inference.md",
     "docs/public/en/guide/functions.md",
+    "docs/public/en/guide/forms.md",
     "docs/public/en/guide/records.md",
     "docs/public/en/guide/variables.md",
 ];
@@ -29,6 +30,7 @@ const CURRENT_JAPANESE_DOCS: &[&str] = &[
     "docs/public/ja/guide/variables.md",
     "docs/public/ja/guide/types.md",
     "docs/public/ja/guide/functions.md",
+    "docs/public/ja/guide/forms.md",
     "docs/public/ja/guide/patterns.md",
     "docs/public/ja/guide/affine-types.md",
     "docs/public/ja/guide/records.md",
@@ -236,17 +238,26 @@ fn public_docs_do_not_advertise_exported_string_globals() {
 fn public_impl_docs_match_current_grouped_osv_surface() {
     let spec = read_fixture("LANGUAGE_SPECIFICATION.md");
     let readme = read_fixture("README.md");
+    let impl_section = spec
+        .split_once("### 8.3 Implementation Blocks")
+        .and_then(|(_, after)| {
+            after
+                .split_once("### 8.4 Forms, Adoptions")
+                .map(|(body, _)| body)
+        })
+        .expect("LANGUAGE_SPECIFICATION.md should contain the impl section before forms");
 
     assert!(
-        spec.contains("(receiver) method") && spec.contains("(receiver, args...) method"),
+        impl_section.contains("(receiver) method")
+            && impl_section.contains("(receiver, args...) method"),
         "LANGUAGE_SPECIFICATION.md should document impl dispatch as grouped OSV calls"
     );
     assert!(
-        spec.contains("must be `self: Target`"),
+        impl_section.contains("must be `self: Target`"),
         "LANGUAGE_SPECIFICATION.md should make the impl receiver contract normative"
     );
     assert!(
-        !spec.contains("receiver |> method"),
+        !impl_section.contains("receiver |> method"),
         "LANGUAGE_SPECIFICATION.md should not advertise pipe dispatch for impl methods"
     );
     assert!(
@@ -316,7 +327,7 @@ fn ebnf_documents_closed_user_enums_as_reachable_qualified_syntax() {
 }
 
 #[test]
-fn type_inference_docs_distinguish_current_enums_from_future_features() {
+fn type_inference_docs_distinguish_current_enums_and_forms_from_future_features() {
     let markdown = read_fixture("docs/public/en/guide/type-inference.md");
     let normalized = normalize_markdown_whitespace(&markdown);
 
@@ -327,11 +338,15 @@ fn type_inference_docs_distinguish_current_enums_from_future_features() {
         "no host-visible enum ABI",
         "postfix `?` propagation remains future work",
         "Temporal Affine Types (TAT) remain outside the default v0.0.1 gate",
-        "User-defined `form`, `takes`, `of`, and associated-type declarations are future design work, not current source syntax",
+        "current post-v0.0.1 compiler also supports method-only forms",
+        "concrete record `takes` declarations",
+        "generic `of` bounds",
+        "Form-bounded calls are resolved statically and monomorphized",
+        "associated types, generic forms or adoptions, conditional adoptions, default methods, enum adoptions, and dynamic dispatch remain future design work",
     ] {
         assert!(
             normalized.contains(required_claim),
-            "docs/public/en/guide/type-inference.md should document the current enum and future-feature boundary with: {required_claim}"
+            "docs/public/en/guide/type-inference.md should document the current enum/form and future-feature boundary with: {required_claim}"
         );
     }
 }

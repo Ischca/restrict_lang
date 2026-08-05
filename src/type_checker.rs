@@ -148,6 +148,36 @@ pub enum TypeError {
 
     /// Associated type projection remains unresolved after type inference
     UnresolvedProjection(String),
+
+    /// A source-level form name was not declared.
+    UndefinedForm(String),
+
+    /// A source-level form was declared more than once, including prelude forms.
+    DuplicateForm(String),
+
+    /// A type adopted the same form more than once.
+    DuplicateAdoption {
+        target: String,
+        form: String,
+    },
+
+    /// A required form method was omitted by an adoption.
+    MissingFormMethod {
+        form: String,
+        method: String,
+    },
+
+    /// An adoption provided a method that is not part of its form.
+    UnexpectedFormMethod {
+        form: String,
+        method: String,
+    },
+
+    /// A form method selector is available through more than one bound.
+    AmbiguousFormMethod {
+        method: String,
+        forms: Vec<String>,
+    },
 }
 
 impl fmt::Display for TypeError {
@@ -289,6 +319,22 @@ impl fmt::Display for TypeError {
                     write!(f, "{base}")
                 }
             }
+            TypeError::UndefinedForm(name) => write!(f, "Form {name} is not defined"),
+            TypeError::DuplicateForm(name) => write!(f, "Form {name} is already defined"),
+            TypeError::DuplicateAdoption { target, form } => {
+                write!(f, "Type {target} already takes form {form}")
+            }
+            TypeError::MissingFormMethod { form, method } => {
+                write!(f, "Missing method {method} required by form {form}")
+            }
+            TypeError::UnexpectedFormMethod { form, method } => {
+                write!(f, "Method {method} is not declared by form {form}")
+            }
+            TypeError::AmbiguousFormMethod { method, forms } => write!(
+                f,
+                "Form method {method} is ambiguous across {}",
+                forms.join(", ")
+            ),
         }
     }
 }
@@ -605,6 +651,8 @@ struct Variable {
     used: bool, // For affine type checking
     pending_inference_uses: usize,
     deferred: Option<DeferredBinding>,
+    deferred_alias_group_id: Option<u64>,
+    was_deferred_callable: bool,
     flexible_collection_literal: bool,
 }
 
@@ -612,7 +660,22 @@ struct Variable {
 enum DeferredBinding {
     Lambda(LambdaExpr),
     BranchCallable(DeferredBranchCallable),
+    GenericFunction {
+        name: String,
+        definition: FunctionDef,
+    },
 }
+
+#[derive(Debug, Clone)]
+struct DeferredGenericBranchAliasGroup {
+    group_id: u64,
+    placeholder: TypedType,
+    function_name: String,
+    definition: FunctionDef,
+    members: Vec<(usize, String)>,
+}
+
+type DeferredGenericBranchAliasResolution = (Vec<(usize, String)>, TypedType);
 
 #[derive(Debug, Clone)]
 struct DeferredBranchCallable {
@@ -631,7 +694,7 @@ struct DeferredLambdaCandidate {
     captures: Vec<(String, TypedType)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RecordDef {
     fields: HashMap<String, TypedType>,
     field_order: Vec<String>,
@@ -664,6 +727,11 @@ struct FunctionDef {
     temporal_constraints: Vec<TemporalConstraint>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct FormDef {
+    methods: HashMap<String, FunctionDef>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckedFunctionSignature {
     pub params: Vec<(String, TypedType)>,
@@ -678,6 +746,7 @@ struct VariantPayloadExpectedContext<'a> {
     substitution: &'a mut ConstraintSubstitution,
 }
 
+#[derive(Clone)]
 pub struct TypeChecker {
     // Variable environment (stack of scopes)
     var_env: Vec<HashMap<String, Variable>>,
@@ -685,8 +754,16 @@ pub struct TypeChecker {
     type_param_env: Vec<HashSet<String>>,
     // Type bounds environment: type_param -> required_traits
     type_bounds_env: Vec<HashMap<String, Vec<String>>>,
+    // Form bounds are behavioral evidence, not legacy trait evidence. Keeping
+    // them separate prevents a source form named `Copy` from granting affine
+    // Copy semantics to `<T of Copy>`.
+    form_bounds_env: Vec<HashMap<String, Vec<String>>>,
     // Trait implementations: type_name -> trait_names
     trait_impls: HashMap<String, HashSet<String>>,
+    // Source-visible forms, including compiler-provided prelude forms.
+    forms: HashMap<String, FormDef>,
+    // Closed-world source form adoptions: target type -> adopted form names.
+    form_adoptions: HashMap<String, HashSet<String>>,
     // Record definitions
     records: HashMap<String, RecordDef>,
     // Closed user-defined enum definitions
@@ -711,8 +788,17 @@ pub struct TypeChecker {
     async_runtime_stack: Vec<String>, // Stack of async lifetime names
     // Shared A-layer inference variable generator.
     type_var_generator: TypeVarGenerator,
+    // Stable provenance for deferred callable moves. Type equality cannot
+    // identify aliases after inference unifies independent placeholders.
+    next_deferred_alias_group_id: u64,
+    // Prevent recursive finalization while a stored callable is being
+    // rechecked against the concrete type inferred for its alias group.
+    finalizing_deferred_alias_group_ids: HashSet<u64>,
     // Built-in form/adoption environment used by A-layer constraint solving.
     form_environment: FormEnvironment,
+    // Record shapes are registered before source `takes` declarations. Bound
+    // use validation therefore starts only once all adoptions are known.
+    form_bound_validation_ready: bool,
 }
 
 impl Default for TypeChecker {
@@ -722,12 +808,42 @@ impl Default for TypeChecker {
 }
 
 impl TypeChecker {
+    fn is_display_intrinsic_name(name: &str) -> bool {
+        matches!(name, "display" | "print" | "println")
+    }
+
+    fn validate_unique_parameter_names(owner: &str, params: &[Param]) -> Result<(), TypeError> {
+        let mut names = HashSet::new();
+        for param in params {
+            if !names.insert(&param.name) {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "duplicate parameter '{}' in {}",
+                    param.name, owner
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn display_type_param() -> TypeParam {
+        TypeParam {
+            name: "T".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec!["Display".to_string()],
+            is_temporal: false,
+        }
+    }
+
     pub fn new() -> Self {
         let mut checker = Self {
             var_env: vec![HashMap::new()],
             type_param_env: vec![HashSet::new()],
             type_bounds_env: vec![HashMap::new()],
+            form_bounds_env: vec![HashMap::new()],
             trait_impls: HashMap::new(),
+            forms: HashMap::new(),
+            form_adoptions: HashMap::new(),
             records: HashMap::new(),
             enums: HashMap::new(),
             functions: HashMap::new(),
@@ -740,7 +856,10 @@ impl TypeChecker {
             temporal_context: TemporalContext::default(),
             async_runtime_stack: Vec::new(),
             type_var_generator: TypeVarGenerator::new(),
+            next_deferred_alias_group_id: 0,
+            finalizing_deferred_alias_group_ids: HashSet::new(),
             form_environment: FormEnvironment::new(),
+            form_bound_validation_ready: false,
         };
 
         // Register built-in functions and traits
@@ -989,6 +1108,7 @@ impl TypeChecker {
                     name: "T".to_string(),
                     bounds: vec![],
                     derivation_bound: None,
+                    of_forms: vec![],
                     is_temporal: false,
                 }],
                 temporal_constraints: vec![],
@@ -1017,6 +1137,7 @@ impl TypeChecker {
                     name: "T".to_string(),
                     bounds: vec![],
                     derivation_bound: None,
+                    of_forms: vec![],
                     is_temporal: false,
                 }],
                 temporal_constraints: vec![],
@@ -1039,6 +1160,7 @@ impl TypeChecker {
                     name: "T".to_string(),
                     bounds: vec![],
                     derivation_bound: None,
+                    of_forms: vec![],
                     is_temporal: false,
                 }],
                 temporal_constraints: vec![],
@@ -1047,13 +1169,14 @@ impl TypeChecker {
     }
 
     fn register_builtins(&mut self) {
-        // println function
+        // Display-polymorphic println function. Code generation resolves the
+        // concrete adoption statically after generic specialization.
         self.functions.insert(
             "println".to_string(),
             FunctionDef {
-                params: vec![("s".to_string(), TypedType::String)],
+                params: vec![("value".to_string(), TypedType::TypeParam("T".to_string()))],
                 return_type: TypedType::Unit,
-                type_params: vec![],
+                type_params: vec![Self::display_type_param()],
                 temporal_constraints: vec![],
             },
         );
@@ -1062,6 +1185,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
 
@@ -1142,6 +1266,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         self.functions.insert(
@@ -1278,6 +1403,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         // list_is_empty<T>
@@ -1412,6 +1538,7 @@ impl TypeChecker {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
 
@@ -1462,13 +1589,24 @@ impl TypeChecker {
     }
 
     fn register_std_io(&mut self) {
-        // print function
+        // Display-polymorphic print function.
         self.functions.insert(
             "print".to_string(),
             FunctionDef {
-                params: vec![("s".to_string(), TypedType::String)],
+                params: vec![("value".to_string(), TypedType::TypeParam("T".to_string()))],
                 return_type: TypedType::Unit,
-                type_params: vec![],
+                type_params: vec![Self::display_type_param()],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // Convert a Display value to its source-level String representation.
+        self.functions.insert(
+            "display".to_string(),
+            FunctionDef {
+                params: vec![("value".to_string(), TypedType::TypeParam("T".to_string()))],
+                return_type: TypedType::String,
+                type_params: vec![Self::display_type_param()],
                 temporal_constraints: vec![],
             },
         );
@@ -1519,30 +1657,57 @@ impl TypeChecker {
     }
 
     fn register_std_forms(&mut self) {
+        let display_method = FunctionDef {
+            params: vec![("self".to_string(), TypedType::TypeParam("Self".to_string()))],
+            return_type: TypedType::String,
+            type_params: vec![],
+            temporal_constraints: vec![],
+        };
+        self.forms.insert(
+            "Display".to_string(),
+            FormDef {
+                methods: HashMap::from([("display".to_string(), display_method)]),
+            },
+        );
+        self.forms
+            .insert("Container".to_string(), FormDef::default());
+
         self.form_environment
             .register_builtin_container_adoptions()
             .expect("standard Container form adoptions should be valid");
+        for type_name in [
+            "String", "Int32", "Int64", "Float64", "Boolean", "Char", "Unit",
+        ] {
+            self.form_environment
+                .register_direct_adoption(type_name, "Display")
+                .expect("standard Display adoptions should be unique");
+            self.form_adoptions
+                .entry(type_name.to_string())
+                .or_default()
+                .insert("Display".to_string());
+        }
     }
 
     fn register_std_prelude(&mut self) {
         let c_param = TypeParam {
             name: "C".to_string(),
-            bounds: vec![TypeBound {
-                trait_name: "Container".to_string(),
-            }],
+            bounds: vec![],
             derivation_bound: None,
+            of_forms: vec!["Container".to_string()],
             is_temporal: false,
         };
         let t_param = TypeParam {
             name: "T".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
         let u_param = TypeParam {
             name: "U".to_string(),
             bounds: vec![],
             derivation_bound: None,
+            of_forms: vec![],
             is_temporal: false,
         };
 
@@ -1730,17 +1895,18 @@ impl TypeChecker {
             )));
         }
 
-        if let Some(name) = scope.iter().find_map(|(name, var)| {
-            if var.deferred.is_some() {
-                Some(name)
-            } else {
-                None
-            }
-        }) {
-            return Err(TypeError::CannotInferType(format!(
-                "binding '{}' has unresolved deferred type",
-                name
-            )));
+        let mut concrete_deferred = scope
+            .iter()
+            .filter_map(|(name, var)| var.deferred.as_ref().map(|deferred| (name, var, deferred)))
+            .collect::<Vec<_>>();
+        concrete_deferred.sort_by_key(|(name, _, _)| *name);
+        for (name, var, deferred) in concrete_deferred {
+            let group_id = var.deferred_alias_group_id.ok_or_else(|| {
+                TypeError::CannotInferType(format!(
+                    "deferred callable binding '{name}' is missing alias provenance"
+                ))
+            })?;
+            self.validate_concrete_deferred_callable(&self.var_env, group_id, deferred, &var.ty)?;
         }
 
         Ok(())
@@ -1761,11 +1927,178 @@ impl TypeChecker {
         result.map(|value| (value, branch_env))
     }
 
+    fn resolve_deferred_generic_branch_alias_groups(
+        &mut self,
+        base_env: &[HashMap<String, Variable>],
+        branch_envs: &[Vec<HashMap<String, Variable>>],
+    ) -> Result<Vec<DeferredGenericBranchAliasResolution>, TypeError> {
+        let mut groups = Vec::<DeferredGenericBranchAliasGroup>::new();
+
+        for scope in base_env {
+            for (binding_name, var) in scope {
+                let Some(DeferredBinding::GenericFunction { name, definition }) = &var.deferred
+                else {
+                    continue;
+                };
+                let group_id = var.deferred_alias_group_id.ok_or_else(|| {
+                    TypeError::CannotInferType(format!(
+                        "deferred generic binding '{binding_name}' is missing alias provenance"
+                    ))
+                })?;
+
+                if let Some(group) = groups.iter().find(|group| group.group_id == group_id) {
+                    if group.function_name != *name {
+                        return Err(TypeError::CannotInferType(
+                            "generic alias group mixes distinct function definitions".to_string(),
+                        ));
+                    }
+                    continue;
+                }
+
+                let mut members = base_env
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(member_scope_idx, member_scope)| {
+                        member_scope
+                            .iter()
+                            .filter(move |(_, member)| {
+                                member.deferred_alias_group_id == Some(group_id)
+                            })
+                            .map(move |(member_name, _)| (member_scope_idx, member_name.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                members.sort();
+
+                for (member_scope_idx, member_name) in &members {
+                    let member = base_env
+                        .get(*member_scope_idx)
+                        .and_then(|member_scope| member_scope.get(member_name))
+                        .ok_or_else(|| TypeError::UndefinedVariable(member_name.clone()))?;
+                    if member.ty != var.ty {
+                        return Err(TypeError::CannotInferType(format!(
+                            "generic alias group member '{member_name}' has inconsistent type state"
+                        )));
+                    }
+                    if let Some(DeferredBinding::GenericFunction {
+                        name: member_origin,
+                        ..
+                    }) = &member.deferred
+                    {
+                        if member_origin != name {
+                            return Err(TypeError::CannotInferType(
+                                "generic alias group mixes distinct function definitions"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                groups.push(DeferredGenericBranchAliasGroup {
+                    group_id,
+                    placeholder: var.ty.clone(),
+                    function_name: name.clone(),
+                    definition: definition.clone(),
+                    members,
+                });
+            }
+        }
+        groups.sort_by_key(|group| group.group_id);
+
+        let mut resolutions = Vec::new();
+        for group in groups {
+            let mut anchors = Vec::new();
+
+            for branch_env in branch_envs {
+                let mut branch_anchor: Option<TypedType> = None;
+                for (scope_idx, member_name) in &group.members {
+                    let branch_var = branch_env
+                        .get(*scope_idx)
+                        .and_then(|scope| scope.get(member_name))
+                        .ok_or_else(|| {
+                            TypeError::CannotInferType(format!(
+                                "generic alias branch lost binding '{member_name}'"
+                            ))
+                        })?;
+                    if Self::contains_inference_internal_type(&branch_var.ty) {
+                        if branch_var.deferred_alias_group_id == Some(group.group_id)
+                            && branch_var.ty == group.placeholder
+                        {
+                            continue;
+                        }
+                        return Err(TypeError::CannotInferType(format!(
+                            "generic alias '{member_name}' was only partially resolved in one branch"
+                        )));
+                    }
+                    if branch_var.deferred_alias_group_id.is_some()
+                        && branch_var.deferred_alias_group_id != Some(group.group_id)
+                    {
+                        return Err(TypeError::CannotInferType(format!(
+                            "generic alias '{member_name}' changed provenance in one branch"
+                        )));
+                    }
+
+                    if let Some(previous) = &branch_anchor {
+                        let mut substitution = ConstraintSubstitution::new();
+                        unify_constraint(previous, &branch_var.ty, &mut substitution)?;
+                        branch_anchor = Some(substitution.apply(previous)?);
+                    } else {
+                        branch_anchor = Some(branch_var.ty.clone());
+                    }
+                }
+
+                if let Some(anchor) = branch_anchor {
+                    let validated = self.instantiate_generic_function_value_from_expected(
+                        &group.function_name,
+                        &group.definition,
+                        Some(&anchor),
+                    )?;
+                    let mut validation_substitution = ConstraintSubstitution::new();
+                    unify_constraint(&anchor, &validated, &mut validation_substitution)?;
+                    anchors.push(validation_substitution.apply(&anchor)?);
+                }
+            }
+
+            let Some(mut merged_anchor) = anchors.first().cloned() else {
+                continue;
+            };
+            for anchor in anchors.iter().skip(1) {
+                let mut substitution = ConstraintSubstitution::new();
+                unify_constraint(&merged_anchor, anchor, &mut substitution)?;
+                merged_anchor = substitution.apply(&merged_anchor)?;
+            }
+
+            resolutions.push((group.members, merged_anchor));
+        }
+
+        Ok(resolutions)
+    }
+
+    fn validate_concrete_deferred_callable(
+        &self,
+        base_env: &[HashMap<String, Variable>],
+        group_id: u64,
+        deferred: &DeferredBinding,
+        merged_ty: &TypedType,
+    ) -> Result<(), TypeError> {
+        let mut probe = self.clone();
+        probe.var_env = base_env.to_vec();
+        probe.finalizing_deferred_alias_group_ids.insert(group_id);
+        let mut substitution = ConstraintSubstitution::new();
+        probe.check_deferred_callable_payload_against_expected(
+            deferred,
+            merged_ty,
+            &mut substitution,
+        )?;
+        Ok(())
+    }
+
     fn merge_branch_var_usage(
         &mut self,
         base_env: Vec<HashMap<String, Variable>>,
         branch_envs: &[Vec<HashMap<String, Variable>>],
-    ) {
+    ) -> Result<(), TypeError> {
+        let generic_alias_resolutions =
+            self.resolve_deferred_generic_branch_alias_groups(&base_env, branch_envs)?;
         let mut updates = Vec::new();
 
         for (scope_idx, scope) in base_env.iter().enumerate() {
@@ -1790,8 +2123,20 @@ impl TypeChecker {
                     pending_inference_uses = pending_inference_uses.max(max_pending_inference_uses);
                 }
 
-                let mut merged_ty = var.ty.clone();
-                if Self::contains_inference_internal_type(&var.ty) {
+                let generic_alias_resolution = generic_alias_resolutions
+                    .iter()
+                    .find(|(members, _)| {
+                        members.iter().any(|(member_scope_idx, member_name)| {
+                            *member_scope_idx == scope_idx && member_name == name
+                        })
+                    })
+                    .map(|(_, resolved)| resolved.clone());
+                let mut merged_ty = generic_alias_resolution
+                    .clone()
+                    .unwrap_or_else(|| var.ty.clone());
+                if generic_alias_resolution.is_none()
+                    && Self::contains_inference_internal_type(&var.ty)
+                {
                     let branch_types: Vec<TypedType> = branch_vars
                         .iter()
                         .map(|branch_var| branch_var.ty.clone())
@@ -1801,31 +2146,73 @@ impl TypeChecker {
                         Self::merge_inference_branch_type(&var.ty, &branch_types)
                     {
                         merged_ty = resolved;
-
-                        if !Self::contains_inference_internal_type(&merged_ty) {
-                            if var.mutable || self.is_copyable(&merged_ty) {
-                                used = false;
-                                pending_inference_uses = 0;
-                            } else if used || pending_inference_uses > 0 {
-                                used = true;
-                                pending_inference_uses = 0;
-                            }
-                        }
                     }
                 }
 
+                if Self::contains_inference_internal_type(&var.ty)
+                    && !Self::contains_inference_internal_type(&merged_ty)
+                {
+                    if var.mutable || self.is_copyable(&merged_ty) {
+                        used = false;
+                        pending_inference_uses = 0;
+                    } else {
+                        for branch_var in &branch_vars {
+                            if branch_var.pending_inference_uses > 1
+                                || (branch_var.used && branch_var.pending_inference_uses > 0)
+                            {
+                                return Err(TypeError::AffineViolation(name.clone()));
+                            }
+                        }
+                        if used || pending_inference_uses > 0 {
+                            used = true;
+                        }
+                        pending_inference_uses = 0;
+                    }
+                }
+
+                let clear_deferred = !Self::contains_inference_internal_type(&merged_ty)
+                    && match &var.deferred {
+                        Some(DeferredBinding::GenericFunction { .. }) => {
+                            generic_alias_resolution.is_some()
+                        }
+                        Some(deferred) => {
+                            let group_id = var.deferred_alias_group_id.ok_or_else(|| {
+                                TypeError::CannotInferType(format!(
+                                    "deferred callable binding '{name}' is missing alias provenance"
+                                ))
+                            })?;
+                            self.validate_concrete_deferred_callable(
+                                &base_env, group_id, deferred, &merged_ty,
+                            )?;
+                            true
+                        }
+                        None => false,
+                    };
+                let clear_alias_group = !Self::contains_inference_internal_type(&merged_ty)
+                    && var.deferred_alias_group_id.is_some();
                 updates.push((
                     scope_idx,
                     name.clone(),
                     merged_ty,
                     used,
                     pending_inference_uses,
+                    clear_deferred,
+                    clear_alias_group,
                 ));
             }
         }
 
         self.var_env = base_env;
-        for (scope_idx, name, merged_ty, used, pending_inference_uses) in updates {
+        for (
+            scope_idx,
+            name,
+            merged_ty,
+            used,
+            pending_inference_uses,
+            clear_deferred,
+            clear_alias_group,
+        ) in updates
+        {
             if let Some(var) = self
                 .var_env
                 .get_mut(scope_idx)
@@ -1834,8 +2221,16 @@ impl TypeChecker {
                 var.ty = merged_ty;
                 var.used = used;
                 var.pending_inference_uses = pending_inference_uses;
+                if clear_deferred {
+                    var.deferred = None;
+                }
+                if clear_alias_group {
+                    var.deferred_alias_group_id = None;
+                }
             }
         }
+
+        Ok(())
     }
 
     fn merge_inference_branch_type(
@@ -1874,19 +2269,26 @@ impl TypeChecker {
     fn push_type_param_scope(&mut self, type_params: &[TypeParam]) {
         let mut type_param_scope = HashSet::new();
         let mut type_bounds_scope = HashMap::new();
+        let mut form_bounds_scope = HashMap::new();
 
         for param in type_params {
             type_param_scope.insert(param.name.clone());
 
-            // Collect trait bounds for this type parameter
-            let bounds: Vec<String> = param
+            // Keep legacy trait bounds separate from source form evidence.
+            // A form may deliberately share a name with a trait (notably
+            // `Copy`), but `T of Copy` must never make T affine-Copy.
+            let bounds = param
                 .bounds
                 .iter()
                 .map(|bound| bound.trait_name.clone())
-                .collect();
+                .collect::<Vec<_>>();
+            let form_bounds = param.of_forms.clone();
 
             if !bounds.is_empty() {
                 type_bounds_scope.insert(param.name.clone(), bounds);
+            }
+            if !form_bounds.is_empty() {
+                form_bounds_scope.insert(param.name.clone(), form_bounds);
             }
 
             // Store derivation bound for later checking
@@ -1899,11 +2301,13 @@ impl TypeChecker {
 
         self.type_param_env.push(type_param_scope);
         self.type_bounds_env.push(type_bounds_scope);
+        self.form_bounds_env.push(form_bounds_scope);
     }
 
     fn pop_type_param_scope(&mut self) {
         self.type_param_env.pop();
         self.type_bounds_env.pop();
+        self.form_bounds_env.pop();
     }
 
     fn is_type_param(&self, name: &str) -> bool {
@@ -2010,6 +2414,15 @@ impl TypeChecker {
         Vec::new()
     }
 
+    fn get_form_bounds(&self, type_param: &str) -> Vec<String> {
+        for scope in self.form_bounds_env.iter().rev() {
+            if let Some(bounds) = scope.get(type_param) {
+                return bounds.clone();
+            }
+        }
+        Vec::new()
+    }
+
     fn type_implements_trait(&self, ty: &TypedType, trait_name: &str) -> bool {
         match ty {
             TypedType::Int32 => self
@@ -2045,6 +2458,10 @@ impl TypeChecker {
                 self.get_type_bounds(param_name)
                     .contains(&trait_name.to_string())
             }
+            TypedType::Record { name, .. } | TypedType::Enum { name } => self
+                .trait_impls
+                .get(name)
+                .is_some_and(|traits| traits.contains(trait_name)),
             _ => false, // Other types don't implement traits for now
         }
     }
@@ -2159,6 +2576,48 @@ impl TypeChecker {
         Ok(())
     }
 
+    fn fresh_deferred_alias_group_id(&mut self) -> u64 {
+        let id = self.next_deferred_alias_group_id;
+        self.next_deferred_alias_group_id += 1;
+        id
+    }
+
+    fn peek_deferred_alias_group_id(&self, name: &str) -> Option<u64> {
+        self.var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .and_then(|var| var.deferred_alias_group_id)
+    }
+
+    fn peek_was_deferred_callable(&self, name: &str) -> bool {
+        self.var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .is_some_and(|var| var.was_deferred_callable)
+    }
+
+    fn mark_var_as_deferred_origin(&mut self, name: &str) -> Result<(), TypeError> {
+        for scope in self.var_env.iter_mut().rev() {
+            if let Some(var) = scope.get_mut(name) {
+                var.was_deferred_callable = true;
+                return Ok(());
+            }
+        }
+        Err(TypeError::UndefinedVariable(name.to_string()))
+    }
+
+    fn transfer_deferred_callable(&mut self, name: &str) -> Result<(), TypeError> {
+        for scope in self.var_env.iter_mut().rev() {
+            if let Some(var) = scope.get_mut(name) {
+                var.deferred = None;
+                return Ok(());
+            }
+        }
+        Err(TypeError::UndefinedVariable(name.to_string()))
+    }
+
     fn contains_inference_internal_type(ty: &TypedType) -> bool {
         match ty {
             TypedType::InferVar(_) | TypedType::Projection { .. } => true,
@@ -2257,7 +2716,7 @@ impl TypeChecker {
                     if var.mutable || self.is_copyable(&resolved) {
                         pending_inference_uses = 0;
                     } else if var.pending_inference_uses > 0 {
-                        if var.pending_inference_uses > 1 {
+                        if var.pending_inference_uses > 1 || var.used {
                             return Err(TypeError::AffineViolation(name.clone()));
                         }
                         mark_used = true;
@@ -2275,6 +2734,97 @@ impl TypeChecker {
             }
         }
 
+        let mut prospective_env = self.var_env.clone();
+        for (scope_idx, name, resolved, mark_used, pending_inference_uses) in &updates {
+            let var = prospective_env
+                .get_mut(*scope_idx)
+                .and_then(|scope| scope.get_mut(name))
+                .ok_or_else(|| TypeError::UndefinedVariable(name.clone()))?;
+            var.ty = resolved.clone();
+            var.pending_inference_uses = *pending_inference_uses;
+            if *mark_used {
+                var.used = true;
+            }
+        }
+
+        let mut alias_groups = HashMap::<u64, Vec<(usize, String)>>::new();
+        for (scope_idx, scope) in prospective_env.iter().enumerate() {
+            for (name, var) in scope {
+                if let Some(group_id) = var.deferred_alias_group_id {
+                    alias_groups
+                        .entry(group_id)
+                        .or_default()
+                        .push((scope_idx, name.clone()));
+                }
+            }
+        }
+
+        let mut group_ids = alias_groups.keys().copied().collect::<Vec<_>>();
+        group_ids.sort_unstable();
+        let mut finalized_group_ids = HashSet::new();
+        for group_id in group_ids {
+            if self.finalizing_deferred_alias_group_ids.contains(&group_id) {
+                continue;
+            }
+
+            let members = alias_groups.get(&group_id).ok_or_else(|| {
+                TypeError::CannotInferType(
+                    "deferred callable alias group disappeared during substitution".to_string(),
+                )
+            })?;
+            let (_, first_name) = members.first().ok_or_else(|| {
+                TypeError::CannotInferType(
+                    "deferred callable alias group has no live members".to_string(),
+                )
+            })?;
+            let anchor_ty = prospective_env
+                .get(members[0].0)
+                .and_then(|scope| scope.get(first_name))
+                .map(|var| var.ty.clone())
+                .ok_or_else(|| TypeError::UndefinedVariable(first_name.clone()))?;
+
+            for (scope_idx, member_name) in members.iter().skip(1) {
+                let member_ty = prospective_env
+                    .get(*scope_idx)
+                    .and_then(|scope| scope.get(member_name))
+                    .map(|var| &var.ty)
+                    .ok_or_else(|| TypeError::UndefinedVariable(member_name.clone()))?;
+                if member_ty != &anchor_ty {
+                    return Err(TypeError::CannotInferType(format!(
+                        "deferred callable alias group member '{member_name}' has inconsistent type state"
+                    )));
+                }
+            }
+
+            if Self::contains_inference_internal_type(&anchor_ty) {
+                continue;
+            }
+
+            let owners = members
+                .iter()
+                .filter_map(|(scope_idx, member_name)| {
+                    let var = prospective_env.get(*scope_idx)?.get(member_name)?;
+                    var.deferred
+                        .as_ref()
+                        .map(|deferred| (member_name.clone(), deferred.clone()))
+                })
+                .collect::<Vec<_>>();
+            let [(_, deferred)] = owners.as_slice() else {
+                return Err(TypeError::CannotInferType(
+                    "concrete deferred callable alias group must have exactly one owner"
+                        .to_string(),
+                ));
+            };
+
+            self.validate_concrete_deferred_callable(
+                &prospective_env,
+                group_id,
+                deferred,
+                &anchor_ty,
+            )?;
+            finalized_group_ids.insert(group_id);
+        }
+
         for (scope_idx, name, resolved, mark_used, pending_inference_uses) in updates {
             if let Some(var) = self
                 .var_env
@@ -2285,6 +2835,20 @@ impl TypeChecker {
                 var.pending_inference_uses = pending_inference_uses;
                 if mark_used {
                     var.used = true;
+                }
+            }
+        }
+
+        if !finalized_group_ids.is_empty() {
+            for scope in &mut self.var_env {
+                for var in scope.values_mut() {
+                    if var
+                        .deferred_alias_group_id
+                        .is_some_and(|group_id| finalized_group_ids.contains(&group_id))
+                    {
+                        var.deferred = None;
+                        var.deferred_alias_group_id = None;
+                    }
                 }
             }
         }
@@ -2304,17 +2868,76 @@ impl TypeChecker {
         false
     }
 
-    fn update_var_type_and_clear_deferred(&mut self, name: &str, ty: TypedType) -> bool {
-        for scope in self.var_env.iter_mut().rev() {
-            if let Some(var) = scope.get_mut(name) {
-                var.ty = ty;
-                var.deferred = None;
-                var.flexible_collection_literal = false;
-                return true;
+    fn resolve_deferred_callable_alias_group(
+        &mut self,
+        name: &str,
+        resolved: &TypedType,
+    ) -> Result<(), TypeError> {
+        let alias_group_id = self
+            .var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .ok_or_else(|| TypeError::UndefinedVariable(name.to_string()))?
+            .deferred_alias_group_id
+            .ok_or_else(|| {
+                TypeError::CannotInferType(format!(
+                    "deferred callable binding '{name}' is missing alias provenance"
+                ))
+            })?;
+
+        let members = self
+            .var_env
+            .iter()
+            .enumerate()
+            .flat_map(|(scope_idx, scope)| {
+                scope
+                    .iter()
+                    .filter(move |(_, var)| var.deferred_alias_group_id == Some(alias_group_id))
+                    .map(move |(member_name, _)| (scope_idx, member_name.clone()))
+            })
+            .collect::<Vec<_>>();
+
+        if members.is_empty() {
+            return Err(TypeError::CannotInferType(format!(
+                "deferred callable binding '{name}' has an empty alias group"
+            )));
+        }
+
+        let resolved_is_copyable = self.is_copyable(resolved);
+        for (scope_idx, member_name) in &members {
+            let var = self
+                .var_env
+                .get(*scope_idx)
+                .and_then(|scope| scope.get(member_name))
+                .ok_or_else(|| TypeError::UndefinedVariable(member_name.clone()))?;
+            if !var.mutable
+                && !resolved_is_copyable
+                && (var.pending_inference_uses > 1 || (var.used && var.pending_inference_uses > 0))
+            {
+                return Err(TypeError::AffineViolation(member_name.clone()));
             }
         }
 
-        false
+        for (scope_idx, member_name) in members {
+            let var = self
+                .var_env
+                .get_mut(scope_idx)
+                .and_then(|scope| scope.get_mut(&member_name))
+                .ok_or_else(|| TypeError::UndefinedVariable(member_name.clone()))?;
+            if var.mutable || resolved_is_copyable {
+                var.pending_inference_uses = 0;
+            } else if var.pending_inference_uses == 1 {
+                var.used = true;
+                var.pending_inference_uses = 0;
+            }
+            var.ty = resolved.clone();
+            var.deferred = None;
+            var.deferred_alias_group_id = None;
+            var.flexible_collection_literal = false;
+        }
+
+        Ok(())
     }
 
     fn is_flexible_collection_literal(&self, name: &str) -> bool {
@@ -2335,10 +2958,11 @@ impl TypeChecker {
     }
 
     fn peek_deferred_callable(&self, name: &str) -> Option<DeferredBinding> {
-        self.var_env.iter().rev().find_map(|scope| {
-            let var = scope.get(name)?;
-            var.deferred.clone()
-        })
+        self.var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .and_then(|var| var.deferred.clone())
     }
 
     fn update_direct_ident_from_substitution(
@@ -2364,6 +2988,21 @@ impl TypeChecker {
         expected: &TypedType,
         substitution: &mut ConstraintSubstitution,
     ) -> Result<TypedType, TypeError> {
+        let resolved = self.check_deferred_callable_payload_against_expected(
+            deferred,
+            expected,
+            substitution,
+        )?;
+        self.resolve_deferred_callable_alias_group(name, &resolved)?;
+        Ok(resolved)
+    }
+
+    fn check_deferred_callable_payload_against_expected(
+        &mut self,
+        deferred: &DeferredBinding,
+        expected: &TypedType,
+        substitution: &mut ConstraintSubstitution,
+    ) -> Result<TypedType, TypeError> {
         let resolved = match deferred {
             DeferredBinding::Lambda(lambda) => {
                 self.check_generic_lambda_arg(lambda, expected, substitution)?
@@ -2374,10 +3013,19 @@ impl TypeChecker {
                     expected,
                     substitution,
                 )?,
+            DeferredBinding::GenericFunction {
+                name, definition, ..
+            } => {
+                let instantiated = self.instantiate_generic_function_value_from_expected(
+                    name,
+                    definition,
+                    Some(expected),
+                )?;
+                unify_constraint(expected, &instantiated, substitution)?;
+                instantiated
+            }
         };
-        let resolved = substitution.apply(&resolved)?;
-        self.update_var_type_and_clear_deferred(name, resolved.clone());
-        Ok(resolved)
+        substitution.apply(&resolved)
     }
 
     fn check_deferred_branch_callable_against_expected(
@@ -2451,6 +3099,11 @@ impl TypeChecker {
         func_def: &FunctionDef,
         expected: Option<&TypedType>,
     ) -> Result<TypedType, TypeError> {
+        if Self::is_display_intrinsic_name(name) {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "compiler intrinsic '{name}' cannot be used as a first-class function value in the initial Display slice; call it directly with OSV syntax"
+            )));
+        }
         if !func_def.type_params.is_empty() {
             return self.instantiate_generic_function_value_from_expected(name, func_def, expected);
         }
@@ -2517,14 +3170,11 @@ impl TypeChecker {
         let mut substitution = ConstraintSubstitution::new();
         let mut constraints = Vec::new();
         for type_param in &func_def.type_params {
-            for bound in &type_param.bounds {
-                if !Self::is_form_bound(&bound.trait_name) {
-                    continue;
-                }
+            for form_name in self.form_bound_names(type_param) {
                 if let Some(ty) = type_vars.get(&type_param.name) {
                     constraints.push(Constraint::HasForm {
                         ty: ty.clone(),
-                        form_name: bound.trait_name.clone(),
+                        form_name,
                         origin: Self::constraint_origin(ConstraintKind::FormBound {
                             type_param: type_param.name.clone(),
                         }),
@@ -2716,7 +3366,7 @@ impl TypeChecker {
     }
 
     fn bind_var(&mut self, name: String, ty: TypedType, mutable: bool) -> Result<(), TypeError> {
-        self.bind_var_with_deferred(name, ty, mutable, None)
+        self.bind_var_with_deferred(name, ty, mutable, None, None)
     }
 
     fn bind_var_with_deferred(
@@ -2725,7 +3375,14 @@ impl TypeChecker {
         ty: TypedType,
         mutable: bool,
         deferred: Option<DeferredBinding>,
+        deferred_alias_group_id: Option<u64>,
     ) -> Result<(), TypeError> {
+        if deferred.is_some() != deferred_alias_group_id.is_some() {
+            return Err(TypeError::UnsupportedFeature(
+                "internal deferred callable binding is missing alias provenance".to_string(),
+            ));
+        }
+        let was_deferred_callable = deferred.is_some();
         let current_scope = self.var_env.last_mut().ok_or_else(|| {
             TypeError::UnsupportedFeature(
                 "internal type checker scope stack is empty while binding variable".to_string(),
@@ -2739,6 +3396,8 @@ impl TypeChecker {
                 used: false,
                 pending_inference_uses: 0,
                 deferred,
+                deferred_alias_group_id,
+                was_deferred_callable,
                 flexible_collection_literal: false,
             },
         );
@@ -2755,7 +3414,23 @@ impl TypeChecker {
         Err(TypeError::UndefinedVariable(name.to_string()))
     }
 
+    fn reject_deferred_alias_reassignment(&self, name: &str) -> Result<(), TypeError> {
+        let var = self
+            .var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .ok_or_else(|| TypeError::UndefinedVariable(name.to_string()))?;
+        if var.was_deferred_callable {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "reassignment of deferred-origin callable binding '{name}' is not supported in this release"
+            )));
+        }
+        Ok(())
+    }
+
     fn reassign_var(&mut self, name: &str, ty: &TypedType) -> Result<(), TypeError> {
+        self.reject_deferred_alias_reassignment(name)?;
         // Find the variable and check if it's mutable
         for scope in self.var_env.iter_mut().rev() {
             if let Some(var) = scope.get_mut(name) {
@@ -2765,6 +3440,10 @@ impl TypeChecker {
                 if &var.ty != ty {
                     return Err(typed_type_mismatch(&var.ty, ty));
                 }
+                // Concrete assignment replaces any non-deferred compile-time
+                // alias metadata left by earlier lowering phases.
+                var.deferred = None;
+                var.deferred_alias_group_id = None;
                 // Don't mark as used for reassignment
                 return Ok(());
             }
@@ -2879,10 +3558,37 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a receiver type without changing affine-use state in the real
+    /// checker. Simple receiver shapes use the cheap syntactic path above;
+    /// richer expressions are checked against an isolated snapshot. If the
+    /// expression is a method receiver, the ordinary call path checks it once
+    /// against the selected method signature and records the real state.
+    fn infer_method_receiver_type_non_consuming(&self, expr: &Expr) -> Option<TypedType> {
+        self.peek_method_receiver_type(expr).or_else(|| {
+            let mut probe = self.clone();
+            probe.check_expr(expr).ok()
+        })
+    }
+
     fn peek_named_call_return_type(&self, call: &CallExpr) -> Option<TypedType> {
         let ExprKind::Ident(name) = &call.function.kind else {
             return None;
         };
+
+        if let Some(TypedType::Function {
+            params,
+            return_type,
+        }) = self.peek_var_type(name)
+        {
+            if params.len() == call.args.len() {
+                return Some(*return_type);
+            }
+        }
+
+        let mut method_probe = self.clone();
+        if let Ok(Some(return_type)) = method_probe.check_osv_method_call(name, &call.args) {
+            return Some(return_type);
+        }
 
         let func_info = self.functions.get(name)?;
         if self.provisional_function_returns.contains(name) {
@@ -2897,22 +3603,35 @@ impl TypeChecker {
 
     fn peek_pipe_return_type(&self, pipe: &PipeExpr) -> Option<TypedType> {
         match &pipe.target {
-            PipeTarget::Ident(name) if self.functions.contains_key(name) => {
-                let func_info = self.functions.get(name)?;
-                if self.provisional_function_returns.contains(name) || func_info.params.len() != 1 {
-                    return None;
-                }
-                Some(func_info.return_type.clone())
-            }
-            PipeTarget::Expr(target) => {
-                let call = CallExpr {
-                    function: target.clone(),
-                    args: vec![pipe.expr.clone()],
-                };
-                self.peek_named_call_return_type(&call)
-            }
-            _ => None,
+            PipeTarget::Ident(name) => self.peek_pipe_ident_return_type(name, &pipe.expr),
+            PipeTarget::Expr(target) => match &target.kind {
+                ExprKind::Ident(name) => self.peek_pipe_ident_return_type(name, &pipe.expr),
+                _ => None,
+            },
         }
+    }
+
+    fn peek_pipe_ident_return_type(&self, name: &str, receiver: &Expr) -> Option<TypedType> {
+        let call = CallExpr {
+            function: Box::new(Expr::new(ExprKind::Ident(name.to_string()))),
+            args: vec![Box::new(receiver.clone())],
+        };
+
+        match self.peek_var_type(name) {
+            Some(TypedType::Function { .. }) => return self.peek_named_call_return_type(&call),
+            Some(_) => return None,
+            None => {}
+        }
+
+        if self.receiver_has_form_method_selector(receiver, name) {
+            return self.peek_named_call_return_type(&call);
+        }
+
+        let function = self.functions.get(name)?;
+        if self.provisional_function_returns.contains(name) || function.params.len() != 1 {
+            return None;
+        }
+        Some(function.return_type.clone())
     }
 
     fn check_osv_method_call(
@@ -2924,9 +3643,44 @@ impl TypeChecker {
             return Ok(None);
         };
 
-        let Some(receiver_ty) = self.peek_method_receiver_type(receiver) else {
+        let Some(receiver_ty) = self.infer_method_receiver_type_non_consuming(receiver) else {
             return Ok(None);
         };
+
+        if let TypedType::TypeParam(param_name) = &receiver_ty {
+            let mut candidates = self
+                .get_form_bounds(param_name)
+                .into_iter()
+                .filter_map(|form_name| {
+                    self.forms
+                        .get(&form_name)
+                        .and_then(|form| form.methods.get(method_name))
+                        .cloned()
+                        .map(|method| (form_name, method))
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by(|left, right| left.0.cmp(&right.0));
+            candidates.dedup_by(|left, right| left.0 == right.0);
+
+            if candidates.len() > 1 {
+                return Err(TypeError::AmbiguousFormMethod {
+                    method: method_name.to_string(),
+                    forms: candidates.into_iter().map(|(name, _)| name).collect(),
+                });
+            }
+            if let Some((_, mut method)) = candidates.pop() {
+                method.params = method
+                    .params
+                    .into_iter()
+                    .map(|(name, ty)| (name, Self::substitute_form_self(&ty, &receiver_ty)))
+                    .collect();
+                method.return_type = Self::substitute_form_self(&method.return_type, &receiver_ty);
+                return self
+                    .check_resolved_method_call(method_name, &method, args)
+                    .map(Some);
+            }
+            return Ok(None);
+        }
 
         let record_name = match &receiver_ty {
             TypedType::Record { name, .. } => name.clone(),
@@ -2956,6 +3710,16 @@ impl TypeChecker {
             )));
         }
 
+        self.check_resolved_method_call(method_name, &method_info, args)
+            .map(Some)
+    }
+
+    fn check_resolved_method_call(
+        &mut self,
+        method_name: &str,
+        method_info: &FunctionDef,
+        args: &[Box<Expr>],
+    ) -> Result<TypedType, TypeError> {
         if args.len() != method_info.params.len() {
             return Err(TypeError::ArityMismatch {
                 expected: method_info.params.len(),
@@ -2968,9 +3732,7 @@ impl TypeChecker {
                 function: Box::new(Expr::new(ExprKind::Ident(method_name.to_string()))),
                 args: args.to_vec(),
             };
-            return self
-                .check_function_call_with_inference(&method_info, &call, None)
-                .map(Some);
+            return self.check_function_call_with_inference(method_info, &call, None);
         }
 
         for (i, arg) in args.iter().enumerate() {
@@ -2981,7 +3743,68 @@ impl TypeChecker {
             }
         }
 
-        Ok(Some(method_info.return_type))
+        Ok(method_info.return_type.clone())
+    }
+
+    fn receiver_has_method_selector(&self, receiver: &Expr, method_name: &str) -> bool {
+        let Some(receiver_ty) = self.infer_method_receiver_type_non_consuming(receiver) else {
+            return false;
+        };
+        match receiver_ty {
+            TypedType::Record { name, .. } => self
+                .methods
+                .get(&name)
+                .is_some_and(|methods| methods.contains_key(method_name)),
+            TypedType::Temporal { base_type, .. } => match *base_type {
+                TypedType::Record { name, .. } => self
+                    .methods
+                    .get(&name)
+                    .is_some_and(|methods| methods.contains_key(method_name)),
+                _ => false,
+            },
+            TypedType::TypeParam(name) => {
+                self.get_form_bounds(&name).into_iter().any(|form_name| {
+                    self.forms
+                        .get(&form_name)
+                        .is_some_and(|form| form.methods.contains_key(method_name))
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn receiver_has_form_method_selector(&self, receiver: &Expr, method_name: &str) -> bool {
+        let Some(receiver_ty) = self.infer_method_receiver_type_non_consuming(receiver) else {
+            return false;
+        };
+
+        let adopted_form_has_method = |record_name: &str| {
+            self.form_adoptions
+                .get(record_name)
+                .into_iter()
+                .flatten()
+                .any(|form_name| {
+                    self.forms
+                        .get(form_name)
+                        .is_some_and(|form| form.methods.contains_key(method_name))
+                })
+        };
+
+        match receiver_ty {
+            TypedType::Record { name, .. } => adopted_form_has_method(&name),
+            TypedType::Temporal { base_type, .. } => match *base_type {
+                TypedType::Record { name, .. } => adopted_form_has_method(&name),
+                _ => false,
+            },
+            TypedType::TypeParam(name) => {
+                self.get_form_bounds(&name).into_iter().any(|form_name| {
+                    self.forms
+                        .get(&form_name)
+                        .is_some_and(|form| form.methods.contains_key(method_name))
+                })
+            }
+            _ => false,
+        }
     }
 
     fn convert_type(&mut self, ty: &Type) -> Result<TypedType, TypeError> {
@@ -3006,13 +3829,17 @@ impl TypeChecker {
                     }
                     // Check if it's a record type
                     else if self.records.contains_key(name) {
-                        Ok(TypedType::Record {
+                        let ty = TypedType::Record {
                             name: name.clone(),
                             type_args: Vec::new(),
                             frozen: false,
                             hash: None,
                             parent_hash: None,
-                        })
+                        };
+                        if self.form_bound_validation_ready {
+                            self.validate_record_type_form_bounds(&ty)?;
+                        }
+                        Ok(ty)
                     } else if self.enums.contains_key(name) {
                         Ok(TypedType::Enum { name: name.clone() })
                     } else {
@@ -3082,7 +3909,7 @@ impl TypeChecker {
                         )));
                     }
 
-                    Ok(TypedType::Record {
+                    let ty = TypedType::Record {
                         name: name.clone(),
                         type_args: params
                             .iter()
@@ -3091,7 +3918,11 @@ impl TypeChecker {
                         frozen: false,
                         hash: None,
                         parent_hash: None,
-                    })
+                    };
+                    if self.form_bound_validation_ready {
+                        self.validate_record_type_form_bounds(&ty)?;
+                    }
+                    Ok(ty)
                 }
                 _ if self.enums.contains_key(name) => Err(TypeError::UnsupportedFeature(format!(
                     "generic enum types are not supported: {}<{}>",
@@ -3140,6 +3971,7 @@ impl TypeChecker {
         if BUILTIN_TYPES.contains(&enum_decl.name.as_str())
             || self.enums.contains_key(&enum_decl.name)
             || self.records.contains_key(&enum_decl.name)
+            || self.forms.contains_key(&enum_decl.name)
         {
             return Err(TypeError::UnsupportedFeature(format!(
                 "duplicate type declaration '{}'",
@@ -3401,6 +4233,7 @@ impl TypeChecker {
 
     pub fn check_program(&mut self, program: &Program) -> Result<(), TypeError> {
         self.checked_expr_types.clear();
+        self.form_bound_validation_ready = false;
         self.reject_unresolved_imports(&program.imports)?;
 
         // Run lifetime inference if needed
@@ -3418,7 +4251,16 @@ impl TypeChecker {
             }
         }
 
-        // First pass: register enum names and variant names. Payloads are
+        // First pass: register source form names before signatures and bounds
+        // are resolved. Prelude forms were installed when the checker was
+        // created, so a source declaration cannot silently shadow them.
+        for decl in &program.declarations {
+            if let TopDecl::Form(form) = Self::decl_registration_item(decl) {
+                self.register_form_header(form)?;
+            }
+        }
+
+        // Second pass: register enum names and variant names. Payloads are
         // resolved only after record shapes exist, while records may already
         // refer to these enum headers.
         for decl in &program.declarations {
@@ -3427,7 +4269,7 @@ impl TypeChecker {
             }
         }
 
-        // Second pass: register record/context shapes before any signature that
+        // Third pass: register record/context shapes before any signature that
         // may mention them, regardless of source order.
         for decl in &program.declarations {
             match Self::decl_registration_item(decl) {
@@ -3441,7 +4283,7 @@ impl TypeChecker {
             }
         }
 
-        // Third pass: reject recursive enum graphs, then resolve each payload.
+        // Fourth pass: reject recursive enum graphs, then resolve each payload.
         self.validate_enum_recursion(program)?;
         for decl in &program.declarations {
             if let TopDecl::Enum(enum_decl) = Self::decl_registration_item(decl) {
@@ -3449,14 +4291,22 @@ impl TypeChecker {
             }
         }
 
-        // Fourth pass: register function signatures for forward references.
+        // Fifth pass: resolve source form method signatures now that all
+        // nominal type names are available.
+        for decl in &program.declarations {
+            if let TopDecl::Form(form) = Self::decl_registration_item(decl) {
+                self.register_form_methods(form)?;
+            }
+        }
+
+        // Sixth pass: register function signatures for forward references.
         for decl in &program.declarations {
             if let TopDecl::Function(func) = Self::decl_registration_item(decl) {
                 self.register_function_signature(func)?;
             }
         }
 
-        // Fifth pass: register impl method signatures before checking bodies,
+        // Seventh pass: register impl method signatures before checking bodies,
         // so OSV method calls can refer to impl blocks declared later.
         for decl in &program.declarations {
             if let TopDecl::Impl(impl_block) = Self::decl_registration_item(decl) {
@@ -3464,7 +4314,24 @@ impl TypeChecker {
             }
         }
 
-        // Sixth pass: check impl bodies before ordinary functions. This turns
+        // Eighth pass: validate explicit form adoptions and register their
+        // method signatures. This happens after ordinary impl signatures so a
+        // selector collision is deterministic and diagnosed before bodies.
+        for decl in &program.declarations {
+            if let TopDecl::Takes(takes) = Self::decl_registration_item(decl) {
+                self.register_takes_method_signatures(takes)?;
+            }
+        }
+
+        // Record and callable signatures are registered before `takes`
+        // declarations so nominal references can be resolved independent of
+        // source order. Now that all adoption edges are known, validate every
+        // previously registered bounded-record use and enable eager validation
+        // for body-local annotations and record construction.
+        self.form_bound_validation_ready = true;
+        self.validate_registered_record_form_bound_uses()?;
+
+        // Ninth pass: check impl and takes bodies before ordinary functions. This turns
         // unannotated method returns from provisional signatures into inferred
         // concrete method signatures before function bodies call them.
         for decl in &program.declarations {
@@ -3472,8 +4339,13 @@ impl TypeChecker {
                 self.check_impl_block(impl_block)?;
             }
         }
+        for decl in &program.declarations {
+            if let TopDecl::Takes(takes) = Self::decl_registration_item(decl) {
+                self.check_takes_decl(takes)?;
+            }
+        }
 
-        // Seventh pass: infer unannotated ordinary function returns before
+        // Tenth pass: infer unannotated ordinary function returns before
         // annotated functions and top-level bindings use those functions.
         self.infer_unannotated_function_returns(program)?;
 
@@ -3491,6 +4363,9 @@ impl TypeChecker {
                 }
                 TopDecl::Impl(_) => {
                     // Already processed before function bodies
+                }
+                TopDecl::Form(_) | TopDecl::Takes(_) => {
+                    // Already registered and checked in dedicated passes.
                 }
                 TopDecl::Function(func) if func.return_type.is_none() => {
                     // Already processed before annotated function bodies
@@ -3521,11 +4396,8 @@ impl TypeChecker {
 
         while !pending.is_empty() {
             let next_idx = pending.iter().position(|func| {
-                let deps = self.collect_unannotated_function_deps_in_block(
-                    &func.body,
-                    &HashSet::new(),
-                    &unannotated_names,
-                );
+                let deps =
+                    self.collect_unannotated_function_deps_for_function(func, &unannotated_names);
                 deps.iter().all(|dep| !pending_names.contains(dep))
             });
 
@@ -3543,23 +4415,70 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn collect_unannotated_function_deps_in_block(
+    fn collect_unannotated_function_deps_for_function(
         &self,
+        func: &FunDecl,
+        unannotated_names: &HashSet<String>,
+    ) -> HashSet<String> {
+        let mut probe = self.clone();
+        probe.push_type_param_scope(&func.type_params);
+        probe.push_scope();
+
+        let mut bound_vars = HashSet::new();
+        if let Some(signature) = self.functions.get(&func.name) {
+            for (param, (_, ty)) in func.params.iter().zip(signature.params.iter()) {
+                bound_vars.insert(param.name.clone());
+                let _ = probe.bind_var(param.name.clone(), ty.clone(), false);
+            }
+        }
+
+        probe.collect_unannotated_function_deps_in_block(&func.body, &bound_vars, unannotated_names)
+    }
+
+    fn collect_unannotated_function_deps_in_block(
+        &mut self,
         block: &BlockExpr,
         bound_vars: &HashSet<String>,
         unannotated_names: &HashSet<String>,
     ) -> HashSet<String> {
+        self.push_scope();
         let mut deps = HashSet::new();
         let mut block_bound = bound_vars.clone();
 
         for stmt in &block.statements {
             match stmt {
                 Stmt::Binding(bind) => {
-                    deps.extend(self.collect_unannotated_function_deps_in_expr(
-                        &bind.value,
-                        &block_bound,
-                        unannotated_names,
-                    ));
+                    let annotated_binding_type = bind.type_annotation.as_ref().and_then(|ty| {
+                        let mut type_probe = self.clone();
+                        type_probe.convert_type(ty).ok()
+                    });
+                    if let (ExprKind::Lambda(lambda), Some(TypedType::Function { params, .. })) =
+                        (&bind.value.kind, annotated_binding_type.as_ref())
+                    {
+                        deps.extend(self.collect_unannotated_lambda_deps(
+                            lambda,
+                            &block_bound,
+                            unannotated_names,
+                            Some(params),
+                        ));
+                    } else {
+                        deps.extend(self.collect_unannotated_function_deps_in_expr(
+                            &bind.value,
+                            &block_bound,
+                            unannotated_names,
+                        ));
+                    }
+                    let binding_type = annotated_binding_type.or_else(|| {
+                        let mut type_probe = self.clone();
+                        if bind.type_annotation.is_none() {
+                            type_probe.check_expr(&bind.value).ok()
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(binding_type) = binding_type {
+                        let _ = self.bind_pattern(&bind.pattern, &binding_type, bind.mutable);
+                    }
                     let mut pattern_vars = HashSet::new();
                     self.collect_pattern_bindings(&bind.pattern, &mut pattern_vars);
                     block_bound.extend(pattern_vars);
@@ -3589,11 +4508,12 @@ impl TypeChecker {
             ));
         }
 
+        self.pop_scope();
         deps
     }
 
     fn collect_unannotated_function_deps_in_expr(
-        &self,
+        &mut self,
         expr: &Expr,
         bound_vars: &HashSet<String>,
         unannotated_names: &HashSet<String>,
@@ -3633,37 +4553,123 @@ impl TypeChecker {
                 ));
             }
             ExprKind::Call(call) => {
-                deps.extend(self.collect_unannotated_function_deps_in_expr(
-                    &call.function,
-                    bound_vars,
-                    unannotated_names,
-                ));
-                for arg in &call.args {
+                let callable_name = match &call.function.kind {
+                    ExprKind::Ident(name) => Some(name.as_str()),
+                    _ => None,
+                };
+                let selected_method = match callable_name {
+                    Some(name) => call
+                        .args
+                        .first()
+                        .is_some_and(|receiver| self.receiver_has_method_selector(receiver, name)),
+                    None => false,
+                };
+                if !selected_method {
+                    if let ExprKind::Lambda(lambda) = &call.function.kind {
+                        let expected_params = call
+                            .args
+                            .iter()
+                            .map(|arg| {
+                                let mut type_probe = self.clone();
+                                type_probe.check_expr(arg).ok()
+                            })
+                            .collect::<Option<Vec<_>>>();
+                        deps.extend(self.collect_unannotated_lambda_deps(
+                            lambda,
+                            bound_vars,
+                            unannotated_names,
+                            expected_params.as_deref(),
+                        ));
+                    } else {
+                        deps.extend(self.collect_unannotated_function_deps_in_expr(
+                            &call.function,
+                            bound_vars,
+                            unannotated_names,
+                        ));
+                    }
+                }
+                for (index, arg) in call.args.iter().enumerate() {
+                    let expected_arg = callable_name.and_then(|name| {
+                        self.expected_function_param_type_for_call(name, index, &call.args)
+                            .ok()
+                            .flatten()
+                    });
+                    if let (ExprKind::Lambda(lambda), Some(TypedType::Function { params, .. })) =
+                        (&arg.kind, expected_arg.as_ref())
+                    {
+                        deps.extend(self.collect_unannotated_lambda_deps(
+                            lambda,
+                            bound_vars,
+                            unannotated_names,
+                            Some(params),
+                        ));
+                    } else {
+                        deps.extend(self.collect_unannotated_function_deps_in_expr(
+                            arg,
+                            bound_vars,
+                            unannotated_names,
+                        ));
+                    }
+                }
+            }
+            ExprKind::Pipe(pipe) => {
+                let expected_receiver = self
+                    .expected_type_for_pipe_target_first_arg(&pipe.target, &pipe.expr)
+                    .ok()
+                    .flatten();
+                if let (ExprKind::Lambda(lambda), Some(TypedType::Function { params, .. })) =
+                    (&pipe.expr.kind, expected_receiver.as_ref())
+                {
+                    deps.extend(self.collect_unannotated_lambda_deps(
+                        lambda,
+                        bound_vars,
+                        unannotated_names,
+                        Some(params),
+                    ));
+                } else {
                     deps.extend(self.collect_unannotated_function_deps_in_expr(
-                        arg,
+                        &pipe.expr,
                         bound_vars,
                         unannotated_names,
                     ));
                 }
-            }
-            ExprKind::Pipe(pipe) => {
-                deps.extend(self.collect_unannotated_function_deps_in_expr(
-                    &pipe.expr,
-                    bound_vars,
-                    unannotated_names,
-                ));
                 match &pipe.target {
                     PipeTarget::Ident(name) => {
-                        if !bound_vars.contains(name) && unannotated_names.contains(name) {
+                        if !self.receiver_has_form_method_selector(&pipe.expr, name)
+                            && !bound_vars.contains(name)
+                            && unannotated_names.contains(name)
+                        {
                             deps.insert(name.clone());
                         }
                     }
                     PipeTarget::Expr(target) => {
-                        deps.extend(self.collect_unannotated_function_deps_in_expr(
-                            target,
-                            bound_vars,
-                            unannotated_names,
-                        ));
+                        if let ExprKind::Lambda(lambda) = &target.kind {
+                            let expected_param = {
+                                let mut type_probe = self.clone();
+                                type_probe.check_expr(&pipe.expr).ok()
+                            };
+                            let expected_params = expected_param.map(|ty| vec![ty]);
+                            deps.extend(self.collect_unannotated_lambda_deps(
+                                lambda,
+                                bound_vars,
+                                unannotated_names,
+                                expected_params.as_deref(),
+                            ));
+                        } else {
+                            let selected_method = match &target.kind {
+                                ExprKind::Ident(name) => {
+                                    self.receiver_has_form_method_selector(&pipe.expr, name)
+                                }
+                                _ => false,
+                            };
+                            if !selected_method {
+                                deps.extend(self.collect_unannotated_function_deps_in_expr(
+                                    target,
+                                    bound_vars,
+                                    unannotated_names,
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -3752,6 +4758,10 @@ impl TypeChecker {
                 ));
             }
             ExprKind::Match(match_expr) => {
+                let matched_type = {
+                    let mut type_probe = self.clone();
+                    type_probe.check_expr(&match_expr.expr).ok()
+                };
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     &match_expr.expr,
                     bound_vars,
@@ -3760,11 +4770,16 @@ impl TypeChecker {
                 for arm in &match_expr.arms {
                     let mut arm_bound = bound_vars.clone();
                     self.collect_pattern_bindings(&arm.pattern, &mut arm_bound);
+                    self.push_scope();
+                    if let Some(matched_type) = &matched_type {
+                        let _ = self.bind_pattern_vars(&arm.pattern, matched_type);
+                    }
                     deps.extend(self.collect_unannotated_function_deps_in_block(
                         &arm.body,
                         &arm_bound,
                         unannotated_names,
                     ));
+                    self.pop_scope();
                 }
             }
             ExprKind::Then(then_expr) => {
@@ -3818,18 +4833,16 @@ impl TypeChecker {
                 ));
             }
             ExprKind::Lambda(lambda) => {
-                let mut lambda_bound = bound_vars.clone();
-                for param in &lambda.params {
-                    lambda_bound.insert(param.name.clone());
-                }
-                deps.extend(self.collect_unannotated_function_deps_in_expr(
-                    &lambda.body,
-                    &lambda_bound,
+                deps.extend(self.collect_unannotated_lambda_deps(
+                    lambda,
+                    bound_vars,
                     unannotated_names,
+                    None,
                 ));
             }
             ExprKind::With(with_expr) => {
                 let mut body_bound = bound_vars.clone();
+                self.push_scope();
                 for binding in &with_expr.bindings {
                     match binding {
                         FieldInit::Field { name, value } => {
@@ -3839,6 +4852,13 @@ impl TypeChecker {
                                 unannotated_names,
                             ));
                             body_bound.insert(name.clone());
+                            let binding_type = {
+                                let mut type_probe = self.clone();
+                                type_probe.check_expr(value).ok()
+                            };
+                            if let Some(binding_type) = binding_type {
+                                let _ = self.bind_var(name.clone(), binding_type, false);
+                            }
                         }
                         FieldInit::Spread(value) => {
                             deps.extend(self.collect_unannotated_function_deps_in_expr(
@@ -3854,6 +4874,7 @@ impl TypeChecker {
                     &body_bound,
                     unannotated_names,
                 ));
+                self.pop_scope();
             }
             ExprKind::WithLifetime(with_lifetime) => {
                 deps.extend(self.collect_unannotated_function_deps_in_block(
@@ -3872,6 +4893,35 @@ impl TypeChecker {
             | ExprKind::None => {}
         }
 
+        deps
+    }
+
+    fn collect_unannotated_lambda_deps(
+        &mut self,
+        lambda: &LambdaExpr,
+        bound_vars: &HashSet<String>,
+        unannotated_names: &HashSet<String>,
+        expected_params: Option<&[TypedType]>,
+    ) -> HashSet<String> {
+        let mut lambda_bound = bound_vars.clone();
+        self.push_scope();
+        for (index, param) in lambda.params.iter().enumerate() {
+            lambda_bound.insert(param.name.clone());
+            let param_type = if let Some(annotation) = &param.type_annotation {
+                self.convert_type(annotation).ok()
+            } else {
+                expected_params.and_then(|params| params.get(index).cloned())
+            };
+            if let Some(param_type) = param_type {
+                let _ = self.bind_var(param.name.clone(), param_type, false);
+            }
+        }
+        let deps = self.collect_unannotated_function_deps_in_expr(
+            &lambda.body,
+            &lambda_bound,
+            unannotated_names,
+        );
+        self.pop_scope();
         deps
     }
 
@@ -3902,6 +4952,570 @@ impl TypeChecker {
         }
     }
 
+    fn validate_declared_form_bounds(&self, type_params: &[TypeParam]) -> Result<(), TypeError> {
+        for type_param in type_params {
+            if type_param
+                .bounds
+                .iter()
+                .any(|bound| bound.trait_name == "Container")
+            {
+                return Err(TypeError::UnsupportedFeature(
+                    "form 'Container' is compiler-internal and cannot appear in source bounds"
+                        .to_string(),
+                ));
+            }
+            let mut seen = HashSet::new();
+            let mut selector_forms = HashMap::<String, String>::new();
+            for form_name in self.form_bound_names(type_param) {
+                if form_name == "Container" {
+                    return Err(TypeError::UnsupportedFeature(
+                        "form 'Container' is compiler-internal and cannot appear in source bounds"
+                            .to_string(),
+                    ));
+                }
+                let form = self
+                    .forms
+                    .get(&form_name)
+                    .ok_or_else(|| TypeError::UndefinedForm(form_name.clone()))?;
+                if !seen.insert(form_name.clone()) {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "duplicate form bound '{} of {}'",
+                        type_param.name, form_name
+                    )));
+                }
+
+                let mut selectors = form.methods.keys().cloned().collect::<Vec<_>>();
+                selectors.sort();
+                for selector in selectors {
+                    if let Some(previous_form) =
+                        selector_forms.insert(selector.clone(), form_name.clone())
+                    {
+                        return Err(TypeError::AmbiguousFormMethod {
+                            method: selector,
+                            forms: vec![previous_form, form_name.clone()],
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_record_type_form_bounds(&self, ty: &TypedType) -> Result<(), TypeError> {
+        match ty {
+            TypedType::Record {
+                name, type_args, ..
+            } => {
+                // Some compiler-provided callables use opaque internal record
+                // names (for example Task) that are not source declarations.
+                // They have no source `of` contract to validate here.
+                let Some(record) = self.records.get(name) else {
+                    for arg in type_args {
+                        self.validate_record_type_form_bounds(arg)?;
+                    }
+                    return Ok(());
+                };
+                let regular_params = record
+                    .type_params
+                    .iter()
+                    .filter(|param| !param.is_temporal)
+                    .collect::<Vec<_>>();
+                let has_form_bounds = regular_params
+                    .iter()
+                    .any(|param| !self.form_bound_names(param).is_empty());
+
+                if has_form_bounds && type_args.len() != regular_params.len() {
+                    return Err(TypeError::CannotInferType(format!(
+                        "bounded record '{}' requires {} concrete type argument(s), found {}",
+                        name,
+                        regular_params.len(),
+                        type_args.len()
+                    )));
+                }
+
+                let mut constraints = Vec::new();
+                for (param, arg) in regular_params.iter().zip(type_args.iter()) {
+                    for form_name in self.form_bound_names(param) {
+                        constraints.push(Constraint::HasForm {
+                            ty: arg.clone(),
+                            form_name,
+                            origin: Self::constraint_origin(ConstraintKind::FormBound {
+                                type_param: format!("{}::{}", name, param.name),
+                            }),
+                        });
+                    }
+                }
+                if !constraints.is_empty() {
+                    self.solve_constraints_with_current_forms(
+                        &constraints,
+                        &ConstraintSubstitution::new(),
+                    )?;
+                }
+
+                for arg in type_args {
+                    self.validate_record_type_form_bounds(arg)?;
+                }
+                Ok(())
+            }
+            TypedType::Option(inner) | TypedType::List(inner) | TypedType::Array(inner, _) => {
+                self.validate_record_type_form_bounds(inner)
+            }
+            TypedType::Result(ok, err) => {
+                self.validate_record_type_form_bounds(ok)?;
+                self.validate_record_type_form_bounds(err)
+            }
+            TypedType::Function {
+                params,
+                return_type,
+            } => {
+                for param in params {
+                    self.validate_record_type_form_bounds(param)?;
+                }
+                self.validate_record_type_form_bounds(return_type)
+            }
+            TypedType::Temporal { base_type, .. } => {
+                self.validate_record_type_form_bounds(base_type)
+            }
+            TypedType::Projection { base, args, .. } => {
+                self.validate_record_type_form_bounds(base)?;
+                for arg in args {
+                    self.validate_record_type_form_bounds(arg)?;
+                }
+                Ok(())
+            }
+            TypedType::Int32
+            | TypedType::Int64
+            | TypedType::Float64
+            | TypedType::Boolean
+            | TypedType::String
+            | TypedType::Char
+            | TypedType::Unit
+            | TypedType::Enum { .. }
+            | TypedType::TypeParam(_)
+            | TypedType::InferVar(_) => Ok(()),
+        }
+    }
+
+    fn validate_registered_record_form_bound_uses(&mut self) -> Result<(), TypeError> {
+        let record_types = self
+            .records
+            .values()
+            .map(|record| {
+                (
+                    record.type_params.clone(),
+                    record.fields.values().cloned().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (type_params, fields) in record_types {
+            self.push_type_param_scope(&type_params);
+            let result = fields
+                .iter()
+                .try_for_each(|field| self.validate_record_type_form_bounds(field));
+            self.pop_type_param_scope();
+            result?;
+        }
+
+        let enum_payloads = self
+            .enums
+            .values()
+            .flat_map(|definition| definition.variants.values().flatten().cloned())
+            .collect::<Vec<_>>();
+        for payload in &enum_payloads {
+            self.validate_record_type_form_bounds(payload)?;
+        }
+
+        let function_types = self.functions.values().cloned().collect::<Vec<_>>();
+        for function in function_types {
+            self.push_type_param_scope(&function.type_params);
+            let result = function
+                .params
+                .iter()
+                .map(|(_, ty)| ty)
+                .chain(std::iter::once(&function.return_type))
+                .try_for_each(|ty| self.validate_record_type_form_bounds(ty));
+            self.pop_type_param_scope();
+            result?;
+        }
+
+        let method_types = self
+            .methods
+            .values()
+            .flat_map(|methods| methods.values().cloned())
+            .collect::<Vec<_>>();
+        for method in method_types {
+            self.push_type_param_scope(&method.type_params);
+            let result = method
+                .params
+                .iter()
+                .map(|(_, ty)| ty)
+                .chain(std::iter::once(&method.return_type))
+                .try_for_each(|ty| self.validate_record_type_form_bounds(ty));
+            self.pop_type_param_scope();
+            result?;
+        }
+
+        let form_methods = self
+            .forms
+            .values()
+            .flat_map(|form| form.methods.values().cloned())
+            .collect::<Vec<_>>();
+        let self_param = TypeParam {
+            name: "Self".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: false,
+        };
+        for method in form_methods {
+            self.push_type_param_scope(std::slice::from_ref(&self_param));
+            let result = method
+                .params
+                .iter()
+                .map(|(_, ty)| ty)
+                .chain(std::iter::once(&method.return_type))
+                .try_for_each(|ty| self.validate_record_type_form_bounds(ty));
+            self.pop_type_param_scope();
+            result?;
+        }
+
+        Ok(())
+    }
+
+    fn register_form_header(&mut self, form: &FormDecl) -> Result<(), TypeError> {
+        if self.forms.contains_key(&form.name) {
+            return Err(TypeError::DuplicateForm(form.name.clone()));
+        }
+        self.forms.insert(form.name.clone(), FormDef::default());
+        Ok(())
+    }
+
+    fn register_form_methods(&mut self, form: &FormDecl) -> Result<(), TypeError> {
+        if form.methods.is_empty() {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "form '{}' must declare at least one method",
+                form.name
+            )));
+        }
+
+        let self_param = TypeParam {
+            name: "Self".to_string(),
+            bounds: vec![],
+            derivation_bound: None,
+            of_forms: vec![],
+            is_temporal: false,
+        };
+        self.push_type_param_scope(std::slice::from_ref(&self_param));
+        let result = (|| {
+            let mut methods = HashMap::new();
+            for method in &form.methods {
+                Self::validate_unique_parameter_names(
+                    &format!("form method '{}::{}'", form.name, method.name),
+                    &method.params,
+                )?;
+                if Self::is_display_intrinsic_name(&method.name) {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "form method selector '{}' is compiler-reserved; only the prelude Display.display contract may declare it",
+                        method.name
+                    )));
+                }
+                let Some(receiver) = method.params.first() else {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "form method '{}::{}' must declare first parameter as self: Self",
+                        form.name, method.name
+                    )));
+                };
+                if receiver.name != "self"
+                    || receiver.ty != crate::ast::Type::Named("Self".to_string())
+                {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "form method '{}::{}' must declare first parameter as self: Self",
+                        form.name, method.name
+                    )));
+                }
+                if methods.contains_key(&method.name) {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "duplicate method '{}' in form '{}'",
+                        method.name, form.name
+                    )));
+                }
+
+                let params = method
+                    .params
+                    .iter()
+                    .map(|param| Ok((param.name.clone(), self.convert_type(&param.ty)?)))
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+                let return_type = self.convert_type(&method.return_type)?;
+                methods.insert(
+                    method.name.clone(),
+                    FunctionDef {
+                        params,
+                        return_type,
+                        type_params: vec![],
+                        temporal_constraints: vec![],
+                    },
+                );
+            }
+            Ok(methods)
+        })();
+        self.pop_type_param_scope();
+
+        let methods = result?;
+        self.forms
+            .get_mut(&form.name)
+            .ok_or_else(|| TypeError::UndefinedForm(form.name.clone()))?
+            .methods = methods;
+        Ok(())
+    }
+
+    fn substitute_form_self(ty: &TypedType, target: &TypedType) -> TypedType {
+        match ty {
+            TypedType::TypeParam(name) if name == "Self" => target.clone(),
+            TypedType::List(inner) => {
+                TypedType::List(Box::new(Self::substitute_form_self(inner, target)))
+            }
+            TypedType::Option(inner) => {
+                TypedType::Option(Box::new(Self::substitute_form_self(inner, target)))
+            }
+            TypedType::Result(ok, err) => TypedType::Result(
+                Box::new(Self::substitute_form_self(ok, target)),
+                Box::new(Self::substitute_form_self(err, target)),
+            ),
+            TypedType::Array(inner, size) => {
+                TypedType::Array(Box::new(Self::substitute_form_self(inner, target)), *size)
+            }
+            TypedType::Function {
+                params,
+                return_type,
+            } => TypedType::Function {
+                params: params
+                    .iter()
+                    .map(|param| Self::substitute_form_self(param, target))
+                    .collect(),
+                return_type: Box::new(Self::substitute_form_self(return_type, target)),
+            },
+            TypedType::Record {
+                name,
+                type_args,
+                frozen,
+                hash,
+                parent_hash,
+            } => TypedType::Record {
+                name: name.clone(),
+                type_args: type_args
+                    .iter()
+                    .map(|arg| Self::substitute_form_self(arg, target))
+                    .collect(),
+                frozen: *frozen,
+                hash: hash.clone(),
+                parent_hash: parent_hash.clone(),
+            },
+            TypedType::Temporal {
+                base_type,
+                temporals,
+            } => TypedType::Temporal {
+                base_type: Box::new(Self::substitute_form_self(base_type, target)),
+                temporals: temporals.clone(),
+            },
+            TypedType::Projection {
+                base,
+                form_name,
+                assoc_name,
+                args,
+            } => TypedType::Projection {
+                base: Box::new(Self::substitute_form_self(base, target)),
+                form_name: form_name.clone(),
+                assoc_name: assoc_name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| Self::substitute_form_self(arg, target))
+                    .collect(),
+            },
+            _ => ty.clone(),
+        }
+    }
+
+    fn register_takes_method_signatures(&mut self, takes: &TakesDecl) -> Result<(), TypeError> {
+        if takes.form_name == "Container" {
+            return Err(TypeError::UnsupportedFeature(
+                "form 'Container' is compiler-internal and cannot be adopted by source declarations"
+                    .to_string(),
+            ));
+        }
+        if self._contexts.contains(&takes.target) {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "takes target '{}' must be a concrete record; contexts cannot adopt forms",
+                takes.target
+            )));
+        }
+        let record = self.records.get(&takes.target).ok_or_else(|| {
+            TypeError::UnsupportedFeature(format!(
+                "takes target '{}' must be a concrete record declared in this program",
+                takes.target
+            ))
+        })?;
+        if !record.type_params.is_empty() {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "generic takes target '{}' is not supported in the initial form slice",
+                takes.target
+            )));
+        }
+        let form = self
+            .forms
+            .get(&takes.form_name)
+            .cloned()
+            .ok_or_else(|| TypeError::UndefinedForm(takes.form_name.clone()))?;
+        if self
+            .form_adoptions
+            .get(&takes.target)
+            .is_some_and(|forms| forms.contains(&takes.form_name))
+        {
+            return Err(TypeError::DuplicateAdoption {
+                target: takes.target.clone(),
+                form: takes.form_name.clone(),
+            });
+        }
+
+        let mut provided = HashSet::new();
+        for function in &takes.functions {
+            if !provided.insert(function.name.clone()) {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "duplicate method '{}' in {} takes {}",
+                    function.name, takes.target, takes.form_name
+                )));
+            }
+            if !form.methods.contains_key(&function.name) {
+                return Err(TypeError::UnexpectedFormMethod {
+                    form: takes.form_name.clone(),
+                    method: function.name.clone(),
+                });
+            }
+        }
+        for required in form.methods.keys() {
+            if !provided.contains(required) {
+                return Err(TypeError::MissingFormMethod {
+                    form: takes.form_name.clone(),
+                    method: required.clone(),
+                });
+            }
+        }
+
+        let target_type = TypedType::Record {
+            name: takes.target.clone(),
+            type_args: vec![],
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+        };
+        let mut staged = Vec::new();
+        for function in &takes.functions {
+            Self::validate_unique_parameter_names(
+                &format!(
+                    "form adoption method '{} takes {}.{}'",
+                    takes.target, takes.form_name, function.name
+                ),
+                &function.params,
+            )?;
+            if Self::is_display_intrinsic_name(&function.name)
+                && !(takes.form_name == "Display" && function.name == "display")
+            {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "form adoption method selector '{}' is compiler-reserved; only Display.display may implement a Display intrinsic",
+                    function.name
+                )));
+            }
+            if function.is_async
+                || !function.type_params.is_empty()
+                || !function.temporal_constraints.is_empty()
+            {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "form adoption method '{}::{}' must be non-generic and non-temporal",
+                    takes.target, function.name
+                )));
+            }
+            let Some(return_annotation) = function.return_type.as_ref() else {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "form adoption method '{}::{}' requires an explicit return type",
+                    takes.target, function.name
+                )));
+            };
+            self.validate_impl_receiver_param(&takes.target, function)?;
+
+            let actual = FunctionDef {
+                params: self.impl_method_param_types(&takes.target, function)?,
+                return_type: self.convert_type(return_annotation)?,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            };
+            let required = form
+                .methods
+                .get(&function.name)
+                .expect("provided form method was checked above");
+            let expected_params = required
+                .params
+                .iter()
+                .map(|(name, ty)| (name.clone(), Self::substitute_form_self(ty, &target_type)))
+                .collect::<Vec<_>>();
+            let expected_return = Self::substitute_form_self(&required.return_type, &target_type);
+            let actual_param_types = actual.params.iter().map(|(_, ty)| ty).collect::<Vec<_>>();
+            let expected_param_types = expected_params.iter().map(|(_, ty)| ty).collect::<Vec<_>>();
+            if actual_param_types != expected_param_types || actual.return_type != expected_return {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "form method signature mismatch for '{} takes {}.{}': expected ({}) -> {}, found ({}) -> {}",
+                    takes.target,
+                    takes.form_name,
+                    function.name,
+                    expected_params
+                        .iter()
+                        .map(|(name, ty)| format!("{}: {}", name, format_typed_type(ty)))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    format_typed_type(&expected_return),
+                    actual
+                        .params
+                        .iter()
+                        .map(|(name, ty)| format!("{}: {}", name, format_typed_type(ty)))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    format_typed_type(&actual.return_type)
+                )));
+            }
+            if self
+                .methods
+                .get(&takes.target)
+                .and_then(|methods| methods.get(&function.name))
+                .is_some()
+            {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "method selector '{}' for '{}' conflicts with an existing impl or form adoption",
+                    function.name, takes.target
+                )));
+            }
+            staged.push((function.name.clone(), actual));
+        }
+
+        for (name, signature) in staged {
+            self.methods
+                .entry(takes.target.clone())
+                .or_default()
+                .insert(name, signature);
+        }
+        self.form_environment
+            .register_direct_adoption(takes.target.clone(), takes.form_name.clone())?;
+        self.form_adoptions
+            .entry(takes.target.clone())
+            .or_default()
+            .insert(takes.form_name.clone());
+        Ok(())
+    }
+
+    fn check_takes_decl(&mut self, takes: &TakesDecl) -> Result<(), TypeError> {
+        self.check_impl_block(&ImplBlock {
+            target: takes.target.clone(),
+            functions: takes.functions.clone(),
+        })
+    }
+
     /// Check if the program needs lifetime inference
     fn needs_lifetime_inference(&self, program: &Program) -> bool {
         // Check if any declaration uses temporal types without explicit lifetimes
@@ -3920,6 +5534,14 @@ impl TypeChecker {
     }
 
     fn register_function_signature(&mut self, func: &FunDecl) -> Result<(), TypeError> {
+        Self::validate_unique_parameter_names(&format!("function '{}'", func.name), &func.params)?;
+        if Self::is_display_intrinsic_name(&func.name) {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "top-level function name '{}' is compiler-reserved by the Display output intrinsics",
+                func.name
+            )));
+        }
+        self.validate_declared_form_bounds(&func.type_params)?;
         // Push type parameter scope for generics
         self.push_type_param_scope(&func.type_params);
 
@@ -3972,6 +5594,7 @@ impl TypeChecker {
         match decl {
             TopDecl::Record(record) => self.check_record_decl(record),
             TopDecl::Enum(_) => Ok(()),
+            TopDecl::Form(_) | TopDecl::Takes(_) => Ok(()),
             TopDecl::Function(func) => self.check_function_decl(func),
             TopDecl::Binding(bind) => self.check_bind_decl(bind),
             TopDecl::Impl(impl_block) => self.check_impl_block(impl_block),
@@ -3981,12 +5604,14 @@ impl TypeChecker {
     }
 
     fn check_record_decl(&mut self, record: &RecordDecl) -> Result<(), TypeError> {
-        if self.enums.contains_key(&record.name) {
+        if self.enums.contains_key(&record.name) || self.forms.contains_key(&record.name) {
             return Err(TypeError::UnsupportedFeature(format!(
                 "duplicate type declaration '{}'",
                 record.name
             )));
         }
+
+        self.validate_declared_form_bounds(&record.type_params)?;
 
         // Register temporal type parameters
         for type_param in &record.type_params {
@@ -4180,6 +5805,12 @@ impl TypeChecker {
             .as_ref()
             .map(|annotation| self.convert_type(annotation))
             .transpose()?;
+        let inherits_deferred_origin = annotated_ty.is_none()
+            && matches!(&bind.pattern, Pattern::Ident(_))
+            && matches!(
+                &bind.value.kind,
+                ExprKind::Ident(source) if self.peek_was_deferred_callable(source)
+            );
         let inferred_expected_ty = if annotated_ty.is_none()
             && contextual_expected_ty.is_none()
             && matches!(bind.pattern, Pattern::Ident(_))
@@ -4194,13 +5825,16 @@ impl TypeChecker {
             .or(contextual_expected_ty)
             .or(inferred_expected_ty.as_ref());
         let mut deferred_binding = None;
+        let mut deferred_alias_group_id = None;
         let can_defer_unannotated_callable = annotated_ty.is_none()
             && contextual_expected_ty.is_none()
             && matches!(bind.pattern, Pattern::Ident(_))
             && self.can_defer_callable_expr(&bind.value);
         let ty = if can_defer_unannotated_callable {
-            let (ty, deferred) = self.check_deferred_callable_binding(&bind.value)?;
+            let (ty, deferred, alias_group_id) =
+                self.check_deferred_callable_binding(&bind.value)?;
             deferred_binding = deferred;
+            deferred_alias_group_id = alias_group_id;
             ty
         } else if annotated_ty.is_none()
             && contextual_expected_ty.is_none()
@@ -4230,9 +5864,18 @@ impl TypeChecker {
 
         // Handle pattern binding
         if let (Pattern::Ident(name), Some(deferred)) = (&bind.pattern, deferred_binding) {
-            self.bind_var_with_deferred(name.clone(), ty, bind.mutable, Some(deferred))?;
+            self.bind_var_with_deferred(
+                name.clone(),
+                ty,
+                bind.mutable,
+                Some(deferred),
+                deferred_alias_group_id,
+            )?;
         } else {
             self.bind_pattern(&bind.pattern, &ty, bind.mutable)?;
+        }
+        if let (true, Pattern::Ident(name)) = (inherits_deferred_origin, &bind.pattern) {
+            self.mark_var_as_deferred_origin(name)?;
         }
 
         if annotated_ty.is_none()
@@ -4252,14 +5895,65 @@ impl TypeChecker {
     fn check_deferred_callable_binding(
         &mut self,
         expr: &Expr,
-    ) -> Result<(TypedType, Option<DeferredBinding>), TypeError> {
+    ) -> Result<(TypedType, Option<DeferredBinding>, Option<u64>), TypeError> {
         if let ExprKind::Lambda(lambda) = &expr.kind {
-            return self.check_deferred_lambda_binding(lambda);
+            let (ty, deferred) = self.check_deferred_lambda_binding(lambda)?;
+            let alias_group_id = deferred
+                .as_ref()
+                .map(|_| self.fresh_deferred_alias_group_id());
+            return Ok((ty, deferred, alias_group_id));
         }
 
         match &expr.kind {
-            ExprKind::Then(then) => self.check_then_expr_as_deferred_callable(then),
-            ExprKind::Match(match_expr) => self.check_match_expr_as_deferred_callable(match_expr),
+            ExprKind::Ident(name) => {
+                if let Some(deferred) = self.peek_deferred_callable(name) {
+                    let alias_group_id =
+                        self.peek_deferred_alias_group_id(name).ok_or_else(|| {
+                            TypeError::CannotInferType(format!(
+                                "deferred callable binding '{name}' is missing alias provenance"
+                            ))
+                        })?;
+                    let ty = self.lookup_var(name)?;
+                    self.transfer_deferred_callable(name)?;
+                    return Ok((ty, Some(deferred), Some(alias_group_id)));
+                }
+
+                if let Some(definition) = self
+                    .functions
+                    .get(name)
+                    .filter(|definition| !definition.type_params.is_empty())
+                    .cloned()
+                {
+                    let ty = self.named_function_value_type(name, &definition, None)?;
+                    let alias_group_id = self.fresh_deferred_alias_group_id();
+                    return Ok((
+                        ty,
+                        Some(DeferredBinding::GenericFunction {
+                            name: name.clone(),
+                            definition,
+                        }),
+                        Some(alias_group_id),
+                    ));
+                }
+
+                Err(TypeError::CannotInferType(format!(
+                    "deferred callable binding '{name}' is not generic"
+                )))
+            }
+            ExprKind::Then(then) => {
+                let (ty, deferred) = self.check_then_expr_as_deferred_callable(then)?;
+                let alias_group_id = deferred
+                    .as_ref()
+                    .map(|_| self.fresh_deferred_alias_group_id());
+                Ok((ty, deferred, alias_group_id))
+            }
+            ExprKind::Match(match_expr) => {
+                let (ty, deferred) = self.check_match_expr_as_deferred_callable(match_expr)?;
+                let alias_group_id = deferred
+                    .as_ref()
+                    .map(|_| self.fresh_deferred_alias_group_id());
+                Ok((ty, deferred, alias_group_id))
+            }
             _ => Err(TypeError::CannotInferType(
                 "deferred callable binding requires a lambda-producing expression".to_string(),
             )),
@@ -4438,7 +6132,7 @@ impl TypeChecker {
         candidates.push(else_candidate);
 
         let ty = self.placeholder_for_deferred_candidates(&candidates)?;
-        self.merge_branch_var_usage(branch_base, &branch_envs);
+        self.merge_branch_var_usage(branch_base, &branch_envs)?;
 
         if let Some(anchored_ty) = self.resolve_anchored_deferred_candidates(&candidates)? {
             return Ok((anchored_ty, None));
@@ -4503,7 +6197,7 @@ impl TypeChecker {
         }
 
         let ty = self.placeholder_for_deferred_candidates(&candidates)?;
-        self.merge_branch_var_usage(branch_base, &branch_envs);
+        self.merge_branch_var_usage(branch_base, &branch_envs)?;
 
         if let Some(anchored_ty) = self.resolve_anchored_deferred_candidates(&candidates)? {
             return Ok((anchored_ty, None));
@@ -4613,9 +6307,9 @@ impl TypeChecker {
 
             if self.current_scope_contains_var(&var_name) {
                 captures.push((var_name, var_type));
-            } else if !self.ident_is_replay_safe_for_deferred_callable(&var_name) {
+            } else {
                 return Err(TypeError::CannotInferType(format!(
-                    "deferred lambda branch captures non-copy affine value '{}'; add an explicit function type annotation",
+                    "deferred lambda branch outer binding capture '{}' is not supported; bind a Copy prefix inside each branch or add an explicit function type annotation",
                     var_name
                 )));
             }
@@ -4714,6 +6408,13 @@ impl TypeChecker {
     fn can_defer_callable_expr(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Lambda(_) => true,
+            ExprKind::Ident(name) => {
+                self.peek_deferred_callable(name).is_some()
+                    || self
+                        .functions
+                        .get(name)
+                        .is_some_and(|definition| !definition.type_params.is_empty())
+            }
             ExprKind::Then(then) => {
                 self.branch_expr_has_terminal_lambda(expr)
                     && self.expr_is_replay_safe_for_deferred_callable(&then.condition)
@@ -4835,11 +6536,11 @@ impl TypeChecker {
     }
 
     fn ident_is_replay_safe_for_deferred_callable(&self, name: &str) -> bool {
-        self.var_env.iter().rev().any(|scope| {
-            scope
-                .get(name)
-                .is_some_and(|var| var.mutable || self.is_copyable(&var.ty))
-        })
+        self.var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .is_some_and(|var| !var.mutable && self.is_copyable(&var.ty))
     }
 
     fn type_matches_expected(&self, expected: &TypedType, actual: &TypedType) -> bool {
@@ -5092,6 +6793,7 @@ impl TypeChecker {
         if !mutable {
             return Err(TypeError::ImmutableReassignment(assign.name.clone()));
         }
+        self.reject_deferred_alias_reassignment(&assign.name)?;
 
         let value_ty = self.check_expr_with_expected(&assign.value, Some(&target_ty))?;
         let resolved_target_ty = if Self::contains_inference_internal_type(&target_ty)
@@ -5162,6 +6864,17 @@ impl TypeChecker {
 
         let target = impl_block.target.clone();
         for func in &impl_block.functions {
+            self.validate_declared_form_bounds(&func.type_params)?;
+            Self::validate_unique_parameter_names(
+                &format!("impl method '{}::{}'", target, func.name),
+                &func.params,
+            )?;
+            if Self::is_display_intrinsic_name(&func.name) {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "impl method selector '{}' is compiler-reserved by the Display output intrinsics",
+                    func.name
+                )));
+            }
             if self
                 .methods
                 .get(&target)
@@ -5750,6 +7463,7 @@ impl TypeChecker {
             hash: record_hash,
             parent_hash,
         };
+        self.validate_record_type_form_bounds(&base_type)?;
 
         // If the record has temporal parameters, wrap it in a Temporal type
         let temporal_params: Vec<String> = type_params
@@ -5980,7 +7694,8 @@ impl TypeChecker {
         constraints: &[Constraint],
         initial: &ConstraintSubstitution,
     ) -> Result<ConstraintSubstitution, TypeError> {
-        solve_constraints_with_forms_and_initial(constraints, &self.form_environment, initial)
+        let forms = self.scoped_form_environment();
+        solve_constraints_with_forms_and_initial(constraints, &forms, initial)
     }
 
     fn solve_constraints_partial_with_current_forms(
@@ -5988,11 +7703,34 @@ impl TypeChecker {
         constraints: &[Constraint],
         initial: &ConstraintSubstitution,
     ) -> Result<ConstraintSubstitution, TypeError> {
-        solve_constraints_partial_with_forms_and_initial(
-            constraints,
-            &self.form_environment,
-            initial,
-        )
+        let forms = self.scoped_form_environment();
+        solve_constraints_partial_with_forms_and_initial(constraints, &forms, initial)
+    }
+
+    fn scoped_form_environment(&self) -> FormEnvironment {
+        let mut forms = self.form_environment.clone();
+        let mut visible_type_params = HashSet::new();
+        for (type_params, bounds) in self
+            .type_param_env
+            .iter()
+            .zip(self.form_bounds_env.iter())
+            .rev()
+        {
+            for type_param in type_params {
+                if !visible_type_params.insert(type_param) {
+                    continue;
+                }
+                let Some(bounds) = bounds.get(type_param) else {
+                    continue;
+                };
+                for form_name in bounds {
+                    if self.forms.contains_key(form_name) {
+                        forms.assume_abstract_adoption(type_param.clone(), form_name.clone());
+                    }
+                }
+            }
+        }
+        forms
     }
 
     fn lower_associated_type_projections(
@@ -6072,8 +7810,8 @@ impl TypeChecker {
         }
     }
 
-    fn is_form_bound(name: &str) -> bool {
-        matches!(name, "Container")
+    fn form_bound_names(&self, type_param: &TypeParam) -> Vec<String> {
+        type_param.of_forms.clone()
     }
 
     // Check function call with generic type inference
@@ -6127,14 +7865,11 @@ impl TypeChecker {
         let func_name = Self::call_constraint_name(call);
 
         for type_param in &func_info.type_params {
-            for bound in &type_param.bounds {
-                if !Self::is_form_bound(&bound.trait_name) {
-                    continue;
-                }
+            for form_name in self.form_bound_names(type_param) {
                 if let Some(ty) = type_vars.get(&type_param.name) {
                     constraints.push(Constraint::HasForm {
                         ty: ty.clone(),
-                        form_name: bound.trait_name.clone(),
+                        form_name,
                         origin: Self::constraint_origin(ConstraintKind::FormBound {
                             type_param: type_param.name.clone(),
                         }),
@@ -6193,9 +7928,6 @@ impl TypeChecker {
             {
                 // Check trait bounds
                 for bound in &type_param.bounds {
-                    if Self::is_form_bound(&bound.trait_name) {
-                        continue;
-                    }
                     if !self.type_implements_trait(&concrete_type, &bound.trait_name) {
                         return Err(TypeError::UnsupportedFeature(format!(
                             "Type {} does not implement trait {}",
@@ -6783,6 +8515,15 @@ impl TypeChecker {
         call: &CallExpr,
         expected_return: Option<&TypedType>,
     ) -> Result<TypedType, TypeError> {
+        self.check_call_expr_with_expected_mode(call, expected_return, true)
+    }
+
+    fn check_call_expr_with_expected_mode(
+        &mut self,
+        call: &CallExpr,
+        expected_return: Option<&TypedType>,
+        allow_receiver_methods: bool,
+    ) -> Result<TypedType, TypeError> {
         // First check the function expression type
         match &call.function.kind {
             ExprKind::VariantRef(path) => {
@@ -6801,6 +8542,15 @@ impl TypeChecker {
                     }
                     Err(TypeError::UndefinedVariable(_)) => {}
                     Err(err) => return Err(err),
+                }
+
+                // Applicable receiver methods are type-directed OSV calls and
+                // take precedence over same-spelled global or builtin
+                // functions. Lexical callable bindings above still win.
+                if allow_receiver_methods {
+                    if let Some(return_type) = self.check_osv_method_call(name, &call.args)? {
+                        return Ok(return_type);
+                    }
                 }
 
                 // Handle spawn operation - requires AsyncRuntime context
@@ -6859,10 +8609,6 @@ impl TypeChecker {
                 } else {
                     if matches!(name.as_str(), "some" | "none") {
                         return Err(lowercase_option_constructor_error(name));
-                    }
-
-                    if let Some(return_type) = self.check_osv_method_call(name, &call.args)? {
-                        return Ok(return_type);
                     }
 
                     Err(TypeError::UndefinedFunction(name.clone()))
@@ -7505,7 +9251,7 @@ impl TypeChecker {
         match &expr.kind {
             ExprKind::Pipe(pipe) => {
                 if Self::expr_is_ident(&pipe.expr, name) {
-                    return self.expected_type_for_pipe_target_first_arg(&pipe.target);
+                    return self.expected_type_for_pipe_target_first_arg(&pipe.target, &pipe.expr);
                 }
             }
             ExprKind::Call(call) => {
@@ -7548,25 +9294,43 @@ impl TypeChecker {
     fn expected_type_for_pipe_target_first_arg(
         &mut self,
         target: &PipeTarget,
+        receiver: &Expr,
     ) -> Result<Option<TypedType>, TypeError> {
-        match target {
-            PipeTarget::Ident(func_name) => Ok(self.expected_function_param_type(func_name, 0)),
-            PipeTarget::Expr(expr) => {
-                if let ExprKind::Ident(func_name) = &expr.kind {
-                    Ok(self.expected_function_param_type(func_name, 0))
-                } else {
-                    Ok(None)
-                }
-            }
-        }
-    }
+        let func_name = match target {
+            PipeTarget::Ident(func_name) => func_name,
+            PipeTarget::Expr(expr) => match &expr.kind {
+                ExprKind::Ident(func_name) => func_name,
+                _ => return Ok(None),
+            },
+        };
 
-    fn expected_function_param_type(&self, func_name: &str, index: usize) -> Option<TypedType> {
-        let function = self.functions.get(func_name)?;
-        if !function.type_params.is_empty() {
-            return None;
+        match self.peek_var_type(func_name) {
+            Some(TypedType::Function { .. }) => {
+                return self.expected_function_param_type_for_call_mode(
+                    func_name,
+                    0,
+                    &[Box::new(receiver.clone())],
+                    false,
+                );
+            }
+            Some(_) => return Ok(None),
+            None => {}
         }
-        function.params.get(index).map(|(_, ty)| ty.clone())
+
+        if self.receiver_has_form_method_selector(receiver, func_name) {
+            return Ok(self.expected_osv_method_param_type(
+                func_name,
+                0,
+                &[Box::new(receiver.clone())],
+            ));
+        }
+
+        self.expected_function_param_type_for_call_mode(
+            func_name,
+            0,
+            &[Box::new(receiver.clone())],
+            false,
+        )
     }
 
     fn expected_function_param_type_for_call(
@@ -7575,6 +9339,31 @@ impl TypeChecker {
         target_index: usize,
         args: &[Box<Expr>],
     ) -> Result<Option<TypedType>, TypeError> {
+        self.expected_function_param_type_for_call_mode(func_name, target_index, args, true)
+    }
+
+    fn expected_function_param_type_for_call_mode(
+        &mut self,
+        func_name: &str,
+        target_index: usize,
+        args: &[Box<Expr>],
+        allow_receiver_methods: bool,
+    ) -> Result<Option<TypedType>, TypeError> {
+        if let Some(TypedType::Function { params, .. }) = self.peek_var_type(func_name) {
+            if params.len() != args.len() {
+                return Ok(None);
+            }
+            return Ok(params.get(target_index).cloned());
+        }
+
+        if allow_receiver_methods
+            && args
+                .first()
+                .is_some_and(|receiver| self.receiver_has_method_selector(receiver, func_name))
+        {
+            return Ok(self.expected_osv_method_param_type(func_name, target_index, args));
+        }
+
         let Some(function) = self.functions.get(func_name).cloned() else {
             return Ok(None);
         };
@@ -7616,6 +9405,62 @@ impl TypeChecker {
         }
 
         Ok(Some(resolved_target))
+    }
+
+    fn expected_osv_method_param_type(
+        &self,
+        method_name: &str,
+        target_index: usize,
+        args: &[Box<Expr>],
+    ) -> Option<TypedType> {
+        let receiver_ty = self.infer_method_receiver_type_non_consuming(args.first()?)?;
+        let method = match &receiver_ty {
+            TypedType::TypeParam(param_name) => {
+                let mut candidates = self
+                    .get_form_bounds(param_name)
+                    .into_iter()
+                    .filter_map(|form_name| {
+                        self.forms
+                            .get(&form_name)
+                            .and_then(|form| form.methods.get(method_name))
+                            .cloned()
+                            .map(|method| (form_name, method))
+                    })
+                    .collect::<Vec<_>>();
+                candidates.sort_by(|left, right| left.0.cmp(&right.0));
+                candidates.dedup_by(|left, right| left.0 == right.0);
+                if candidates.len() != 1 {
+                    return None;
+                }
+                let (_, mut method) = candidates.pop()?;
+                method.params = method
+                    .params
+                    .into_iter()
+                    .map(|(name, ty)| (name, Self::substitute_form_self(&ty, &receiver_ty)))
+                    .collect();
+                method.return_type = Self::substitute_form_self(&method.return_type, &receiver_ty);
+                method
+            }
+            TypedType::Record { name, .. } => self
+                .methods
+                .get(name)
+                .and_then(|methods| methods.get(method_name))
+                .cloned()?,
+            TypedType::Temporal { base_type, .. } => match base_type.as_ref() {
+                TypedType::Record { name, .. } => self
+                    .methods
+                    .get(name)
+                    .and_then(|methods| methods.get(method_name))
+                    .cloned()?,
+                _ => return None,
+            },
+            _ => return None,
+        };
+
+        if !method.type_params.is_empty() || method.params.len() != args.len() {
+            return None;
+        }
+        method.params.get(target_index).map(|(_, ty)| ty.clone())
     }
 
     fn non_consuming_expected_context_expr_type(&self, expr: &Expr) -> Option<TypedType> {
@@ -7913,7 +9758,7 @@ impl TypeChecker {
             PipeTarget::Ident(name) => {
                 let function_variable =
                     matches!(self.peek_var_type(name), Some(TypedType::Function { .. }));
-                if self.functions.contains_key(name) || function_variable {
+                if function_variable {
                     // Pipe to function: expr |> function. The desugared call
                     // checks an id-preserving clone of the pipe object, so its
                     // facts are recorded directly under the source node ids.
@@ -7921,7 +9766,19 @@ impl TypeChecker {
                         function: Box::new(Expr::new(ExprKind::Ident(name.clone()))),
                         args: vec![pipe.expr.clone()],
                     };
+                    self.check_call_expr_with_expected_mode(&call, expected, false)
+                } else if self.receiver_has_form_method_selector(&pipe.expr, name) {
+                    let call = CallExpr {
+                        function: Box::new(Expr::new(ExprKind::Ident(name.clone()))),
+                        args: vec![pipe.expr.clone()],
+                    };
                     self.check_call_expr_with_expected(&call, expected)
+                } else if self.functions.contains_key(name) {
+                    let call = CallExpr {
+                        function: Box::new(Expr::new(ExprKind::Ident(name.clone()))),
+                        args: vec![pipe.expr.clone()],
+                    };
+                    self.check_call_expr_with_expected_mode(&call, expected, false)
                 } else if matches!(name.as_str(), "some" | "none") {
                     Err(lowercase_option_constructor_error(name))
                 } else {
@@ -7939,7 +9796,14 @@ impl TypeChecker {
                     function: target_expr.clone(),
                     args: vec![pipe.expr.clone()],
                 };
-                self.check_call_expr_with_expected(&call, expected)
+                let allow_form_method = match &target_expr.kind {
+                    ExprKind::Ident(name) => {
+                        !matches!(self.peek_var_type(name), Some(TypedType::Function { .. }))
+                            && self.receiver_has_form_method_selector(&pipe.expr, name)
+                    }
+                    _ => false,
+                };
+                self.check_call_expr_with_expected_mode(&call, expected, allow_form_method)
             }
         }
     }
@@ -8470,7 +10334,7 @@ impl TypeChecker {
             finalize_result,
         )?;
 
-        self.merge_branch_var_usage(branch_base, &branch_envs);
+        self.merge_branch_var_usage(branch_base, &branch_envs)?;
         self.apply_substitution_to_var_env(&branch_substitution)?;
         Ok(result_ty)
     }
@@ -8566,7 +10430,7 @@ impl TypeChecker {
             finalize_result,
         )?;
 
-        self.merge_branch_var_usage(branch_base, &branch_envs);
+        self.merge_branch_var_usage(branch_base, &branch_envs)?;
         self.apply_substitution_to_var_env(&branch_substitution)?;
         Ok(result_type)
     }
@@ -9601,12 +11465,9 @@ mod tests {
 
     #[test]
     fn deferred_lambda_resolution_does_not_overwrite_source_facts() {
-        // A mutable deferred lambda binding escapes affine single-use
-        // marking, so it can be resolved at two different instantiations
-        // in one accepted program. Those per-use-site re-checks happen on
-        // stored clones; with ids stripped from the clones, they must not
-        // record instantiation-specific facts under the source lambda
-        // body's node ids.
+        // Deferred use-site re-checks happen on stored clones. With ids
+        // stripped from the clones, branch specialization must not record
+        // instantiation-specific facts under the source lambda body's node ids.
         let source = r#"
 fun main: () -> Int32 = {
     mut val emit = |x| [];
@@ -9617,7 +11478,7 @@ fun main: () -> Int32 = {
     } else {
         0
     };
-    val b: Boolean -> List<Boolean> = emit;
+    val b: Int32 -> List<Int32> = emit;
     42
 }
 "#;
@@ -9625,7 +11486,7 @@ fun main: () -> Int32 = {
         let mut checker = TypeChecker::new();
         checker
             .check_program(&program)
-            .expect("double resolution of a mutable deferred lambda is accepted");
+            .expect("later uses at the merged concrete specialization are accepted");
 
         let TopDecl::Function(func) = &program.declarations[0] else {
             panic!("first declaration should be main");
@@ -9642,6 +11503,94 @@ fun main: () -> Int32 = {
             None,
             "use-site instantiations must not write facts for source lambda body nodes"
         );
+    }
+
+    #[test]
+    fn branch_merge_rechecks_non_generic_deferred_before_clearing() {
+        let source = r#"
+fun main: () -> () = {
+    val mapper = |value| value + 1;
+    ()
+}
+"#;
+        let (_, program) = parse_program(source).unwrap();
+        let TopDecl::Function(func) = &program.declarations[0] else {
+            panic!("first declaration should be main");
+        };
+        let Stmt::Binding(binding) = &func.body.statements[0] else {
+            panic!("first statement should bind the lambda");
+        };
+        let ExprKind::Lambda(lambda) = &binding.value.kind else {
+            panic!("binding value should be a lambda");
+        };
+
+        let mut checker = TypeChecker::new();
+        let placeholder = checker.fresh_lambda_function_type(1);
+        let alias_group_id = checker.fresh_deferred_alias_group_id();
+        checker
+            .bind_var_with_deferred(
+                "mapper".to_string(),
+                placeholder,
+                false,
+                Some(DeferredBinding::Lambda(lambda.clone())),
+                Some(alias_group_id),
+            )
+            .unwrap();
+        let base_env = checker.var_env.clone();
+        let merged_ty = TypedType::Function {
+            params: vec![TypedType::String],
+            return_type: Box::new(TypedType::String),
+        };
+        let mut unchecked_branch = base_env.clone();
+        let mapper = unchecked_branch
+            .last_mut()
+            .and_then(|scope| scope.get_mut("mapper"))
+            .unwrap();
+        mapper.ty = merged_ty;
+        // A transfer clears deferred ownership without checking the lambda
+        // body. Branch merge must not treat this marker alone as evidence.
+        mapper.deferred = None;
+        mapper.used = true;
+
+        let err = checker
+            .merge_branch_var_usage(base_env.clone(), &[unchecked_branch, base_env])
+            .expect_err("the merged String signature must recheck the stored lambda body");
+        assert!(matches!(err, TypeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn branch_merge_validates_concrete_deferred_generic_before_clearing() {
+        let mut checker = TypeChecker::new();
+        let definition = checker.functions.get("map").unwrap().clone();
+        let invalid_map_type = TypedType::Function {
+            params: vec![TypedType::Int32],
+            return_type: Box::new(TypedType::Int32),
+        };
+        let alias_group_id = checker.fresh_deferred_alias_group_id();
+        checker
+            .bind_var_with_deferred(
+                "apply_map".to_string(),
+                invalid_map_type,
+                false,
+                Some(DeferredBinding::GenericFunction {
+                    name: "map".to_string(),
+                    definition,
+                }),
+                Some(alias_group_id),
+            )
+            .unwrap();
+        let base_env = checker.var_env.clone();
+
+        let err = checker
+            .merge_branch_var_usage(base_env.clone(), &[base_env.clone(), base_env])
+            .expect_err("a concrete deferred generic must still match its stored definition");
+        assert!(matches!(
+            err,
+            TypeError::ArityMismatch {
+                expected: 2,
+                found: 1
+            }
+        ));
     }
 
     fn test_record_type(name: &str) -> TypedType {

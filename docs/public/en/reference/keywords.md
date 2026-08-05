@@ -13,6 +13,9 @@ records current post-v0.0.1 additions explicitly.
 | `mut` | Mark a binding mutable as `mut val`. |
 | `record` | Define a record type. |
 | `enum` | Define a closed, non-generic, non-recursive user enum. |
+| `form` | Define a non-generic, method-only static interface. |
+| `takes` | Adopt a form for one concrete, non-generic record. |
+| `of` | Require one or more forms on a generic type parameter. |
 | `context` | Define a context binding shape. |
 | `pub` | Expose a supported top-level declaration from a source module. |
 | `import` | Import from dotted source modules. |
@@ -53,6 +56,32 @@ fun make_error: (message: String) -> ParseError = {
 `pub enum` exposes the type to Restrict source modules only; it does not define
 a host enum ABI. Generic or recursive enums and `?` propagation remain future
 work.
+
+Forms use fully typed method signatures, while adoptions provide their bodies:
+
+```restrict
+pub form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = {
+        self.text
+    }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+```
+
+The compiler selects these calls statically. Generic forms, associated types,
+default methods, conditional or generic adoptions, enum adoptions, and dynamic
+dispatch remain outside the current slice.
 
 Mutable bindings place `mut` before `val`:
 

@@ -6,7 +6,7 @@
 //! source evaluation order in the B-layer.
 
 use crate::type_checker::{format_typed_type, ArrayLength, TypeError, TypedType};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,7 +18,7 @@ impl fmt::Display for TypeVarId {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TypeVarGenerator {
     next: u32,
 }
@@ -195,6 +195,14 @@ pub fn substitute_type_params(ty: &TypedType, type_vars: &HashMap<String, TypedT
 #[derive(Debug, Clone, Default)]
 pub struct FormEnvironment {
     adoptions: Vec<FormAdoption>,
+    /// Closed-world source and compiler-provided adoptions that do not expose
+    /// associated types. The first component is the concrete source type name
+    /// (for example `Int32` or `Point`) and the second is the form name.
+    direct_adoptions: HashSet<(String, String)>,
+    /// Form evidence supplied by the active generic scope. Unlike concrete
+    /// adoptions, these assumptions are valid only while checking a body whose
+    /// type parameter declares the corresponding `of` bound.
+    abstract_adoptions: HashSet<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +282,34 @@ impl FormEnvironment {
         Ok(())
     }
 
+    pub(crate) fn register_direct_adoption(
+        &mut self,
+        type_name: impl Into<String>,
+        form_name: impl Into<String>,
+    ) -> Result<(), TypeError> {
+        let type_name = type_name.into();
+        let form_name = form_name.into();
+        if !self
+            .direct_adoptions
+            .insert((type_name.clone(), form_name.clone()))
+        {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "duplicate {} adoption for {}",
+                form_name, type_name
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn assume_abstract_adoption(
+        &mut self,
+        type_param: impl Into<String>,
+        form_name: impl Into<String>,
+    ) {
+        self.abstract_adoptions
+            .insert((type_param.into(), form_name.into()));
+    }
+
     fn adopt_type_constructor(
         &mut self,
         type_constructor: TypeConstructor,
@@ -312,6 +348,22 @@ impl FormEnvironment {
     }
 
     fn require_form(&self, ty: &TypedType, form_name: &str) -> Result<(), TypeError> {
+        if let TypedType::TypeParam(type_param) = ty {
+            if self
+                .abstract_adoptions
+                .contains(&(type_param.clone(), form_name.to_string()))
+            {
+                return Ok(());
+            }
+        }
+
+        if concrete_form_target_name(ty).is_some_and(|type_name| {
+            self.direct_adoptions
+                .contains(&(type_name.to_string(), form_name.to_string()))
+        }) {
+            return Ok(());
+        }
+
         self.find_adoption(ty, form_name).map(|_| ())
     }
 
@@ -555,10 +607,27 @@ fn solve_constraints_with_forms_and_initial_mode(
 
 fn unsupported_form_error(ty: &TypedType, form_name: &str) -> TypeError {
     TypeError::UnsupportedFeature(format!(
-        "{} does not satisfy the built-in {} constraint",
+        "{} does not take form {}",
         format_typed_type(ty),
         form_name
     ))
+}
+
+fn concrete_form_target_name(ty: &TypedType) -> Option<&str> {
+    match ty {
+        TypedType::Int32 => Some("Int32"),
+        TypedType::Int64 => Some("Int64"),
+        TypedType::Float64 => Some("Float64"),
+        TypedType::Boolean => Some("Boolean"),
+        TypedType::String => Some("String"),
+        TypedType::Char => Some("Char"),
+        TypedType::Unit => Some("Unit"),
+        TypedType::Record {
+            name, type_args, ..
+        } if type_args.is_empty() => Some(name),
+        TypedType::Enum { name } => Some(name),
+        _ => None,
+    }
 }
 
 fn unresolved_projection_error(
@@ -620,7 +689,7 @@ fn unresolved_constraint_error(constraint: &Constraint) -> TypeError {
             origin,
         } => with_constraint_origin(
             TypeError::UnsupportedFeature(format!(
-                "could not prove {} satisfies the built-in {} constraint",
+                "could not prove {} takes form {}",
                 format_typed_type(ty),
                 form_name
             )),

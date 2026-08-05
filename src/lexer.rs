@@ -50,10 +50,12 @@ pub enum Token {
     Context,
     /// `enum` keyword for closed user-defined sum declarations
     Enum,
-    /// `form` keyword reserved for future source-level form declarations
+    /// `form` keyword for compile-time behavioral contracts
     Form,
-    /// `takes` keyword reserved for future source-level form adoptions
+    /// `takes` keyword for form adoption declarations
     Takes,
+    /// `of` keyword for form constraints on type parameters
+    Of,
     /// `with` keyword for resource management
     With,
     /// `fun` keyword for function declarations
@@ -176,6 +178,7 @@ impl fmt::Display for Token {
             Token::Enum => write!(f, "enum"),
             Token::Form => write!(f, "form"),
             Token::Takes => write!(f, "takes"),
+            Token::Of => write!(f, "of"),
             Token::With => write!(f, "with"),
             Token::Fun => write!(f, "fun"),
             Token::Val => write!(f, "val"),
@@ -272,6 +275,7 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "enum" => Token::Enum,
         "form" => Token::Form,
         "takes" => Token::Takes,
+        "of" => Token::Of,
         "with" => Token::With,
         "fun" => Token::Fun,
         "val" => Token::Val,
@@ -605,6 +609,7 @@ mod tests {
         assert_eq!(lex("enum").unwrap().1, vec![Token::Enum]);
         assert_eq!(lex("form").unwrap().1, vec![Token::Form]);
         assert_eq!(lex("takes").unwrap().1, vec![Token::Takes]);
+        assert_eq!(lex("of").unwrap().1, vec![Token::Of]);
         assert_eq!(lex("fun").unwrap().1, vec![Token::Fun]);
         assert_eq!(lex("val").unwrap().1, vec![Token::Val]);
         assert_eq!(lex("pub").unwrap().1, vec![Token::Pub]);

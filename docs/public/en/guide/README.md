@@ -1,14 +1,15 @@
 # Language Guide Overview
 
 Welcome to the Restrict Language guide. These pages describe the current
-release-facing syntax, including the closed enum slice added after v0.0.1, and
-mark historical v0.0.1 boundaries where they matter.
+release-facing syntax, including the closed enum and static form slices added
+after v0.0.1, and mark historical v0.0.1 boundaries where they matter.
 
 ## What You'll Learn
 
 - **[OSV Word Order](./osv-order.md)** - Calls put arguments before functions
 - **[Syntax Reference](./syntax.md)** - Current declarations, expressions, and literals
 - **[Type System](./types.md)** - Built-ins, closed user enums, generics, and affine ownership
+- **[Forms and Static Polymorphism](./forms.md)** - Method-only forms, concrete adoptions, and `of` bounds
 - **[Ownership](./ownership.md)** - Memory management without GC
 - **[Pattern Matching](./patterns.md)** - Exhaustive `match` expressions
 - **[Warder Package Manager](./warder.md)** - Managing dependencies
@@ -52,6 +53,11 @@ affine by default. Copyable primitives such as `Int32`, `Boolean`, `Float64`,
 ### Type-Directed Impl Functions
 `impl` blocks define functions selected by the receiver type, but calls remain
 OSV. Use `(receiver, args...) function_name`, not object-style method calls.
+
+### Static Forms
+Method-only forms express reusable requirements. Concrete records adopt a form
+with `takes`, and generic functions list bounds with `<T of Form>`. The compiler
+selects and monomorphizes every method call without runtime form objects.
 
 ### Pattern Matching
 `match` is also OSV: the value being matched appears before the `match`

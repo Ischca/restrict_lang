@@ -110,11 +110,11 @@
                 },
                 {
                     "name": "keyword.declaration.restrict",
-                    "match": "\\b(record|context|enum|fun|val|mut|pub|import|export)\\b"
+                    "match": "\\b(record|context|enum|form|fun|val|mut|pub|import|export|impl)\\b"
                 },
                 {
                     "name": "keyword.other.restrict",
-                    "match": "\\b(clone|freeze|temporal|within|where|as|fatal)\\b"
+                    "match": "\\b(clone|freeze|temporal|within|where|as|fatal|takes|of)\\b"
                 },
                 {
                     "name": "constant.language.boolean.restrict",

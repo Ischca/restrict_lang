@@ -51,6 +51,7 @@ wasmtime hello.wat
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support for the current concrete ABI surface
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition (traditional function calls not supported)
+- **🧩 Forms**: Explicit `form` / `takes` contracts with static, monomorphized dispatch
 - **💬 Comments**: Full support for single-line (`//`) and multi-line (`/* */`) comments
 - **🎪 Spread Destructuring**: Extract multiple record fields with rest patterns `{ field1, field2, ...rest }`
 - **⏰ Temporal Affine Types**: Experimental and excluded from the default v0.0.1 gate
@@ -66,9 +67,12 @@ small user-defined enum slice while retaining the ABI boundaries below.
   `Type::Variant` names in OSV order, patterns use the same qualified names,
   and matches must be exhaustive. `pub enum` is source-module metadata only:
   user enums have no host WebAssembly ABI.
-- User-defined `form`, `takes`, `of`, and associated-type declarations are
-  future design work. The current `Container` behavior used by `map` and
-  `filter` is a compiler-internal constraint for built-in `List` and `Option`.
+- The current post-v0.0.1 compiler supports non-generic, method-only `form`
+  contracts, concrete record `takes` declarations, and `<T of A + B>` generic
+  bounds. Dispatch is static and monomorphized. Associated types, generic or
+  conditional adoptions, defaults, enum adoptions, and dynamic dispatch remain
+  future work. The current `Container` behavior used by `map` and `filter`
+  remains compiler-internal.
 - Exported generic functions do not yet have a stable WebAssembly ABI and are
   rejected by v0.0.1 release-surface validation before `--check` success or
   code generation. Exported records are source-level module metadata only; they
@@ -105,7 +109,7 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 fun main: () -> Int32 = {
     val result = (10, 20) add
     "Result: " |> println
-    result |> print_int
+    result |> println
     result
 }
 ```
@@ -274,6 +278,57 @@ val bob = Person { name: "Bob", age: 17, email: "bob@example.com" }
 val adult = (bob) is_adult
 ```
 
+### Forms and Display
+
+Forms describe behavior without runtime vtables. A record adopts a form
+explicitly, and generic functions state the required forms with `of`.
+
+```restrict
+pub form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = {
+        self.text
+    }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+```
+
+The compiler provides `Display` for `String`, all scalar types, and `()`. User
+records opt in explicitly. `print` and `println` accept any value that takes
+`Display`; `print_int` and `print_float` remain available for compatibility.
+
+```restrict
+record Notice {
+    text: String
+}
+
+Notice takes Display {
+    fun display: (self: Notice) -> String = {
+        self.text
+    }
+}
+
+fun main: () -> () = {
+    42 |> print
+    " · " |> print
+    Notice { text: "records too" } |> println
+}
+```
+
+Passing a non-Copy record as `self` consumes it under the ordinary affine
+rules. Forms with associated types, generic or conditional `takes`, default
+methods, enum adoptions, and dynamic dispatch are not in this initial slice.
+
 ### Arena Memory Management
 
 ```restrict
@@ -319,6 +374,8 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [x] Result types with expected-type inference
 - [x] Closed user-defined enums with qualified constructors and exhaustive matching
 - [x] Type-directed `impl` method dispatch through grouped OSV calls
+- [x] Method-only forms, concrete record adoptions, `of` bounds, and static form dispatch
+- [x] Display-polymorphic `print` and `println`
 - [x] Source import resolution through the CLI
 - [x] Direct local Warder dependencies with manifest-bound namespaces and deterministic lock hashes
 - [x] Affine checking across complex expressions, OSV calls, field access, and branching
@@ -332,6 +389,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [ ] Registry, Git, foreign-WASM, and transitive Warder dependency resolution
 - [ ] Source-level import aliases, re-exports, and std aggregators
 - [ ] Direct WebAssembly ABI for exported generic functions and host-visible record values
+- [ ] Associated types, generic/conditional form adoptions, and default form methods
 
 ### 📋 Planned Features
 
@@ -352,6 +410,10 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - Closed user-defined enums are supported after v0.0.1, including use as the
   error type in `Result<T, CustomError>`. Generic and recursive user enums,
   direct host enum ABI, and `?` propagation syntax remain future work
+- Source forms are intentionally narrow: non-generic method contracts and
+  concrete non-generic record adoptions only. `takes` is not independently
+  public, and associated types, generic/conditional adoptions, defaults,
+  dynamic dispatch, and enum adoptions remain future work
 - Exported generic functions require a concrete WebAssembly ABI design before
   codegen support; exported records are source-level only and emit no direct
   host-visible Wasm export

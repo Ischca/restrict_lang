@@ -70,6 +70,36 @@
         ],
         "description": "Create a record instance"
     },
+    "Form Declaration": {
+        "prefix": "form",
+        "body": [
+            "form ${1:FormName} {",
+            "\tfun ${2:method}: (self: Self) -> ${3:ReturnType}",
+            "\t$0",
+            "}"
+        ],
+        "description": "Define a non-generic method-only form"
+    },
+    "Display Adoption": {
+        "prefix": "takes-display",
+        "body": [
+            "${1:RecordName} takes Display {",
+            "\tfun display: (self: ${1:RecordName}) -> String = {",
+            "\t\t${2:self.field}",
+            "\t}",
+            "}"
+        ],
+        "description": "Adopt Display for a concrete record"
+    },
+    "Form-Bounded Function": {
+        "prefix": "fun-of",
+        "body": [
+            "fun ${1:function_name}: <T of ${2:FormName}>(value: T) -> ${3:ReturnType} = {",
+            "\tvalue |> ${4:method}$0",
+            "}"
+        ],
+        "description": "Define a statically dispatched form-bounded function"
+    },
     "Context Definition": {
         "prefix": "context",
         "body": [

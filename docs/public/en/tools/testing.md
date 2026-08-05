@@ -90,7 +90,10 @@ When adding docs:
 - avoid stdin, filesystem, and network APIs in quick-start runnable examples
 - keep current user enum examples closed, non-generic, and non-recursive, with
   qualified variants and exhaustive matches
-- mark TAT, generic or recursive enums, enum host ABI, `form`/`takes`, and
-  composite host ABI as future work
+- keep form examples method-only, adoptions concrete and non-generic, and `of`
+  bounds explicit
+- mark TAT, generic or recursive enums, enum host ABI, associated types,
+  generic/conditional/enum adoptions, dynamic dispatch, and composite host ABI
+  as future work
 
 The docs tests are meant to enforce those rules automatically.

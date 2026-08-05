@@ -1,6 +1,6 @@
 # Restrict Language Development Roadmap
 
-**Last Updated**: 2025-01-13
+**Last Updated**: 2026-08-04
 **Status**: Active Development
 **Target**: v1.0 Release
 
@@ -36,6 +36,7 @@
 | Context System | ✅ 75% | Callback-based resource management |
 | **Generics** | ✅ 90% | Type params, inference, monomorphization |
 | **Module System** | ✅ 80% | Imports, exports, file resolution |
+| **Forms & Display** | ✅ Initial slice | Method-only forms, concrete record adoptions, static dispatch |
 
 ### 🚧 Partially Implemented (30-70%)
 
@@ -287,6 +288,11 @@ After:  Affine type violation: variable 'p' has already been used.
   - OSV constructors and exhaustive matching
   - `Result<T, CustomError>` within Restrict programs
 - [x] `std/result.rl` constructor and match boundary
+- [x] Initial source-level `form` / `takes` / `of` slice
+  - Non-generic, method-only form contracts
+  - Concrete non-generic record adoptions
+  - `<T of A + B>` bounds and static monomorphization
+  - Compiler-provided `Display` and polymorphic `print` / `println`
 
 **Remaining Tasks**:
 - [ ] Higher-level `std/result.rl` helpers such as predicates, transforms, and Option conversion
@@ -313,7 +319,8 @@ After:  Affine type violation: variable 'p' has already been used.
 **Remaining Tasks**:
 - [ ] Generic type inference improvements
 - [ ] Type aliases
-- [ ] Trait-like bounds (if needed)
+- [x] Initial form-based behavioral bounds
+- [ ] Associated form types, generic/conditional adoptions, and default methods
 - [ ] Type system documentation
 
 **Success Criteria**: Type inference "just works" in most cases

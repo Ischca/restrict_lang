@@ -232,8 +232,21 @@ can infer their generic types from explicit result types, sibling arguments,
 sibling branches, or the surrounding expected type.
 
 The `Container` behavior behind `map` and `filter` is compiler-internal in
-v0.0.1. User-defined `form`, `takes`, `of`, and associated-type declarations are
-future design work, not current source syntax.
+v0.0.1. The current post-v0.0.1 compiler also supports method-only forms,
+concrete record `takes` declarations, and generic `of` bounds. Form-bounded
+calls are resolved statically and monomorphized; associated types, generic
+forms or adoptions, conditional adoptions, default methods, enum adoptions, and
+dynamic dispatch remain future design work.
+
+```restrict
+form Labelled {
+    fun label: (self: Self) -> String
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+```
 
 ```restrict
 fun choose_list: <T>(value: List<T>, fallback: List<T>) -> List<T> = {

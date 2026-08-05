@@ -36,8 +36,16 @@ use nom::{
 /// Type alias for parser results.
 type ParseResult<'a, T> = IResult<&'a str, T>;
 
-const UNSUPPORTED_FORM_TAKES_DECL_ERROR: &str =
-    "source-level `form` / `takes` syntax is unsupported in v0.0.1; v0.0.1 only exposes compiler-internal Container behavior";
+const GENERIC_FORM_ERROR: &str = "generic forms are not supported yet; declare a non-generic form";
+const GENERIC_TAKES_ERROR: &str =
+    "generic or temporal takes targets are not supported yet; adopt a form for a concrete nominal type";
+const ASSOCIATED_FORM_TYPE_ERROR: &str =
+    "source-level associated form types are not supported yet; forms may only require typed methods";
+const DEFAULT_FORM_METHOD_ERROR: &str =
+    "default form method bodies are not supported yet; implement the method in a takes declaration";
+const CONDITIONAL_TAKES_ERROR: &str = "conditional takes declarations are not supported yet";
+const EXPORTED_TAKES_ERROR: &str =
+    "takes declarations cannot be public; export the form and nominal type instead";
 const UNSUPPORTED_IMPORT_ALIAS_ERROR: &str =
     "string import paths and import aliases are unsupported in v0.0.1; use dotted source imports such as import module.{item}";
 const UNSUPPORTED_RE_EXPORT_ERROR: &str =
@@ -569,6 +577,7 @@ fn type_param(input: &str) -> ParseResult<'_, TypeParam> {
                 name,
                 bounds: vec![],
                 derivation_bound: None,
+                of_forms: vec![],
                 is_temporal: true,
             },
         ));
@@ -594,12 +603,21 @@ fn type_param(input: &str) -> ParseResult<'_, TypeParam> {
     })(input)?;
 
     let bounds = bounds.unwrap_or_default();
+
+    // Parse form constraints: T of Showable + Comparable
+    let (input, of_forms) = opt(|input| {
+        let (input, _) = expect_token(Token::Of)(input)?;
+        separated_list1(expect_token(Token::Plus), ident)(input)
+    })(input)?;
+    let of_forms = of_forms.unwrap_or_default();
+
     Ok((
         input,
         TypeParam {
             name,
             bounds,
             derivation_bound,
+            of_forms,
             is_temporal: false,
         },
     ))
@@ -1775,6 +1793,9 @@ fn export_decl(input: &str) -> ParseResult<'_, TopDecl> {
         )));
     }
     let (input, item) = top_decl_inner(input)?;
+    if matches!(item, TopDecl::Takes(_)) {
+        return user_syntax_failure(EXPORTED_TAKES_ERROR);
+    }
     Ok((
         input,
         TopDecl::Export(ExportDecl {
@@ -1783,23 +1804,114 @@ fn export_decl(input: &str) -> ParseResult<'_, TopDecl> {
     ))
 }
 
-fn unsupported_form_takes_decl(input: &str) -> ParseResult<'_, TopDecl> {
-    let (_input, _) = alt((expect_token(Token::Form), expect_token(Token::Takes)))(input)?;
-    Err(nom::Err::Failure(nom::error::Error::new(
-        UNSUPPORTED_FORM_TAKES_DECL_ERROR,
-        nom::error::ErrorKind::Fail,
-    )))
+fn form_method_decl(input: &str) -> ParseResult<'_, FormMethodDecl> {
+    let (input, _) = expect_token(Token::Fun)(input)?;
+    let (input, name) = ident(input)?;
+    let (input, _) = expect_token(Token::Colon)(input)?;
+
+    if matches!(lex_token(input), Ok((_, Token::Lt))) {
+        return user_syntax_failure(GENERIC_FORM_ERROR);
+    }
+
+    let (input, params) = delimited(
+        expect_token(Token::LParen),
+        separated_list0(expect_token(Token::Comma), param),
+        expect_token(Token::RParen),
+    )(input)?;
+    let (input, _) = expect_token(Token::ThinArrow)(input)?;
+    let (input, return_type) = parse_type(input)?;
+
+    if matches!(lex_token(input), Ok((_, Token::Assign))) {
+        return user_syntax_failure(DEFAULT_FORM_METHOD_ERROR);
+    }
+
+    Ok((
+        input,
+        FormMethodDecl {
+            name,
+            params,
+            return_type,
+        },
+    ))
+}
+
+fn form_decl(input: &str) -> ParseResult<'_, FormDecl> {
+    let (input, _) = expect_token(Token::Form)(input)?;
+    let (input, name) = ident(input)?;
+
+    if matches!(lex_token(input), Ok((_, Token::Lt))) {
+        return user_syntax_failure(GENERIC_FORM_ERROR);
+    }
+
+    let (mut input, _) = expect_token(Token::LBrace)(input)?;
+    let mut methods = Vec::new();
+    loop {
+        let (remaining, _) = skip(input)?;
+        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
+            return Ok((after_brace, FormDecl { name, methods }));
+        }
+        if starts_with_word(remaining, "type") {
+            return user_syntax_failure(ASSOCIATED_FORM_TYPE_ERROR);
+        }
+
+        let (remaining, method) = form_method_decl(remaining)?;
+        methods.push(method);
+        let (remaining, _) = opt(expect_token(Token::Comma))(remaining)?;
+        input = remaining;
+    }
+}
+
+fn takes_decl(input: &str) -> ParseResult<'_, TakesDecl> {
+    let (input, target) = ident(input)?;
+
+    if matches!(lex_token(input), Ok((_, Token::Lt | Token::Tilde))) {
+        return user_syntax_failure(GENERIC_TAKES_ERROR);
+    }
+
+    let (input, _) = expect_token(Token::Takes)(input)?;
+    let (input, form_name) = ident(input)?;
+
+    if matches!(lex_token(input), Ok((_, Token::Lt | Token::Tilde))) {
+        return user_syntax_failure(GENERIC_TAKES_ERROR);
+    }
+    if matches!(lex_token(input), Ok((_, Token::Where))) {
+        return user_syntax_failure(CONDITIONAL_TAKES_ERROR);
+    }
+
+    let (mut input, _) = expect_token(Token::LBrace)(input)?;
+    let mut functions = Vec::new();
+    loop {
+        let (remaining, _) = skip(input)?;
+        if let Ok((after_brace, _)) = expect_token::<'_>(Token::RBrace)(remaining) {
+            return Ok((
+                after_brace,
+                TakesDecl {
+                    target,
+                    form_name,
+                    functions,
+                },
+            ));
+        }
+        if starts_with_word(remaining, "type") {
+            return user_syntax_failure(ASSOCIATED_FORM_TYPE_ERROR);
+        }
+
+        let (remaining, function) = fun_decl(remaining)?;
+        functions.push(function);
+        input = remaining;
+    }
 }
 
 fn top_decl_inner(input: &str) -> ParseResult<'_, TopDecl> {
     alt((
-        unsupported_form_takes_decl,
+        map(form_decl, TopDecl::Form),
         map(enum_decl, TopDecl::Enum),
         map(fun_decl, TopDecl::Function),
         map(record_decl, TopDecl::Record),
         map(impl_block, TopDecl::Impl),
         map(context_decl, TopDecl::Context),
         map(bind_decl, TopDecl::Binding),
+        map(takes_decl, TopDecl::Takes),
     ))(input)
 }
 
@@ -1975,6 +2087,131 @@ mod tests {
         };
         assert_eq!(enum_decl.name, "Status");
         assert_eq!(enum_decl.variants.len(), 2);
+    }
+
+    #[test]
+    fn test_form_takes_and_of_constraints_parse() {
+        let source = r#"
+            pub form Showable {
+                fun show: (self: Self) -> String
+            }
+
+            form Comparable {
+                fun compare: (self: Self, other: Self) -> Int32
+            }
+
+            record Widget { label: String }
+
+            Widget takes Showable {
+                fun show: (self: Widget) -> String = { self.label }
+            }
+
+            fun render: <T of Showable + Comparable>(value: T) -> String = {
+                (value) show
+            }
+        "#;
+        let (remaining, program) = parse_program(source).unwrap();
+        assert!(remaining.trim().is_empty());
+
+        let TopDecl::Export(export) = &program.declarations[0] else {
+            panic!("expected public form");
+        };
+        let TopDecl::Form(showable) = export.item.as_ref() else {
+            panic!("expected form declaration");
+        };
+        assert_eq!(showable.name, "Showable");
+        assert_eq!(showable.methods.len(), 1);
+        assert_eq!(showable.methods[0].name, "show");
+        assert_eq!(showable.methods[0].params[0].name, "self");
+        assert_eq!(
+            showable.methods[0].return_type,
+            Type::Named("String".to_string())
+        );
+
+        let TopDecl::Takes(takes) = &program.declarations[3] else {
+            panic!("expected takes declaration");
+        };
+        assert_eq!(takes.target, "Widget");
+        assert_eq!(takes.form_name, "Showable");
+        assert_eq!(takes.functions.len(), 1);
+        assert_eq!(takes.functions[0].name, "show");
+
+        let TopDecl::Function(render) = &program.declarations[4] else {
+            panic!("expected constrained function");
+        };
+        assert_eq!(
+            render.type_params[0].of_forms,
+            vec!["Showable".to_string(), "Comparable".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_takes_bodies_receive_dense_node_ids() {
+        let (_, program) = parse_program(
+            r#"
+                form Showable { fun show: (self: Self) -> String }
+                record Widget { label: String }
+                Widget takes Showable {
+                    fun show: (self: Widget) -> String = { self.label }
+                }
+            "#,
+        )
+        .unwrap();
+
+        let ids = collect_node_ids(&program);
+        assert!(!ids.is_empty());
+        assert_eq!(ids, (0..ids.len() as u32).map(NodeId).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_initial_form_slice_rejects_deferred_features() {
+        let generic_form =
+            parse_program("form Showable<T> { fun show: (self: Self) -> String }").unwrap_err();
+        assert!(matches!(
+            generic_form,
+            nom::Err::Failure(error) if error.input == GENERIC_FORM_ERROR
+        ));
+
+        let associated = parse_program("form Iterable { type Item }").unwrap_err();
+        assert!(matches!(
+            associated,
+            nom::Err::Failure(error) if error.input == ASSOCIATED_FORM_TYPE_ERROR
+        ));
+
+        let default_method =
+            parse_program("form Showable { fun show: (self: Self) -> String = { \"default\" } }")
+                .unwrap_err();
+        assert!(matches!(
+            default_method,
+            nom::Err::Failure(error) if error.input == DEFAULT_FORM_METHOD_ERROR
+        ));
+
+        let generic_takes = parse_program(
+            "Widget<T> takes Showable { fun show: (self: Widget) -> String = { \"x\" } }",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            generic_takes,
+            nom::Err::Failure(error) if error.input == GENERIC_TAKES_ERROR
+        ));
+
+        let conditional = parse_program(
+            "Widget takes Showable where T of Other { fun show: (self: Widget) -> String = { \"x\" } }",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            conditional,
+            nom::Err::Failure(error) if error.input == CONDITIONAL_TAKES_ERROR
+        ));
+
+        let public_takes = parse_program(
+            "pub Widget takes Showable { fun show: (self: Widget) -> String = { \"x\" } }",
+        )
+        .unwrap_err();
+        assert!(matches!(
+            public_takes,
+            nom::Err::Failure(error) if error.input == EXPORTED_TAKES_ERROR
+        ));
     }
 
     #[test]

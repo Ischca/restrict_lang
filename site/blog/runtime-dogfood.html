@@ -71,7 +71,10 @@ export fun dogfood_score: () -&gt; Int32 = {
         Browser examples are limited to the public syntax surface and expose the
         tokens, AST, compiler output, and errors separately. They are not a mock
         interpreter. The compiler is built to WebAssembly and runs locally in the
-        page, so a visitor can inspect the same stages the repository tests.
+        page, so a visitor can inspect the same stages the repository tests. The
+        current <strong>Forms and Display</strong> preset also proves visible
+        output from both <code>42 |&gt; print</code> and a record with an explicit
+        Display adoption.
       </p>
       <div class="article-actions">
         <a class="button primary" href="../compiler/">Open the playground</a>

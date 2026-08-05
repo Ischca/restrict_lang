@@ -74,7 +74,8 @@ When editing public docs:
 - label examples that require the current post-v0.0.1 compiler
 - use `val`, `mut val`, OSV calls, and `:` record fields
 - keep user enum examples within the closed, non-generic, non-recursive slice;
-  avoid TAT, generic or recursive enums, `form`/`takes`, and composite host ABI
+  keep form examples method-only with concrete non-generic `takes`; and avoid
+  TAT, generic or recursive enums, advanced forms, and composite host ABI
   examples unless they are clearly marked as future work
 
 When editing internal docs:

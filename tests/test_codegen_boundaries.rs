@@ -89,7 +89,7 @@ fun main: () -> Int32 = {
 
     let err = compile_to_wat(source).expect_err("context exports should not have a Wasm ABI");
     assert!(
-        err.contains("Only concrete function exports, source-level record or enum exports, and constant global exports are supported by codegen"),
+        err.contains("Only concrete function exports, source-level record, enum, or form metadata exports, and constant global exports are supported by codegen"),
         "error should list the current export support surface, got: {err}"
     );
 }
@@ -264,6 +264,105 @@ fun main: () -> Int32 = {
     assert!(
         !message.contains("Feature not implemented"),
         "ambiguous method dispatch should be an explicit release boundary, got: {message}"
+    );
+}
+
+#[test]
+fn impl_method_wat_symbols_are_injective_and_disjoint_from_source_functions() {
+    let source = r#"
+record B {
+    value: Int32
+}
+
+record B_c {
+    value: Int32
+}
+
+fun B_c_d: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+impl B {
+    fun c_d: (self: B) -> Int32 = {
+        self.value
+    }
+}
+
+impl B_c {
+    fun d: (self: B_c) -> Int32 = {
+        self.value
+    }
+}
+
+export fun impl_symbol_collision_score: () -> Int32 = {
+    val source_function = 39 |> B_c_d;
+    val left_method = (B { value: 1 }) c_d;
+    val right_method = (B_c { value: 1 }) d;
+    source_function + left_method + right_method
+}
+"#;
+
+    let wat = compile_to_wat(source).expect("adversarial impl identities should generate WAT");
+
+    assert!(
+        wat.contains("(func $B_c_d "),
+        "the source function should retain its source-level symbol:\n{wat}"
+    );
+    assert!(
+        wat.contains("(func $__restrict_impl@42@635f64 "),
+        "B.c_d should have an independently encoded impl symbol:\n{wat}"
+    );
+    assert!(
+        wat.contains("(func $__restrict_impl@425f63@64 "),
+        "B_c.d should have an independently encoded impl symbol:\n{wat}"
+    );
+}
+
+#[test]
+fn codegen_rejects_source_adoption_of_internal_container_form() {
+    let program = parse_complete(
+        r#"
+record Widget {
+    value: Int32
+}
+
+Widget takes Container {
+    fun hidden: (self: Widget) -> Int32 = {
+        self.value
+    }
+}
+"#,
+    );
+
+    let mut codegen = WasmCodeGen::new();
+    let err = codegen
+        .generate(&program)
+        .expect_err("source types must not adopt the compiler-internal Container form");
+
+    assert_eq!(
+        err.to_string(),
+        "Unsupported feature: Container is a compiler-internal form and cannot be adopted by source types"
+    );
+}
+
+#[test]
+fn codegen_rejects_source_declaration_of_internal_container_form() {
+    let program = parse_complete(
+        r#"
+form Container {
+    fun hidden: (self: Self) -> Int32
+}
+"#,
+    );
+
+    let mut codegen = WasmCodeGen::new();
+    let err = codegen
+        .generate(&program)
+        .expect_err("source programs must not redeclare the compiler-internal Container form");
+
+    assert_eq!(
+        err.to_string(),
+        "Unsupported feature: Container is a compiler-internal form and cannot be declared by source programs"
     );
 }
 
@@ -890,7 +989,7 @@ fn println_rejects_unsupported_argument_type_instead_of_string_fallback() {
     let program = parse_complete(
         r#"
 fun main: () -> () = {
-    3.14 |> println
+    [1, 2, 3] |> println
 }
 "#,
     );
@@ -902,7 +1001,7 @@ fun main: () -> () = {
     let message = err.to_string();
 
     assert!(
-        message.contains("println does not support argument type Float64"),
+        message.contains("source type 'List<Int32>' does not take Display"),
         "error should identify the unsupported println argument type, got: {message}"
     );
 }

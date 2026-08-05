@@ -19,13 +19,17 @@ WebAssembly text and binary output. Its current stable-facing shape is compact:
 - record declarations and record values inside Restrict programs
 - closed, non-generic, non-recursive user enums with qualified variants and
   exhaustive matching
+- method-only forms, concrete record adoptions, and statically resolved `of`
+  bounds
+- Display-polymorphic `display`, `print`, and `println`
 - scalar monomorphic WebAssembly exports for the host boundary
 
 Some keywords and design documents describe future work. Temporal Affine Types,
-source-level `form`/`takes` declarations, generic or recursive user enums, and
-exported generic or composite host ABIs remain outside the current compiler
-surface. User enums may be used inside `Result<T, CustomError>`, but the `?`
-propagation operator is not implemented yet.
+generic or recursive forms and user enums, associated types, default form
+methods, conditional or generic adoptions, dynamic dispatch, and exported
+generic or composite host ABIs remain outside the current compiler surface.
+User enums may be used inside `Result<T, CustomError>`, but the `?` propagation
+operator is not implemented yet.
 
 ## Why OSV
 

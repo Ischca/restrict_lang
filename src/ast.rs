@@ -68,6 +68,10 @@ pub enum TopDecl {
     Record(RecordDecl),
     /// Closed enum declaration (sum type)
     Enum(EnumDecl),
+    /// Form declaration (a compile-time behavioral contract)
+    Form(FormDecl),
+    /// Adoption of a form by a concrete nominal type
+    Takes(TakesDecl),
     /// Implementation block for a type
     Impl(ImplBlock),
     /// Context declaration (type class)
@@ -100,6 +104,43 @@ pub struct EnumVariantDecl {
     pub name: String,
     /// Optional single payload type
     pub payload: Option<Type>,
+}
+
+/// A non-generic compile-time behavioral contract.
+///
+/// Forms only declare required, fully typed method signatures. They do not
+/// carry default bodies or source-level associated types in the initial slice.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormDecl {
+    /// Name used by `takes` declarations and `of` constraints
+    pub name: String,
+    /// Required methods in declaration order
+    pub methods: Vec<FormMethodDecl>,
+}
+
+/// A required method signature declared by a form.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormMethodDecl {
+    /// Method selector
+    pub name: String,
+    /// Fully typed parameters; the first parameter is conventionally `self`
+    pub params: Vec<Param>,
+    /// Required result type
+    pub return_type: Type,
+}
+
+/// Adoption of a form by a concrete record or enum.
+///
+/// The type checker validates that `target` names an eligible nominal type and
+/// that `functions` exactly implement the required form method signatures.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TakesDecl {
+    /// Concrete nominal type adopting the form
+    pub target: String,
+    /// Form being adopted
+    pub form_name: String,
+    /// Required method implementations
+    pub functions: Vec<FunDecl>,
 }
 
 /// Export declaration that makes an item publicly available.
@@ -269,6 +310,7 @@ pub struct FunDecl {
 /// <T: Clone>       // With trait bound
 /// <T: Clone + Display>  // Multiple bounds
 /// <T from Animal>  // Derivation bound
+/// <T of Showable>  // Compile-time form constraint
 /// <~t>             // Temporal type parameter
 /// <~tx, ~db> where ~tx within ~db  // Temporal with constraints
 /// ```
@@ -280,6 +322,8 @@ pub struct TypeParam {
     pub bounds: Vec<TypeBound>,
     /// Derivation bound (e.g., `T from ParentType`)
     pub derivation_bound: Option<String>,
+    /// Form constraints (e.g., `T of Showable + Comparable`)
+    pub of_forms: Vec<String>,
     /// Whether this is a temporal type parameter (starts with ~)
     pub is_temporal: bool,
 }
@@ -1016,8 +1060,13 @@ fn visit_top_decl_exprs_mut(decl: &mut TopDecl, f: &mut impl FnMut(&mut Expr)) {
                 visit_block_exprs_mut(&mut func.body, f);
             }
         }
+        TopDecl::Takes(takes) => {
+            for func in &mut takes.functions {
+                visit_block_exprs_mut(&mut func.body, f);
+            }
+        }
         TopDecl::Export(export) => visit_top_decl_exprs_mut(&mut export.item, f),
-        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Context(_) => {}
+        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Form(_) | TopDecl::Context(_) => {}
     }
 }
 
@@ -1145,8 +1194,13 @@ fn collect_top_decl_ids(decl: &TopDecl, ids: &mut Vec<NodeId>) {
                 collect_block_ids(&func.body, ids);
             }
         }
+        TopDecl::Takes(takes) => {
+            for func in &takes.functions {
+                collect_block_ids(&func.body, ids);
+            }
+        }
         TopDecl::Export(export) => collect_top_decl_ids(&export.item, ids),
-        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Context(_) => {}
+        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Form(_) | TopDecl::Context(_) => {}
     }
 }
 

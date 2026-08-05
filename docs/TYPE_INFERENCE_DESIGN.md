@@ -11,7 +11,7 @@
 | Apply surface | 外部挙動は実装済み | OSV tuple call、pipe、named function value、parenthesized function value、immediate lambda は双方向推論で同等に扱われる | 内部は完全な単一 `Apply` IR ではなく、経路ごとの接続コードが残る |
 | Lambda expected propagation | 実装済み + supported deviation | immediate lambda は expected function type を使う。local `val` lambda と、終端 lambda を返す `then` / `match` local `val` は文脈が未確定なら deferred binding として保持し、後続の map / pipe / OSV 使用で replay して解決できる。branch block は replay-safe かつ Copy 型の単純 `val` prefix まで許可する | 未解決の deferred lambda は scope exit でエラー。`Int32` fallback は禁止。branch/match の制御条件・scrutinee・pattern は binding 時に一度だけ検査し、replay するのは lambda 本体だけ。mutable、複雑 pattern、non-Copy prefix は v0.0.1 では拒否する |
 | Empty / partial local inference | 実装済み | local `[]` / `None` / `Ok(...)` / `Err(...)` / range / array は return context や後続使用から型を確定できる。copyable に解決された pending use は move として扱わない | non-copy に解決された pending use は既存 affine ルールで拒否する |
-| Built-in `Container` forms | v0.0.1 supported | compiler-internal `Container` adoption は `List` / `Option` のみ。`map` / `filter` は `Container.Item` / `Container.Mapped<U>` projection で解決する | source-level `form` / `takes`、条件付き adoption、overlap rejection は post-v0.0.1 debt |
+| Forms and built-in `Container` | post-v0.0.1 initial slice implemented | source-level method-only `form`、具体recordの`takes`、`<T of A + B>`を静的解決・monomorphizeする。compiler-internal `Container` adoption は引き続き `List` / `Option` 専用 | associated type、generic/default form、generic/conditional/enum adoption、dynamic dispatch は post-v0.0.1 debt |
 | B層 affine / context | 現行維持 | residual environment ではなく、既存の `used` flag と `pending_inference_uses` ガードで affine 検査を維持する。deferred lambda replay 後も affine double-use を拒否する | `⊣ Γ'` residual environment 化と効果推論は post-v0.0.1 B-layer debt |
 
 ## 背景
@@ -508,8 +508,9 @@ A層の deferred / replay 経路は、推論のための先読みや再検査が
 3. `TypeParam` は宣言上の型パラメータ、`InferVar` は推論中のメタ変数。solver は `TypeParam` を直接 bind しない
 4. generic function を instantiate するとき、`TypeParam` は fresh `InferVar` に置換される
 5. 文脈なし local `val` lambda と、終端 lambda を返す `then` / `match` local `val` は deferred binding として後続 expected type で解決できる。branch block は replay-safe かつ Copy 型の単純 `val` prefix まで許可する。未解決なら scope exit でエラー。`Int32` fallback は禁止。branch/match の制御フロー効果は binding 時に一度だけ検査し、deferred replay では lambda 本体だけを再検査する
-6. v0.0.1 の form solving は built-in `Container` (`List`, `Option`) の closed-world table に限定する。user-defined `form` / `takes` と overlapping adoption rejection は post-v0.0.1 debt
-7. B層の消費判定は現行 `used` flag と `pending_inference_uses` を維持する。residual environment 化は post-v0.0.1 debt
+6. v0.0.1 では、unannotated deferred binding とそこから作った unannotated alias は、型解決後も再代入できない。runtime で再代入する callable は、元の mutable binding に concrete function annotation を付けて宣言する
+7. v0.0.1 の form solving は built-in `Container` (`List`, `Option`) の closed-world table に限定する。user-defined `form` / `takes` と overlapping adoption rejection は post-v0.0.1 debt
+8. B層の消費判定は現行 `used` flag と `pending_inference_uses` を維持する。residual environment 化は post-v0.0.1 debt
 
 ---
 

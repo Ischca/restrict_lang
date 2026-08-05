@@ -34,6 +34,9 @@ Quick insertion of common Restrict Language patterns:
 - `val` - Variable binding
 - `import` - Named dotted import
 - `record` - Record definition
+- `form` - Method-only form declaration
+- `takes-display` - Display adoption for a concrete record
+- `fun-of` - Function with a static form bound
 - `match` - Pattern matching
 - `then` - Conditional expression
 - `call` - OSV multi-argument function call
@@ -115,6 +118,13 @@ import release.policy
 ```
 
 String import paths and import aliases are not supported in v0.0.1.
+
+### Forms and Display
+
+The current post-v0.0.1 compiler supports method-only `form` declarations,
+concrete record `takes` adoptions, and `<T of Form>` bounds. Dispatch is static;
+associated types, generic or conditional adoptions, default methods, enum
+adoptions, and dynamic dispatch are not part of this slice.
 
 ## Example Code
 

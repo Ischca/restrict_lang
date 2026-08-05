@@ -300,6 +300,639 @@ fun main: () -> Int32 = {
 }
 
 #[test]
+fn direct_generic_function_alias_infers_from_single_pipe_use() {
+    let input = r#"
+fun main: () -> Int32 = {
+    val keep = identity;
+    41 |> keep
+}
+"#;
+
+    type_check(input).expect("one use should resolve and consume a direct generic alias");
+}
+
+#[test]
+fn direct_generic_function_alias_rejects_pending_double_use() {
+    let input = r#"
+fun main: () -> Int32 = {
+    val keep = identity;
+    keep;
+    41 |> keep
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("resolving a direct generic alias must account for all pending uses");
+    assert!(
+        err.contains("affine type violation") && err.contains("keep"),
+        "error should identify the direct generic alias double use, got: {err}"
+    );
+}
+
+#[test]
+fn projection_bearing_generic_alias_chain_rejects_source_reuse() {
+    let input = r#"
+fun main: () -> List<Int32> = {
+    val numbers = [1, 2, 3];
+    val apply_map = map;
+    val map_again = apply_map;
+    apply_map;
+    (numbers, |value| value + 1) map_again
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("a moved projection-bearing generic alias must not remain reusable");
+    assert!(
+        err.contains("affine type violation") && err.contains("apply_map"),
+        "error should identify the moved map alias, got: {err}"
+    );
+}
+
+#[test]
+fn branch_merge_rejects_pending_affine_double_use_after_concretization() {
+    let input = r#"
+fun main: (flag: Boolean) -> () = {
+    val items = [];
+    flag then {
+        items;
+        items;
+        ()
+    } else {
+        val typed: List<String> = items;
+        ()
+    }
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("branch type resolution must not erase two pending affine uses");
+    assert!(
+        err.contains("affine type violation") && err.contains("items"),
+        "error should identify the branch-local affine double use, got: {err}"
+    );
+}
+
+#[test]
+fn branch_merge_clears_resolved_generic_deferred_state() {
+    let input = r#"
+fun main: (flag: Boolean) -> () = {
+    val keep = identity;
+    flag then {
+        val typed: Int32 -> Int32 = keep;
+        ()
+    } else {
+        ()
+    }
+}
+"#;
+
+    type_check(input)
+        .expect("a generic alias resolved in one branch should not retain stale deferred state");
+}
+
+#[test]
+fn branch_merge_clears_rechecked_immutable_lambda_deferred_state() {
+    let input = r#"
+fun main: (flag: Boolean) -> () = {
+    val mapper = |value| value;
+    flag then {
+        val typed: Int32 -> Int32 = mapper;
+        ()
+    } else {
+        ()
+    }
+}
+"#;
+
+    type_check(input).expect(
+        "an immutable lambda rechecked in one branch should not retain stale deferred state",
+    );
+}
+
+#[test]
+fn branch_merge_fixes_mutable_lambda_to_concrete_specialization() {
+    let input = r#"
+fun main: (flag: Boolean) -> Boolean = {
+    mut val id = |value| value;
+    flag then {
+        val as_int: Int32 -> Int32 = id;
+        ()
+    } else {
+        ()
+    };
+    val as_bool: Boolean -> Boolean = id;
+    true |> as_bool
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("branch specialization must fix a mutable deferred lambda's concrete type");
+    assert!(
+        err.contains("Type mismatch"),
+        "the incompatible post-merge specialization should be rejected, got: {err}"
+    );
+}
+
+#[test]
+fn branch_merge_resolves_projection_bearing_direct_map_alias() {
+    let input = r#"
+fun main: (flag: Boolean) -> () = {
+    val apply_map = map;
+    flag then {
+        val numbers = [1, 2, 3];
+        val mapped = (numbers, |value| value + 1) apply_map;
+        ()
+    } else {
+        ()
+    }
+}
+"#;
+
+    type_check(input)
+        .expect("one branch should be able to specialize a projection-bearing map alias");
+}
+
+#[test]
+fn branch_merge_resolves_projection_bearing_map_alias_chain() {
+    let input = r#"
+fun main: (flag: Boolean) -> () = {
+    val map_plan = map;
+    val apply_map = map_plan;
+    flag then {
+        val numbers = [1, 2, 3];
+        val mapped = (numbers, |value| value + 1) apply_map;
+        ()
+    } else {
+        ()
+    }
+}
+"#;
+
+    type_check(input)
+        .expect("one branch should specialize a complete projection-bearing alias chain");
+}
+
+#[test]
+fn branch_merge_rejects_incompatible_generic_alias_specializations() {
+    let input = r#"
+fun main: (flag: Boolean) -> () = {
+    val apply_map = map;
+    flag then {
+        val numbers = [1, 2, 3];
+        val mapped = (numbers, |value| value + 1) apply_map;
+        ()
+    } else {
+        val words = ["one", "two"];
+        val mapped = (words, |value| value) apply_map;
+        ()
+    }
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("one generic alias cannot have incompatible branch specializations");
+    assert!(
+        err.contains("Type mismatch"),
+        "error should report incompatible branch specializations, got: {err}"
+    );
+    assert!(
+        !err.contains("unresolved deferred type"),
+        "incompatible specializations should fail at the merge, got: {err}"
+    );
+}
+
+#[test]
+fn substitution_rejects_use_after_incompatible_affine_branch_consumption() {
+    let input = r#"
+fun main: (flag: Boolean) -> () = {
+    val items = [];
+    flag then {
+        val strings: List<String> = items;
+        ()
+    } else {
+        val integers: List<Int32> = items;
+        ()
+    };
+    val reused: List<String> = items;
+    ()
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("later inference must retain affine uses from incompatible branches");
+    assert!(
+        err.contains("affine type violation") && err.contains("items"),
+        "error should identify the affine value consumed in a branch, got: {err}"
+    );
+}
+
+#[test]
+fn branch_merge_validates_generic_alias_concretized_by_generic_sink() {
+    let input = r#"
+form Marker {
+    fun mark: (self: Self) -> String
+}
+
+fun bounded: <T of Marker>(value: T) -> T = {
+    value
+}
+
+fun choose_first: <T>(value: T, fallback: T) -> T = {
+    value
+}
+
+fun plain: (value: Int32) -> Int32 = {
+    value
+}
+
+fun main: (flag: Boolean) -> () = {
+    val bounded_alias = bounded;
+    val picked = (bounded_alias, plain) choose_first;
+    flag then {
+        ()
+    } else {
+        ()
+    }
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("branch merge must validate a concrete deferred generic against its bounds");
+    assert!(
+        err.contains("Marker"),
+        "error should identify the unsatisfied stored generic bound, got: {err}"
+    );
+    assert!(
+        !err.contains("unresolved deferred type"),
+        "the concrete generic alias should fail validation before scope finalization, got: {err}"
+    );
+}
+
+#[test]
+fn generic_sink_concretized_alias_is_validated_without_branch_merge() {
+    let input = r#"
+fun choose_first: <T>(value: T, fallback: T) -> T = {
+    value
+}
+
+fun plain: (value: Int32) -> Int32 = {
+    value
+}
+
+fun main: () -> Int32 = {
+    val identity_alias = identity;
+    val picked = (identity_alias, plain) choose_first;
+    41 |> picked
+}
+"#;
+
+    type_check(input)
+        .expect("scope finalization should validate a concrete generic alias without a branch");
+}
+
+#[test]
+fn generic_sink_fixes_mutable_alias_to_concrete_specialization() {
+    let input = r#"
+fun choose_first: <T>(value: T, fallback: T) -> T = {
+    value
+}
+
+fun plain: (value: Int32) -> Int32 = {
+    value
+}
+
+fun main: () -> Boolean = {
+    mut val id = identity;
+    val picked = (id, plain) choose_first;
+    val as_bool: Boolean -> Boolean = id;
+    true |> as_bool
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("generic-sink inference must fix a mutable alias's concrete type");
+    assert!(
+        err.contains("Type mismatch"),
+        "the incompatible later specialization should be rejected, got: {err}"
+    );
+}
+
+#[test]
+fn generic_sink_concretized_alias_rejects_unsatisfied_bound_without_branch() {
+    let input = r#"
+form Marker {
+    fun mark: (self: Self) -> String
+}
+
+fun bounded: <T of Marker>(value: T) -> T = {
+    value
+}
+
+fun choose_first: <T>(value: T, fallback: T) -> T = {
+    value
+}
+
+fun plain: (value: Int32) -> Int32 = {
+    value
+}
+
+fun main: () -> Int32 = {
+    val bounded_alias = bounded;
+    val picked = (bounded_alias, plain) choose_first;
+    41 |> picked
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("scope finalization must enforce the stored generic alias bounds");
+    assert!(
+        err.contains("Marker"),
+        "error should identify the unsatisfied stored generic bound, got: {err}"
+    );
+}
+
+#[test]
+fn deferred_lambda_alias_chain_resolves_all_moved_bindings() {
+    let input = r#"
+fun main: () -> List<Int32> = {
+    val build = |value| [];
+    val build_again = build;
+    val maker: Int32 -> List<Int32> = build_again;
+    1 |> maker
+}
+"#;
+
+    type_check(input).expect("lambda alias resolution should finalize the complete moved chain");
+}
+
+#[test]
+fn deferred_lambda_alias_chain_rejects_source_reuse() {
+    let input = r#"
+fun main: () -> List<Int32> = {
+    val build = |value| [];
+    val build_again = build;
+    build;
+    val maker: Int32 -> List<Int32> = build_again;
+    1 |> maker
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("resolving a lambda alias chain must retain source affine uses");
+    assert!(
+        err.contains("affine type violation") && err.contains("build"),
+        "error should identify the reused lambda source alias, got: {err}"
+    );
+}
+
+#[test]
+fn deferred_branch_callable_alias_chain_resolves_all_moved_bindings() {
+    let input = r#"
+fun main: (flag: Boolean) -> List<Int32> = {
+    val build = flag then {
+        |value| []
+    } else {
+        |value| []
+    };
+    val build_again = build;
+    val maker: Int32 -> List<Int32> = build_again;
+    1 |> maker
+}
+"#;
+
+    type_check(input)
+        .expect("branch-callable alias resolution should finalize the complete moved chain");
+}
+
+#[test]
+fn independent_deferred_lambda_groups_do_not_cross_resolve() {
+    let input = r#"
+fun main: () -> List<String> = {
+    mut val a = |x| [];
+    mut val b = |x| None;
+    val same = a == b;
+    val maker: Int32 -> List<String> = a;
+    1 |> b
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("resolving one deferred lambda must not resolve an independent lambda");
+    assert!(
+        !err.contains("affine type violation"),
+        "independent mutable lambdas should not share affine state, got: {err}"
+    );
+    assert!(
+        err.contains("Type mismatch")
+            || (err.contains("Option") && err.contains("List"))
+            || (err.contains("Cannot infer type") && err.contains("None")),
+        "error should preserve b's Option-returning body, got: {err}"
+    );
+}
+
+#[test]
+fn deferred_callable_lookup_respects_lexical_shadowing() {
+    let input = r#"
+fun main: () -> Int32 = {
+    val keep = identity;
+    val read = |keep: Int32| {
+        val x = keep;
+        x
+    };
+    val answer = 41 |> read;
+    val outer_id: Int32 -> Int32 = keep;
+    answer
+}
+"#;
+
+    type_check(input)
+        .expect("an inner concrete binding must shadow an outer deferred callable completely");
+}
+
+#[test]
+fn generic_sink_finalization_ignores_shadowing_owner_name() {
+    let input = r#"
+fun choose_first: <T>(value: T, fallback: T) -> T = {
+    value
+}
+
+fun plain: (value: Int32) -> Int32 = {
+    value
+}
+
+fun main: () -> Int32 = {
+    mut val base = identity;
+    mut val keep = base;
+    val read = |keep: Int32| {
+        val picked = (base, plain) choose_first;
+        keep
+    };
+    1 |> read
+}
+"#;
+
+    type_check(input)
+        .expect("synthetic group finalization must not resolve a shadowing lambda parameter");
+}
+
+#[test]
+fn mutable_reassignment_rejects_multi_member_deferred_alias_group() {
+    let input = r#"
+fun ints: (value: Int32) -> List<Int32> = {
+    [value]
+}
+
+fun main: (flag: Boolean) -> List<Boolean> = {
+    mut val a = |value| [];
+    mut val b = a;
+    flag then {
+        val typed: Int32 -> List<Int32> = b;
+        ()
+    } else {
+        ()
+    };
+    a = ints;
+    val bools: Boolean -> List<Boolean> = b;
+    true |> a
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("reassigning any deferred-origin alias group must be rejected");
+    assert!(
+        err.contains("reassignment of deferred-origin callable binding")
+            && err.contains("not supported in this release"),
+        "error should explain the deferred reassignment boundary, got: {err}"
+    );
+}
+
+#[test]
+fn mutable_reassignment_rejects_deferred_alias_owner() {
+    let input = r#"
+fun ints: (value: Int32) -> List<Int32> = {
+    [value]
+}
+
+fun main: () -> List<Int32> = {
+    mut val source = |value| None;
+    mut val owner = source;
+    owner = ints;
+    1 |> source
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("overwriting the deferred owner must not orphan its stored body");
+    assert!(
+        err.contains("reassignment of deferred-origin callable binding") && err.contains("owner"),
+        "error should identify the deferred owner reassignment boundary, got: {err}"
+    );
+}
+
+#[test]
+fn mutable_reassignment_rejects_single_deferred_holder() {
+    let input = r#"
+fun ints: (value: Int32) -> List<Int32> = {
+    [value]
+}
+
+fun main: () -> List<Int32> = {
+    mut val build = |value| None;
+    build = ints;
+    1 |> build
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("even a single deferred-origin holder cannot be reassigned in this release");
+    assert!(
+        err.contains("reassignment of deferred-origin callable binding"),
+        "error should explain the deferred reassignment boundary, got: {err}"
+    );
+}
+
+#[test]
+fn mutable_reassignment_rejects_resolved_deferred_holder() {
+    let input = r#"
+fun replacement: (value: Int32) -> Option<String> = {
+    Some("replacement")
+}
+
+fun main: () -> Option<String> = {
+    mut val build = |value| None;
+    val typed: Int32 -> Option<String> = build;
+    build = replacement;
+    1 |> build
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("deferred-origin reassignment remains unsupported after type resolution");
+    assert!(
+        err.contains("reassignment of deferred-origin callable binding"),
+        "error should explain the deferred-origin reassignment boundary, got: {err}"
+    );
+}
+
+#[test]
+fn branch_reassignment_rejects_unresolved_deferred_holder() {
+    let input = r#"
+fun replacement: (value: Int32) -> List<Int32> = {
+    [value]
+}
+
+fun main: (flag: Boolean) -> List<Int32> = {
+    mut val build = |value| [];
+    flag then {
+        build = replacement;
+        ()
+    } else {
+        ()
+    };
+    val typed: Int32 -> List<Int32> = build;
+    1 |> typed
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("branch-local assignment must not replace deferred-origin provenance");
+    assert!(
+        err.contains("reassignment of deferred-origin callable binding"),
+        "error should explain the deferred reassignment boundary, got: {err}"
+    );
+}
+
+#[test]
+fn branch_reassignment_rejects_post_resolution_deferred_alias() {
+    let input = r#"
+fun replacement: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun main: (flag: Boolean) -> Int32 = {
+    mut val source = identity;
+    val typed: Int32 -> Int32 = source;
+    mut val alias = source;
+    flag then {
+        alias = replacement;
+        ()
+    } else {
+        ()
+    };
+    1 |> alias
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("unannotated aliases must retain deferred-origin reassignment taint");
+    assert!(
+        err.contains("reassignment of deferred-origin callable binding") && err.contains("alias"),
+        "error should identify the post-resolution deferred alias, got: {err}"
+    );
+}
+
+#[test]
 fn then_produced_lambda_infers_from_later_pipe_use() {
     let input = r#"
 fun main: (flag: Boolean) -> Int32 = {
@@ -331,6 +964,51 @@ fun main: (flag: Boolean) -> Int32 = {
 "#;
 
     type_check(input).expect("then-produced lambda should infer with replay-safe prefix bindings");
+}
+
+#[test]
+fn deferred_branch_callable_rejects_mutable_condition_replay() {
+    let input = r#"
+fun main: () -> Int32 = {
+    mut val flag = true;
+    val adjust = flag then {
+        |value| value + 1
+    } else {
+        |value| value - 1
+    };
+    flag = false;
+    41 |> adjust
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("a mutable condition cannot be replayed when the deferred callable is used");
+    assert!(
+        err.contains("replay-safe conditions"),
+        "error should explain the deferred replay boundary, got: {err}"
+    );
+}
+
+#[test]
+fn deferred_branch_callable_rejects_outer_binding_capture() {
+    let input = r#"
+fun main: (flag: Boolean) -> Int32 = {
+    val offset = 1;
+    val adjust = flag then {
+        |value| value + offset
+    } else {
+        |value| value - offset
+    };
+    41 |> adjust
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("deferred branch lambdas cannot replay an outer local capture in this release");
+    assert!(
+        err.contains("outer binding capture") && err.contains("offset"),
+        "error should identify the unsupported outer capture, got: {err}"
+    );
 }
 
 #[test]

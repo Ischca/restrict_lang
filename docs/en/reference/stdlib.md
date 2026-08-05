@@ -1,9 +1,8 @@
 # Standard Library Reference
 
-This page documents the v0.0.1 standard-library surface that is currently
-registered by the compiler. The files under `std/` are source-adjacent indexes
-for readers and tests; the runtime behavior is implemented in the compiler and
-WebAssembly code generator.
+This page documents the compiler-registered standard-library surface. It keeps
+v0.0.1 compatibility helpers while recording the current post-v0.0.1 Display
+addition.
 
 The current standard library is intentionally small. APIs listed as absent below
 are not user-facing v0.0.1 features, even if their names appear in older
@@ -15,7 +14,7 @@ Standard-library calls use the same OSV syntax as user functions:
 
 ```restrict
 "hello" |> println
-42 |> print_int
+42 |> print
 (left, right) max
 values |> list_count
 (maybe_value, fallback) option_unwrap_or
@@ -62,11 +61,14 @@ the current compiler-registered surface.
 
 ## IO
 
-Current IO functions:
+`Display` is the standard method-only form for turning a value into `String`.
+The compiler provides adoptions for `String`, `Int32`, `Int64`, `Float64`,
+`Boolean`, `Char`, and `()`; user records adopt it explicitly with `takes`.
 
 ```text
-println: (String) -> ()
-print: (String) -> ()
+display: <T of Display>(T) -> String
+println: <T of Display>(T) -> ()
+print: <T of Display>(T) -> ()
 print_int: (Int32) -> ()
 print_float: (Float64) -> ()
 eprint: (String) -> ()
@@ -77,11 +79,16 @@ Canonical call shapes:
 
 ```restrict
 "hello" |> println
-"hello" |> print
-42 |> print_int
+42 |> print
 3.14 |> print_float
 "error" |> eprintln
 ```
+
+`print_int` and `print_float` remain compatibility helpers. `eprint` and
+`eprintln` remain String-only. `display`, `print`, and `println` are
+compiler-reserved direct call targets and cannot be declared as top-level
+source functions or ordinary/custom-form method selectors. The builtins
+themselves are direct-call-only and cannot be captured as first-class function values.
 
 Stdin and file APIs are outside the v0.0.1 std surface. That includes
 `readLine`, `readFile`, `writeFile`, path metadata, directory operations, and
@@ -251,11 +258,11 @@ The following areas are absent from the compiler-registered v0.0.1 surface:
 - Borrowing/reference-oriented memory helpers
 - Conversion traits
 - Hashing traits
-- Display/debug formatting traits
+- Debug formatting
 - Random-number APIs
 - Networking APIs
 - Environment and process APIs
-- User-defined traits/typeclasses and associated types
+- Associated types and advanced form features
 
 When adding std documentation, document only APIs backed by compiler/runtime
 behavior and keep design sketches out of current-reference examples.

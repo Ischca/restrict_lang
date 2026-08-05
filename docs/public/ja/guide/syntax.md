@@ -355,7 +355,8 @@ v0.0.1の公開リリースではユーザー定義enumは未対応でした。�
 
 - temporal affine types と lifetime scope
 - TAT cleanup
-- trait、impl、derive、属性
+- associated type、generic form、default method、generic/conditional/enum adoption
+- derive、属性、dynamic dispatch
 - ループラベルと範囲パターン
 - パッケージ単位の標準ライブラリ集約 import
 - メソッド呼び出し形式の通常関数

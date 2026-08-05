@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restrict Language · Affine programs for WebAssembly</title>
-  <meta name="description" content="Restrict is an OSV programming language exploring affine ownership and focused WebAssembly output. Try the v0.0.1 preview in your browser.">
+  <meta name="description" content="Restrict is an OSV programming language exploring affine ownership, static forms, and focused WebAssembly output. Try the current compiler in your browser.">
   <meta name="theme-color" content="#ff6b35">
   <meta property="og:site_name" content="Restrict Language">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Restrict Language · Affine programs for WebAssembly">
-  <meta property="og:description" content="Write OSV programs, make ownership visible, and compile a focused v0.0.1 surface to WebAssembly.">
+  <meta property="og:description" content="Write OSV programs, make ownership visible, and compile static forms to focused WebAssembly.">
   <meta property="og:url" content="https://ischca.github.io/restrict_lang/">
   <meta name="twitter:card" content="summary">
   <link rel="canonical" href="https://ischca.github.io/restrict_lang/">
@@ -36,7 +36,7 @@
   <main id="content">
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow status-label"><span aria-hidden="true"></span>v0.0.1 preview</p>
+        <p class="eyebrow status-label"><span aria-hidden="true"></span>v0.0.1 foundation · current compiler</p>
         <h1>Values first.<br>Ownership clear.</h1>
         <p class="lead">
           Restrict is a small programming language where data comes before the
@@ -99,9 +99,9 @@ export fun score: () -&gt; Int32 = {
         </article>
         <article>
           <span class="feature-index">03</span>
-          <h3>Inspect the pipeline</h3>
-          <p>Compile, tokenize, and parse in the browser. Source stays on the device and every output remains visible.</p>
-          <a class="text-link" href="compiler/">Try a live example</a>
+          <h3>Compose with static forms</h3>
+          <p>Give generic functions explicit <code>of</code> bounds, adopt forms on records, and keep every method call statically selected.</p>
+          <a class="text-link" href="docs/en/guide/forms.html">Read the forms guide</a>
         </article>
       </div>
     </section>
@@ -132,8 +132,10 @@ export fun score: () -&gt; Int32 = {
         <p>
           Generic and composite values work inside Restrict programs. The host
           boundary stays deliberately scalar while record, string, list, and
-          generic ABI design remains open. Temporal affine types, user-defined
-          ADTs, and source-level forms are reserved for later work.
+          generic ABI design remains open. The v0.0.1 tag shipped without user
+          enums or forms; the current compiler now adds closed enums and a
+          narrow, statically dispatched <code>form</code>/<code>takes</code>
+          slice without widening that host ABI.
         </p>
         <a class="button dark" href="docs/en/reference/release-surface.html">Review the release contract</a>
       </div>

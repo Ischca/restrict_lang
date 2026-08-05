@@ -51,10 +51,10 @@ export fun exported_score: () -> Int32 = {
 }
 ```
 
-## Current Post-v0.0.1 Addition
+## Current Post-v0.0.1 Additions
 
-The current compiler adds closed user-defined enums without changing the
-v0.0.1 host ABI:
+The current compiler adds closed user-defined enums and a narrow static form
+system without changing the v0.0.1 host ABI:
 
 | Surface | Current status |
 | --- | --- |
@@ -62,6 +62,10 @@ v0.0.1 host ABI:
 | Constructors and patterns | Use qualified `Type::Variant` names. Constructors use OSV order and matches are exhaustive. |
 | Custom `Result` errors | A closed enum can be the error in `Result<T, CustomError>`. Error propagation still uses explicit `match`; postfix `?` remains future work. |
 | `pub enum` | Exposes the enum namespace across Restrict source modules only. Enum values have no direct host-visible WebAssembly ABI. |
+| Method-only forms | `form Name` contains fully typed method signatures. Forms are non-generic and have no associated types or default bodies. |
+| Concrete record adoptions | `RecordName takes FormName` supplies every method body for one concrete, non-generic record. |
+| Form bounds | Generic functions use `<T of Form>` or `<T of First + Second>`. Calls are statically checked and monomorphized. |
+| Standard `Display` | `display`, `print`, and `println` accept `<T of Display>`. Scalar built-ins adopt Display; user records opt in explicitly. These compiler-reserved call targets are direct-call-only in the initial slice. |
 
 ## Rejected With Explicit Diagnostics
 
@@ -71,6 +75,7 @@ v0.0.1 host ABI:
 | String imports and import aliases | v0.0.1 keeps the source module surface dotted and direct. |
 | Re-exports | Import declarations stay at the source module boundary. |
 | User-defined enums in the v0.0.1 tag | The v0.0.1 release rejected these declarations. This is historical; the current closed enum slice is documented above. |
+| Source-level forms in the v0.0.1 tag | The v0.0.1 release reserved `form`, `takes`, and `of`. This is historical; the current method-only slice is documented above. |
 | Exported generic functions | Host-visible generic ABI rules are still design work. |
 | Exported composite host values | Strings, records, lists, `Option`, and `Result` do not have a direct host ABI yet. |
 | Computed or mutable exported globals | Exported top-level bindings must be immutable scalar literal constants. |
@@ -78,9 +83,11 @@ v0.0.1 host ABI:
 ## Reserved For Later
 
 - Temporal Affine Types
-- source-level `form` / `takes` declarations
+- associated types, generic forms, default methods, generic/conditional/enum
+  adoptions, and dynamic dispatch
 - generic or recursive user enums and variants with more than one direct payload
 - direct host WebAssembly ABI for user enum values
+- first-class values for the polymorphic `display`, `print`, and `println` builtins
 - postfix `?` error propagation
 - direct generic or composite host ABI
 - WebAssembly Component Model and WIT binding generation

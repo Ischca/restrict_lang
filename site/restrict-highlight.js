@@ -1,6 +1,6 @@
 (function(global) {
     const KEYWORDS = new Set([
-        'fun', 'val', 'mut', 'record', 'context', 'enum', 'match', 'then',
+        'fun', 'val', 'mut', 'record', 'context', 'enum', 'form', 'takes', 'of', 'match', 'then',
         'else', 'while', 'temporal', 'within', 'where', 'clone', 'freeze',
         'pub', 'import', 'export', 'impl', 'as', 'fatal', 'with',
         'lifetime', 'await', 'spawn'
@@ -8,7 +8,7 @@
     const LITERALS = new Set(['true', 'false', 'Some', 'None', 'Ok', 'Err']);
     const TYPES = new Set([
         'Int32', 'Int64', 'Float64', 'String', 'Char', 'Boolean', 'List',
-        'Array', 'Option', 'Result', 'Range'
+        'Array', 'Option', 'Result', 'Range', 'Display', 'Self'
     ]);
     const OPERATORS = [
         '|>', '=>', '->', '==', '!=', '<=', '>=', '&&', '||',
@@ -127,7 +127,7 @@
                     expectTitle = false;
                 } else if (KEYWORDS.has(word)) {
                     output += span('hljs-keyword', word);
-                    expectTitle = word === 'fun' || word === 'record' || word === 'context' || word === 'impl';
+                    expectTitle = word === 'fun' || word === 'record' || word === 'context' || word === 'impl' || word === 'form' || word === 'takes';
                 } else if (LITERALS.has(word)) {
                     output += span('hljs-literal', word);
                 } else if (TYPES.has(word)) {
@@ -161,7 +161,7 @@
         hljs.registerLanguage('restrict', function(hljsApi) {
             const typeMode = {
                 className: 'type',
-                begin: /\b(?:Int32|Int64|Float64|String|Char|Boolean|List|Array|Option|Result|Range)\b/
+                begin: /\b(?:Int32|Int64|Float64|String|Char|Boolean|List|Array|Option|Result|Range|Display|Self)\b/
             };
             const operatorMode = {
                 className: 'operator',
@@ -198,7 +198,7 @@
                     },
                     {
                         className: 'class',
-                        beginKeywords: 'record context impl',
+                        beginKeywords: 'record context impl form',
                         end: /\{/,
                         excludeEnd: true,
                         contains: [

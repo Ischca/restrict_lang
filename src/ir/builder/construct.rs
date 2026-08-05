@@ -67,6 +67,8 @@ impl<'a> CheckedIrBuilder<'a> {
             }
             TopDecl::Export(export) => self.register_source_function_name(export.item.as_ref()),
             TopDecl::Impl(_)
+            | TopDecl::Form(_)
+            | TopDecl::Takes(_)
             | TopDecl::Record(_)
             | TopDecl::Enum(_)
             | TopDecl::Context(_)
@@ -113,6 +115,8 @@ impl<'a> CheckedIrBuilder<'a> {
                 self.collect_function_ir_from_decl(export.item.as_ref(), functions, true)?
             }
             TopDecl::Impl(_)
+            | TopDecl::Form(_)
+            | TopDecl::Takes(_)
             | TopDecl::Record(_)
             | TopDecl::Enum(_)
             | TopDecl::Context(_)

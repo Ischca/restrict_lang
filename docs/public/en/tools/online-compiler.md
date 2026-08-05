@@ -50,6 +50,10 @@ post-v0.0.1 closed enum slice. It demonstrates a non-generic, non-recursive
 `CustomError`, qualified `Type::Variant` construction, exhaustive matching, and
 `Result<Int32, CustomError>`; the program prints `-2`.
 
+Choose **Forms and Display** to run the current static form slice. The example
+prints the built-in `Int32` value `42`, then a record that explicitly adopts
+`Display`; the visible output is `42 · records too`.
+
 ## Module Imports
 
 The web entry point supports a module-source map API internally. The default UI

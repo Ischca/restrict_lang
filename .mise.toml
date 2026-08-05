@@ -30,6 +30,18 @@ run = [
   "mise run check",
 ]
 
+[tasks.preflight-quick]
+description = "Fail fast on formatting, lint, and high-signal regressions"
+run = "bash scripts/preflight.sh quick"
+
+[tasks.preflight]
+description = "Run the complete merge preflight in fail-fast order"
+run = "bash scripts/preflight.sh full"
+
+[tasks.preflight-pages]
+description = "Run the complete preflight and rebuild the Pages artifact"
+run = "bash scripts/preflight.sh pages"
+
 [tasks.test-root]
 description = "Run only root crate tests"
 run = ["cargo test"]
@@ -144,9 +156,7 @@ wasmtime "$out"
 [tasks.ci]
 description = "Run full CI pipeline locally"
 run = [
-  "mise run fmt",
-  "mise run lint",
-  "mise run test-full",
+  "mise run preflight",
   "mise run build-release",
 ]
 

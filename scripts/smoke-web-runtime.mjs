@@ -2,21 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import init, { compile_restrict_lang, wat_to_wasm } from '../web/pkg/restrict_lang.js';
+import { examples } from '../web/examples.js';
 
 const compilerWasm = await readFile(new URL('../web/pkg/restrict_lang_bg.wasm', import.meta.url));
 await init({ module_or_path: compilerWasm });
-
-const playgroundApp = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
-
-function exampleSource(name) {
-    const marker = name + ': `';
-    const markerOffset = playgroundApp.indexOf(marker);
-    assert.notEqual(markerOffset, -1, `playground example ${name} should exist`);
-    const sourceOffset = markerOffset + marker.length;
-    const sourceEnd = playgroundApp.indexOf('`', sourceOffset);
-    assert.notEqual(sourceEnd, -1, `playground example ${name} should end`);
-    return playgroundApp.slice(sourceOffset, sourceEnd);
-}
 
 async function runProgram(source, label) {
     const compilation = compile_restrict_lang(source);
@@ -65,10 +54,25 @@ async function runProgram(source, label) {
     return new TextDecoder().decode(outputBytes);
 }
 
-assert.equal(await runProgram(exampleSource('function'), 'default playground example'), '42\n');
-assert.equal(await runProgram(exampleSource('enumResult'), 'enum Result playground example'), '-2\n');
-assert.equal(
-    await runProgram(exampleSource('formsDisplay'), 'Forms and Display playground example'),
-    '42 · records too\n'
-);
-console.log('web runtime smoke: 42, -2, 42 · records too');
+const verified = [];
+for (const example of examples) {
+    if (example.kind === 'diagnostic') {
+        const compilation = compile_restrict_lang(example.source);
+        assert.equal(compilation.success, false, `${example.title} should produce a compiler diagnostic`);
+        assert.ok(
+            compilation.error.toLowerCase().includes(example.expectedDiagnostic.toLowerCase()),
+            `${example.title} should include ${example.expectedDiagnostic}: ${compilation.error}`
+        );
+        verified.push(`${example.id}:diagnostic`);
+        continue;
+    }
+
+    assert.equal(
+        await runProgram(example.source, example.title),
+        example.expectedOutput,
+        `${example.title} should produce its documented output`
+    );
+    verified.push(`${example.id}:output`);
+}
+
+console.log(`web runtime smoke: ${verified.join(', ')}`);

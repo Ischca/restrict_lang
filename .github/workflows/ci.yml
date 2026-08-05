@@ -99,6 +99,9 @@ jobs:
           vscode_release_examples_compile_through_cli
           -- --ignored --exact
 
+      - name: Check generated playground samples
+        run: bash scripts/sync_samples.sh --check
+
       - name: Smoke test checked-in web runtime
         run: node scripts/smoke-web-runtime.mjs
 

@@ -45,14 +45,29 @@ The browser compiler can show:
 It uses the same parser, type checker, and code generator as the Rust crate.
 That makes it a good smoke test for examples in docs and blog posts.
 
-Choose **Custom errors with Result** from the example menu to run the current
-post-v0.0.1 closed enum slice. It demonstrates a non-generic, non-recursive
-`CustomError`, qualified `Type::Variant` construction, exhaustive matching, and
-`Result<Int32, CustomError>`; the program prints `-2`.
+The example menu is arranged as a short learning path:
 
-Choose **Forms and Display** to run the current static form slice. The example
-prints the built-in `Int32` value `42`, then a record that explicitly adopts
-`Display`; the visible output is `42 · records too`.
+- **Start here** introduces output, functions and OSV calls, records, and
+  `Option` matching.
+- **Current compiler** covers a custom enum carried by `Result`, a generic form
+  contract, and Display-polymorphic output.
+- **Diagnostics** contains an intentional affine use-after-consume error.
+
+Each selection shows what it teaches and the expected output or diagnostic
+above the editor. Choose **Result with a custom error** to see a qualified enum
+variant become the useful output `invalid code`, rather than an opaque numeric
+sentinel.
+
+Forms and Display are deliberately separate. **Generic form contract** shows
+the whole static mechanism: `form Labelled`, `Badge takes Labelled`, and the
+explicit generic bound `<T of Labelled>`. **Display across types** then applies
+the same idea to the compiler prelude by sending an `Int32`, a `String`, and a
+record with an explicit `Display` adoption through `println`.
+
+The checked-in sources under `samples/playground/` are the catalog's single
+source of truth. CI compiles every successful example, executes its generated
+WebAssembly, asserts exact stdout, and separately asserts the intentional
+diagnostic.
 
 ## Module Imports
 

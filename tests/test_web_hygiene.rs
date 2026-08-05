@@ -66,7 +66,9 @@ fn playground_runs_generated_wasm_and_surfaces_program_output() {
         "wasi_snapshot_preview1",
         "fd_write",
         "programInstance.exports._start",
-        "result |> print_int",
+        "exampleGroups",
+        "examplesById",
+        "updateExampleGuide",
     ] {
         assert!(
             app.contains(required),
@@ -101,31 +103,54 @@ fn playground_editor_overlay_keeps_caret_and_highlight_metrics_aligned() {
 }
 
 #[test]
-fn playground_exposes_forms_and_display_output() {
+fn playground_separates_generic_forms_from_display_output() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let html = read_fixture(root, "web/index.html");
     let app = read_fixture(root, "web/app.js");
+    let manifest = read_fixture(root, "samples/playground/manifest.json");
+    let form = read_fixture(root, "samples/playground/form_contract.rl");
+    let display = read_fixture(root, "samples/playground/display_types.rl");
+
+    for required in ["form Labelled", "Badge takes Labelled", "<T of Labelled>"] {
+        assert!(
+            form.contains(required),
+            "generic form example should include `{required}`"
+        );
+    }
 
     for required in [
-        "formsDisplay",
-        "42 |> print",
         "Notice takes Display",
         "fun display: (self: Notice) -> String",
-        "Notice { text: \"records too\" } |> println",
+        "42 |> println",
+        "Notice { text: \"record adoption\" } |> println",
     ] {
         assert!(
-            app.contains(required),
-            "playground Forms and Display example should include `{required}`"
+            display.contains(required),
+            "Display example should include `{required}`"
+        );
+    }
+
+    for required in ["formContract", "displayTypes", "affineDiagnostic"] {
+        assert!(
+            manifest.contains(required),
+            "playground manifest should include `{required}`"
+        );
+    }
+
+    for required in [
+        r#"id="sampleGuide""#,
+        r#"id="sampleDescription""#,
+        r#"id="sampleExpectation""#,
+    ] {
+        assert!(
+            html.contains(required),
+            "playground should expose `{required}`"
         );
     }
 
     assert!(
-        html.contains(r#"<option value="formsDisplay">Forms and Display</option>"#),
-        "playground should expose the Forms and Display preset"
-    );
-    assert!(
-        !app.contains("print accepts String"),
-        "playground should not show the obsolete String-only print hint"
+        app.contains("populateExampleSelect") && app.contains("optionGroup.label = group.title"),
+        "playground should build grouped example options from the generated catalog"
     );
 }
 
@@ -168,6 +193,7 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
         "site/restrict-highlight.js",
         "site/restrict-code-blocks.js",
         "web/restrict-highlight.js",
+        "web/examples.js",
     ] {
         assert!(
             root.join(path).is_file(),
@@ -201,12 +227,17 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
         "Pages workflow should execute the generated compiler and capture its output before deployment"
     );
     assert!(
+        workflow.contains("bash scripts/sync_samples.sh --check"),
+        "Pages workflow should reject a stale generated playground catalog"
+    );
+    assert!(
         workflow.contains("bash scripts/build-pages.sh") && workflow.contains("path: ./site/dist"),
         "Pages workflow should upload the assembled LP/docs/blog/compiler artifact"
     );
     assert!(
         workflow.contains("test -f site/dist/docs/index.html")
             && workflow.contains("test -f site/dist/compiler/pkg/restrict_lang.js")
+            && workflow.contains("test -f site/dist/compiler/examples.js")
             && workflow.contains("test -f site/dist/compiler/restrict-highlight.js")
             && workflow.contains("test -f site/dist/favicon.svg")
             && workflow.contains("find site/dist/compiler/pkg -maxdepth 1 -type f -name '*.wasm'"),
@@ -523,11 +554,13 @@ fn pages_build_script_fails_before_partial_artifacts() {
         "require_file \"$ROOT_DIR/docs/book/index.html\"",
         "require_dir \"$ROOT_DIR/web/pkg\"",
         "require_file \"$ROOT_DIR/web/pkg/restrict_lang.js\"",
+        "require_file \"$ROOT_DIR/web/examples.js\"",
         "require_file \"$SITE_DIR/tools/highlight-theme-lab.html\"",
         "require_file \"$SITE_DIR/blog/shipping-v001-preview.html\"",
         "cp \"$SITE_DIR/tools/\"*.html \"$TMP_DIR/tools/\"",
         "require_file \"$TMP_DIR/tools/highlight-theme-lab.html\"",
         "require_file \"$TMP_DIR/blog/shipping-v001-preview.html\"",
+        "require_file \"$TMP_DIR/compiler/examples.js\"",
         "does not contain a .wasm bundle",
         "mktemp -d",
         "mv \"$TMP_DIR\" \"$DIST_DIR\"",
@@ -568,14 +601,20 @@ fn embedded_web_examples(root: &Path) -> Vec<EmbeddedExample> {
         });
     }
 
-    let app = read_fixture(root, "web/app.js");
-    for (index, source) in extract_restrict_template_literals(&app)
-        .into_iter()
-        .enumerate()
-    {
+    let samples_dir = root.join("samples/playground");
+    let mut sample_paths = fs::read_dir(&samples_dir)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", samples_dir.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rl"))
+        .collect::<Vec<_>>();
+    sample_paths.sort();
+
+    for path in sample_paths {
         examples.push(EmbeddedExample {
-            label: format!("web/app.js example template[{}]", index + 1),
-            source,
+            label: path.display().to_string(),
+            source: fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display())),
         });
     }
 
@@ -607,50 +646,6 @@ fn extract_example_code_divs(markup: &str) -> Vec<String> {
     }
 
     snippets
-}
-
-fn extract_restrict_template_literals(javascript: &str) -> Vec<String> {
-    javascript_template_literals(javascript)
-        .into_iter()
-        .filter(|literal| literal.contains("fun ") || literal.contains("record "))
-        .collect()
-}
-
-fn javascript_template_literals(javascript: &str) -> Vec<String> {
-    let mut literals = Vec::new();
-    let bytes = javascript.as_bytes();
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] != b'`' {
-            index += 1;
-            continue;
-        }
-
-        let literal_start = index + 1;
-        index += 1;
-        let mut escaped = false;
-
-        while index < bytes.len() {
-            match bytes[index] {
-                b'\\' if !escaped => {
-                    escaped = true;
-                    index += 1;
-                }
-                b'`' if !escaped => {
-                    literals.push(javascript[literal_start..index].to_string());
-                    index += 1;
-                    break;
-                }
-                _ => {
-                    escaped = false;
-                    index += 1;
-                }
-            }
-        }
-    }
-
-    literals
 }
 
 fn assert_current_web_example_syntax(label: &str, source: &str) {
@@ -686,6 +681,8 @@ fn assert_current_web_example_syntax(label: &str, source: &str) {
 
     assert_no_record_field_assignments(label, &code_only, source);
 
+    let mut in_form_contract = false;
+
     for (line_index, line) in code_only.lines().enumerate() {
         let line_number = line_index + 1;
         let trimmed = line.trim();
@@ -698,26 +695,52 @@ fn assert_current_web_example_syntax(label: &str, source: &str) {
             !trimmed.contains(';'),
             "{label}:{line_number} should not use semicolons in embedded examples:\n{source}"
         );
-        assert_current_function_declaration(label, line_number, line, source);
+
+        if trimmed.starts_with("form ") || trimmed.starts_with("pub form ") {
+            in_form_contract = true;
+        }
+
+        assert_current_function_declaration(label, line_number, line, source, in_form_contract);
         assert_no_traditional_call_syntax(label, line_number, line, source);
+
+        if in_form_contract && trimmed == "}" {
+            in_form_contract = false;
+        }
     }
 }
 
-fn assert_current_function_declaration(label: &str, line_number: usize, line: &str, source: &str) {
+fn assert_current_function_declaration(
+    label: &str,
+    line_number: usize,
+    line: &str,
+    source: &str,
+    in_form_contract: bool,
+) {
     let trimmed = line.trim_start();
     let Some(after_fun) = trimmed.strip_prefix("fun ") else {
         return;
     };
     let before_body = after_fun.split('=').next().unwrap_or(after_fun);
 
+    let has_parameter_list =
+        before_body.contains(": (") || (before_body.contains(": <") && before_body.contains(">("));
     assert!(
-        before_body.contains(": ("),
-        "{label}:{line_number} should use `fun name: (...) -> Type =` syntax:\n{source}"
+        has_parameter_list,
+        "{label}:{line_number} should use `fun name: (...) -> Type =` or generic `fun name: <T>(...) -> Type =` syntax:\n{source}"
     );
     assert!(
         before_body.contains(" -> "),
         "{label}:{line_number} should include an explicit return type:\n{source}"
     );
+
+    if in_form_contract {
+        assert!(
+            !trimmed.contains(" =") && !trimmed.ends_with('{'),
+            "{label}:{line_number} form contracts should declare signatures without bodies:\n{source}"
+        );
+        return;
+    }
+
     assert!(
         trimmed.contains(" ="),
         "{label}:{line_number} should include `=` before the function body:\n{source}"

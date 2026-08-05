@@ -48,6 +48,9 @@ jobs:
           mdbook --version
           wasm-pack --version
 
+      - name: Check generated playground samples
+        run: bash scripts/sync_samples.sh --check
+
       - name: Build documentation
         run: mdbook build docs
 
@@ -72,6 +75,7 @@ jobs:
           test -f site/dist/blog/shipping-v001-preview.html
           test -f site/dist/compiler/index.html
           test -f site/dist/compiler/app.js
+          test -f site/dist/compiler/examples.js
           test -f site/dist/compiler/restrict-highlight.js
           test -f site/dist/compiler/pkg/restrict_lang.js
           find site/dist/compiler/pkg -maxdepth 1 -type f -name '*.wasm' -print -quit | grep -q .

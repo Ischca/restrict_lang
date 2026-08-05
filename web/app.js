@@ -1,97 +1,8 @@
 import init, { compile_restrict_lang, lex_only, parse_only, wat_to_wasm } from './pkg/restrict_lang.js';
+import { exampleGroups, examples, examplesById } from './examples.js';
 
 let wasmModule = null;
 let activeTab = 'output';
-
-const examples = {
-    function: `// Values come before verbs.
-fun add: (left: Int32, right: Int32) -> Int32 = {
-    left + right
-}
-
-fun main: () -> () = {
-    val result = (20, 22) add
-    result |> print_int
-}`,
-    pipe: `// A pipe sends one value into a function.
-fun increment: (value: Int32) -> Int32 = {
-    value + 1
-}
-
-fun main: () -> () = {
-    41 |> increment |> print_int
-}`,
-    record: `// Record fields use colons.
-record Point {
-    x: Int32
-    y: Int32
-}
-
-fun make_origin: () -> Point = {
-    Point { x: 0, y: 0 }
-}
-
-fun main: () -> () = {
-    val origin = () make_origin
-    origin.x |> print_int
-}`,
-    match: `// Built-in options can be matched.
-fun choose: (value: Option<Int32>) -> Int32 = {
-    value match {
-        Some(number) => { number }
-        None => { 0 }
-    }
-}
-
-fun main: () -> () = {
-    Some(42) |> choose |> print_int
-}`,
-    enumResult: `// Closed enums make Result errors domain-specific.
-enum CustomError {
-    Empty
-    Invalid(String)
-}
-
-fun decode: (code: Int32) -> Result<Int32, CustomError> = {
-    code == 0 then {
-        Ok(42)
-    } else {
-        Err("invalid code" |> CustomError::Invalid)
-    }
-}
-
-fun collapse: (result: Result<Int32, CustomError>) -> Int32 = {
-    result match {
-        Ok(value) => { value }
-        Err(error) => {
-            error match {
-                CustomError::Empty => { -1 }
-                CustomError::Invalid(message) => { -2 }
-            }
-        }
-    }
-}
-
-fun main: () -> () = {
-    1 |> decode |> collapse |> print_int
-}`,
-    formsDisplay: `// Display lets one output function handle many concrete types.
-record Notice {
-    text: String
-}
-
-Notice takes Display {
-    fun display: (self: Notice) -> String = {
-        self.text
-    }
-}
-
-fun main: () -> () = {
-    42 |> print
-    " · " |> print
-    Notice { text: "records too" } |> println
-}`
-};
 
 async function initWasm() {
     try {
@@ -410,14 +321,66 @@ function setButtonsDisabled(disabled) {
     }
 }
 
+function groupTitle(groupId) {
+    return exampleGroups.find((group) => group.id === groupId)?.title || 'Example';
+}
+
+function updateExampleGuide(example) {
+    document.getElementById('sampleGroup').textContent = groupTitle(example.group);
+    document.getElementById('sampleTitle').textContent = example.title;
+    document.getElementById('sampleDescription').textContent = example.description;
+
+    const isDiagnostic = example.kind === 'diagnostic';
+    document.getElementById('sampleExpectationLabel').textContent = isDiagnostic
+        ? 'Expected diagnostic'
+        : 'Expected output';
+    document.getElementById('sampleExpectation').textContent = isDiagnostic
+        ? example.expectedDiagnostic
+        : example.expectedOutput.trimEnd();
+}
+
+function showSharedSourceGuide() {
+    document.getElementById('sampleGroup').textContent = 'Shared source';
+    document.getElementById('sampleTitle').textContent = 'Code from this URL';
+    document.getElementById('sampleDescription').textContent = 'This source came from the code query parameter instead of a curated example.';
+    document.getElementById('sampleExpectationLabel').textContent = 'Expected result';
+    document.getElementById('sampleExpectation').textContent = 'Run to inspect';
+}
+
+function populateExampleSelect() {
+    const select = document.getElementById('exampleSelect');
+    select.replaceChildren();
+
+    const sharedSourceOption = document.createElement('option');
+    sharedSourceOption.value = '';
+    sharedSourceOption.textContent = 'Shared source';
+    sharedSourceOption.hidden = true;
+    select.appendChild(sharedSourceOption);
+
+    for (const group of exampleGroups) {
+        const optionGroup = document.createElement('optgroup');
+        optionGroup.label = group.title;
+
+        for (const example of examples.filter((candidate) => candidate.group === group.id)) {
+            const option = document.createElement('option');
+            option.value = example.id;
+            option.textContent = example.title;
+            optionGroup.appendChild(option);
+        }
+
+        select.appendChild(optionGroup);
+    }
+}
+
 function loadExample(exampleName) {
-    const example = examples[exampleName];
+    const example = examplesById[exampleName];
     if (!example) {
         return;
     }
 
-    document.getElementById('sourceCode').value = example;
+    document.getElementById('sourceCode').value = example.source;
     document.getElementById('exampleSelect').value = exampleName;
+    updateExampleGuide(example);
     syncSourceHighlight();
     updateSourceStats();
     clearOutput();
@@ -529,6 +492,10 @@ function loadInitialCodeFromQuery() {
     const code = params.get('code');
     if (code !== null) {
         document.getElementById('sourceCode').value = code;
+        const select = document.getElementById('exampleSelect');
+        select.options[0].hidden = false;
+        select.value = '';
+        showSharedSourceGuide();
         syncSourceHighlight();
         updateSourceStats();
         clearOutput();
@@ -544,6 +511,8 @@ window.showTab = showTab;
 window.loadExample = loadExample;
 
 document.addEventListener('DOMContentLoaded', () => {
+    populateExampleSelect();
+    loadExample(examples[0].id);
     initializeSourceHighlighting();
     initializeActions();
     loadInitialCodeFromQuery();

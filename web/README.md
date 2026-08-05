@@ -8,7 +8,7 @@ A web-based compiler for the Restrict Language that runs entirely in the browser
 - **Interactive Interface**: Compile, lex, and parse actions from a browser editor
 - **Restrict Syntax Highlighting**: The source editor highlights keywords, types, literals, comments, strings, numbers, and OSV operators
 - **Step-by-Step Analysis**: View tokens, AST, and compilation errors separately
-- **Example Programs**: Built-in examples using the current public syntax, including Forms and Display
+- **Curated Example Programs**: Grouped runnable examples, separate generic form and Display lessons, and an intentional affine diagnostic
 - **No Server Required**: Runs entirely in the browser
 
 ## Building
@@ -52,7 +52,7 @@ npx serve .
 3. **Compile**: Click "Compile" when you only want to inspect the generated WebAssembly text
 4. **Analyze**: Use "Tokenize" or "Parse" for step-by-step analysis
 5. **View Results**: Switch between tabs to see program output, WebAssembly, tokens, AST, or errors
-6. **Try Examples**: Choose an example program to load it
+6. **Try Examples**: Choose a grouped example and compare its documented expectation with the Output or Errors tab
 
 ## Architecture
 
@@ -61,6 +61,7 @@ The web compiler consists of:
 - **Rust Backend**: The core compiler and WAT assembler compiled to WebAssembly
 - **JavaScript Frontend**: Web interface that calls the compiler, instantiates generated WebAssembly, captures WASI stdout/stderr, and keeps the source editor highlight layer in sync
 - **HTML/CSS**: User interface and styling
+- **Sample Catalog**: `samples/playground/manifest.json` and its `.rl` files generate `web/examples.js`, which is consumed by both the UI and runtime smoke test
 
 ## Supported Syntax Surface
 
@@ -82,6 +83,11 @@ The initial form slice is deliberately static: forms and adoptions are
 non-generic, form methods have complete signatures, and each adoption provides
 every method body. Associated types, default methods, conditional or generic
 adoptions, enum adoptions, and dynamic dispatch are not supported.
+
+The playground teaches a custom form contract separately from Display. The
+first example shows `form`, a concrete `takes`, and an explicit `<T of Form>`
+bound together. The following Display example shows the practical prelude
+contract used by `println` across built-in types and an adopted record.
 
 ## Browser Runtime
 
@@ -139,9 +145,10 @@ To modify the web compiler:
 
 1. Edit Rust code in `src/web.rs` for WASM bindings
 2. Edit JavaScript code in `web/app.js` for the frontend
-3. Edit `web/restrict-highlight.js` for shared source highlighting rules
-4. Edit HTML/CSS in `web/index.html` for the interface
-5. Rebuild with `./build.sh`
+3. Edit sources and metadata under `samples/playground/`, then run `bash scripts/sync_samples.sh`
+4. Edit `web/restrict-highlight.js` for shared source highlighting rules
+5. Edit HTML/CSS in `web/index.html` for the interface
+6. Rebuild with `./build.sh`
 
 ## Troubleshooting
 

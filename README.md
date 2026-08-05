@@ -463,6 +463,12 @@ mise run test
 # Run slow release example CLI gates
 mise run check
 
+# Run the complete merge preflight in fail-fast order
+mise run preflight
+
+# Also rebuild and smoke-test the Pages artifact
+mise run preflight-pages
+
 # Run specific test suites
 mise exec -- cargo test lambda        # Lambda expression tests
 mise exec -- cargo test pattern       # Pattern matching tests

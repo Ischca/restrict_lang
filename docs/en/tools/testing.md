@@ -17,13 +17,23 @@ Useful focused commands:
 mise exec -- cargo test --test test_docs_hygiene
 mise exec -- cargo test --test test_wat_validation
 mise run check
+mise run preflight
+mise run preflight-pages
 ```
 
 `mise run test-fast` is the normal local gate for compiler work. It runs
 formatting, focused library checks, and one combined Cargo invocation for docs,
 release-surface, sample, and generic integration tests without the slow release
-example CLI sweep. Use `mise run test-full` or `mise run ci` before release
-handoff.
+example CLI sweep. `mise run preflight` is the one-command merge gate: it runs
+cheap checks first, then the complete workspace suite, ignored release example
+checks, and the checked-in browser runtime smoke. Use `mise run
+preflight-pages` for a publication handoff that must also rebuild the mdBook,
+WebAssembly package, and assembled Pages artifact.
+
+GitHub Actions runs the same coverage as separate quality, compiler-core,
+integration, Warder, and release-gate jobs. Integration test targets are split
+deterministically across four shards, while the final `test` job preserves the
+stable branch-protection check name.
 
 `mise run check` executes the slow release example CLI entrypoint validation.
 Those tests are ignored in the default `cargo test` run so active compiler

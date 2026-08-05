@@ -16,49 +16,125 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  quality:
+    name: Quality
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-    - name: Cache cargo
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: |
-          .
-          warder
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-quality
 
-    - name: Check formatting
-      run: cargo fmt -- --check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-    - name: Lint
-      run: cargo clippy -- -D warnings
+      - name: Lint workspace
+        run: cargo clippy --workspace --locked -- -D warnings
 
-    - name: Run tests
-      run: cargo test --verbose
+  test-shards:
+    name: Tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: compiler-core
+            command: bash scripts/ci-test-shard.sh core
+          - name: integration-1
+            command: bash scripts/ci-test-shard.sh integration 0 4
+          - name: integration-2
+            command: bash scripts/ci-test-shard.sh integration 1 4
+          - name: integration-3
+            command: bash scripts/ci-test-shard.sh integration 2 4
+          - name: integration-4
+            command: bash scripts/ci-test-shard.sh integration 3 4
+          - name: warder
+            command: bash scripts/ci-test-shard.sh warder
+    steps:
+      - uses: actions/checkout@v6
 
-    - name: Test Warder
-      run: cd warder && cargo test --verbose
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Install mise
-      uses: jdx/mise-action@v2
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-tests
 
-    - name: Check release example entrypoints compile
-      run: mise run check
+      - name: Run test shard
+        run: ${{ matrix.command }}
 
-    # Release build is a smoke test only: real release artifacts come from
-    # release.yml on tags. Run it on main pushes to catch breakage before a
-    # tag, but skip it on PRs to roughly halve their compile time.
-    - name: Build release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: cargo build --release
+  release-gates:
+    name: Release gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
-    - name: Build Warder release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: cd warder && cargo build --release
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-release-gates
+
+      - name: Check standalone release example entrypoints
+        run: >-
+          cargo test -p restrict_lang --locked
+          --test test_release_example_hygiene
+          standalone_release_examples_compile_through_cli
+          -- --ignored --exact
+
+      - name: Check VS Code release example entrypoints
+        run: >-
+          cargo test -p restrict_lang --locked
+          --test test_release_example_hygiene
+          vscode_release_examples_compile_through_cli
+          -- --ignored --exact
+
+      - name: Smoke test checked-in web runtime
+        run: node scripts/smoke-web-runtime.mjs
+
+  # Keep the historical `test` check name stable for branch protection while
+  # the expensive work runs in parallel above.
+  test:
+    name: test
+    if: always()
+    needs: [quality, test-shards, release-gates]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI partition
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          TEST_SHARDS_RESULT: ${{ needs.test-shards.result }}
+          RELEASE_GATES_RESULT: ${{ needs.release-gates.result }}
+        run: |
+          test "$QUALITY_RESULT" = success
+          test "$TEST_SHARDS_RESULT" = success
+          test "$RELEASE_GATES_RESULT" = success
+
+  build-release:
+    name: Release build smoke
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-release-build
+
+      - name: Build workspace release binaries
+        run: cargo build --workspace --locked --release

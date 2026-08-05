@@ -134,7 +134,10 @@ These are intentional v0.0.1 boundaries, not accidental omissions:
 
 - exported generic functions are not host-visible
 - exported composite values do not receive a direct host ABI
-- source-level `form`/`takes` declarations are reserved for later
+- current form dispatch is statically selected and monomorphized; there are no
+  runtime form objects or dynamic dispatch ABI
+- forms and concrete record adoptions are source-module features and do not add
+  a composite host ABI
 - Temporal Affine Types are outside the default release gate
 - WebAssembly Component Model and WIT integration are future interop work
 

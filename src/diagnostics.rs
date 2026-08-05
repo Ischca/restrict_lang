@@ -98,12 +98,15 @@ mod tests {
 
     #[test]
     fn parse_error_formatter_preserves_unsupported_feature_messages() {
-        let source = "form Printable { Item }\n";
-        let err = parse_program(source).expect_err("form declarations are not implemented");
+        let source = r#"form Printable<T> {
+    fun display: (self: Self) -> String
+}
+"#;
+        let err = parse_program(source).expect_err("generic forms are intentionally deferred");
         let message = format_parse_error(source, err);
 
-        assert!(message.contains("source-level `form` / `takes` syntax is unsupported in v0.0.1"));
-        assert!(message.contains("compiler-internal Container behavior"));
+        assert!(message.contains("generic forms are not supported yet"));
+        assert!(message.contains("declare a non-generic form"));
         assert!(!message.contains("unexpected input near"));
         assert!(!message.contains("Error("));
         assert!(!message.contains("ErrorKind"));

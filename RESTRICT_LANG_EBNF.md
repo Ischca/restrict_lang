@@ -22,6 +22,7 @@ ident_continue  = ident_start | digit ;
 identifier      = ident_start { ident_continue } ;
 
 keyword         = "fun" | "val" | "mut" | "record" | "context" | "enum" | "impl"
+                | "form" | "takes" | "of"
                 | "match" | "then" | "else" | "temporal" | "where" | "within"
                 | "spawn" | "await" | "clone" | "freeze" | "pub" | "import"
                 | "export" | "as" | "fatal" | "true" | "false" | "Some" | "None"
@@ -72,6 +73,9 @@ temporal_type       = simple_type "<" temporal_var ">" ;
                       (* TAT: temporal types auto-cleanup when scope ends *)
 
 func_type           = "|" [ type { "," type } ] "|" "->" type ;
+
+(* Post-v0.0.1 form bounds. Multiple required forms are intersections. *)
+form_bounds         = "of" identifier { "+" identifier } ;
 
 (* Temporal Constraints *)
 temporal_constraint = temporal_var "within" temporal_var ;
@@ -211,10 +215,12 @@ program             = { top_decl } ;
 top_decl            = function_decl
                     | record_decl
                     | enum_decl
+                    | form_decl
+                    | takes_decl
                     | context_decl
                     | impl_decl
                     | import_decl ;
-                    (* reserved: macro_decl, trait_decl, type_decl *)
+                    (* reserved: macro_decl, type_decl *)
 
 (* Function Declaration *)
 function_decl       = { context_ann } [ "pub" ] "fun" identifier ":"
@@ -223,7 +229,7 @@ function_decl       = { context_ann } [ "pub" ] "fun" identifier ":"
 function_signature  = [ type_params ] param_block [ "->" type ] [ where_clause ] ;
 
 type_params         = "<" type_param { "," type_param } ">" ;
-type_param          = identifier | temporal_var ;
+type_param          = identifier [ form_bounds ] | temporal_var ;
 
 param_block         = "(" [ param_def { "," param_def } ] ")" ;
 param_def           = identifier ":" type ;
@@ -245,6 +251,23 @@ context_decl        = "context" identifier [ type_params ] "{"
 impl_decl           = "impl" identifier "{" method_decl { method_decl } "}" ;
 method_decl         = "fun" identifier ":" function_signature "=" block_expr ;
                       (* first parameter must be self: Target; calls remain OSV *)
+
+(* Post-v0.0.1 method-only forms. A form and each form method are non-generic.
+   Every method is fully typed and has no default body. *)
+form_decl           = [ "pub" ] "form" identifier "{"
+                      form_method_decl { form_method_decl } "}" ;
+
+form_method_decl    = "fun" identifier ":" "("
+                      "self" ":" "Self" { "," param_def } ")"
+                      "->" type [ "," ] ;
+
+(* An adoption targets a concrete, non-generic record. The implementation
+   repeats each complete signature, replacing Self with the target record. *)
+takes_decl          = identifier "takes" identifier "{"
+                      takes_method_decl { takes_method_decl } "}" ;
+
+takes_method_decl   = "fun" identifier ":" param_block "->" type
+                      "=" block_expr ;
 
 (* Closed user enums: non-generic and non-recursive. Each variant has zero or
    one payload; function and temporal payload types are not supported. *)
@@ -297,8 +320,11 @@ restrict_program    = program ;
 ### Reserved for Future Extensions
 - `macro`: Macro system
 - `effect`: Effect handlers
-- `trait`: Trait system
 - `type`: Type aliases
+
+Source-level associated form types, generic forms, generic or conditional
+`takes`, default form methods, enum adoptions, and dynamic dispatch are also
+reserved for future extensions.
 
 ### Edge Cases and Clarifications
 - Nested comments not supported: `/* /* */ */` is invalid

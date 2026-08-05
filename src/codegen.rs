@@ -95,6 +95,10 @@ pub struct WasmCodeGen {
     local_types: Vec<HashMap<String, WasmType>>,
     /// Variable to declared/source Restrict type mapping (scoped)
     local_source_types: Vec<HashMap<String, Type>>,
+    /// Source locals whose declaration has been reached during emission.
+    /// Locals are predeclared in Wasm, so this keeps later declarations from
+    /// shadowing methods or outer bindings before their source position.
+    active_local_bindings: Vec<HashSet<String>>,
     /// Source binding names to emitted Wasm local names (scoped).
     local_aliases: Vec<HashMap<String, String>>,
     /// Specific binding declarations that must use an emitted Wasm local alias.
@@ -136,6 +140,10 @@ pub struct WasmCodeGen {
     global_source_types: HashMap<String, Type>,
     /// Method signatures: record_name -> method_name -> function_sig
     methods: HashMap<String, HashMap<String, FunctionSig>>,
+    /// Source-level form signatures: form_name -> member_name -> signature.
+    forms: HashMap<String, HashMap<String, FunctionSourceSig>>,
+    /// Concrete form adoptions: target type -> member name -> adoption candidates.
+    form_adoptions: HashMap<String, HashMap<String, Vec<FormAdoption>>>,
     /// String constants pool for deduplication
     strings: Vec<String>,
     /// String constant offsets in linear memory
@@ -166,6 +174,8 @@ pub struct WasmCodeGen {
     captured_vars: Vec<String>,
     /// Record definitions: record_name -> fields
     records: HashMap<String, Vec<(String, Type)>>,
+    /// Context names also represented in `records` for field layout lowering.
+    contexts: HashSet<String>,
     /// Closed enum definitions in declaration order. The vector index is the
     /// compiler-internal runtime tag for a variant.
     enums: HashMap<String, Vec<EnumVariantDecl>>,
@@ -204,6 +214,12 @@ struct FunctionSourceSig {
     type_params: Vec<String>,
     params: Vec<Type>,
     result: Option<Type>,
+}
+
+#[derive(Debug, Clone)]
+struct FormAdoption {
+    form_name: String,
+    function_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -248,6 +264,7 @@ impl WasmCodeGen {
             locals: vec![HashMap::new()],
             local_types: vec![HashMap::new()],
             local_source_types: vec![HashMap::new()],
+            active_local_bindings: vec![HashSet::new()],
             local_aliases: vec![HashMap::new()],
             binding_local_aliases: HashMap::new(),
             match_local_ids: HashMap::new(),
@@ -267,6 +284,8 @@ impl WasmCodeGen {
             global_types: HashMap::new(),
             global_source_types: HashMap::new(),
             methods: HashMap::new(),
+            forms: HashMap::new(),
+            form_adoptions: HashMap::new(),
             strings: Vec::new(),
             string_offsets: HashMap::new(),
             next_mem_offset: 1024, // Start at 1024 to leave room for other data
@@ -282,6 +301,7 @@ impl WasmCodeGen {
             in_lambda_with_captures: false,
             captured_vars: Vec::new(),
             records: HashMap::new(),
+            contexts: HashSet::new(),
             enums: HashMap::new(),
             record_type_params: HashMap::new(),
             record_field_offsets: HashMap::new(),
@@ -354,14 +374,23 @@ impl WasmCodeGen {
 
         // Note: Using direct function calls for cleanup instead of function table
 
+        self.register_builtin_display_surface()?;
+
         // Collect string constants first
         self.collect_strings(program)?;
+        self.collect_display_runtime_strings()?;
         self.place_arena_region_after_static_data()?;
 
         // Generate string data section
         if !self.strings.is_empty() {
             self.output.push_str("\n  ;; String constants\n");
-            for (s, offset) in &self.string_offsets {
+            for s in &self.strings {
+                let offset = self.string_offsets.get(s).ok_or_else(|| {
+                    CodeGenError::InvalidCheckedIr(format!(
+                        "string pool is missing an offset for {:?}",
+                        s
+                    ))
+                })?;
                 let bytes = s.as_bytes();
                 let len = bytes.len() as u32;
 
@@ -427,6 +456,18 @@ impl WasmCodeGen {
         }
 
         for decl in &program.declarations {
+            if let TopDecl::Form(form) = Self::decl_codegen_item(decl) {
+                self.register_form_definition(form)?;
+            }
+        }
+
+        for decl in &program.declarations {
+            if let TopDecl::Takes(takes) = Self::decl_codegen_item(decl) {
+                self.register_takes_methods(takes)?;
+            }
+        }
+
+        for decl in &program.declarations {
             if let TopDecl::Binding(binding) = Self::decl_codegen_item(decl) {
                 self.register_global_binding(binding)?;
             }
@@ -457,6 +498,8 @@ impl WasmCodeGen {
                 TopDecl::Impl(impl_block) => {
                     self.register_impl_methods(impl_block)?;
                 }
+                TopDecl::Form(_) => {}
+                TopDecl::Takes(_) => {}
                 TopDecl::Export(_) => {
                     // Not yet implemented
                 }
@@ -482,6 +525,10 @@ impl WasmCodeGen {
                 TopDecl::Enum(_) => {}
                 TopDecl::Impl(impl_block) => {
                     self.generate_impl_methods(impl_block)?;
+                }
+                TopDecl::Form(_) => {}
+                TopDecl::Takes(takes) => {
+                    self.generate_takes_methods(takes)?;
                 }
                 TopDecl::Export(_) => {
                     // Not yet implemented
@@ -1033,9 +1080,10 @@ impl WasmCodeGen {
     }
 
     fn generate_builtin_functions(&mut self) -> Result<(), CodeGenError> {
-        // Built-in println function for strings
+        // Internal low-level writer. Source-level `println` dispatches through Display.
         self.output.push_str("\n  ;; Built-in functions\n");
-        self.output.push_str("  (func $println (param $str i32)\n");
+        self.output
+            .push_str("  (func $__restrict_println_string (param $str i32)\n");
         self.output.push_str("    (local $len i32)\n");
         self.output.push_str("    (local $iov_base i32)\n");
         self.output.push_str("    (local $iov_len i32)\n");
@@ -1226,46 +1274,6 @@ impl WasmCodeGen {
         self.output.push_str("    drop\n");
         self.output.push_str("  )\n");
 
-        // println function with generic dispatch
-        self.output.push_str("\n  ;; Generic println function\n");
-        self.output
-            .push_str("  (func $println_generic (param $value i32) (param $type_tag i32)\n");
-        self.output.push_str("    ;; Dispatch based on type tag\n");
-        self.output.push_str("    ;; 0 = String, 1 = Int32\n");
-        self.output.push_str("    local.get $type_tag\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    i32.eq\n");
-        self.output.push_str("    (if\n");
-        self.output.push_str("      (then\n");
-        self.output.push_str("        ;; String case\n");
-        self.output.push_str("        local.get $value\n");
-        self.output.push_str("        call $println\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("      (else\n");
-        self.output.push_str("        ;; Int32 case\n");
-        self.output.push_str("        local.get $value\n");
-        self.output.push_str("        call $print_int\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("    )\n");
-        self.output.push_str("  )\n");
-
-        // Add println to function signatures
-        self.functions.insert(
-            "println".to_string(),
-            FunctionSig {
-                _params: vec![WasmType::I32],
-                result: None,
-            },
-        );
-        self.function_source_sigs.insert(
-            "println".to_string(),
-            FunctionSourceSig {
-                type_params: vec![],
-                params: vec![Type::Named("String".to_string())],
-                result: Some(Type::Named("Unit".to_string())),
-            },
-        );
-
         // Add print_int to function signatures
         self.functions.insert(
             "print_int".to_string(),
@@ -1276,6 +1284,7 @@ impl WasmCodeGen {
         );
 
         self.generate_std_io_functions()?;
+        self.generate_display_functions()?;
         self.generate_std_math_functions()?;
         self.generate_std_prelude_functions()?;
 
@@ -1295,7 +1304,7 @@ impl WasmCodeGen {
     }
 
     fn generate_std_io_functions(&mut self) -> Result<(), CodeGenError> {
-        self.emit_string_write_function("print", 1, false);
+        self.emit_string_write_function("__restrict_print_string", 1, false);
         self.emit_string_write_function("eprint", 2, false);
         self.emit_string_write_function("eprintln", 2, true);
 
@@ -1444,7 +1453,6 @@ impl WasmCodeGen {
         self.output.push_str("  )\n");
 
         for (name, param_ty) in [
-            ("print", Type::Named("String".to_string())),
             ("print_int", Type::Named("Int32".to_string())),
             ("print_float", Type::Named("Float64".to_string())),
             ("eprint", Type::Named("String".to_string())),
@@ -1507,6 +1515,590 @@ impl WasmCodeGen {
         self.output.push_str("    call $fd_write\n");
         self.output.push_str("    drop\n");
         self.output.push_str("  )\n");
+    }
+
+    fn generate_display_functions(&mut self) -> Result<(), CodeGenError> {
+        let true_offset = *self.string_offsets.get("true").ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr("missing Display runtime string 'true'".to_string())
+        })?;
+        let false_offset = *self.string_offsets.get("false").ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr("missing Display runtime string 'false'".to_string())
+        })?;
+        let unit_offset = *self.string_offsets.get("()").ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr("missing Display runtime string '()'".to_string())
+        })?;
+        let nan_offset = *self.string_offsets.get("NaN").ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr("missing Display runtime string 'NaN'".to_string())
+        })?;
+        let infinity_offset = *self.string_offsets.get("Infinity").ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr("missing Display runtime string 'Infinity'".to_string())
+        })?;
+        let negative_infinity_offset = *self.string_offsets.get("-Infinity").ok_or_else(|| {
+            CodeGenError::InvalidCheckedIr("missing Display runtime string '-Infinity'".to_string())
+        })?;
+        let string_display_name = Self::form_method_function_name("Display", "String", "display");
+        let int32_display_name = Self::form_method_function_name("Display", "Int32", "display");
+        let int64_display_name = Self::form_method_function_name("Display", "Int64", "display");
+        let boolean_display_name = Self::form_method_function_name("Display", "Boolean", "display");
+        let unit_display_name = Self::form_method_function_name("Display", "Unit", "display");
+        let char_display_name = Self::form_method_function_name("Display", "Char", "display");
+        let float64_display_name = Self::form_method_function_name("Display", "Float64", "display");
+
+        self.output
+            .push_str("\n  ;; Display form runtime helpers\n");
+        self.output.push_str(&format!(
+            "  (func ${string_display_name} (param $value i32) (result i32)\n    local.get $value\n  )\n",
+        ));
+
+        self.output.push_str(&format!(
+            r#"  (func ${int32_display_name} (param $value i32) (result i32)
+    (local $out i32)
+    (local $num i32)
+    (local $remaining i32)
+    (local $digits i32)
+    (local $len i32)
+    (local $index i32)
+    (local $negative i32)
+    i32.const 16
+    call $allocate
+    local.set $out
+    local.get $value
+    i32.const 0
+    i32.lt_s
+    local.set $negative
+    local.get $negative
+    (if (result i32)
+      (then
+        i32.const 0
+        local.get $value
+        i32.sub
+      )
+      (else
+        local.get $value
+      )
+    )
+    local.set $num
+    local.get $num
+    i32.eqz
+    (if
+      (then
+        i32.const 1
+        local.set $digits
+      )
+      (else
+        local.get $num
+        local.set $remaining
+        (block $display_i32_count_done
+          (loop $display_i32_count
+            local.get $digits
+            i32.const 1
+            i32.add
+            local.set $digits
+            local.get $remaining
+            i32.const 10
+            i32.div_u
+            local.tee $remaining
+            br_if $display_i32_count
+          )
+        )
+      )
+    )
+    local.get $digits
+    local.get $negative
+    i32.add
+    local.set $len
+    local.get $out
+    local.get $len
+    i32.store
+    local.get $negative
+    (if
+      (then
+        local.get $out
+        i32.const 4
+        i32.add
+        i32.const 45
+        i32.store8
+      )
+    )
+    local.get $len
+    i32.const 1
+    i32.sub
+    local.set $index
+    local.get $num
+    i32.eqz
+    (if
+      (then
+        local.get $out
+        i32.const 4
+        i32.add
+        local.get $index
+        i32.add
+        i32.const 48
+        i32.store8
+      )
+      (else
+        (block $display_i32_digits_done
+          (loop $display_i32_digits
+            local.get $out
+            i32.const 4
+            i32.add
+            local.get $index
+            i32.add
+            local.get $num
+            i32.const 10
+            i32.rem_u
+            i32.const 48
+            i32.add
+            i32.store8
+            local.get $num
+            i32.const 10
+            i32.div_u
+            local.tee $num
+            i32.eqz
+            br_if $display_i32_digits_done
+            local.get $index
+            i32.const 1
+            i32.sub
+            local.set $index
+            br $display_i32_digits
+          )
+        )
+      )
+    )
+    local.get $out
+  )
+"#
+        ));
+
+        self.output.push_str(&format!(
+            r#"  (func ${int64_display_name} (param $value i64) (result i32)
+    (local $out i32)
+    (local $num i64)
+    (local $remaining i64)
+    (local $digits i32)
+    (local $len i32)
+    (local $index i32)
+    (local $negative i32)
+    i32.const 32
+    call $allocate
+    local.set $out
+    local.get $value
+    i64.const 0
+    i64.lt_s
+    local.set $negative
+    local.get $negative
+    (if (result i64)
+      (then
+        i64.const 0
+        local.get $value
+        i64.sub
+      )
+      (else
+        local.get $value
+      )
+    )
+    local.set $num
+    local.get $num
+    i64.eqz
+    (if
+      (then
+        i32.const 1
+        local.set $digits
+      )
+      (else
+        local.get $num
+        local.set $remaining
+        (block $display_i64_count_done
+          (loop $display_i64_count
+            local.get $digits
+            i32.const 1
+            i32.add
+            local.set $digits
+            local.get $remaining
+            i64.const 10
+            i64.div_u
+            local.tee $remaining
+            i64.eqz
+            i32.eqz
+            br_if $display_i64_count
+          )
+        )
+      )
+    )
+    local.get $digits
+    local.get $negative
+    i32.add
+    local.set $len
+    local.get $out
+    local.get $len
+    i32.store
+    local.get $negative
+    (if
+      (then
+        local.get $out
+        i32.const 4
+        i32.add
+        i32.const 45
+        i32.store8
+      )
+    )
+    local.get $len
+    i32.const 1
+    i32.sub
+    local.set $index
+    local.get $num
+    i64.eqz
+    (if
+      (then
+        local.get $out
+        i32.const 4
+        i32.add
+        local.get $index
+        i32.add
+        i32.const 48
+        i32.store8
+      )
+      (else
+        (block $display_i64_digits_done
+          (loop $display_i64_digits
+            local.get $out
+            i32.const 4
+            i32.add
+            local.get $index
+            i32.add
+            local.get $num
+            i64.const 10
+            i64.rem_u
+            i32.wrap_i64
+            i32.const 48
+            i32.add
+            i32.store8
+            local.get $num
+            i64.const 10
+            i64.div_u
+            local.tee $num
+            i64.eqz
+            br_if $display_i64_digits_done
+            local.get $index
+            i32.const 1
+            i32.sub
+            local.set $index
+            br $display_i64_digits
+          )
+        )
+      )
+    )
+    local.get $out
+  )
+"#
+        ));
+
+        self.output.push_str(&format!(
+            r#"  (func ${boolean_display_name} (param $value i32) (result i32)
+    local.get $value
+    (if (result i32)
+      (then i32.const {true_offset})
+      (else i32.const {false_offset})
+    )
+  )
+  (func ${unit_display_name} (param $value i32) (result i32)
+    i32.const {unit_offset}
+  )
+"#
+        ));
+
+        self.output.push_str(&format!(
+            r#"  (func ${char_display_name} (param $value i32) (result i32)
+    (local $out i32)
+    i32.const 8
+    call $allocate
+    local.set $out
+    local.get $value
+    i32.const 127
+    i32.le_u
+    (if
+      (then
+        local.get $out
+        i32.const 1
+        i32.store
+        local.get $out
+        i32.const 4
+        i32.add
+        local.get $value
+        i32.store8
+      )
+      (else
+        local.get $value
+        i32.const 2047
+        i32.le_u
+        (if
+          (then
+            local.get $out
+            i32.const 2
+            i32.store
+            local.get $out
+            i32.const 4
+            i32.add
+            local.get $value
+            i32.const 6
+            i32.shr_u
+            i32.const 192
+            i32.or
+            i32.store8
+            local.get $out
+            i32.const 5
+            i32.add
+            local.get $value
+            i32.const 63
+            i32.and
+            i32.const 128
+            i32.or
+            i32.store8
+          )
+          (else
+            local.get $value
+            i32.const 65535
+            i32.le_u
+            (if
+              (then
+                local.get $out
+                i32.const 3
+                i32.store
+                local.get $out
+                i32.const 4
+                i32.add
+                local.get $value
+                i32.const 12
+                i32.shr_u
+                i32.const 224
+                i32.or
+                i32.store8
+                local.get $out
+                i32.const 5
+                i32.add
+                local.get $value
+                i32.const 6
+                i32.shr_u
+                i32.const 63
+                i32.and
+                i32.const 128
+                i32.or
+                i32.store8
+                local.get $out
+                i32.const 6
+                i32.add
+                local.get $value
+                i32.const 63
+                i32.and
+                i32.const 128
+                i32.or
+                i32.store8
+              )
+              (else
+                local.get $out
+                i32.const 4
+                i32.store
+                local.get $out
+                i32.const 4
+                i32.add
+                local.get $value
+                i32.const 18
+                i32.shr_u
+                i32.const 240
+                i32.or
+                i32.store8
+                local.get $out
+                i32.const 5
+                i32.add
+                local.get $value
+                i32.const 12
+                i32.shr_u
+                i32.const 63
+                i32.and
+                i32.const 128
+                i32.or
+                i32.store8
+                local.get $out
+                i32.const 6
+                i32.add
+                local.get $value
+                i32.const 6
+                i32.shr_u
+                i32.const 63
+                i32.and
+                i32.const 128
+                i32.or
+                i32.store8
+                local.get $out
+                i32.const 7
+                i32.add
+                local.get $value
+                i32.const 63
+                i32.and
+                i32.const 128
+                i32.or
+                i32.store8
+              )
+            )
+          )
+        )
+      )
+    )
+    local.get $out
+  )
+"#
+        ));
+
+        self.output.push_str(&format!(
+            r#"  (func ${float64_display_name} (param $value f64) (result i32)
+    (local $negative i32)
+    (local $absolute f64)
+    (local $whole i64)
+    (local $fraction i32)
+    (local $whole_string i32)
+    (local $whole_len i32)
+    (local $len i32)
+    (local $out i32)
+    (local $cursor i32)
+    local.get $value
+    local.get $value
+    f64.ne
+    (if
+      (then
+        i32.const {nan_offset}
+        return
+      )
+    )
+    local.get $value
+    f64.const inf
+    f64.eq
+    (if
+      (then
+        i32.const {infinity_offset}
+        return
+      )
+    )
+    local.get $value
+    f64.const -inf
+    f64.eq
+    (if
+      (then
+        i32.const {negative_infinity_offset}
+        return
+      )
+    )
+    f64.const 0
+    local.get $value
+    f64.gt
+    local.set $negative
+    local.get $negative
+    (if (result f64)
+      (then
+        local.get $value
+        f64.neg
+      )
+      (else
+        local.get $value
+      )
+    )
+    local.set $absolute
+    local.get $absolute
+    f64.const 9223372036854774784
+    f64.ge
+    (if
+      (then
+        local.get $negative
+        (if (result i32)
+          (then i32.const {negative_infinity_offset})
+          (else i32.const {infinity_offset})
+        )
+        return
+      )
+    )
+    local.get $absolute
+    i64.trunc_f64_s
+    local.set $whole
+    local.get $absolute
+    local.get $whole
+    f64.convert_i64_s
+    f64.sub
+    f64.const 100
+    f64.mul
+    i32.trunc_f64_s
+    local.set $fraction
+    local.get $whole
+    call ${int64_display_name}
+    local.set $whole_string
+    local.get $whole_string
+    i32.load
+    local.set $whole_len
+    local.get $whole_len
+    i32.const 3
+    i32.add
+    local.get $negative
+    i32.add
+    local.set $len
+    local.get $len
+    i32.const 4
+    i32.add
+    call $allocate
+    local.set $out
+    local.get $out
+    local.get $len
+    i32.store
+    local.get $out
+    i32.const 4
+    i32.add
+    local.set $cursor
+    local.get $negative
+    (if
+      (then
+        local.get $cursor
+        i32.const 45
+        i32.store8
+        local.get $cursor
+        i32.const 1
+        i32.add
+        local.set $cursor
+      )
+    )
+    local.get $cursor
+    local.get $whole_string
+    i32.const 4
+    i32.add
+    local.get $whole_len
+    memory.copy
+    local.get $cursor
+    local.get $whole_len
+    i32.add
+    local.set $cursor
+    local.get $cursor
+    i32.const 46
+    i32.store8
+    local.get $cursor
+    i32.const 1
+    i32.add
+    local.get $fraction
+    i32.const 10
+    i32.div_u
+    i32.const 48
+    i32.add
+    i32.store8
+    local.get $cursor
+    i32.const 2
+    i32.add
+    local.get $fraction
+    i32.const 10
+    i32.rem_u
+    i32.const 48
+    i32.add
+    i32.store8
+    local.get $out
+  )
+"#
+        ));
+
+        Ok(())
     }
 
     fn generate_std_math_functions(&mut self) -> Result<(), CodeGenError> {
@@ -4438,6 +5030,14 @@ impl WasmCodeGen {
                         self.collect_strings_from_block(&func.body)?;
                     }
                 }
+                TopDecl::Takes(takes) => {
+                    for func in &takes.functions {
+                        self.collect_strings_from_block(&func.body)?;
+                    }
+                }
+                TopDecl::Form(_) => {
+                    // Forms contain signatures only.
+                }
                 TopDecl::Export(_) => {
                     // Not yet implemented
                 }
@@ -4475,6 +5075,13 @@ impl WasmCodeGen {
             self.string_offsets.insert(s.to_string(), offset);
             self.strings.push(s.to_string());
             self.next_mem_offset = next_mem_offset;
+        }
+        Ok(())
+    }
+
+    fn collect_display_runtime_strings(&mut self) -> Result<(), CodeGenError> {
+        for value in ["true", "false", "()", "NaN", "Infinity", "-Infinity"] {
+            self.intern_string_literal(value)?;
         }
         Ok(())
     }
@@ -4892,14 +5499,27 @@ impl WasmCodeGen {
     }
 
     fn infer_function_body_source_type(&mut self, func: &FunDecl) -> Option<Type> {
-        self.local_source_types.push(HashMap::new());
-        for param in &func.params {
-            self.set_local_source_type(&param.name, param.ty.clone());
-        }
+        let parameter_bindings = func
+            .params
+            .iter()
+            .map(|param| (param.name.clone(), param.ty.clone()))
+            .collect();
+        self.push_signature_source_scope(parameter_bindings);
 
         let result = self.infer_block_source_type_for_signature(&func.body);
-        self.local_source_types.pop();
+        self.pop_signature_source_scope();
         result
+    }
+
+    fn push_signature_source_scope(&mut self, bindings: HashMap<String, Type>) {
+        let active = bindings.keys().cloned().collect();
+        self.local_source_types.push(bindings);
+        self.active_local_bindings.push(active);
+    }
+
+    fn pop_signature_source_scope(&mut self) {
+        self.local_source_types.pop();
+        self.active_local_bindings.pop();
     }
 
     fn infer_block_source_type_for_signature(&mut self, block: &BlockExpr) -> Option<Type> {
@@ -4910,6 +5530,11 @@ impl WasmCodeGen {
                     .clone()
                     .or_else(|| self.infer_expr_source_type_for_signature(&bind.value));
                 self.bind_pattern_source_types_for_signature(&bind.pattern, value_ty.as_ref());
+                let mut names = HashSet::new();
+                self.collect_pattern_bindings_for_codegen(&bind.pattern, &mut names);
+                if let Some(active) = self.active_local_bindings.last_mut() {
+                    active.extend(names);
+                }
             }
         }
 
@@ -4926,37 +5551,37 @@ impl WasmCodeGen {
     fn infer_expr_source_type_for_signature(&mut self, expr: &Expr) -> Option<Type> {
         match &expr.kind {
             ExprKind::Block(block) => {
-                self.local_source_types.push(HashMap::new());
+                self.push_signature_source_scope(HashMap::new());
                 let ty = self.infer_block_source_type_for_signature(block);
-                self.local_source_types.pop();
+                self.pop_signature_source_scope();
                 ty
             }
             ExprKind::Then(then) => {
                 let mut ty = None;
 
-                self.local_source_types.push(HashMap::new());
+                self.push_signature_source_scope(HashMap::new());
                 ty = Self::merge_source_types(
                     ty,
                     self.infer_block_source_type_for_signature(&then.then_block),
                 );
-                self.local_source_types.pop();
+                self.pop_signature_source_scope();
 
                 for (_, block) in &then.else_ifs {
-                    self.local_source_types.push(HashMap::new());
+                    self.push_signature_source_scope(HashMap::new());
                     ty = Self::merge_source_types(
                         ty,
                         self.infer_block_source_type_for_signature(block),
                     );
-                    self.local_source_types.pop();
+                    self.pop_signature_source_scope();
                 }
 
                 if let Some(block) = &then.else_block {
-                    self.local_source_types.push(HashMap::new());
+                    self.push_signature_source_scope(HashMap::new());
                     ty = Self::merge_source_types(
                         ty,
                         self.infer_block_source_type_for_signature(block),
                     );
-                    self.local_source_types.pop();
+                    self.pop_signature_source_scope();
                 }
 
                 ty
@@ -4966,25 +5591,30 @@ impl WasmCodeGen {
                 let mut ty = None;
 
                 for arm in &match_expr.arms {
-                    self.local_source_types.push(HashMap::new());
+                    self.push_signature_source_scope(HashMap::new());
                     self.bind_pattern_source_types_for_signature(
                         &arm.pattern,
                         scrutinee_ty.as_ref(),
                     );
+                    let mut names = HashSet::new();
+                    self.collect_pattern_bindings_for_codegen(&arm.pattern, &mut names);
+                    if let Some(active) = self.active_local_bindings.last_mut() {
+                        active.extend(names);
+                    }
                     ty = Self::merge_source_types(
                         ty,
                         self.infer_block_source_type_for_signature(&arm.body),
                     );
-                    self.local_source_types.pop();
+                    self.pop_signature_source_scope();
                 }
 
                 ty
             }
             ExprKind::With(with) => {
                 let bindings = self.context_source_bindings(with, &HashMap::new());
-                self.local_source_types.push(bindings);
+                self.push_signature_source_scope(bindings);
                 let ty = self.infer_block_source_type_for_signature(&with.body);
-                self.local_source_types.pop();
+                self.pop_signature_source_scope();
                 ty
             }
             _ => self.infer_expr_source_type(expr),
@@ -5090,8 +5720,322 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn register_builtin_display_surface(&mut self) -> Result<(), CodeGenError> {
+        let display_signature = FunctionSourceSig {
+            type_params: vec![],
+            params: vec![Type::Named("Self".to_string())],
+            result: Some(Type::Named("String".to_string())),
+        };
+        self.forms
+            .entry("Display".to_string())
+            .or_default()
+            .insert("display".to_string(), display_signature);
+
+        for target in [
+            "String", "Int32", "Int64", "Float64", "Boolean", "Char", "Unit",
+        ] {
+            let function_name = Self::form_method_function_name("Display", target, "display");
+            let source_type = Type::Named(target.to_string());
+            let wasm_type = self.convert_type(&source_type)?;
+            self.functions.insert(
+                function_name.clone(),
+                FunctionSig {
+                    _params: vec![wasm_type],
+                    result: Some(WasmType::I32),
+                },
+            );
+            self.function_source_sigs.insert(
+                function_name.clone(),
+                FunctionSourceSig {
+                    type_params: vec![],
+                    params: vec![source_type],
+                    result: Some(Type::Named("String".to_string())),
+                },
+            );
+            self.form_adoptions
+                .entry(target.to_string())
+                .or_default()
+                .entry("display".to_string())
+                .or_default()
+                .push(FormAdoption {
+                    form_name: "Display".to_string(),
+                    function_name,
+                });
+        }
+
+        Ok(())
+    }
+
+    fn register_form_definition(&mut self, form: &FormDecl) -> Result<(), CodeGenError> {
+        if form.name == "Container" {
+            return Err(CodeGenError::UnsupportedFeature(
+                "Container is a compiler-internal form and cannot be declared by source programs"
+                    .to_string(),
+            ));
+        }
+        if self.forms.contains_key(&form.name) {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Duplicate or reserved form '{}'",
+                form.name
+            )));
+        }
+
+        let mut methods = HashMap::new();
+        for method in &form.methods {
+            if methods
+                .insert(
+                    method.name.clone(),
+                    FunctionSourceSig {
+                        type_params: vec![],
+                        params: method.params.iter().map(|param| param.ty.clone()).collect(),
+                        result: Some(method.return_type.clone()),
+                    },
+                )
+                .is_some()
+            {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "Duplicate member '{}' in form '{}'",
+                    method.name, form.name
+                )));
+            }
+        }
+        self.forms.insert(form.name.clone(), methods);
+        Ok(())
+    }
+
+    fn encode_symbol_component(component: &str) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+
+        let mut encoded = String::with_capacity(component.len() * 2);
+        for byte in component.as_bytes() {
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        encoded
+    }
+
+    fn form_method_function_name(form_name: &str, target: &str, member: &str) -> String {
+        // `@` cannot occur in source identifiers or module-qualified source
+        // names. Each component is also encoded independently, so adoption
+        // symbols are disjoint from source functions and injective across all
+        // (form, target, member) component boundaries.
+        format!(
+            "__restrict_form@{}@{}@{}",
+            Self::encode_symbol_component(form_name),
+            Self::encode_symbol_component(target),
+            Self::encode_symbol_component(member)
+        )
+    }
+
+    fn takes_codegen_decl(&self, takes: &TakesDecl, func: &FunDecl) -> FunDecl {
+        let mut method = func.clone();
+        method.name = Self::form_method_function_name(&takes.form_name, &takes.target, &func.name);
+        if let Some(first_param) = method.params.first_mut() {
+            if first_param.name == "self" {
+                first_param.ty = Type::Named(takes.target.clone());
+            }
+        }
+        method
+    }
+
+    fn register_takes_method_signature(
+        &mut self,
+        takes: &TakesDecl,
+        func: &FunDecl,
+    ) -> Result<(), CodeGenError> {
+        if !self
+            .forms
+            .get(&takes.form_name)
+            .is_some_and(|methods| methods.contains_key(&func.name))
+        {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Unknown member '{}.{}' in takes declaration",
+                takes.form_name, func.name
+            )));
+        }
+
+        let method = self.takes_codegen_decl(takes, func);
+        if self.functions.contains_key(&method.name) {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Duplicate adoption of form '{}' for '{}'",
+                takes.form_name, takes.target
+            )));
+        }
+        self.register_function_signature(&method)?;
+        self.form_adoptions
+            .entry(takes.target.clone())
+            .or_default()
+            .entry(func.name.clone())
+            .or_default()
+            .push(FormAdoption {
+                form_name: takes.form_name.clone(),
+                function_name: method.name,
+            });
+        Ok(())
+    }
+
+    fn register_takes_methods(&mut self, takes: &TakesDecl) -> Result<(), CodeGenError> {
+        if takes.form_name == "Container" {
+            return Err(CodeGenError::UnsupportedFeature(
+                "Container is a compiler-internal form and cannot be adopted by source types"
+                    .to_string(),
+            ));
+        }
+        if self.contexts.contains(&takes.target) || !self.records.contains_key(&takes.target) {
+            return Err(CodeGenError::UnsupportedType(format!(
+                "takes target '{}' is not a concrete, non-generic record",
+                takes.target
+            )));
+        }
+        if !self.forms.contains_key(&takes.form_name) {
+            return Err(CodeGenError::UnsupportedType(format!(
+                "Unknown form '{}'",
+                takes.form_name
+            )));
+        }
+        if self
+            .form_adoptions
+            .get(&takes.target)
+            .is_some_and(|members| {
+                members
+                    .values()
+                    .flatten()
+                    .any(|adoption| adoption.form_name == takes.form_name)
+            })
+        {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Duplicate adoption of form '{}' for '{}'",
+                takes.form_name, takes.target
+            )));
+        }
+
+        for func in takes
+            .functions
+            .iter()
+            .filter(|func| func.return_type.is_some())
+        {
+            self.register_takes_method_signature(takes, func)?;
+        }
+        for func in takes
+            .functions
+            .iter()
+            .filter(|func| func.return_type.is_none())
+        {
+            self.register_takes_method_signature(takes, func)?;
+        }
+        Ok(())
+    }
+
+    fn source_type_adoption_target(ty: &Type) -> Option<&str> {
+        match ty {
+            Type::Named(name) | Type::Temporal(name, _) => Some(name),
+            Type::Generic(_, _) | Type::Function(_, _) => None,
+        }
+    }
+
+    fn resolve_form_method_for_source_type(
+        &self,
+        member: &str,
+        source_type: &Type,
+        required_form: Option<&str>,
+    ) -> Result<Option<String>, CodeGenError> {
+        let Some(target) = Self::source_type_adoption_target(source_type) else {
+            return Ok(None);
+        };
+        let Some(candidates) = self
+            .form_adoptions
+            .get(target)
+            .and_then(|members| members.get(member))
+        else {
+            return Ok(None);
+        };
+        let matching = candidates
+            .iter()
+            .filter(|candidate| required_form.is_none_or(|form| candidate.form_name == form))
+            .collect::<Vec<_>>();
+        match matching.as_slice() {
+            [] => Ok(None),
+            [adoption] => Ok(Some(adoption.function_name.clone())),
+            _ => Err(CodeGenError::UnsupportedFeature(format!(
+                "Form member '{}' is ambiguous for source type '{}'",
+                member, source_type
+            ))),
+        }
+    }
+
+    fn resolve_form_method_call_target(
+        &self,
+        member: &str,
+        args: &[Box<Expr>],
+    ) -> Result<Option<String>, CodeGenError> {
+        let Some(receiver) = args.first() else {
+            return Ok(None);
+        };
+        let source_type = self
+            .infer_expr_source_type(receiver)
+            .or_else(|| self.get_expr_type(receiver).map(Type::Named));
+        let Some(source_type) = source_type else {
+            return Ok(None);
+        };
+        self.resolve_form_method_for_source_type(member, &source_type, None)
+    }
+
+    fn resolve_applicable_receiver_method_for_source_type(
+        &self,
+        member: &str,
+        source_type: &Type,
+    ) -> Result<Option<String>, CodeGenError> {
+        if let Some(target_name) =
+            self.resolve_form_method_for_source_type(member, source_type, None)?
+        {
+            return Ok(Some(target_name));
+        }
+
+        let Some(record_name) = self.source_record_name(source_type) else {
+            return Ok(None);
+        };
+        Ok(self
+            .methods
+            .get(record_name)
+            .is_some_and(|methods| methods.contains_key(member))
+            .then(|| Self::method_function_name(record_name, member)))
+    }
+
+    fn resolve_applicable_receiver_method_for_expr(
+        &self,
+        member: &str,
+        receiver: &Expr,
+    ) -> Result<Option<String>, CodeGenError> {
+        let source_type = self
+            .infer_expr_source_type(receiver)
+            .or_else(|| self.get_expr_type(receiver).map(Type::Named));
+        let Some(source_type) = source_type else {
+            return Ok(None);
+        };
+        self.resolve_applicable_receiver_method_for_source_type(member, &source_type)
+    }
+
+    fn resolve_applicable_receiver_method_call_target(
+        &self,
+        member: &str,
+        args: &[Box<Expr>],
+    ) -> Result<Option<String>, CodeGenError> {
+        let Some(receiver) = args.first() else {
+            return Ok(None);
+        };
+        self.resolve_applicable_receiver_method_for_expr(member, receiver)
+    }
+
     fn method_function_name(record_name: &str, method_name: &str) -> String {
-        format!("{}_{}", record_name, method_name)
+        // `@` cannot occur in source identifiers or module-qualified source
+        // names. Encoding each component independently therefore keeps impl
+        // symbols disjoint from source functions as well as injective across
+        // record/method component boundaries.
+        format!(
+            "__restrict_impl@{}@{}",
+            Self::encode_symbol_component(record_name),
+            Self::encode_symbol_component(method_name)
+        )
     }
 
     fn method_codegen_decl(&self, target: &str, func: &FunDecl) -> FunDecl {
@@ -5274,6 +6218,7 @@ impl WasmCodeGen {
             offset += self.size_of_type(&field.ty);
         }
 
+        self.contexts.insert(context.name.clone());
         self.records.insert(context.name.clone(), fields);
         self.record_field_offsets
             .insert(context.name.clone(), field_offsets);
@@ -5420,6 +6365,14 @@ impl WasmCodeGen {
             self.generate_function(&method)?;
         }
 
+        Ok(())
+    }
+
+    fn generate_takes_methods(&mut self, takes: &TakesDecl) -> Result<(), CodeGenError> {
+        for func in &takes.functions {
+            let method = self.takes_codegen_decl(takes, func);
+            self.generate_function(&method)?;
+        }
         Ok(())
     }
 
@@ -5923,7 +6876,6 @@ impl WasmCodeGen {
     fn generate_generic_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
         // Handle special generic functions
         match func.name.as_str() {
-            "println" => self.generate_println_specializations(func),
             "new_list" => self.generate_new_list_specializations(func),
             "list_add" => self.generate_list_add_specializations(func),
             _ => {
@@ -5932,60 +6884,6 @@ impl WasmCodeGen {
                 Ok(())
             }
         }
-    }
-
-    fn generate_println_specializations(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
-        // Generate println_String specialization
-        let string_func = FunDecl {
-            name: "println_String".to_string(),
-            type_params: vec![],
-            temporal_constraints: vec![],
-            params: vec![Param {
-                name: func.params[0].name.clone(),
-                ty: Type::Named("String".to_string()),
-                context_bound: None,
-            }],
-            return_type: Some(Type::Named("Unit".to_string())),
-            body: BlockExpr {
-                statements: vec![],
-                expr: Some(Box::new(Expr::new(ExprKind::Call(CallExpr {
-                    function: Box::new(Expr::new(ExprKind::Ident("println".to_string()))), // Call built-in println
-                    args: vec![Box::new(Expr::new(ExprKind::Ident(
-                        func.params[0].name.clone(),
-                    )))],
-                })))),
-            },
-            is_async: false,
-        };
-
-        // Generate println_Int32 specialization
-        let int_func = FunDecl {
-            name: "println_Int32".to_string(),
-            type_params: vec![],
-            temporal_constraints: vec![],
-            params: vec![Param {
-                name: func.params[0].name.clone(),
-                ty: Type::Named("Int32".to_string()),
-                context_bound: None,
-            }],
-            return_type: Some(Type::Named("Unit".to_string())),
-            body: BlockExpr {
-                statements: vec![],
-                expr: Some(Box::new(Expr::new(ExprKind::Call(CallExpr {
-                    function: Box::new(Expr::new(ExprKind::Ident("print_int".to_string()))), // Call built-in print_int
-                    args: vec![Box::new(Expr::new(ExprKind::Ident(
-                        func.params[0].name.clone(),
-                    )))],
-                })))),
-            },
-            is_async: false,
-        };
-
-        // Generate the specialized functions
-        self.generate_function(&string_func)?;
-        self.generate_function(&int_func)?;
-
-        Ok(())
     }
 
     fn generate_start_wrapper(&mut self) -> Result<(), CodeGenError> {
@@ -6045,7 +6943,7 @@ impl WasmCodeGen {
 
     fn generate_function(&mut self, func: &FunDecl) -> Result<(), CodeGenError> {
         if !func.type_params.is_empty() {
-            if matches!(func.name.as_str(), "println" | "new_list" | "list_add") {
+            if matches!(func.name.as_str(), "new_list" | "list_add") {
                 return self.generate_generic_function(func);
             }
 
@@ -6100,6 +6998,7 @@ impl WasmCodeGen {
             self.add_local(&param.name, idx as u32);
             self.set_local_type(&param.name, *wasm_type);
             self.set_local_source_type(&param.name, source_type.clone());
+            self.activate_local_binding(&param.name);
             self.register_record_var_type(&param.name, source_type);
         }
 
@@ -6111,11 +7010,33 @@ impl WasmCodeGen {
 
         // First, collect all local variables by analyzing the function body
         let mut locals: Vec<(String, WasmType)> = Vec::new();
-        self.collect_locals_from_block_with_expected(
+        let active_before_collection = self.active_local_bindings.last().cloned();
+        let generic_aliases_before_collection = self.generic_function_aliases.last().cloned();
+        let deferred_aliases_before_collection = self.deferred_lambda_aliases.last().cloned();
+        let collection_result = self.collect_locals_from_block_with_expected(
             &func.body,
             &mut locals,
             body_expected_source.as_ref(),
-        )?;
+        );
+        if let (Some(scope), Some(previous)) = (
+            self.active_local_bindings.last_mut(),
+            active_before_collection,
+        ) {
+            *scope = previous;
+        }
+        if let (Some(scope), Some(previous)) = (
+            self.generic_function_aliases.last_mut(),
+            generic_aliases_before_collection,
+        ) {
+            *scope = previous;
+        }
+        if let (Some(scope), Some(previous)) = (
+            self.deferred_lambda_aliases.last_mut(),
+            deferred_aliases_before_collection,
+        ) {
+            *scope = previous;
+        }
+        collection_result?;
         let locals = Self::dedupe_locals(locals)?;
 
         // Function header
@@ -6828,22 +7749,42 @@ impl WasmCodeGen {
     fn callable_param_source_type(&self, callable: &Expr, index: usize) -> Option<Type> {
         match &callable.kind {
             ExprKind::Ident(name) => {
-                if let Some(Type::Function(params, _)) = self.lookup_local_source_type(name) {
+                if let Some(Type::Function(params, _)) = self.lookup_active_local_source_type(name)
+                {
                     return params.get(index).cloned();
                 }
 
-                let function_name = self
-                    .lookup_generic_function_alias(name)
-                    .unwrap_or_else(|| name.clone());
-                self.function_source_sigs
-                    .get(&function_name)
-                    .and_then(|sig| {
-                        if sig.type_params.is_empty() {
-                            sig.params.get(index).cloned()
-                        } else {
-                            None
-                        }
-                    })
+                if let Some(function_name) = self.lookup_generic_function_alias(name) {
+                    return self
+                        .function_source_sigs
+                        .get(&function_name)
+                        .and_then(|sig| {
+                            if sig.type_params.is_empty() {
+                                sig.params.get(index).cloned()
+                            } else {
+                                None
+                            }
+                        });
+                }
+
+                if let Some(callable) = self.lookup_deferred_lambda_alias(name) {
+                    return match self.infer_expr_source_type(&callable) {
+                        Some(Type::Function(params, _)) => params.get(index).cloned(),
+                        _ => None,
+                    };
+                }
+
+                if self.has_active_local_binding(name) {
+                    return None;
+                }
+
+                self.function_source_sigs.get(name).and_then(|sig| {
+                    if sig.type_params.is_empty() {
+                        sig.params.get(index).cloned()
+                    } else {
+                        None
+                    }
+                })
             }
             ExprKind::Lambda(lambda) => lambda.params.get(index).and_then(|param| {
                 param
@@ -7731,6 +8672,7 @@ impl WasmCodeGen {
                 }
                 self.output
                     .push_str(&format!("    local.set ${}\n", storage_name));
+                self.activate_local_binding(name);
             }
             Pattern::Record(_, _)
             | Pattern::RecordDestruct { .. }
@@ -7743,7 +8685,14 @@ impl WasmCodeGen {
             | Pattern::ListCons(_, _)
             | Pattern::ListExact(_)
             | Pattern::Literal(_)
-            | Pattern::Wildcard => self.generate_pattern_binding(bind)?,
+            | Pattern::Wildcard => {
+                self.generate_pattern_binding(bind)?;
+                let mut names = HashSet::new();
+                self.collect_pattern_bindings_for_codegen(&bind.pattern, &mut names);
+                for name in names {
+                    self.activate_local_binding(&name);
+                }
+            }
         }
 
         Ok(())
@@ -7982,7 +8931,7 @@ impl WasmCodeGen {
             .map(str::to_string)
             .unwrap_or_else(|| assign.name.clone());
         let source_ty = self
-            .lookup_local_source_type(&assign.name)
+            .lookup_active_local_source_type(&assign.name)
             .or_else(|| self.infer_expr_source_type(&assign.value));
 
         if let Some(source_ty) = source_ty.as_ref() {
@@ -7994,12 +8943,16 @@ impl WasmCodeGen {
         }
 
         // Store in local
-        if self.lookup_local(&assign.name).is_some() {
+        if self.has_active_local_binding(&assign.name) {
             self.output
                 .push_str(&format!("    local.set ${}\n", storage_name));
         } else {
             return Err(CodeGenError::UndefinedVariable(assign.name.clone()));
         }
+        // The RHS has been materialized into the runtime local. Any earlier
+        // compile-time callable alias for this visible binding is now stale,
+        // including when an inner block assigns an outer local.
+        self.clear_visible_callable_aliases(&assign.name);
 
         Ok(())
     }
@@ -8149,10 +9102,10 @@ impl WasmCodeGen {
                 self.output.push_str("    i32.const 0\n");
             }
             ExprKind::Ident(name) => {
-                // Check if it's a captured variable in a lambda
-                if self.in_lambda_with_captures && self.captured_vars.contains(name) {
-                    self.emit_local_get(name);
-                } else if let Some(_idx) = self.lookup_local(name) {
+                // Captures and active lexical bindings both lower to Wasm locals.
+                if (self.in_lambda_with_captures && self.captured_vars.contains(name))
+                    || self.has_active_local_binding(name)
+                {
                     self.emit_local_get(name);
                 } else if self.global_types.contains_key(name) {
                     self.output.push_str(&format!("    global.get ${}\n", name));
@@ -8214,12 +9167,15 @@ impl WasmCodeGen {
                         })?
                 } else if let ExprKind::Ident(var_name) = &obj_expr.kind {
                     // For identifiers, look up the record type from variable tracking.
-                    self.var_types.get(var_name).cloned().ok_or_else(|| {
-                        CodeGenError::NotImplemented(format!(
-                            "field access on unknown variable: {}",
-                            var_name
-                        ))
-                    })?
+                    self.has_active_local_binding(var_name)
+                        .then(|| self.var_types.get(var_name).cloned())
+                        .flatten()
+                        .ok_or_else(|| {
+                            CodeGenError::NotImplemented(format!(
+                                "field access on unknown variable: {}",
+                                var_name
+                            ))
+                        })?
                 } else if let ExprKind::RecordLit(record_lit) = &obj_expr.kind {
                     // Direct record literal
                     record_lit.name.clone()
@@ -8349,7 +9305,7 @@ impl WasmCodeGen {
         let free_var_sources: HashMap<String, Type> = free_vars
             .iter()
             .filter_map(|(name, _)| {
-                self.lookup_local_source_type(name)
+                self.lookup_active_local_source_type(name)
                     .map(|source_ty| (name.clone(), source_ty))
             })
             .collect();
@@ -8517,6 +9473,7 @@ impl WasmCodeGen {
             if let Some(source_ty) = abi.source_params.get(i) {
                 self.set_local_source_type(&param.name, source_ty.clone());
             }
+            self.activate_local_binding(&param.name);
         }
         self.add_local("closure", lambda.params.len() as u32);
         self.set_local_type("closure", WasmType::I32);
@@ -8525,6 +9482,7 @@ impl WasmCodeGen {
             if let Some(source_ty) = free_var_sources.get(name) {
                 self.set_local_source_type(name, source_ty.clone());
             }
+            self.activate_local_binding(name);
         }
 
         for (next_idx, (name, ty)) in (lambda.params.len() as u32 + 1..).zip(lambda_locals.iter()) {
@@ -8568,6 +9526,7 @@ impl WasmCodeGen {
             if let Some(source_ty) = abi.source_params.get(idx) {
                 self.set_local_source_type(&param.name, source_ty.clone());
             }
+            self.activate_local_binding(&param.name);
         }
 
         let mut locals = Vec::new();
@@ -8684,9 +9643,7 @@ impl WasmCodeGen {
                 self.collect_free_variables_for_codegen(&pipe.expr, bound, seen, free_vars)?;
                 match &pipe.target {
                     PipeTarget::Ident(name) => {
-                        if !self.functions.contains_key(name) {
-                            self.capture_if_free(name, bound, seen, free_vars)?;
-                        }
+                        self.capture_if_free(name, bound, seen, free_vars)?;
                     }
                     PipeTarget::Expr(target) => {
                         self.collect_free_variables_for_codegen(target, bound, seen, free_vars)?;
@@ -9002,13 +9959,37 @@ impl WasmCodeGen {
         seen: &mut HashSet<String>,
         free_vars: &mut Vec<(String, WasmType)>,
     ) -> Result<(), CodeGenError> {
-        if !bound.contains(name) && self.lookup_local(name).is_some() && seen.insert(name.into()) {
-            let ty = self.lookup_local_abi_type(name)?.ok_or_else(|| {
-                CodeGenError::UnsupportedFeature(format!(
-                    "missing Wasm ABI metadata for local '{}'",
-                    name
-                ))
-            })?;
+        if bound.contains(name) {
+            return Ok(());
+        }
+
+        // Generic aliases are compile-time substitutions and therefore have no
+        // runtime closure slot to capture.
+        if self.lookup_generic_function_alias(name).is_some() {
+            return Ok(());
+        }
+
+        // Deferred callable aliases are also compile-time substitutions, but
+        // their stored expression can itself close over active runtime values.
+        // Expand that expression transitively so those values become captures.
+        if let Some(callable) = self.lookup_deferred_lambda_alias(name) {
+            let expansion_marker = format!("@deferred-alias:{}", name);
+            if !seen.insert(expansion_marker) {
+                return Ok(());
+            }
+            let mut alias_bound = bound.clone();
+            return self.collect_free_variables_for_codegen(
+                &callable,
+                &mut alias_bound,
+                seen,
+                free_vars,
+            );
+        }
+
+        let Some(ty) = self.lookup_active_local_abi_type(name)? else {
+            return Ok(());
+        };
+        if seen.insert(name.into()) {
             free_vars.push((name.to_string(), ty));
         }
 
@@ -9397,6 +10378,36 @@ impl WasmCodeGen {
                 }
             }
 
+            if self.has_local_callable_binding(func_name) {
+                let abi = self.callable_abi_for_args(&call.function, &call.args)?;
+                self.generate_call_args_with_source_params(&call.args, &abi.source_params)?;
+                self.generate_callable_value_with_abi(&call.function, &abi)?;
+                self.emit_typed_indirect_closure_call(&abi);
+                return Ok(());
+            }
+
+            if let Some(target_name) =
+                self.resolve_applicable_receiver_method_call_target(func_name, &call.args)?
+            {
+                return self.generate_resolved_receiver_method_call(target_name, &call.args, None);
+            }
+        }
+
+        if let ExprKind::Ident(name) = &call.function.kind {
+            if matches!(name.as_str(), "display" | "print" | "println")
+                && !self.has_local_callable_binding(name)
+            {
+                if call.args.len() != 1 {
+                    return Err(CodeGenError::UnsupportedFeature(format!(
+                        "{} expects exactly one Display value",
+                        name
+                    )));
+                }
+                return self.generate_display_intrinsic(name, &call.args[0], false);
+            }
+        }
+
+        if let ExprKind::Ident(func_name) = &call.function.kind {
             match func_name.as_str() {
                 "map" => return self.generate_map_call(call),
                 "filter" => return self.generate_filter_call(call),
@@ -9431,7 +10442,24 @@ impl WasmCodeGen {
         }
 
         if let ExprKind::Ident(func_name) = &call.function.kind {
-            if !self.functions.contains_key(func_name) && self.lookup_local(func_name).is_none() {
+            if !self.functions.contains_key(func_name) && !self.has_active_local_binding(func_name)
+            {
+                if let Some(target_name) =
+                    self.resolve_form_method_call_target(func_name, &call.args)?
+                {
+                    self.generate_call_args_for_target(&call.args, &target_name)?;
+                    self.output
+                        .push_str(&format!("    call ${}\n", target_name));
+                    if self
+                        .functions
+                        .get(&target_name)
+                        .is_some_and(|sig| sig.result.is_none())
+                        && self.current_function != Some("main".to_string())
+                    {
+                        self.output.push_str("    i32.const 0\n");
+                    }
+                    return Ok(());
+                }
                 if let Some(target_name) = self.resolve_method_call_target(func_name, &call.args)? {
                     let target_name =
                         self.specialize_method_call_target(target_name, &call.args)?;
@@ -9466,7 +10494,7 @@ impl WasmCodeGen {
                 self.generate_call_args_for_target(&call.args, &target_name)?;
                 self.output
                     .push_str(&format!("    call ${}\n", target_name));
-            } else if self.lookup_local(func_name).is_some() {
+            } else if self.has_active_local_binding(func_name) {
                 let abi = self.callable_abi_for_args(&call.function, &call.args)?;
                 self.generate_call_args_with_source_params(&call.args, &abi.source_params)?;
                 self.generate_callable_value_with_abi(&call.function, &abi)?;
@@ -9479,7 +10507,8 @@ impl WasmCodeGen {
                     if let Some(record_type) = self.get_expr_type(obj_expr) {
                         if let Some(methods) = self.methods.get(&record_type) {
                             if methods.contains_key(func_name) {
-                                let mangled_name = format!("{}_{}", record_type, func_name);
+                                let mangled_name =
+                                    Self::method_function_name(&record_type, func_name);
                                 let mangled_name =
                                     self.specialize_method_call_target(mangled_name, &call.args)?;
                                 self.generate_call_args_for_target(&call.args, &mangled_name)?;
@@ -9518,7 +10547,7 @@ impl WasmCodeGen {
                         } else {
                             // Unique method - safe to call
                             let record_name = &found_records[0];
-                            let mangled_name = format!("{}_{}", record_name, func_name);
+                            let mangled_name = Self::method_function_name(record_name, func_name);
                             let mangled_name =
                                 self.specialize_method_call_target(mangled_name, &call.args)?;
                             self.generate_call_args_for_target(&call.args, &mangled_name)?;
@@ -9542,6 +10571,76 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn resolve_form_method_for_expr(
+        &self,
+        member: &str,
+        receiver: &Expr,
+        required_form: Option<&str>,
+    ) -> Result<Option<String>, CodeGenError> {
+        let source_type = self
+            .infer_expr_source_type(receiver)
+            .or_else(|| self.get_expr_type(receiver).map(Type::Named));
+        let Some(source_type) = source_type else {
+            return Ok(None);
+        };
+        self.resolve_form_method_for_source_type(member, &source_type, required_form)
+    }
+
+    fn generate_display_intrinsic(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        synthesize_pipe_unit: bool,
+    ) -> Result<(), CodeGenError> {
+        let source_type = self.infer_expr_source_type(value).ok_or_else(|| {
+            CodeGenError::UnsupportedFeature(format!(
+                "{} requires a statically known Display argument",
+                name
+            ))
+        })?;
+        let target_name = self
+            .resolve_form_method_for_source_type("display", &source_type, Some("Display"))?
+            .ok_or_else(|| {
+                CodeGenError::UnsupportedFeature(format!(
+                    "source type '{}' does not take Display",
+                    source_type
+                ))
+            })?;
+        let source_param = self
+            .function_source_sigs
+            .get(&target_name)
+            .and_then(|sig| sig.params.first())
+            .cloned()
+            .unwrap_or_else(|| source_type.clone());
+        self.generate_expr_with_expected_source(value, &source_param)?;
+        self.output
+            .push_str(&format!("    call ${}\n", target_name));
+
+        match name {
+            "display" => {}
+            "print" => {
+                self.output.push_str("    call $__restrict_print_string\n");
+                if synthesize_pipe_unit && self.current_function != Some("main".to_string()) {
+                    self.output.push_str("    i32.const 0\n");
+                }
+            }
+            "println" => {
+                self.output
+                    .push_str("    call $__restrict_println_string\n");
+                if synthesize_pipe_unit && self.current_function != Some("main".to_string()) {
+                    self.output.push_str("    i32.const 0\n");
+                }
+            }
+            _ => {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "unknown Display intrinsic '{}'",
+                    name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn specialize_method_call_target(
         &mut self,
         target_name: String,
@@ -9557,6 +10656,39 @@ impl WasmCodeGen {
         } else {
             Ok(target_name)
         }
+    }
+
+    fn generate_resolved_receiver_method_call(
+        &mut self,
+        target_name: String,
+        args: &[Box<Expr>],
+        expected_result: Option<&Type>,
+    ) -> Result<(), CodeGenError> {
+        let target_name = self.specialize_method_call_target(target_name, args)?;
+        let source_params = match expected_result {
+            Some(expected_result) => self.concrete_source_params_for_call_target_with_expected(
+                &target_name,
+                args,
+                Some(expected_result),
+            ),
+            None => self.concrete_source_params_for_call_target(&target_name, args),
+        };
+        if let Some(source_params) = source_params {
+            self.generate_call_args_with_source_params(args, &source_params)?;
+        } else {
+            self.generate_call_args_for_target(args, &target_name)?;
+        }
+        self.output
+            .push_str(&format!("    call ${}\n", target_name));
+        if self
+            .functions
+            .get(&target_name)
+            .is_some_and(|sig| sig.result.is_none())
+            && self.current_function != Some("main".to_string())
+        {
+            self.output.push_str("    i32.const 0\n");
+        }
+        Ok(())
     }
 
     fn generate_call_args_with_source_params(
@@ -9753,6 +10885,33 @@ impl WasmCodeGen {
                     }
                 }
 
+                if self.has_local_callable_binding(func_name) {
+                    let arg_source_tys = call
+                        .args
+                        .iter()
+                        .map(|arg| self.infer_expr_source_type_for_abi(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let abi = self.callable_abi_for_arg_sources_with_expected(
+                        &call.function,
+                        &arg_source_tys,
+                        Some(expected_source),
+                    )?;
+                    self.generate_call_args_with_source_params(&call.args, &abi.source_params)?;
+                    self.generate_callable_value_with_abi(&call.function, &abi)?;
+                    self.emit_typed_indirect_closure_call(&abi);
+                    return Ok(());
+                }
+
+                if let Some(target_name) =
+                    self.resolve_applicable_receiver_method_call_target(func_name, &call.args)?
+                {
+                    return self.generate_resolved_receiver_method_call(
+                        target_name,
+                        &call.args,
+                        Some(expected_source),
+                    );
+                }
+
                 if func_name == "identity" {
                     if call.args.len() != 1 {
                         return Err(CodeGenError::UnsupportedFeature(
@@ -9779,14 +10938,22 @@ impl WasmCodeGen {
                 }
             }
 
-            let is_identity_target = match &pipe.target {
-                PipeTarget::Ident(name) => name == "identity",
-                PipeTarget::Expr(target) => {
-                    matches!(&target.kind, ExprKind::Ident(name) if name == "identity")
-                }
+            let identity_name = match &pipe.target {
+                PipeTarget::Ident(name) if name == "identity" => Some(name),
+                PipeTarget::Expr(target) => match &target.kind {
+                    ExprKind::Ident(name) if name == "identity" => Some(name),
+                    _ => None,
+                },
+                _ => None,
             };
-            if is_identity_target {
-                return self.generate_expr_with_expected_source(&pipe.expr, expected_source);
+            if let Some(identity_name) = identity_name {
+                let is_shadowed = self.has_local_callable_binding(identity_name)
+                    || self
+                        .resolve_form_method_for_expr(identity_name, &pipe.expr, None)?
+                        .is_some();
+                if !is_shadowed {
+                    return self.generate_expr_with_expected_source(&pipe.expr, expected_source);
+                }
             }
         }
 
@@ -9837,8 +11004,35 @@ impl WasmCodeGen {
                     }
                 }
 
-                if !self.functions.contains_key(func_name) && self.lookup_local(func_name).is_none()
+                if !self.functions.contains_key(func_name)
+                    && !self.has_active_local_binding(func_name)
                 {
+                    if let Some(target_name) =
+                        self.resolve_form_method_call_target(func_name, &call.args)?
+                    {
+                        if let Some(source_params) = self
+                            .concrete_source_params_for_call_target_with_expected(
+                                &target_name,
+                                &call.args,
+                                Some(expected_source),
+                            )
+                        {
+                            self.generate_call_args_with_source_params(&call.args, &source_params)?;
+                        } else {
+                            self.generate_call_args_for_target(&call.args, &target_name)?;
+                        }
+                        self.output
+                            .push_str(&format!("    call ${}\n", target_name));
+                        if self
+                            .functions
+                            .get(&target_name)
+                            .is_some_and(|sig| sig.result.is_none())
+                            && self.current_function != Some("main".to_string())
+                        {
+                            self.output.push_str("    i32.const 0\n");
+                        }
+                        return Ok(());
+                    }
                     if let Some(target_name) =
                         self.resolve_method_call_target(func_name, &call.args)?
                     {
@@ -10386,7 +11580,98 @@ impl WasmCodeGen {
             .map(Self::source_type_suffix)
             .collect::<Vec<_>>()
             .join("_");
-        format!("{}__{}", Self::sanitize_wasm_name(function_name), suffix)
+        let readable_name = format!("{}__{}", Self::sanitize_wasm_name(function_name), suffix);
+        let identity =
+            Self::generic_specialization_identity(function_name, type_params, substitution);
+        format!("{readable_name}$sid${identity}")
+    }
+
+    fn append_length_prefixed_identity(output: &mut String, identity: &str) {
+        output.push_str(&identity.len().to_string());
+        output.push('x');
+        output.push_str(identity);
+    }
+
+    fn generic_specialization_identity(
+        function_name: &str,
+        type_params: &[String],
+        substitution: &HashMap<String, Type>,
+    ) -> String {
+        let mut identity = String::from("f");
+        Self::append_length_prefixed_identity(
+            &mut identity,
+            &Self::encode_symbol_component(function_name),
+        );
+        identity.push('s');
+        identity.push_str(&type_params.len().to_string());
+        identity.push('x');
+
+        for param in type_params {
+            let mut binding = String::from("b");
+            Self::append_length_prefixed_identity(
+                &mut binding,
+                &Self::encode_symbol_component(param),
+            );
+            match substitution.get(param) {
+                Some(ty) => {
+                    binding.push('v');
+                    Self::append_length_prefixed_identity(
+                        &mut binding,
+                        &Self::source_type_identity(ty),
+                    );
+                }
+                None => binding.push('m'),
+            }
+            Self::append_length_prefixed_identity(&mut identity, &binding);
+        }
+
+        identity
+    }
+
+    fn source_type_identity(ty: &Type) -> String {
+        match ty {
+            Type::Named(name) => format!("n{}", Self::encode_symbol_component(name)),
+            Type::Generic(name, params) => {
+                let mut identity =
+                    format!("g{}p{}x", Self::encode_symbol_component(name), params.len());
+                for param in params {
+                    Self::append_length_prefixed_identity(
+                        &mut identity,
+                        &Self::source_type_identity(param),
+                    );
+                }
+                identity
+            }
+            Type::Function(params, return_type) => {
+                let mut identity = format!("f{}x", params.len());
+                for param in params {
+                    Self::append_length_prefixed_identity(
+                        &mut identity,
+                        &Self::source_type_identity(param),
+                    );
+                }
+                identity.push('r');
+                Self::append_length_prefixed_identity(
+                    &mut identity,
+                    &Self::source_type_identity(return_type),
+                );
+                identity
+            }
+            Type::Temporal(name, temporals) => {
+                let mut identity = format!(
+                    "t{}l{}x",
+                    Self::encode_symbol_component(name),
+                    temporals.len()
+                );
+                for temporal in temporals {
+                    Self::append_length_prefixed_identity(
+                        &mut identity,
+                        &Self::encode_symbol_component(temporal),
+                    );
+                }
+                identity
+            }
+        }
     }
 
     fn source_type_suffix(ty: &Type) -> String {
@@ -10564,16 +11849,6 @@ impl WasmCodeGen {
         expected_result_source: Option<&Type>,
     ) -> Result<LambdaAbiContext, CodeGenError> {
         if let ExprKind::Ident(name) = &callable.kind {
-            if name == "identity" && arg_source_tys.len() == 1 {
-                return self.source_function_abi(arg_source_tys, &arg_source_tys[0]);
-            }
-
-            if let Some(Type::Function(params, return_type)) = self.lookup_local_source_type(name) {
-                if params.len() == arg_source_tys.len() {
-                    return self.source_function_abi(&params, &return_type);
-                }
-            }
-
             if let Some(function_name) = self.lookup_generic_function_alias(name) {
                 if function_name == "identity" && arg_source_tys.len() == 1 {
                     return self.source_function_abi(arg_source_tys, &arg_source_tys[0]);
@@ -10595,6 +11870,25 @@ impl WasmCodeGen {
                         ))
                     })?;
                 return self.source_function_abi(arg_source_tys, &result_source);
+            }
+
+            if let Some(Type::Function(params, return_type)) =
+                self.lookup_active_local_source_type(name)
+            {
+                if params.len() == arg_source_tys.len() {
+                    return self.source_function_abi(&params, &return_type);
+                }
+            }
+
+            if self.has_active_local_binding(name) {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "active callable '{}' lacks a compatible source signature",
+                    name
+                )));
+            }
+
+            if name == "identity" && arg_source_tys.len() == 1 {
+                return self.source_function_abi(arg_source_tys, &arg_source_tys[0]);
             }
 
             if self.functions.contains_key(name) {
@@ -10670,6 +11964,11 @@ impl WasmCodeGen {
                     abi.source_params.clone(),
                     abi.source_result.clone(),
                 );
+            }
+
+            if self.has_local_callable_binding(name) {
+                self.emit_local_get(name);
+                return Ok(());
             }
 
             if self.functions.contains_key(name) {
@@ -10963,6 +12262,11 @@ impl WasmCodeGen {
                     source_params,
                     source_result,
                 );
+            }
+
+            if self.has_local_callable_binding(name) {
+                self.emit_local_get(name);
+                return Ok(());
             }
 
             if self.functions.contains_key(name) {
@@ -11555,7 +12859,7 @@ impl WasmCodeGen {
             ExprKind::Ident(name) => {
                 if let Some(ty) = self.lookup_local_abi_type(name)? {
                     Ok(ty)
-                } else if self.lookup_local(name).is_some() {
+                } else if self.has_active_local_binding(name) {
                     Err(CodeGenError::UnsupportedFeature(format!(
                         "missing Wasm ABI metadata for local '{}'",
                         name
@@ -11642,11 +12946,17 @@ impl WasmCodeGen {
             ExprKind::CharLit(_) => Some(Type::Named("Char".to_string())),
             ExprKind::StringLit(_) => Some(Type::Named("String".to_string())),
             ExprKind::Unit => Some(Type::Named("Unit".to_string())),
-            ExprKind::Ident(name) => self.lookup_local_source_type(name).or_else(|| {
-                if self.lookup_local(name).is_none() {
-                    self.named_function_source_type(name)
-                } else {
+            ExprKind::Ident(name) => self.lookup_visible_value_source_type(name).or_else(|| {
+                if let Some(function_name) = self.lookup_generic_function_alias(name) {
+                    return self.named_function_source_type(&function_name);
+                }
+                if let Some(callable) = self.lookup_deferred_lambda_alias(name) {
+                    return self.infer_expr_source_type(&callable);
+                }
+                if self.has_active_local_binding(name) {
                     None
+                } else {
+                    self.named_function_source_type(name)
                 }
             }),
             ExprKind::RecordLit(record) => self.infer_record_lit_source_type(record),
@@ -11729,6 +13039,46 @@ impl WasmCodeGen {
                 }
 
                 if let ExprKind::Ident(name) = &call.function.kind {
+                    if let Some(Type::Function(params, return_ty)) =
+                        self.lookup_active_local_source_type(name)
+                    {
+                        if params.len() == call.args.len() {
+                            return Some(*return_ty);
+                        }
+                    }
+                    let arg_tys = call
+                        .args
+                        .iter()
+                        .map(|arg| self.infer_expr_source_type(arg))
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(arg_tys) = arg_tys.as_deref() {
+                        if let Some(return_ty) =
+                            self.infer_active_callable_alias_return_source_type(name, arg_tys)
+                        {
+                            return Some(return_ty);
+                        }
+                        if self.has_active_local_binding(name) {
+                            return None;
+                        }
+                        if let Some(receiver_ty) = arg_tys.first() {
+                            if let Some(return_ty) = self
+                                .infer_applicable_receiver_method_return_source_type(
+                                    name,
+                                    receiver_ty,
+                                    arg_tys,
+                                )
+                            {
+                                return Some(return_ty);
+                            }
+                        }
+                    }
+                    if matches!(name.as_str(), "display" | "print" | "println") {
+                        return match name.as_str() {
+                            "display" => Some(Type::Named("String".to_string())),
+                            "print" | "println" => Some(Type::Named("Unit".to_string())),
+                            _ => unreachable!(),
+                        };
+                    }
                     let arg_exprs = call.args.iter().map(|arg| arg.as_ref()).collect::<Vec<_>>();
                     if self.can_infer_named_function_call_source_type(name, false) {
                         if let Some(return_ty) =
@@ -11749,6 +13099,17 @@ impl WasmCodeGen {
                         return Some(return_ty);
                     }
 
+                    if let Some(receiver_ty) = arg_tys.first() {
+                        if let Ok(Some(target_name)) =
+                            self.resolve_form_method_for_source_type(name, receiver_ty, None)
+                        {
+                            return self.infer_function_return_source_type_for_args(
+                                &target_name,
+                                &arg_tys,
+                            );
+                        }
+                    }
+
                     if let Ok(Some(target_name)) = self.resolve_method_call_target(name, &call.args)
                     {
                         return self
@@ -11760,19 +13121,43 @@ impl WasmCodeGen {
             }
             ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(name) => {
-                    if self.functions.contains_key(name) {
-                        let args = [pipe.expr.as_ref()];
-                        self.infer_function_call_source_type(name, &args)
-                    } else if let Some(Type::Function(params, return_ty)) =
-                        self.lookup_local_source_type(name)
+                    let receiver_ty = self.infer_expr_source_type(&pipe.expr);
+                    if let Some(Type::Function(params, return_ty)) =
+                        self.lookup_active_local_source_type(name)
                     {
                         if params.len() == 1 {
                             Some(*return_ty)
                         } else {
                             None
                         }
+                    } else if let Some(return_ty) = receiver_ty.as_ref().and_then(|receiver_ty| {
+                        self.infer_active_callable_alias_return_source_type(
+                            name,
+                            std::slice::from_ref(receiver_ty),
+                        )
+                    }) {
+                        Some(return_ty)
+                    } else if self.has_active_local_binding(name) {
+                        None
+                    } else if let Some(return_ty) = receiver_ty.as_ref().and_then(|receiver_ty| {
+                        self.infer_form_method_return_source_type(
+                            name,
+                            receiver_ty,
+                            std::slice::from_ref(receiver_ty),
+                        )
+                    }) {
+                        Some(return_ty)
+                    } else if matches!(name.as_str(), "display" | "print" | "println") {
+                        match name.as_str() {
+                            "display" => Some(Type::Named("String".to_string())),
+                            "print" | "println" => Some(Type::Named("Unit".to_string())),
+                            _ => unreachable!(),
+                        }
+                    } else if self.functions.contains_key(name) {
+                        let args = [pipe.expr.as_ref()];
+                        self.infer_function_call_source_type(name, &args)
                     } else {
-                        self.infer_expr_source_type(&pipe.expr)
+                        receiver_ty
                     }
                 }
                 PipeTarget::Expr(target) => {
@@ -11784,17 +13169,45 @@ impl WasmCodeGen {
                     }
 
                     if let ExprKind::Ident(name) = &target.kind {
-                        if self.functions.contains_key(name) {
-                            let args = [pipe.expr.as_ref()];
-                            self.infer_function_call_source_type(name, &args)
-                        } else if let Some(Type::Function(params, return_ty)) =
-                            self.lookup_local_source_type(name)
+                        let receiver_ty = self.infer_expr_source_type(&pipe.expr);
+                        if let Some(Type::Function(params, return_ty)) =
+                            self.lookup_active_local_source_type(name)
                         {
                             if params.len() == 1 {
                                 Some(*return_ty)
                             } else {
                                 None
                             }
+                        } else if let Some(return_ty) =
+                            receiver_ty.as_ref().and_then(|receiver_ty| {
+                                self.infer_active_callable_alias_return_source_type(
+                                    name,
+                                    std::slice::from_ref(receiver_ty),
+                                )
+                            })
+                        {
+                            Some(return_ty)
+                        } else if self.has_active_local_binding(name) {
+                            None
+                        } else if let Some(return_ty) =
+                            receiver_ty.as_ref().and_then(|receiver_ty| {
+                                self.infer_form_method_return_source_type(
+                                    name,
+                                    receiver_ty,
+                                    std::slice::from_ref(receiver_ty),
+                                )
+                            })
+                        {
+                            Some(return_ty)
+                        } else if matches!(name.as_str(), "display" | "print" | "println") {
+                            match name.as_str() {
+                                "display" => Some(Type::Named("String".to_string())),
+                                "print" | "println" => Some(Type::Named("Unit".to_string())),
+                                _ => unreachable!(),
+                            }
+                        } else if self.functions.contains_key(name) {
+                            let args = [pipe.expr.as_ref()];
+                            self.infer_function_call_source_type(name, &args)
                         } else {
                             None
                         }
@@ -11869,11 +13282,14 @@ impl WasmCodeGen {
     }
 
     fn can_infer_named_function_call_source_type(&self, name: &str, bound_in_expr: bool) -> bool {
-        if bound_in_expr || self.lookup_local_source_type(name).is_some() {
+        if bound_in_expr || self.lookup_active_local_source_type(name).is_some() {
             return false;
         }
 
-        if self.lookup_local(name).is_some() && self.lookup_generic_function_alias(name).is_none() {
+        if self.has_active_local_binding(name)
+            && self.lookup_generic_function_alias(name).is_none()
+            && self.lookup_deferred_lambda_alias(name).is_none()
+        {
             return false;
         }
 
@@ -11992,7 +13408,13 @@ impl WasmCodeGen {
                     });
                 self.infer_expr_source_type_with_bindings(&lambda.body, &lambda_bindings)
             }
-            ExprKind::Ident(name) => self.infer_named_callable_return_source_type(name, arg_tys),
+            ExprKind::Ident(name) => match bindings.get(name) {
+                Some(Type::Function(params, return_ty)) if params.len() == arg_tys.len() => {
+                    Some((**return_ty).clone())
+                }
+                Some(_) => None,
+                None => self.infer_named_callable_return_source_type(name, arg_tys),
+            },
             ExprKind::Then(then) => {
                 self.infer_then_callable_return_source_type_with_bindings(then, arg_tys, bindings)
             }
@@ -12085,12 +13507,26 @@ impl WasmCodeGen {
         self.infer_callable_return_source_type_with_bindings(expr, arg_tys, &block_bindings)
     }
 
+    fn infer_active_callable_alias_return_source_type(
+        &self,
+        name: &str,
+        arg_tys: &[Type],
+    ) -> Option<Type> {
+        if let Some(function_name) = self.lookup_generic_function_alias(name) {
+            return self.infer_function_return_source_type_for_args(&function_name, arg_tys);
+        }
+
+        self.lookup_deferred_lambda_alias(name)
+            .and_then(|callable| self.infer_callable_return_source_type(&callable, arg_tys))
+    }
+
     fn infer_named_callable_return_source_type(
         &self,
         name: &str,
         arg_tys: &[Type],
     ) -> Option<Type> {
-        if let Some(Type::Function(params, return_ty)) = self.lookup_local_source_type(name) {
+        if let Some(Type::Function(params, return_ty)) = self.lookup_active_local_source_type(name)
+        {
             if params.len() == arg_tys.len() {
                 return Some(*return_ty);
             }
@@ -12102,6 +13538,10 @@ impl WasmCodeGen {
 
         if let Some(callable) = self.lookup_deferred_lambda_alias(name) {
             return self.infer_callable_return_source_type(&callable, arg_tys);
+        }
+
+        if self.has_active_local_binding(name) {
+            return None;
         }
 
         if let Some(return_ty) = self.infer_method_return_source_type_for_args(name, arg_tys) {
@@ -12127,6 +13567,30 @@ impl WasmCodeGen {
         }
 
         let target_name = Self::method_function_name(record_name, method_name);
+        self.infer_function_return_source_type_for_args(&target_name, arg_tys)
+    }
+
+    fn infer_applicable_receiver_method_return_source_type(
+        &self,
+        member: &str,
+        receiver_ty: &Type,
+        arg_tys: &[Type],
+    ) -> Option<Type> {
+        let target_name = self
+            .resolve_applicable_receiver_method_for_source_type(member, receiver_ty)
+            .ok()??;
+        self.infer_function_return_source_type_for_args(&target_name, arg_tys)
+    }
+
+    fn infer_form_method_return_source_type(
+        &self,
+        member: &str,
+        receiver_ty: &Type,
+        arg_tys: &[Type],
+    ) -> Option<Type> {
+        let target_name = self
+            .resolve_form_method_for_source_type(member, receiver_ty, None)
+            .ok()??;
         self.infer_function_return_source_type_for_args(&target_name, arg_tys)
     }
 
@@ -12161,9 +13625,15 @@ impl WasmCodeGen {
             ExprKind::Ident(name) => bindings
                 .get(name)
                 .cloned()
-                .or_else(|| self.lookup_local_source_type(name))
+                .or_else(|| self.lookup_visible_value_source_type(name))
                 .or_else(|| {
-                    if self.lookup_local(name).is_none() {
+                    if let Some(function_name) = self.lookup_generic_function_alias(name) {
+                        return self.named_function_source_type(&function_name);
+                    }
+                    if let Some(callable) = self.lookup_deferred_lambda_alias(name) {
+                        return self.infer_expr_source_type_with_bindings(&callable, bindings);
+                    }
+                    if !self.has_active_local_binding(name) {
                         self.named_function_source_type(name)
                     } else {
                         None
@@ -12195,6 +13665,50 @@ impl WasmCodeGen {
                 }
 
                 if let ExprKind::Ident(name) = &call.function.kind {
+                    if let Some(Type::Function(params, return_ty)) = bindings
+                        .get(name)
+                        .cloned()
+                        .or_else(|| self.lookup_active_local_source_type(name))
+                    {
+                        if params.len() == call.args.len() {
+                            return Some(*return_ty);
+                        }
+                    }
+                    let arg_tys = call
+                        .args
+                        .iter()
+                        .map(|arg| self.infer_expr_source_type_with_bindings(arg, bindings))
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(arg_tys) = arg_tys.as_deref() {
+                        if !bindings.contains_key(name) {
+                            if let Some(return_ty) =
+                                self.infer_active_callable_alias_return_source_type(name, arg_tys)
+                            {
+                                return Some(return_ty);
+                            }
+                        }
+                        if bindings.contains_key(name) || self.has_active_local_binding(name) {
+                            return None;
+                        }
+                        if let Some(receiver_ty) = arg_tys.first() {
+                            if let Some(return_ty) = self
+                                .infer_applicable_receiver_method_return_source_type(
+                                    name,
+                                    receiver_ty,
+                                    arg_tys,
+                                )
+                            {
+                                return Some(return_ty);
+                            }
+                        }
+                    }
+                    if matches!(name.as_str(), "display" | "print" | "println") {
+                        return match name.as_str() {
+                            "display" => Some(Type::Named("String".to_string())),
+                            "print" | "println" => Some(Type::Named("Unit".to_string())),
+                            _ => unreachable!(),
+                        };
+                    }
                     let arg_exprs = call.args.iter().map(|arg| arg.as_ref()).collect::<Vec<_>>();
                     if self.can_infer_named_function_call_source_type(
                         name,
@@ -12213,6 +13727,15 @@ impl WasmCodeGen {
                         .map(|arg| self.infer_expr_source_type_with_bindings(arg, bindings))
                         .collect::<Option<Vec<_>>>()?;
                     self.infer_named_callable_return_source_type(name, &arg_tys)
+                        .or_else(|| {
+                            let receiver_ty = arg_tys.first()?;
+                            let target_name = self
+                                .resolve_form_method_for_source_type(name, receiver_ty, None)
+                                .ok()??;
+                            self.function_source_sigs
+                                .get(&target_name)
+                                .and_then(|sig| sig.result.clone())
+                        })
                 } else {
                     None
                 }
@@ -12221,7 +13744,55 @@ impl WasmCodeGen {
                 let arg_ty = self.infer_expr_source_type_with_bindings(&pipe.expr, bindings)?;
                 match &pipe.target {
                     PipeTarget::Ident(name) => {
-                        self.infer_named_callable_return_source_type(name, &[arg_ty])
+                        if let Some(Type::Function(params, return_ty)) = bindings
+                            .get(name)
+                            .cloned()
+                            .or_else(|| self.lookup_active_local_source_type(name))
+                        {
+                            if params.len() == 1 {
+                                Some(*return_ty)
+                            } else {
+                                None
+                            }
+                        } else if let Some(return_ty) = (!bindings.contains_key(name))
+                            .then(|| {
+                                self.infer_active_callable_alias_return_source_type(
+                                    name,
+                                    std::slice::from_ref(&arg_ty),
+                                )
+                            })
+                            .flatten()
+                        {
+                            Some(return_ty)
+                        } else if bindings.contains_key(name) || self.has_active_local_binding(name)
+                        {
+                            None
+                        } else if let Some(return_ty) = self.infer_form_method_return_source_type(
+                            name,
+                            &arg_ty,
+                            std::slice::from_ref(&arg_ty),
+                        ) {
+                            Some(return_ty)
+                        } else if matches!(name.as_str(), "display" | "print" | "println") {
+                            match name.as_str() {
+                                "display" => Some(Type::Named("String".to_string())),
+                                "print" | "println" => Some(Type::Named("Unit".to_string())),
+                                _ => unreachable!(),
+                            }
+                        } else {
+                            self.infer_function_return_source_type_for_args(
+                                name,
+                                std::slice::from_ref(&arg_ty),
+                            )
+                            .or_else(|| {
+                                let target_name = self
+                                    .resolve_form_method_for_source_type(name, &arg_ty, None)
+                                    .ok()??;
+                                self.function_source_sigs
+                                    .get(&target_name)
+                                    .and_then(|sig| sig.result.clone())
+                            })
+                        }
                     }
                     PipeTarget::Expr(target) => {
                         if let ExprKind::VariantRef(path) = &target.kind {
@@ -12229,7 +13800,58 @@ impl WasmCodeGen {
                                 .contains_key(&path.enum_name)
                                 .then(|| Type::Named(path.enum_name.clone()))
                         } else if let ExprKind::Ident(name) = &target.kind {
-                            self.infer_named_callable_return_source_type(name, &[arg_ty])
+                            if let Some(Type::Function(params, return_ty)) = bindings
+                                .get(name)
+                                .cloned()
+                                .or_else(|| self.lookup_active_local_source_type(name))
+                            {
+                                if params.len() == 1 {
+                                    Some(*return_ty)
+                                } else {
+                                    None
+                                }
+                            } else if let Some(return_ty) = (!bindings.contains_key(name))
+                                .then(|| {
+                                    self.infer_active_callable_alias_return_source_type(
+                                        name,
+                                        std::slice::from_ref(&arg_ty),
+                                    )
+                                })
+                                .flatten()
+                            {
+                                Some(return_ty)
+                            } else if bindings.contains_key(name)
+                                || self.has_active_local_binding(name)
+                            {
+                                None
+                            } else if let Some(return_ty) = self
+                                .infer_form_method_return_source_type(
+                                    name,
+                                    &arg_ty,
+                                    std::slice::from_ref(&arg_ty),
+                                )
+                            {
+                                Some(return_ty)
+                            } else if matches!(name.as_str(), "display" | "print" | "println") {
+                                match name.as_str() {
+                                    "display" => Some(Type::Named("String".to_string())),
+                                    "print" | "println" => Some(Type::Named("Unit".to_string())),
+                                    _ => unreachable!(),
+                                }
+                            } else {
+                                self.infer_function_return_source_type_for_args(
+                                    name,
+                                    std::slice::from_ref(&arg_ty),
+                                )
+                                .or_else(|| {
+                                    let target_name = self
+                                        .resolve_form_method_for_source_type(name, &arg_ty, None)
+                                        .ok()??;
+                                    self.function_source_sigs
+                                        .get(&target_name)
+                                        .and_then(|sig| sig.result.clone())
+                                })
+                            }
                         } else {
                             None
                         }
@@ -12637,7 +14259,12 @@ impl WasmCodeGen {
         }
 
         let record_name = match &object.kind {
-            ExprKind::Ident(name) => self.var_types.get(name),
+            ExprKind::Ident(name)
+                if self.has_active_local_binding(name)
+                    && self.lookup_active_local_source_type(name).is_none() =>
+            {
+                self.var_types.get(name)
+            }
             ExprKind::RecordLit(record) => Some(&record.name),
             _ => None,
         };
@@ -12731,6 +14358,7 @@ impl WasmCodeGen {
         self.locals.push(HashMap::new());
         self.local_types.push(HashMap::new());
         self.local_source_types.push(HashMap::new());
+        self.active_local_bindings.push(HashSet::new());
         self.local_aliases.push(HashMap::new());
         self.generic_function_aliases.push(HashMap::new());
         self.deferred_lambda_aliases.push(HashMap::new());
@@ -12740,6 +14368,7 @@ impl WasmCodeGen {
         self.locals.pop();
         self.local_types.pop();
         self.local_source_types.pop();
+        self.active_local_bindings.pop();
         self.local_aliases.pop();
         self.generic_function_aliases.pop();
         self.deferred_lambda_aliases.pop();
@@ -12810,35 +14439,124 @@ impl WasmCodeGen {
         None
     }
 
+    fn has_local_callable_binding(&self, name: &str) -> bool {
+        matches!(
+            self.lookup_active_local_source_type(name),
+            Some(Type::Function(_, _))
+        ) || self.lookup_generic_function_alias(name).is_some()
+            || self.lookup_deferred_lambda_alias(name).is_some()
+    }
+
+    fn activate_local_binding(&mut self, name: &str) {
+        if let Some(scope) = self.active_local_bindings.last_mut() {
+            scope.insert(name.to_string());
+        }
+    }
+
+    fn has_active_local_binding(&self, name: &str) -> bool {
+        self.active_local_bindings
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
+    fn lookup_active_local_source_type(&self, name: &str) -> Option<Type> {
+        for index in (0..self.active_local_bindings.len()).rev() {
+            if self.active_local_bindings[index].contains(name) {
+                if let Some(source_ty) = self
+                    .local_source_types
+                    .get(index)
+                    .and_then(|scope| scope.get(name))
+                {
+                    return Some(source_ty.clone());
+                }
+
+                if let Some(local_name) = self
+                    .local_aliases
+                    .get(index)
+                    .and_then(|scope| scope.get(name))
+                {
+                    return self
+                        .local_source_types
+                        .get(index)
+                        .and_then(|scope| scope.get(local_name))
+                        .cloned();
+                }
+
+                return self
+                    .local_source_types
+                    .get(index)
+                    .and_then(|scope| scope.get(name))
+                    .cloned();
+            }
+        }
+        None
+    }
+
+    fn lookup_visible_value_source_type(&self, name: &str) -> Option<Type> {
+        if self.has_active_local_binding(name) {
+            self.lookup_active_local_source_type(name)
+        } else {
+            self.global_source_types.get(name).cloned()
+        }
+    }
+
+    fn lookup_active_local_abi_type(&self, name: &str) -> Result<Option<WasmType>, CodeGenError> {
+        for index in (0..self.active_local_bindings.len()).rev() {
+            if !self.active_local_bindings[index].contains(name) {
+                continue;
+            }
+
+            if let Some(source_ty) = self
+                .local_source_types
+                .get(index)
+                .and_then(|scope| scope.get(name))
+            {
+                return self.convert_type(source_ty).map(Some);
+            }
+
+            let storage_name = self
+                .local_aliases
+                .get(index)
+                .and_then(|scope| scope.get(name))
+                .map(String::as_str)
+                .unwrap_or(name);
+
+            // Source scopes are logical, but Wasm locals are predeclared in
+            // the function scope. Once the nearest active source binding is
+            // known, look up only that binding's physical storage name across
+            // the local metadata stack. This preserves lexical shadowing while
+            // allowing bindings introduced by `with` and branch scopes to use
+            // their predeclared ABI type.
+            return Ok(self
+                .local_types
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(storage_name))
+                .copied());
+        }
+
+        Ok(None)
+    }
+
     fn set_local_type(&mut self, name: &str, ty: WasmType) {
         if let Some(scope) = self.local_types.last_mut() {
             scope.insert(name.to_string(), ty);
         }
     }
 
-    fn lookup_local_type(&self, name: &str) -> Option<WasmType> {
-        if let Some(local_name) = self.lookup_local_alias(name) {
-            for scope in self.local_types.iter().rev() {
-                if let Some(ty) = scope.get(local_name) {
-                    return Some(*ty);
-                }
-            }
-        }
-
-        for scope in self.local_types.iter().rev() {
-            if let Some(ty) = scope.get(name) {
-                return Some(*ty);
-            }
-        }
-        self.global_types.get(name).copied()
-    }
-
     fn lookup_local_abi_type(&self, name: &str) -> Result<Option<WasmType>, CodeGenError> {
-        if let Some(source_ty) = self.lookup_local_source_type(name) {
-            return self.convert_type(&source_ty).map(Some);
+        if let Some(ty) = self.lookup_active_local_abi_type(name)? {
+            return Ok(Some(ty));
+        }
+        if self.has_active_local_binding(name) {
+            return Ok(None);
+        }
+        if let Some(source_ty) = self.global_source_types.get(name) {
+            return self.convert_type(source_ty).map(Some);
         }
 
-        Ok(self.lookup_local_type(name))
+        Ok(self.global_types.get(name).copied())
     }
 
     fn set_local_source_type(&mut self, name: &str, ty: Type) {
@@ -12883,9 +14601,9 @@ impl WasmCodeGen {
             }
 
             if self
-                .locals
+                .active_local_bindings
                 .get(idx)
-                .is_some_and(|scope| scope.contains_key(name))
+                .is_some_and(|scope| scope.contains(name))
             {
                 return None;
             }
@@ -12906,6 +14624,22 @@ impl WasmCodeGen {
         }
     }
 
+    fn clear_visible_callable_aliases(&mut self, name: &str) {
+        let Some(scope_idx) = (0..self.active_local_bindings.len())
+            .rev()
+            .find(|idx| self.active_local_bindings[*idx].contains(name))
+        else {
+            return;
+        };
+
+        if let Some(scope) = self.generic_function_aliases.get_mut(scope_idx) {
+            scope.remove(name);
+        }
+        if let Some(scope) = self.deferred_lambda_aliases.get_mut(scope_idx) {
+            scope.remove(name);
+        }
+    }
+
     fn lookup_deferred_lambda_alias(&self, name: &str) -> Option<Expr> {
         for idx in (0..self.deferred_lambda_aliases.len()).rev() {
             if let Some(callable) = self.deferred_lambda_aliases[idx].get(name) {
@@ -12913,9 +14647,9 @@ impl WasmCodeGen {
             }
 
             if self
-                .locals
+                .active_local_bindings
                 .get(idx)
-                .is_some_and(|scope| scope.contains_key(name))
+                .is_some_and(|scope| scope.contains(name))
             {
                 return None;
             }
@@ -12975,7 +14709,23 @@ impl WasmCodeGen {
         block: &BlockExpr,
         bindings: &HashMap<String, Type>,
     ) -> bool {
-        if self.block_terminal_lambda(block).is_none() {
+        let Some(terminal) = self.block_terminal_expr(block) else {
+            return false;
+        };
+        let terminal_is_callable = match &terminal.kind {
+            ExprKind::Lambda(_) => true,
+            ExprKind::Ident(name) => {
+                matches!(bindings.get(name), Some(Type::Function(_, _)))
+                    || self.has_local_callable_binding(name)
+                    || (!self.has_active_local_binding(name)
+                        && self.named_function_source_type(name).is_some())
+            }
+            _ => matches!(
+                self.infer_expr_source_type_with_bindings(terminal, bindings),
+                Some(Type::Function(_, _))
+            ),
+        };
+        if !terminal_is_callable {
             return false;
         }
 
@@ -13018,16 +14768,13 @@ impl WasmCodeGen {
         true
     }
 
-    fn block_terminal_lambda<'a>(&self, block: &'a BlockExpr) -> Option<&'a LambdaExpr> {
-        if let Some(ExprKind::Lambda(lambda)) = block.expr.as_deref().map(|e| &e.kind) {
-            return Some(lambda);
+    fn block_terminal_expr<'a>(&self, block: &'a BlockExpr) -> Option<&'a Expr> {
+        if let Some(expr) = block.expr.as_deref() {
+            return Some(expr);
         }
 
         match block.statements.last() {
-            Some(Stmt::Expr(expr)) => match &expr.kind {
-                ExprKind::Lambda(lambda) => Some(lambda),
-                _ => None,
-            },
+            Some(Stmt::Expr(expr)) => Some(expr),
             _ => None,
         }
     }
@@ -13035,8 +14782,7 @@ impl WasmCodeGen {
     fn deferred_callable_prefix_statements<'a>(&self, block: &'a BlockExpr) -> &'a [Stmt] {
         if block.expr.is_some() {
             &block.statements
-        } else if matches!(block.statements.last(), Some(Stmt::Expr(expr)) if matches!(&expr.kind, ExprKind::Lambda(_)))
-        {
+        } else if matches!(block.statements.last(), Some(Stmt::Expr(_))) {
             &block.statements[..block.statements.len() - 1]
         } else {
             &block.statements
@@ -13063,7 +14809,7 @@ impl WasmCodeGen {
             ExprKind::Ident(name) => bindings
                 .get(name)
                 .cloned()
-                .or_else(|| self.lookup_local_source_type(name))
+                .or_else(|| self.lookup_visible_value_source_type(name))
                 .as_ref()
                 .is_some_and(Self::is_copyable_source_type),
             ExprKind::Binary(binary) => {
@@ -13786,6 +15532,49 @@ impl WasmCodeGen {
                     }
                     // Also collect locals from the value expression
                     self.collect_locals_from_expr(&bind.value, locals)?;
+
+                    // Local declaration collection runs before body emission so
+                    // Wasm locals can be declared in the function header. Mirror
+                    // source-order callable visibility during that prepass, then
+                    // generate_function restores the entry state before emission.
+                    if let Pattern::Ident(name) = &bind.pattern {
+                        let generic_function_alias = if bind.type_annotation.is_none() {
+                            self.generic_function_alias_target(&bind.value)
+                        } else {
+                            None
+                        };
+                        let deferred_callable_alias = if bind.type_annotation.is_none()
+                            && source_ty.is_none()
+                            && generic_function_alias.is_none()
+                            && self.is_deferred_callable_expr(&bind.value)
+                        {
+                            Some((*bind.value).clone())
+                        } else {
+                            None
+                        };
+
+                        match (generic_function_alias, deferred_callable_alias) {
+                            (Some(function_name), _) => {
+                                self.clear_deferred_lambda_alias(name);
+                                self.set_generic_function_alias(name, function_name);
+                            }
+                            (None, Some(callable)) => {
+                                self.clear_generic_function_alias(name);
+                                self.set_deferred_lambda_alias(name, callable);
+                            }
+                            (None, None) => {
+                                self.clear_generic_function_alias(name);
+                                self.clear_deferred_lambda_alias(name);
+                            }
+                        }
+                        self.activate_local_binding(name);
+                    } else {
+                        let mut names = HashSet::new();
+                        self.collect_pattern_bindings_for_codegen(&bind.pattern, &mut names);
+                        for name in names {
+                            self.activate_local_binding(&name);
+                        }
+                    }
                 }
                 Stmt::Assignment(assign) => {
                     // Assignments don't create new locals, but they can finalize the source type
@@ -13801,6 +15590,10 @@ impl WasmCodeGen {
                         }
                     }
                     self.collect_locals_from_expr(&assign.value, locals)?;
+                    // Mirror emission order: the RHS sees the previous value,
+                    // then assignment invalidates aliases for the nearest
+                    // visible target binding (which may live in an outer scope).
+                    self.clear_visible_callable_aliases(&assign.name);
                 }
                 Stmt::Expr(expr) => {
                     // Check for nested blocks and match expressions
@@ -13817,14 +15610,37 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn applicable_receiver_method_wasm_result(&self, name: &str, receiver: &Expr) -> Option<bool> {
+        let target_name = self
+            .resolve_applicable_receiver_method_for_expr(name, receiver)
+            .ok()??;
+        self.functions
+            .get(&target_name)
+            .map(|signature| signature.result.is_some())
+    }
+
+    fn form_method_wasm_result(&self, name: &str, receiver: &Expr) -> Option<bool> {
+        let target_name = self
+            .resolve_form_method_for_expr(name, receiver, None)
+            .ok()??;
+        self.functions
+            .get(&target_name)
+            .map(|signature| signature.result.is_some())
+    }
+
     fn expr_leaves_value(&self, expr: &Expr) -> bool {
         match &expr.kind {
             ExprKind::Pipe(pipe) => {
                 match &pipe.target {
                     PipeTarget::Ident(name) => {
-                        if name == "println" && self.current_function == Some("main".to_string()) {
-                            // println in main doesn't leave value
-                            false
+                        if self.has_local_callable_binding(name) {
+                            true
+                        } else if let Some(has_result) =
+                            self.form_method_wasm_result(name, &pipe.expr)
+                        {
+                            has_result || self.current_function != Some("main".to_string())
+                        } else if matches!(name.as_str(), "print" | "println") {
+                            self.current_function != Some("main".to_string())
                         } else if let Some(sig) = self.functions.get(name) {
                             // Void pipe calls synthesize a Unit value outside main.
                             sig.result.is_some()
@@ -13836,7 +15652,15 @@ impl WasmCodeGen {
                     }
                     PipeTarget::Expr(target_expr) => {
                         if let ExprKind::Ident(func_name) = &target_expr.kind {
-                            if let Some(sig) = self.functions.get(func_name) {
+                            if self.has_local_callable_binding(func_name) {
+                                true
+                            } else if let Some(has_result) =
+                                self.form_method_wasm_result(func_name, &pipe.expr)
+                            {
+                                has_result || self.current_function != Some("main".to_string())
+                            } else if matches!(func_name.as_str(), "print" | "println") {
+                                self.current_function != Some("main".to_string())
+                            } else if let Some(sig) = self.functions.get(func_name) {
                                 sig.result.is_some()
                                     || self.current_function != Some("main".to_string())
                             } else {
@@ -13850,8 +15674,25 @@ impl WasmCodeGen {
             }
             ExprKind::Call(call) => {
                 if let ExprKind::Ident(func_name) = &call.function.kind {
-                    if let Some(sig) = self.functions.get(func_name) {
+                    if self.has_local_callable_binding(func_name) {
+                        true
+                    } else if let Some(has_result) = call.args.first().and_then(|receiver| {
+                        self.applicable_receiver_method_wasm_result(func_name, receiver)
+                    }) {
+                        has_result || self.current_function != Some("main".to_string())
+                    } else if matches!(func_name.as_str(), "print" | "println") {
+                        false
+                    } else if let Some(sig) = self.functions.get(func_name) {
                         sig.result.is_some()
+                            || (self.current_function != Some("main".to_string())
+                                && self.function_source_sigs.get(func_name).is_some_and(
+                                    |source_sig| {
+                                        source_sig
+                                            .params
+                                            .iter()
+                                            .any(|param| matches!(param, Type::Function(_, _)))
+                                    },
+                                ))
                     } else {
                         true
                     }
@@ -13876,30 +15717,64 @@ impl WasmCodeGen {
         match &expr.kind {
             ExprKind::Call(call) => {
                 if let ExprKind::Ident(func_name) = &call.function.kind {
+                    if self.has_local_callable_binding(func_name) {
+                        return self
+                            .infer_expr_source_type(expr)
+                            .is_some_and(|ty| Self::is_unit_source_type(&ty));
+                    }
+                    if let Some(has_result) = call.args.first().and_then(|receiver| {
+                        self.applicable_receiver_method_wasm_result(func_name, receiver)
+                    }) {
+                        return !has_result && self.current_function != Some("main".to_string());
+                    }
                     if self.functions.contains_key(func_name) {
                         let target_name = self.resolve_builtin_abi_function(func_name, &call.args);
-                        return self
-                            .function_source_sigs
-                            .get(&target_name)
-                            .is_some_and(|sig| {
-                                sig.params
-                                    .iter()
-                                    .any(|param| matches!(param, Type::Function(_, _)))
-                            });
+                        return self.current_function != Some("main".to_string())
+                            && self
+                                .function_source_sigs
+                                .get(&target_name)
+                                .is_some_and(|sig| {
+                                    sig.params
+                                        .iter()
+                                        .any(|param| matches!(param, Type::Function(_, _)))
+                                });
                     }
                 }
                 false
             }
             ExprKind::Pipe(pipe) => match &pipe.target {
-                PipeTarget::Ident(name) => self
-                    .functions
-                    .get(name)
-                    .is_some_and(|sig| sig.result.is_none()),
+                PipeTarget::Ident(name) if self.has_local_callable_binding(name) => self
+                    .infer_expr_source_type(expr)
+                    .is_some_and(|ty| Self::is_unit_source_type(&ty)),
+                PipeTarget::Ident(name)
+                    if self.form_method_wasm_result(name, &pipe.expr).is_some() =>
+                {
+                    self.form_method_wasm_result(name, &pipe.expr) == Some(false)
+                        && self.current_function != Some("main".to_string())
+                }
+                PipeTarget::Ident(name) if matches!(name.as_str(), "print" | "println") => {
+                    self.current_function != Some("main".to_string())
+                }
+                PipeTarget::Ident(name) => self.functions.get(name).is_some_and(|sig| {
+                    sig.result.is_none() && self.current_function != Some("main".to_string())
+                }),
                 PipeTarget::Expr(target) => {
                     if let ExprKind::Ident(name) = &target.kind {
-                        self.functions
-                            .get(name)
-                            .is_some_and(|sig| sig.result.is_none())
+                        if self.has_local_callable_binding(name) {
+                            self.infer_expr_source_type(expr)
+                                .is_some_and(|ty| Self::is_unit_source_type(&ty))
+                        } else if let Some(has_result) =
+                            self.form_method_wasm_result(name, &pipe.expr)
+                        {
+                            !has_result && self.current_function != Some("main".to_string())
+                        } else {
+                            (matches!(name.as_str(), "print" | "println")
+                                || self
+                                    .functions
+                                    .get(name)
+                                    .is_some_and(|sig| sig.result.is_none()))
+                                && self.current_function != Some("main".to_string())
+                        }
                     } else {
                         false
                     }
@@ -14338,6 +16213,7 @@ impl WasmCodeGen {
                         } else {
                             locals.push((name.clone(), *ty));
                         }
+                        self.activate_local_binding(name);
                     }
 
                     self.collect_locals_from_block_with_expected(
@@ -14349,16 +16225,33 @@ impl WasmCodeGen {
                 }
             }
             ExprKind::Then(then) => {
-                self.collect_locals_from_block_with_expected(
+                self.push_scope();
+                let then_result = self.collect_locals_from_block_with_expected(
                     &then.then_block,
                     locals,
                     expected_source,
-                )?;
+                );
+                self.pop_scope();
+                then_result?;
                 for (_, block) in &then.else_ifs {
-                    self.collect_locals_from_block_with_expected(block, locals, expected_source)?;
+                    self.push_scope();
+                    let else_if_result = self.collect_locals_from_block_with_expected(
+                        block,
+                        locals,
+                        expected_source,
+                    );
+                    self.pop_scope();
+                    else_if_result?;
                 }
                 if let Some(block) = &then.else_block {
-                    self.collect_locals_from_block_with_expected(block, locals, expected_source)?;
+                    self.push_scope();
+                    let else_result = self.collect_locals_from_block_with_expected(
+                        block,
+                        locals,
+                        expected_source,
+                    );
+                    self.pop_scope();
+                    else_result?;
                 }
             }
             ExprKind::While(while_expr) => {
@@ -14395,6 +16288,7 @@ impl WasmCodeGen {
                         self.set_local_source_type(name, source_ty.clone());
                         self.register_record_var_type(name, source_ty);
                     }
+                    self.activate_local_binding(name);
                 }
                 let result = self.collect_locals_from_block_with_expected(
                     &with.body,
@@ -14438,7 +16332,26 @@ impl WasmCodeGen {
             }
             ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(name) => {
-                    let source_param = if name == "identity" {
+                    let receiver_target = if self.has_local_callable_binding(name) {
+                        None
+                    } else {
+                        self.resolve_form_method_for_expr(name, &pipe.expr, None)?
+                    };
+                    let source_param = if self.has_local_callable_binding(name) {
+                        let target = Expr::new(ExprKind::Ident(name.clone()));
+                        self.infer_expr_source_type_for_abi(&pipe.expr)
+                            .ok()
+                            .and_then(|arg_source_ty| {
+                                self.callable_abi_for_arg_sources(&target, &[arg_source_ty])
+                                    .ok()
+                                    .and_then(|abi| abi.source_params.first().cloned())
+                            })
+                    } else if let Some(target_name) = receiver_target {
+                        self.function_source_sigs
+                            .get(&target_name)
+                            .and_then(|sig| sig.params.first())
+                            .cloned()
+                    } else if name == "identity" {
                         None
                     } else if self.functions.contains_key(name) {
                         self.resolve_named_function_call_target(
@@ -14452,15 +16365,6 @@ impl WasmCodeGen {
                                 .and_then(|sig| sig.params.first())
                                 .cloned()
                         })
-                    } else if self.lookup_local(name).is_some() {
-                        let target = Expr::new(ExprKind::Ident(name.clone()));
-                        self.infer_expr_source_type_for_abi(&pipe.expr)
-                            .ok()
-                            .and_then(|arg_source_ty| {
-                                self.callable_abi_for_arg_sources(&target, &[arg_source_ty])
-                                    .ok()
-                                    .and_then(|abi| abi.source_params.first().cloned())
-                            })
                     } else {
                         None
                     };
@@ -14472,20 +16376,37 @@ impl WasmCodeGen {
                     )?;
                 }
                 PipeTarget::Expr(target_expr) => {
-                    let callable_context = self
-                        .infer_expr_source_type_for_abi(&pipe.expr)
-                        .ok()
-                        .and_then(|arg_source_ty| {
-                            self.callable_abi_for_arg_sources(
-                                target_expr,
-                                std::slice::from_ref(&arg_source_ty),
-                            )
+                    let receiver_target = match &target_expr.kind {
+                        ExprKind::Ident(name) if !self.has_local_callable_binding(name) => {
+                            self.resolve_form_method_for_expr(name, &pipe.expr, None)?
+                        }
+                        _ => None,
+                    };
+                    let callable_context = if receiver_target.is_some() {
+                        None
+                    } else {
+                        self.infer_expr_source_type_for_abi(&pipe.expr)
                             .ok()
-                        });
+                            .and_then(|arg_source_ty| {
+                                self.callable_abi_for_arg_sources(
+                                    target_expr,
+                                    std::slice::from_ref(&arg_source_ty),
+                                )
+                                .ok()
+                            })
+                    };
                     let source_param = callable_context
                         .as_ref()
                         .and_then(|abi| abi.source_params.first())
-                        .cloned();
+                        .cloned()
+                        .or_else(|| {
+                            receiver_target.as_ref().and_then(|target_name| {
+                                self.function_source_sigs
+                                    .get(target_name)
+                                    .and_then(|sig| sig.params.first())
+                                    .cloned()
+                            })
+                        });
                     let expected_function_source = callable_context
                         .map(|abi| Type::Function(abi.source_params, Box::new(abi.source_result)));
 
@@ -14522,21 +16443,39 @@ impl WasmCodeGen {
     fn generate_pipe_expr(&mut self, pipe: &PipeExpr) -> Result<(), CodeGenError> {
         match &pipe.target {
             PipeTarget::Ident(name) => {
+                if self.has_local_callable_binding(name) {
+                    let target = Expr::new(ExprKind::Ident(name.clone()));
+                    let arg_source_ty = self.infer_expr_source_type_for_abi(&pipe.expr)?;
+                    let abi = self.callable_abi_for_arg_sources(&target, &[arg_source_ty])?;
+                    let source_param = abi.source_params.first().ok_or_else(|| {
+                        CodeGenError::UnsupportedFeature(
+                            "function value pipe requires a single-argument function".to_string(),
+                        )
+                    })?;
+                    self.generate_expr_with_expected_source(&pipe.expr, source_param)?;
+                    self.generate_callable_value_with_abi(&target, &abi)?;
+                    self.emit_typed_indirect_closure_call(&abi);
+                    return Ok(());
+                }
+
+                if let Some(target_name) =
+                    self.resolve_form_method_for_expr(name, &pipe.expr, None)?
+                {
+                    return self.generate_resolved_receiver_method_call(
+                        target_name,
+                        std::slice::from_ref(&pipe.expr),
+                        None,
+                    );
+                }
+
                 // Check if this is a function or a binding
                 if name == "identity" {
                     // identity is a no-op in the value pipeline.
                     self.generate_expr(&pipe.expr)?;
-                } else if name == "println" {
-                    // Special handling for generic println - determine type at runtime
-                    let specialized_name = self.resolve_generic_function_call(name, &pipe.expr)?;
-                    self.generate_expr(&pipe.expr)?;
-                    self.output
-                        .push_str(&format!("    call ${}\n", specialized_name));
-                    // These functions return nothing, so we need to push unit value for pipe result
-                    // But only if we're not in main function (which returns nothing)
-                    if self.current_function != Some("main".to_string()) {
-                        self.output.push_str("    i32.const 0\n");
-                    }
+                } else if matches!(name.as_str(), "display" | "print" | "println")
+                    && !self.has_local_callable_binding(name)
+                {
+                    self.generate_display_intrinsic(name, &pipe.expr, true)?;
                 } else if self.functions.contains_key(name) {
                     // It's a function call: expr |> func
                     let target_name = self.resolve_named_function_call_target(
@@ -14563,7 +16502,7 @@ impl WasmCodeGen {
                             self.output.push_str("    i32.const 0\n");
                         }
                     }
-                } else if self.lookup_local(name).is_some() {
+                } else if self.has_active_local_binding(name) {
                     // Function value stored in a local: expr |> f
                     let target = Expr::new(ExprKind::Ident(name.clone()));
                     let arg_source_ty = self.infer_expr_source_type_for_abi(&pipe.expr)?;
@@ -14576,6 +16515,29 @@ impl WasmCodeGen {
                     self.generate_expr_with_expected_source(&pipe.expr, source_param)?;
                     self.generate_callable_value_with_abi(&target, &abi)?;
                     self.emit_typed_indirect_closure_call(&abi);
+                } else if let Some(target_name) =
+                    self.resolve_form_method_for_expr(name, &pipe.expr, None)?
+                {
+                    let source_param = self
+                        .function_source_sigs
+                        .get(&target_name)
+                        .and_then(|sig| sig.params.first())
+                        .cloned();
+                    if let Some(source_param) = source_param {
+                        self.generate_expr_with_expected_source(&pipe.expr, &source_param)?;
+                    } else {
+                        self.generate_expr(&pipe.expr)?;
+                    }
+                    self.output
+                        .push_str(&format!("    call ${}\n", target_name));
+                    if self
+                        .functions
+                        .get(&target_name)
+                        .is_some_and(|sig| sig.result.is_none())
+                        && self.current_function != Some("main".to_string())
+                    {
+                        self.output.push_str("    i32.const 0\n");
+                    }
                 } else {
                     // It's a new binding: expr |> name
                     // This should have been handled by the type checker to add the local
@@ -14593,10 +16555,41 @@ impl WasmCodeGen {
                 // This is a complex expression
                 match &target_expr.kind {
                     ExprKind::Ident(func_name) => {
+                        if self.has_local_callable_binding(func_name) {
+                            let target = Expr::new(ExprKind::Ident(func_name.clone()));
+                            let arg_source_ty = self.infer_expr_source_type_for_abi(&pipe.expr)?;
+                            let abi =
+                                self.callable_abi_for_arg_sources(&target, &[arg_source_ty])?;
+                            let source_param = abi.source_params.first().ok_or_else(|| {
+                                CodeGenError::UnsupportedFeature(
+                                    "function value pipe requires a single-argument function"
+                                        .to_string(),
+                                )
+                            })?;
+                            self.generate_expr_with_expected_source(&pipe.expr, source_param)?;
+                            self.generate_callable_value_with_abi(&target, &abi)?;
+                            self.emit_typed_indirect_closure_call(&abi);
+                            return Ok(());
+                        }
+
+                        if let Some(target_name) =
+                            self.resolve_form_method_for_expr(func_name, &pipe.expr, None)?
+                        {
+                            return self.generate_resolved_receiver_method_call(
+                                target_name,
+                                std::slice::from_ref(&pipe.expr),
+                                None,
+                            );
+                        }
+
                         // Single argument function call
                         if func_name == "identity" {
                             // identity is a no-op in the value pipeline.
                             self.generate_expr(&pipe.expr)?;
+                        } else if matches!(func_name.as_str(), "display" | "print" | "println")
+                            && !self.has_local_callable_binding(func_name)
+                        {
+                            self.generate_display_intrinsic(func_name, &pipe.expr, true)?;
                         } else if self.functions.contains_key(func_name) {
                             let target_name = self.resolve_named_function_call_target(
                                 func_name,
@@ -14623,7 +16616,7 @@ impl WasmCodeGen {
                                     self.output.push_str("    i32.const 0\n");
                                 }
                             }
-                        } else if self.lookup_local(func_name).is_some() {
+                        } else if self.has_active_local_binding(func_name) {
                             let target = Expr::new(ExprKind::Ident(func_name.clone()));
                             let arg_source_ty = self.infer_expr_source_type_for_abi(&pipe.expr)?;
                             let abi =
@@ -14637,6 +16630,29 @@ impl WasmCodeGen {
                             self.generate_expr_with_expected_source(&pipe.expr, source_param)?;
                             self.generate_callable_value_with_abi(&target, &abi)?;
                             self.emit_typed_indirect_closure_call(&abi);
+                        } else if let Some(target_name) =
+                            self.resolve_form_method_for_expr(func_name, &pipe.expr, None)?
+                        {
+                            let source_param = self
+                                .function_source_sigs
+                                .get(&target_name)
+                                .and_then(|sig| sig.params.first())
+                                .cloned();
+                            if let Some(source_param) = source_param {
+                                self.generate_expr_with_expected_source(&pipe.expr, &source_param)?;
+                            } else {
+                                self.generate_expr(&pipe.expr)?;
+                            }
+                            self.output
+                                .push_str(&format!("    call ${}\n", target_name));
+                            if self
+                                .functions
+                                .get(&target_name)
+                                .is_some_and(|sig| sig.result.is_none())
+                                && self.current_function != Some("main".to_string())
+                            {
+                                self.output.push_str("    i32.const 0\n");
+                            }
                         } else {
                             return Err(CodeGenError::UndefinedFunction(func_name.clone()));
                         }
@@ -14660,42 +16676,6 @@ impl WasmCodeGen {
         }
 
         Ok(())
-    }
-
-    fn resolve_generic_function_call(
-        &self,
-        name: &str,
-        arg_expr: &Expr,
-    ) -> Result<String, CodeGenError> {
-        if name == "println" {
-            let source_ty = self.infer_expr_source_type(arg_expr).ok_or_else(|| {
-                CodeGenError::UnsupportedFeature(
-                    "println requires an inferable String or Int32 argument; use print_float for Float64"
-                        .to_string(),
-                )
-            })?;
-
-            match source_ty {
-                Type::Named(type_name) if type_name == "String" => Ok("println".to_string()),
-                Type::Named(type_name) if type_name == "Int32" => Ok("print_int".to_string()),
-                other => Err(CodeGenError::UnsupportedFeature(format!(
-                    "println does not support argument type {}; use print_int, print_float, or a String value",
-                    other
-                ))),
-            }
-        } else {
-            match self.infer_expr_source_type(arg_expr) {
-                Some(Type::Named(type_name)) => Ok(format!("{}_{}", name, type_name)),
-                Some(other) => Err(CodeGenError::UnsupportedFeature(format!(
-                    "generic function '{}' requires a concrete named specialization for argument type {}",
-                    name, other
-                ))),
-                None => Err(CodeGenError::UnsupportedFeature(format!(
-                    "generic function '{}' requires an inferable argument type for specialization",
-                    name
-                ))),
-            }
-        }
     }
 
     fn generate_list_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
@@ -14932,6 +16912,19 @@ impl WasmCodeGen {
             self.output.push_str("      (then\n");
 
             self.push_scope();
+            // Nested patterns such as `[head | tail]` materialize their
+            // bindings while evaluating the pattern and therefore do not
+            // return them in `bindings`. Register every type-checked pattern
+            // binding as visible in the arm, not only the bindings that still
+            // need a final `local.set` below.
+            for (name, wasm_ty, source_ty) in &binding_infos {
+                self.set_local_type(name, *wasm_ty);
+                if let Some(source_ty) = source_ty {
+                    self.set_local_source_type(name, source_ty.clone());
+                }
+                self.activate_local_binding(name);
+            }
+
             // Apply bindings
             for (binding_index, (name, load_code)) in bindings.into_iter().enumerate() {
                 let (_, wasm_ty, source_ty) =
@@ -14956,6 +16949,7 @@ impl WasmCodeGen {
                 if let Some(source_ty) = source_ty {
                     self.set_local_source_type(&name, source_ty);
                 }
+                self.activate_local_binding(&name);
             }
 
             // Generate arm body as expression (match arms should produce values)
@@ -15813,6 +17807,7 @@ impl WasmCodeGen {
                             self.set_local_source_type(name, source_ty.clone());
                             self.register_record_var_type(name, &source_ty);
                         }
+                        self.activate_local_binding(name);
                     }
                     FieldInit::Spread(_) => {
                         return Err(CodeGenError::NotImplemented(
@@ -16664,6 +18659,12 @@ impl WasmCodeGen {
                             enum_decl.name
                         ));
                     }
+                    TopDecl::Form(form) => {
+                        self.output.push_str(&format!(
+                            "  ;; source export form {} has no direct Wasm export\n",
+                            form.name
+                        ));
+                    }
                     TopDecl::Binding(binding) => {
                         let export_name = match &binding.pattern {
                             Pattern::Ident(name) => name.clone(),
@@ -16690,7 +18691,7 @@ impl WasmCodeGen {
                     }
                     _ => {
                         return Err(CodeGenError::UnsupportedFeature(
-                            "Only concrete function exports, source-level record or enum exports, and constant global exports are supported by codegen".to_string(),
+                            "Only concrete function exports, source-level record, enum, or form metadata exports, and constant global exports are supported by codegen".to_string(),
                         ));
                     }
                 }
@@ -16717,13 +18718,18 @@ impl WasmCodeGen {
                 Some(record.name.clone())
             }
             ExprKind::Ident(name) => {
-                if let Some(Type::Named(type_name)) = self.lookup_local_source_type(name) {
-                    if self.records.contains_key(&type_name) {
-                        return Some(type_name);
+                if let Some(source_ty) = self.lookup_visible_value_source_type(name) {
+                    if let Type::Named(type_name) = source_ty {
+                        if self.records.contains_key(&type_name) {
+                            return Some(type_name);
+                        }
                     }
+                    return None;
                 }
 
-                self.var_types.get(name).cloned()
+                self.has_active_local_binding(name)
+                    .then(|| self.var_types.get(name).cloned())
+                    .flatten()
             }
             _ => None,
         }
@@ -16733,6 +18739,8 @@ impl WasmCodeGen {
 #[cfg(test)]
 mod memory_layout_tests {
     use super::WasmCodeGen;
+    use crate::ast::Type;
+    use std::collections::HashMap;
 
     #[test]
     fn string_memory_offsets_align_and_reject_address_overflow() {
@@ -16741,5 +18749,132 @@ mod memory_layout_tests {
             1036
         );
         assert!(WasmCodeGen::next_string_memory_offset(u32::MAX - 4, 1).is_err());
+    }
+
+    #[test]
+    fn form_method_symbols_encode_each_identity_component_injectively() {
+        let boundary_left = WasmCodeGen::form_method_function_name("A", "B", "c_d");
+        let boundary_right = WasmCodeGen::form_method_function_name("A", "B_c", "d");
+        assert_ne!(boundary_left, boundary_right);
+        assert_eq!(boundary_left, "__restrict_form@41@42@635f64");
+        assert_eq!(boundary_right, "__restrict_form@41@425f63@64");
+        assert_ne!(boundary_left, "__restrict_form_41_for_42_635f64");
+
+        let module_qualified =
+            WasmCodeGen::form_method_function_name("pkg$forms", "Widget", "show");
+        let underscore_spelling =
+            WasmCodeGen::form_method_function_name("pkg_forms", "Widget", "show");
+        assert_ne!(module_qualified, underscore_spelling);
+        assert_eq!(
+            module_qualified,
+            "__restrict_form@706b6724666f726d73@576964676574@73686f77"
+        );
+
+        let unicode = WasmCodeGen::form_method_function_name("描画", "対象", "表示");
+        let former_sanitized_shape = WasmCodeGen::form_method_function_name("__", "__", "__");
+        assert_ne!(unicode, former_sanitized_shape);
+        assert_eq!(
+            unicode,
+            "__restrict_form@e68f8fe794bb@e5afbee8b1a1@e8a1a8e7a4ba"
+        );
+    }
+
+    #[test]
+    fn impl_method_symbols_encode_each_identity_component_injectively() {
+        let boundary_left = WasmCodeGen::method_function_name("B", "c_d");
+        let boundary_right = WasmCodeGen::method_function_name("B_c", "d");
+
+        assert_eq!(boundary_left, "__restrict_impl@42@635f64");
+        assert_eq!(boundary_right, "__restrict_impl@425f63@64");
+        assert_ne!(boundary_left, boundary_right);
+        assert_ne!(boundary_left, "B_c_d");
+    }
+
+    #[test]
+    fn generic_specialization_symbols_encode_canonical_types_injectively() {
+        let named = Type::Named("List_Int32".to_string());
+        let generic = Type::Generic("List".to_string(), vec![Type::Named("Int32".to_string())]);
+        assert_eq!(
+            WasmCodeGen::source_type_suffix(&named),
+            WasmCodeGen::source_type_suffix(&generic)
+        );
+        assert_ne!(
+            WasmCodeGen::source_type_identity(&named),
+            WasmCodeGen::source_type_identity(&generic)
+        );
+
+        let generic_boundaries_left = Type::Generic(
+            "Pair".to_string(),
+            vec![Type::Named("A_B".to_string()), Type::Named("C".to_string())],
+        );
+        let generic_boundaries_right = Type::Generic(
+            "Pair".to_string(),
+            vec![Type::Named("A".to_string()), Type::Named("B_C".to_string())],
+        );
+        assert_ne!(
+            WasmCodeGen::source_type_identity(&generic_boundaries_left),
+            WasmCodeGen::source_type_identity(&generic_boundaries_right)
+        );
+
+        let function_boundaries_left = Type::Function(
+            vec![Type::Named("A_to_B".to_string())],
+            Box::new(Type::Named("C".to_string())),
+        );
+        let function_boundaries_right = Type::Function(
+            vec![Type::Named("A".to_string())],
+            Box::new(Type::Named("B_to_C".to_string())),
+        );
+        assert_eq!(
+            WasmCodeGen::source_type_suffix(&function_boundaries_left),
+            WasmCodeGen::source_type_suffix(&function_boundaries_right)
+        );
+        assert_ne!(
+            WasmCodeGen::source_type_identity(&function_boundaries_left),
+            WasmCodeGen::source_type_identity(&function_boundaries_right)
+        );
+
+        let temporal_boundaries_left = Type::Temporal(
+            "Lease".to_string(),
+            vec!["a_b".to_string(), "c".to_string()],
+        );
+        let temporal_boundaries_right = Type::Temporal(
+            "Lease".to_string(),
+            vec!["a".to_string(), "b_c".to_string()],
+        );
+        assert_ne!(
+            WasmCodeGen::source_type_identity(&temporal_boundaries_left),
+            WasmCodeGen::source_type_identity(&temporal_boundaries_right)
+        );
+
+        let type_params = vec!["T".to_string()];
+        let mut module_substitution = HashMap::new();
+        module_substitution.insert(
+            "T".to_string(),
+            Type::Named("__rl$mod_1_a_5_Thing".to_string()),
+        );
+        let mut root_substitution = HashMap::new();
+        root_substitution.insert(
+            "T".to_string(),
+            Type::Named("__rl_mod_1_a_5_Thing".to_string()),
+        );
+        let module_specialization =
+            WasmCodeGen::generic_specialization_name("render", &type_params, &module_substitution);
+        let root_specialization =
+            WasmCodeGen::generic_specialization_name("render", &type_params, &root_substitution);
+        assert_ne!(module_specialization, root_specialization);
+        assert!(module_specialization.contains("$sid$"));
+        assert!(root_specialization.contains("$sid$"));
+
+        let module_function = WasmCodeGen::generic_specialization_name(
+            "__rl$mod_1_a_6_render",
+            &type_params,
+            &root_substitution,
+        );
+        let root_function = WasmCodeGen::generic_specialization_name(
+            "__rl_mod_1_a_6_render",
+            &type_params,
+            &root_substitution,
+        );
+        assert_ne!(module_function, root_function);
     }
 }

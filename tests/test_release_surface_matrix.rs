@@ -34,6 +34,12 @@ const REQUIRED_PHRASES: &[&str] = &[
     "no host-visible enum ABI",
     "Generic/recursive enums and `?`",
     "ergonomic `?` propagation is not implemented",
+    "Method-only forms",
+    "Concrete record `takes`",
+    "Generic `of` bounds",
+    "Standard `Display`",
+    "Dispatch is static and monomorphized to direct method calls",
+    "Associated types, generic forms, default methods",
     "Exported generic/composite host ABI as design gap",
     "before `--check` success or code generation",
     "Source-level record exports no host ABI",
@@ -59,19 +65,6 @@ const OUTSIDE_GATE_SURFACES: &[OutsideGateSurface] = &[
             "Temporal Affine Types (TAT)",
             "outside the default v0.0.1 gate",
             "Temporal Resource Management (Experimental / Outside v0.0.1 Default Gate)",
-        ],
-    },
-    OutsideGateSurface {
-        label: "source-level form/takes",
-        release_phrases: &[
-            "Source-level `form` / `takes`",
-            "Reserved for a later type-system pass",
-        ],
-        spec_phrases: &[
-            "Source-level declarations spelled `form` / `takes`",
-            "reserved design-space",
-            "terminology for later type-system work",
-            "outside the default v0.0.1",
         ],
     },
     OutsideGateSurface {
@@ -138,7 +131,7 @@ fun main: () -> Int32 = {
 }
 
 #[test]
-fn v001_release_surface_and_spec_keep_unsupported_forms_outside_default_gate() {
+fn v001_release_surface_and_spec_keep_deferred_surfaces_outside_default_gate() {
     let release_surface = read_fixture(RELEASE_SURFACE_DOC);
     let language_spec = read_fixture(LANGUAGE_SPEC);
 
@@ -149,6 +142,55 @@ fn v001_release_surface_and_spec_keep_unsupported_forms_outside_default_gate() {
         for phrase in surface.spec_phrases {
             assert_doc_contains(LANGUAGE_SPEC, &language_spec, phrase, surface.label);
         }
+    }
+}
+
+#[test]
+fn release_surface_and_spec_define_the_post_v001_static_form_boundary() {
+    let release_surface = read_fixture(RELEASE_SURFACE_DOC);
+    let language_spec = read_fixture(LANGUAGE_SPEC);
+    let normalized_language_spec = normalize_whitespace(&language_spec);
+    let post_v001 = section_after(&release_surface, "## Experimental/Post-v0.0.1");
+
+    for phrase in [
+        "Method-only forms",
+        "fully typed method signatures",
+        "Concrete record `takes`",
+        "concrete, non-generic record",
+        "Generic `of` bounds",
+        "<T of First + Second>",
+        "static and monomorphized to direct method calls",
+        "Standard `Display`",
+        "stderr remains String-only",
+        "Advanced form features",
+        "Associated types, generic forms, default methods",
+    ] {
+        assert_doc_contains(
+            RELEASE_SURFACE_DOC,
+            post_v001,
+            phrase,
+            "post-v0.0.1 static forms",
+        );
+    }
+
+    for phrase in [
+        "Forms, Adoptions, and Form Bounds (Post-v0.0.1)",
+        "surface is intentionally method-only",
+        "A `takes` declaration targets one concrete, non-generic record",
+        "<T of A + B>",
+        "monomorphizes form-bounded generic calls and emits a direct call",
+        "Passing a non-Copy value as `self` consumes it",
+        "does not include associated types, generic forms",
+        "pub form Display",
+        "compiler-provided `Display` adoptions",
+        "eprint` and `eprintln` remain String-only",
+    ] {
+        assert_doc_contains(
+            LANGUAGE_SPEC,
+            &normalized_language_spec,
+            phrase,
+            "post-v0.0.1 static forms",
+        );
     }
 }
 
@@ -258,35 +300,61 @@ fn v001_release_surface_supported_section_does_not_promote_reserved_work() {
 }
 
 #[test]
-fn parser_rejects_source_level_form_takes_with_v001_container_boundary() {
+fn parser_accepts_current_form_takes_and_of_surface() {
+    let source = r#"
+pub form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = {
+        self.text
+    }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+"#;
+    let (remaining, _) = parse_program(source).expect("current form syntax should parse");
+    assert!(
+        remaining.trim().is_empty(),
+        "current form syntax should parse completely, remaining: {remaining:?}"
+    );
+}
+
+#[test]
+fn parser_rejects_deferred_form_features_with_specific_diagnostics() {
     let cases = [
         (
-            "form",
-            r#"form Container<T> {
-    Item
+            "generic form",
+            r#"form Labelled<T> {
+    fun label: (self: Self) -> String
 }
 "#,
+            "generic forms are not supported yet",
         ),
         (
-            "takes",
-            r#"takes List<T> Container {
-    Item = T
+            "associated type",
+            r#"form Container {
+    type Item
 }
 "#,
+            "source-level associated form types are not supported yet",
         ),
     ];
 
-    for (label, source) in cases {
-        let err = parse_program(source).expect_err("source-level form/takes should not parse");
+    for (label, source, expected) in cases {
+        let err = parse_program(source).expect_err("deferred form syntax should not parse");
         let message = format_parse_error(source, err);
 
         assert!(
-            message.contains("source-level `form` / `takes` syntax is unsupported in v0.0.1"),
-            "{label} diagnostic should explain the v0.0.1 form/takes boundary, got: {message}"
-        );
-        assert!(
-            message.contains("compiler-internal Container behavior"),
-            "{label} diagnostic should identify the Container-only internal behavior, got: {message}"
+            message.contains(expected),
+            "{label} diagnostic should explain the deferred form feature, got: {message}"
         );
         for internal in [
             "unexpected input near",

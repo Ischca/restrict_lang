@@ -86,6 +86,40 @@ fun main: () -> Int32 = {
 }
 
 #[test]
+fn release_surface_accepts_exported_form_metadata() {
+    let source = r#"
+pub form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = { self.text }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+
+fun main: () -> String = {
+    Badge { text: "ready" } |> read_label
+}
+"#;
+    let (program, checker) = checked_program(source).expect("form source should type-check");
+    check_v001_release_surface(&program, &checker)
+        .expect("public form metadata should pass release validation");
+    let wat = restrict_lang::WasmCodeGen::new()
+        .generate(&program)
+        .expect("public form metadata should compile without a host export");
+    wat::parse_str(&wat).expect("generated form program should be valid WAT");
+    assert!(wat.contains("source export form Labelled has no direct Wasm export"));
+    assert!(!wat.contains("(export \"Labelled\""));
+}
+
+#[test]
 fn release_surface_rejects_enum_values_in_v001_host_signatures() {
     assert_release_error(
         r#"

@@ -40,8 +40,11 @@ the current post-v0.0.1 compiler surface:
 - scalar host exports only
 - closed, non-generic, non-recursive user enums may use qualified
   `Type::Variant` names and exhaustive matches
-- generic or recursive user enums, enum host ABI, TAT, `form`/`takes`, and
-  composite host ABI marked as future work
+- method-only forms, concrete non-generic record adoptions, and explicit `of`
+  bounds may be documented as current post-v0.0.1 behavior
+- generic or recursive user enums, enum host ABI, TAT, associated types,
+  generic/conditional/enum adoptions, dynamic dispatch, and composite host ABI
+  marked as future work
 
 ## Internal Documentation Policy
 

@@ -1,6 +1,6 @@
 # 標準ライブラリリファレンス
 
-このページは、v0.0.1 の current standard-library surface を説明します。現在の標準関数は主にコンパイラへ登録された組み込み surface として提供され、`std/*.rl` は読者とテスト向けの参照インデックスです。
+このページは、v0.0.1 互換 helper と post-v0.0.1 の Display 追加を含む、現在の standard-library surface を説明します。標準関数は主にコンパイラへ登録された組み込み surface として提供され、`std/*.rl` は読者とテスト向けの参照インデックスです。
 
 ## import について
 
@@ -38,9 +38,34 @@ fun prelude_example: () -> Boolean = {
 
 現在の I/O surface はコンソール出力に限定されています。
 
+`Display` は値を `String` に変換する標準 form です。
+
+```restrict
+form Display {
+    fun display: (self: Self) -> String
+}
+```
+
+コンパイラは `String`、`Int32`、`Int64`、`Float64`、`Boolean`、`Char`、
+`()` の adoption を提供します。ユーザー定義 record は明示的に
+`Display` を adopt します。
+
+```restrict
+record Notice {
+    text: String
+}
+
+Notice takes Display {
+    fun display: (self: Notice) -> String = {
+        self.text
+    }
+}
+```
+
 ```text
-println: (String) -> ()
-print: (String) -> ()
+display: <T of Display>(T) -> String
+println: <T of Display>(T) -> ()
+print: <T of Display>(T) -> ()
 print_int: (Int32) -> ()
 print_float: (Float64) -> ()
 eprint: (String) -> ()
@@ -51,11 +76,19 @@ eprintln: (String) -> ()
 fun io_example: () -> () = {
     "Hello" |> print
     "World" |> println
-    42 |> print_int
+    42 |> print
+    Notice { text: "record も出力できます" } |> println
     3.14 |> print_float
     "error" |> eprintln
 }
 ```
+
+`print_int` と `print_float` は互換 helper として残ります。`eprint` と
+`eprintln` は String 専用です。form の選択は静的で、コンパイル時に
+monomorphize されます。`display`、`print`、`println` はコンパイラ予約の
+直接呼び出し先で、トップレベル関数や通常/custom form の method selector として
+宣言できません。組み込み自体を first-class 関数値として捕捉することもまだ
+できません。
 
 標準入力、ファイル読み書き、ディレクトリ操作は current standard-library surface には含まれていません。
 
@@ -215,7 +248,9 @@ fun standard_library_flow: () -> Boolean = {
 - 標準入力とファイルシステム
 - 時刻、乱数、ネットワーク、プロセス管理
 - 反復子 trait とカスタム iterator
-- Display、Debug、Hash などの trait 実装
+- Debug、Hash など Display 以外の標準 form
+- associated type、generic form、default method、conditional/generic/enum
+  adoption、dynamic dispatch
 - macro ベースのフォーマット API
 - try-style early return operator
 

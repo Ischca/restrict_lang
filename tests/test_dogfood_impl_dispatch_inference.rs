@@ -76,11 +76,11 @@ fn dogfood_impl_dispatch_inference_example_generates_valid_wat() {
     let wat = compile_to_wat(source).expect("impl dispatch dogfood should compile to WAT");
 
     assert!(
-        wat.contains("ServiceSignal_risk"),
+        wat.contains("__restrict_impl@536572766963655369676e616c@7269736b"),
         "WAT should include ServiceSignal impl method lowering:\n{wat}"
     );
     assert!(
-        wat.contains("RolloutSignal_risk"),
+        wat.contains("__restrict_impl@526f6c6c6f75745369676e616c@7269736b"),
         "WAT should include RolloutSignal impl method lowering:\n{wat}"
     );
     assert!(

@@ -9,6 +9,8 @@ Restrict Languageは、以下のユニークな特徴を持つ静的型付けコ
 - 日本語の構文に着想を得た**OSV（目的語-主語-動詞）語順**
 - 各値が最大1回しか使用されないことを保証する**アフィン型システム**
 - 修飾されたバリアントと網羅的な`match`を持つ**閉じたユーザー定義enum**
+- `form`、具体recordの`takes`、`of`境界による**静的ポリモーフィズム**
+- scalarと明示的に採用したrecordに対する**Display出力**
 - `freeze`と`clone`操作を持つ**プロトタイプベースのレコード**
 - ガベージコレクタを持たない**WebAssemblyファースト**設計
 - WebAssemblyコンポーネントモデルとWITによる**相互運用性**
@@ -78,7 +80,7 @@ fun error_code: (error: ParseError) -> Int32 = {
 
 payloadなしの値は`() ParseError::Empty`のように構築します。`match`はすべてのバリアントを扱う必要があります。`pub enum`はRestrictソースモジュール間で公開できますが、ユーザー定義enumを直接渡すhost-visible WebAssembly ABIはまだありません。エラー伝播は`match`で明示し、`?`演算子は未実装です。
 
-v0.0.1の公開リリースにはユーザー定義enumは含まれていませんでした。この節は現在のpost-v0.0.1追加分を説明しています。
+v0.0.1の公開リリースにはユーザー定義enumやsource-level formは含まれていませんでした。この節と[Form と静的ポリモーフィズム](./guide/forms.md)は現在のpost-v0.0.1追加分を説明しています。
 
 ### 4. プロトタイプベース継承
 
@@ -113,7 +115,7 @@ Restrictは以下のファーストクラスサポートを持つWebAssemblyに�
 
 1. [インストール](./getting-started/installation.md) - 開発環境のセットアップ
 2. [Hello World](./getting-started/hello-world.md) - 最初のRestrictプログラムを書く
-3. [Warderパッケージマネージャー](./getting-started/warder.md) - パッケージ管理について学ぶ
+3. [Warderパッケージマネージャー](./guide/warder.md) - パッケージ管理について学ぶ
 
 ## サンプルプログラム
 

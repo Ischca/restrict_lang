@@ -18,15 +18,17 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
 }
 
 fn assert_specialized_function_and_call(wat: &str, function_name: &str) {
-    let function_decl = format!("(func ${function_name}");
-    let function_call = format!("call ${function_name}");
+    let function_decl = format!("(func ${function_name}$sid$");
+    let function_call = format!("call ${function_name}$sid$");
 
     assert!(
         wat.contains(&function_decl),
         "expected specialized function `{function_name}` in WAT:\n{wat}"
     );
     assert!(
-        wat.lines().map(str::trim).any(|line| line == function_call),
+        wat.lines()
+            .map(str::trim)
+            .any(|line| line.starts_with(&function_call)),
         "expected specialized call `{function_name}` in WAT:\n{wat}"
     );
 }
@@ -832,9 +834,9 @@ fun main: () -> List<Int32> = {
 
     let wat = compile_to_wat(source).expect("local generic mapper should compile");
 
-    assert!(wat.contains("(func $keep__Int32"));
-    assert!(wat.contains("(func $fnref_keep__Int32_"));
-    assert!(wat.contains("call $keep__Int32"));
+    assert!(wat.contains("(func $keep__Int32$sid$"));
+    assert!(wat.contains("(func $fnref_keep__Int32$sid$"));
+    assert!(wat.contains("call $keep__Int32$sid$"));
     let wasm = wat::parse_str(&wat)
         .unwrap_or_else(|err| panic!("local generic mapper WAT should parse: {err}\n\n{wat}"));
     wasmparser::Validator::new()
@@ -858,8 +860,8 @@ fun main: () -> List<Int32> = {
     let wat = compile_to_wat(source)
         .expect("zero-arg generic function value should specialize from expected return type");
 
-    assert!(wat.contains("(func $empty_values__Int32"));
-    assert!(wat.contains("fnref_empty_values__Int32_"));
+    assert!(wat.contains("(func $empty_values__Int32$sid$"));
+    assert!(wat.contains("(func $fnref_empty_values__Int32$sid$"));
     let wasm = wat::parse_str(&wat).unwrap_or_else(|err| {
         panic!("zero-arg generic function value WAT should parse: {err}\n\n{wat}");
     });
@@ -887,9 +889,9 @@ fun main: () -> List<Int32> = {
 
     let wat = compile_to_wat(source).expect("generic mapper alias chain should compile");
 
-    assert!(wat.contains("(func $keep__Int32"));
-    assert!(wat.contains("(func $fnref_keep__Int32_"));
-    assert!(wat.contains("call $keep__Int32"));
+    assert!(wat.contains("(func $keep__Int32$sid$"));
+    assert!(wat.contains("(func $fnref_keep__Int32$sid$"));
+    assert!(wat.contains("call $keep__Int32$sid$"));
     let wasm = wat::parse_str(&wat).unwrap_or_else(|err| {
         panic!("generic mapper alias chain WAT should parse: {err}\n\n{wat}")
     });
@@ -916,9 +918,9 @@ fun main: () -> Int32 = {
 
     let wat = compile_to_wat(source).expect("generic alias-chain pipe should compile");
 
-    assert!(wat.contains("(func $keep__Int32"));
-    assert!(wat.contains("(func $fnref_keep__Int32_"));
-    assert!(wat.contains("call $keep__Int32"));
+    assert!(wat.contains("(func $keep__Int32$sid$"));
+    assert!(wat.contains("(func $fnref_keep__Int32$sid$"));
+    assert!(wat.contains("call $keep__Int32$sid$"));
     let wasm = wat::parse_str(&wat)
         .unwrap_or_else(|err| panic!("generic alias-chain pipe WAT should parse: {err}\n\n{wat}"));
     wasmparser::Validator::new()
@@ -950,6 +952,61 @@ fun main: (flag: Boolean) -> Int32 = {
     wasmparser::Validator::new()
         .validate_all(&wasm)
         .unwrap_or_else(|err| panic!("then-produced lambda Wasm should validate: {err}\n\n{wat}"));
+}
+
+#[test]
+fn then_callable_mixes_lambda_and_resolved_local_callable() {
+    let source = r#"
+fun main: (flag: Boolean) -> Int32 = {
+    mut val source = |value| value;
+    val typed: Int32 -> Int32 = source;
+    val choose = flag then {
+        |value| value + 1
+    } else {
+        source
+    };
+    41 |> choose
+}
+"#;
+
+    let wat = compile_to_wat(source)
+        .expect("then callable should lower both a lambda and a resolved local callable arm");
+    let wasm = wat::parse_str(&wat)
+        .unwrap_or_else(|err| panic!("mixed then callable WAT should parse: {err}\n\n{wat}"));
+    wasmparser::Validator::new()
+        .validate_all(&wasm)
+        .unwrap_or_else(|err| panic!("mixed then callable Wasm should validate: {err}\n\n{wat}"));
+}
+
+#[test]
+fn annotated_mutable_callable_assignment_uses_runtime_local() {
+    let source = r#"
+fun increment: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+fun double: (value: Int32) -> Int32 = {
+    value * 2
+}
+
+fun main: () -> Int32 = {
+    mut val apply: Int32 -> Int32 = increment;
+    apply = double;
+    21 |> apply
+}
+"#;
+
+    let wat = compile_to_wat(source)
+        .expect("an explicitly typed mutable callable should support runtime reassignment");
+    assert!(
+        wat.contains("call_indirect"),
+        "the reassigned callable should be invoked through its runtime local:\n{wat}"
+    );
+    let wasm = wat::parse_str(&wat)
+        .unwrap_or_else(|err| panic!("callable assignment WAT should parse: {err}\n\n{wat}"));
+    wasmparser::Validator::new()
+        .validate_all(&wasm)
+        .unwrap_or_else(|err| panic!("callable assignment Wasm should validate: {err}\n\n{wat}"));
 }
 
 #[test]
@@ -1123,6 +1180,30 @@ fun main: () -> List<Int32> = {
     wasmparser::Validator::new()
         .validate_all(&wasm)
         .unwrap_or_else(|err| panic!("map alias Wasm should validate: {err}\n\n{wat}"));
+}
+
+#[test]
+fn prelude_map_alias_chain_with_projections_compiles_to_wat() {
+    let source = r#"
+fun main: () -> List<Int32> = {
+    val numbers = [1, 2, 3];
+    val apply_map = map;
+    val map_again = apply_map;
+    (numbers, |value| value + 1) map_again
+}
+"#;
+
+    let wat = compile_to_wat(source).expect("projection-bearing map alias chain should compile");
+
+    assert!(
+        wat.contains("$map_loop"),
+        "map alias chain should use the same inline map lowering:\n{wat}"
+    );
+    let wasm = wat::parse_str(&wat)
+        .unwrap_or_else(|err| panic!("map alias chain WAT should parse: {err}\n\n{wat}"));
+    wasmparser::Validator::new()
+        .validate_all(&wasm)
+        .unwrap_or_else(|err| panic!("map alias chain Wasm should validate: {err}\n\n{wat}"));
 }
 
 #[test]

@@ -114,7 +114,7 @@ fn check_export_decl(
 
     match export_decl.item.as_ref() {
         TopDecl::Function(func) => check_exported_function(program, func, checker, profile),
-        TopDecl::Record(_) | TopDecl::Enum(_) => Ok(()),
+        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Form(_) => Ok(()),
         TopDecl::Binding(binding) => check_exported_binding(binding, checker, profile),
         TopDecl::Export(_) => Err(ReleaseSurfaceError::new(match profile {
             HostAbiProfile::V001Scalar => "Nested exports are unsupported in v0.0.1".to_string(),
@@ -122,10 +122,10 @@ fn check_export_decl(
                 "Nested exports are unsupported by host ABI profile flat-record-v1".to_string()
             }
         })),
-        TopDecl::Impl(_) | TopDecl::Context(_) => {
+        TopDecl::Impl(_) | TopDecl::Takes(_) | TopDecl::Context(_) => {
             Err(ReleaseSurfaceError::new(match profile {
-                HostAbiProfile::V001Scalar => "Only concrete function exports, source-level record or enum exports, and constant global exports are supported in v0.0.1".to_string(),
-                HostAbiProfile::FlatRecordV1 => "Only concrete function exports, source-level record or enum exports, and constant scalar global exports are supported by host ABI profile flat-record-v1".to_string(),
+                HostAbiProfile::V001Scalar => "Only concrete function exports, source-level record, enum, or form metadata exports, and constant global exports are supported in v0.0.1".to_string(),
+                HostAbiProfile::FlatRecordV1 => "Only concrete function exports, source-level record, enum, or form metadata exports, and constant scalar global exports are supported by host ABI profile flat-record-v1".to_string(),
             }))
         }
     }
@@ -704,6 +704,25 @@ fn reject_tat_top_decl(decl: &TopDecl) -> Result<(), ReleaseSurfaceError> {
         TopDecl::Binding(binding) => reject_tat_binding(binding)?,
         TopDecl::Impl(impl_block) => {
             for func in &impl_block.functions {
+                reject_tat_function(func)?;
+            }
+        }
+        TopDecl::Form(form) => {
+            for method in &form.methods {
+                for param in &method.params {
+                    reject_tat_type(
+                        &format!("form method '{}::{}'", form.name, method.name),
+                        &param.ty,
+                    )?;
+                }
+                reject_tat_type(
+                    &format!("form method '{}::{}'", form.name, method.name),
+                    &method.return_type,
+                )?;
+            }
+        }
+        TopDecl::Takes(takes) => {
+            for func in &takes.functions {
                 reject_tat_function(func)?;
             }
         }

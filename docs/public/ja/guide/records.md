@@ -163,11 +163,15 @@ fun main: () -> String = {
 - レコードを処理する公開例では、メソッド風の呼び出しではなくOSV形式を使います。
 - パターンマッチングでは、必要に応じてワイルドカード`_`やスプレッド`..._`で残りのケースを扱います。
 
-## v0.0.1の範囲外
+## 現在の境界
+
+現在のpost-v0.0.1 compilerでは、具体的な非ジェネリックrecordを
+`RecordName takes FormName`でformへ適合できます。メソッドの`self`は通常の
+アフィン引数なので、非Copy recordを消費します。
 
 次の項目は将来の設計対象です。
 
-- メソッド定義用の専用構文
+- generic/conditional/enum adoption、default method、dynamic dispatch
 - デフォルトフィールド値
 - フィールド単位の可視性修飾子
 - 派生実装

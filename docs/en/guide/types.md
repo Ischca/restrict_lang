@@ -343,7 +343,8 @@ These remain outside the current compiler surface:
 - Direct host WebAssembly ABI for user enum values
 - Ergonomic `?` propagation
 - Direct WebAssembly ABI for exported generic functions and host-visible record values
-- User-defined `form`, `takes`, `of`, traits/typeclasses, and associated-type declarations
+- Associated types, generic forms, default form methods, conditional or generic
+  adoptions, enum adoptions, and dynamic dispatch
 - Borrowed slices/references
 - Traditional function-first calls
 

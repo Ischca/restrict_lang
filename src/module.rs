@@ -1,8 +1,8 @@
 use crate::ast::{
-    AssignStmt, BindDecl, BlockExpr, CallExpr, CloneExpr, Expr, ExprKind, FieldInit, FunDecl,
-    ImplBlock, ImportItems, MatchArm, MatchExpr, Pattern, PipeExpr, PipeTarget, Program,
-    PrototypeCloneExpr, RecordDecl, RecordLit, Stmt, ThenExpr, TopDecl, Type, WhileExpr, WithExpr,
-    WithLifetimeExpr,
+    AssignStmt, BindDecl, BlockExpr, CallExpr, CloneExpr, Expr, ExprKind, FieldInit, FormDecl,
+    FunDecl, ImplBlock, ImportItems, MatchArm, MatchExpr, Pattern, PipeExpr, PipeTarget, Program,
+    PrototypeCloneExpr, RecordDecl, RecordLit, Stmt, TakesDecl, ThenExpr, TopDecl, Type, WhileExpr,
+    WithExpr, WithLifetimeExpr,
 };
 use crate::diagnostics::format_parse_error;
 use crate::parser::parse_program;
@@ -290,6 +290,7 @@ impl ModuleResolver {
         let mut declared_names = HashSet::new();
 
         for decl in program.declarations {
+            reject_reserved_prelude_form_decl(&decl, module_path)?;
             match decl {
                 TopDecl::Export(export_decl) => {
                     let name = get_decl_name(&export_decl.item)?;
@@ -310,10 +311,10 @@ impl ModuleResolver {
                     exports.insert(name, *export_decl.item);
                 }
                 decl => {
-                    // Multiple impl blocks for one receiver are legal and do
-                    // not declare the receiver again.
+                    // Impl and takes blocks attach behavior to an existing
+                    // receiver and do not declare that receiver again.
                     let declared_name = match &decl {
-                        TopDecl::Impl(_) => None,
+                        TopDecl::Impl(_) | TopDecl::Takes(_) => None,
                         _ => get_top_decl_name_for_collision(&decl)?,
                     };
                     if let Some(name) = declared_name {
@@ -735,7 +736,10 @@ impl ModuleResolver {
         exports.sort_by(|left, right| left.0.cmp(right.0));
         for (_, decl) in exports {
             let renamed = rename_top_decl(decl.clone(), &rename_map)?;
-            if matches!(decl, TopDecl::Record(_) | TopDecl::Enum(_)) {
+            if matches!(
+                decl,
+                TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Form(_)
+            ) {
                 // Imported public source types stay non-re-exported at the module
                 // graph level, but the flattened compiler program must retain
                 // their source-public provenance for downstream validation.
@@ -752,6 +756,23 @@ impl ModuleResolver {
         emitted_modules.insert(module_key);
         Ok(declarations)
     }
+}
+
+fn reject_reserved_prelude_form_decl(decl: &TopDecl, module_path: &[String]) -> Result<()> {
+    let decl = match decl {
+        TopDecl::Export(export) => export.item.as_ref(),
+        other => other,
+    };
+    if let TopDecl::Form(form) = decl {
+        if matches!(form.name.as_str(), "Display" | "Container") {
+            bail!(
+                "Form '{}' is compiler-provided or compiler-internal and cannot be redeclared in module {}",
+                form.name,
+                module_path.join(".")
+            );
+        }
+    }
+    Ok(())
 }
 
 fn roots_overlap(left: &Path, right: &Path) -> bool {
@@ -925,6 +946,8 @@ fn rename_top_decl(decl: TopDecl, rename_map: &HashMap<String, String>) -> Resul
     match decl {
         TopDecl::Record(record) => Ok(TopDecl::Record(rename_record_decl(record, rename_map))),
         TopDecl::Enum(enum_decl) => Ok(TopDecl::Enum(rename_enum_decl(enum_decl, rename_map))),
+        TopDecl::Form(form) => Ok(TopDecl::Form(rename_form_decl(form, rename_map))),
+        TopDecl::Takes(takes) => Ok(TopDecl::Takes(rename_takes_decl(takes, rename_map))),
         TopDecl::Function(function) => Ok(TopDecl::Function(rename_fun_decl(function, rename_map))),
         TopDecl::Binding(binding) => {
             Ok(TopDecl::Binding(rename_bind_decl_top(binding, rename_map)))
@@ -959,6 +982,11 @@ fn rename_record_decl(mut record: RecordDecl, rename_map: &HashMap<String, Strin
         .map(|param| param.name.clone())
         .collect::<HashSet<_>>();
     record.name = rename_name(record.name, rename_map);
+    for type_param in &mut record.type_params {
+        for form_name in &mut type_param.of_forms {
+            *form_name = rename_name(form_name.clone(), rename_map);
+        }
+    }
     for field in &mut record.fields {
         field.ty = rename_type(field.ty.clone(), rename_map, &type_params);
     }
@@ -968,6 +996,38 @@ fn rename_record_decl(mut record: RecordDecl, rename_map: &HashMap<String, Strin
     record
 }
 
+fn rename_form_decl(mut form: FormDecl, rename_map: &HashMap<String, String>) -> FormDecl {
+    // `Self` is a form-local placeholder, not a module declaration.
+    let type_params = HashSet::from(["Self".to_string()]);
+    form.name = rename_name(form.name, rename_map);
+    for method in &mut form.methods {
+        for param in &mut method.params {
+            param.ty = rename_type(param.ty.clone(), rename_map, &type_params);
+        }
+        method.return_type = rename_type(method.return_type.clone(), rename_map, &type_params);
+    }
+    form
+}
+
+fn rename_takes_decl(mut takes: TakesDecl, rename_map: &HashMap<String, String>) -> TakesDecl {
+    takes.target = rename_name(takes.target, rename_map);
+    takes.form_name = rename_name(takes.form_name, rename_map);
+    takes.functions = takes
+        .functions
+        .into_iter()
+        .map(|function| {
+            // A method selector belongs to the form contract and must remain
+            // stable even when declarations referenced by its signature/body
+            // are module-qualified.
+            let selector = function.name.clone();
+            let mut function = rename_fun_decl(function, rename_map);
+            function.name = selector;
+            function
+        })
+        .collect();
+    takes
+}
+
 fn rename_fun_decl(mut function: FunDecl, rename_map: &HashMap<String, String>) -> FunDecl {
     let type_params = function
         .type_params
@@ -975,6 +1035,11 @@ fn rename_fun_decl(mut function: FunDecl, rename_map: &HashMap<String, String>) 
         .map(|param| param.name.clone())
         .collect::<HashSet<_>>();
     function.name = rename_name(function.name, rename_map);
+    for type_param in &mut function.type_params {
+        for form_name in &mut type_param.of_forms {
+            *form_name = rename_name(form_name.clone(), rename_map);
+        }
+    }
     for param in &mut function.params {
         param.ty = rename_type(param.ty.clone(), rename_map, &type_params);
     }
@@ -1599,6 +1664,7 @@ fn get_top_decl_name_for_collision(decl: &TopDecl) -> Result<Option<String>> {
             Pattern::Ident(name) => Ok(Some(name.clone())),
             _ => Ok(None),
         },
+        TopDecl::Takes(_) => Ok(None),
         _ => Ok(Some(get_decl_name(decl)?)),
     }
 }
@@ -1610,6 +1676,7 @@ fn get_top_decl_emit_key(decl: &TopDecl) -> Result<Option<String>> {
             "impl:{}:{:?}",
             impl_block.target, impl_block.functions
         ))),
+        TopDecl::Takes(takes) => Ok(Some(format!("takes:{}:{}", takes.target, takes.form_name))),
         other => get_top_decl_name_for_collision(other)
             .map(|name| name.map(|name| format!("decl:{}", name))),
     }
@@ -1621,6 +1688,7 @@ fn get_decl_name(decl: &TopDecl) -> Result<String> {
         TopDecl::Function(fun) => Ok(fun.name.clone()),
         TopDecl::Record(rec) => Ok(rec.name.clone()),
         TopDecl::Enum(enum_decl) => Ok(enum_decl.name.clone()),
+        TopDecl::Form(form) => Ok(form.name.clone()),
         TopDecl::Context(ctx) => Ok(ctx.name.clone()),
         TopDecl::Binding(bind) => {
             // Complex top-level binding exports need a public naming design before
@@ -1633,6 +1701,7 @@ fn get_decl_name(decl: &TopDecl) -> Result<String> {
             }
         }
         TopDecl::Impl(impl_block) => Ok(impl_block.target.clone()),
+        TopDecl::Takes(_) => bail!("Takes declarations do not introduce a declaration name"),
         TopDecl::Export(_) => bail!("Nested exports are not allowed"),
     }
 }

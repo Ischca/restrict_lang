@@ -189,6 +189,34 @@ fun main: () -> Int32 = {
 }
 ```
 
+## Form と静的ポリモーフィズム（post-v0.0.1）
+
+現在のcompilerでは、method-only `form`、具体的な非ジェネリックrecordの
+`takes`、`<T of Form>`境界を利用できます。呼び出しは静的に選択され、具体型
+ごとにmonomorphizeされます。
+
+```restrict
+form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = {
+        self.text
+    }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+```
+
+詳細とDisplay出力については[Form と静的ポリモーフィズム](forms.md)を参照してください。
+
 ## 現在の範囲外
 
 次の項目は設計または実装が進行中であり、公開ガイドでは現在の実行可能なRestrictコードとして扱いません。
@@ -197,7 +225,8 @@ fun main: () -> Int32 = {
 - 借用スライスや参照型中心のAPI
 - ジェネリックenum、再帰enum、複数の直接payloadを持つバリアント
 - ユーザー定義enumのhost-visible WebAssembly ABIと`?`演算子
-- トレイトと関連型
+- associated type、generic form、default method、generic/conditional/enum
+  adoption、dynamic dispatch
 - 旧来のRust風コレクションAPIやパス構文
 - 文字列インポート、インポート別名、パッケージ単位の標準ライブラリ集約
 
@@ -205,4 +234,4 @@ fun main: () -> Int32 = {
 
 ## まとめ
 
-現在の型システムでは、基本型、組み込みジェネリック型、レコード型、関数型に加え、制約されたユーザー定義enumを利用できます。例では常に`val`または`mut val`を使い、関数呼び出しとenum構築は`value |> function`、`(a, b) function`、`() Type::Variant`などのOSV形式に統一します。
+現在の型システムでは、基本型、組み込みジェネリック型、レコード型、関数型に加え、制約されたユーザー定義enumと静的formを利用できます。例では常に`val`または`mut val`を使い、関数呼び出しとenum構築は`value |> function`、`(a, b) function`、`() Type::Variant`などのOSV形式に統一します。

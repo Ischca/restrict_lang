@@ -90,10 +90,12 @@ export fun public_answer: () -&gt; Int32 = {
 
       <h2>What comes after the preview</h2>
       <p>
-        User-defined ADTs, source-level forms and associated types, temporal
-        affine types, and direct composite host values remain design work. The
-        next step is not to infer more syntax at any cost; it is to extend the
-        contract only when diagnostics, lowering, and runtime behavior agree.
+        At the v0.0.1 tag, user-defined ADTs, source-level forms and associated
+        types, temporal affine types, and direct composite host values remained
+        design work. The current compiler has since added closed enums and a
+        method-only, statically dispatched form slice. Associated types,
+        generic forms or adoptions, default methods, dynamic dispatch, TAT, and
+        the composite host ABI remain deliberately deferred.
       </p>
       <div class="article-actions">
         <a class="button primary" href="../compiler/?code=fun%20main%3A%20()%20-%3E%20Int32%20%3D%20%7B%0A%20%20%20%2042%0A%7D">Try a typed example</a>

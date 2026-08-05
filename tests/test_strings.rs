@@ -65,8 +65,9 @@ fn test_string_println() {
 
     let wat = compile_to_wat(source).unwrap();
 
-    // Verify println function is called
-    assert!(wat.contains("call $println"));
+    // Source-level println lowers through Display to the reserved string writer.
+    assert!(wat.contains("call $__restrict_form@446973706c6179@537472696e67@646973706c6179"));
+    assert!(wat.contains("call $__restrict_println_string"));
     // Verify fd_write is imported
     assert!(wat.contains("fd_write"));
 }

@@ -101,22 +101,32 @@ fn playground_editor_overlay_keeps_caret_and_highlight_metrics_aligned() {
 }
 
 #[test]
-fn playground_explains_type_specific_print_functions() {
+fn playground_exposes_forms_and_display_output() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let html = read_fixture(root, "web/index.html");
     let app = read_fixture(root, "web/app.js");
 
     for required in [
-        "function formatCompilerDiagnostic(message, source)",
-        "Type mismatch: expected String, found (Int32|Float64)",
-        "print accepts String",
-        "print_int",
-        "print_float",
+        "formsDisplay",
+        "42 |> print",
+        "Notice takes Display",
+        "fun display: (self: Notice) -> String",
+        "Notice { text: \"records too\" } |> println",
     ] {
         assert!(
             app.contains(required),
-            "playground print diagnostic should include `{required}`"
+            "playground Forms and Display example should include `{required}`"
         );
     }
+
+    assert!(
+        html.contains(r#"<option value="formsDisplay">Forms and Display</option>"#),
+        "playground should expose the Forms and Display preset"
+    );
+    assert!(
+        !app.contains("print accepts String"),
+        "playground should not show the obsolete String-only print hint"
+    );
 }
 
 #[test]

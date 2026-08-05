@@ -67,4 +67,8 @@ async function runProgram(source, label) {
 
 assert.equal(await runProgram(exampleSource('function'), 'default playground example'), '42\n');
 assert.equal(await runProgram(exampleSource('enumResult'), 'enum Result playground example'), '-2\n');
-console.log('web runtime smoke: 42, -2');
+assert.equal(
+    await runProgram(exampleSource('formsDisplay'), 'Forms and Display playground example'),
+    '42 · records too\n'
+);
+console.log('web runtime smoke: 42, -2, 42 · records too');

@@ -72,6 +72,14 @@ fn diagnostic_range_for_message(source: &str, message: &str) -> Range {
         }
     }
 
+    for marker in ["form '", "Form '"] {
+        if let Some(form_name) = quoted_name_from_message(message, marker) {
+            if let Some(range) = declaration_name_range(source, "form", form_name) {
+                return range;
+            }
+        }
+    }
+
     Range::new(Position::new(0, 0), Position::new(0, 1))
 }
 
@@ -370,6 +378,9 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
         CompletionItem::new_simple("fun".to_string(), "Function definition".to_string()),
         CompletionItem::new_simple("record".to_string(), "Record type definition".to_string()),
         CompletionItem::new_simple("enum".to_string(), "Closed enum definition".to_string()),
+        CompletionItem::new_simple("form".to_string(), "Behavioral contract".to_string()),
+        CompletionItem::new_simple("takes".to_string(), "Form adoption".to_string()),
+        CompletionItem::new_simple("of".to_string(), "Generic form constraint".to_string()),
         CompletionItem::new_simple("then".to_string(), "Conditional expression".to_string()),
         CompletionItem::new_simple("else".to_string(), "Else clause".to_string()),
         CompletionItem::new_simple("while".to_string(), "While loop".to_string()),
@@ -383,11 +394,15 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
         CompletionItem::new_simple("None".to_string(), "No value".to_string()),
         CompletionItem::new_simple(
             "println".to_string(),
-            "fun println: (s: String) -> ()".to_string(),
+            "fun println: <T of Display>(value: T) -> ()".to_string(),
         ),
         CompletionItem::new_simple(
             "print".to_string(),
-            "fun print: (s: String) -> ()".to_string(),
+            "fun print: <T of Display>(value: T) -> ()".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "display".to_string(),
+            "fun display: <T of Display>(value: T) -> String".to_string(),
         ),
         CompletionItem::new_simple(
             "print_int".to_string(),
@@ -622,6 +637,124 @@ fn enum_hover_info(ast: &crate::ast::Program, word: &str) -> Option<String> {
         return None;
     }
     enum_variant_hover_info(ast, owner, word)
+}
+
+fn form_decl_from_top_decl(decl: &crate::ast::TopDecl) -> Option<&crate::ast::FormDecl> {
+    match decl {
+        crate::ast::TopDecl::Form(form) => Some(form),
+        crate::ast::TopDecl::Export(export) => match export.item.as_ref() {
+            crate::ast::TopDecl::Form(form) => Some(form),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn form_hover_info(ast: &crate::ast::Program, word: &str) -> Option<String> {
+    let form = ast.declarations.iter().find_map(|decl| {
+        let form = form_decl_from_top_decl(decl)?;
+        (form.name == word).then_some(form)
+    })?;
+
+    Some(format!(
+        "**form {}**\n\nCompile-time contract with {} required method{}.",
+        form.name,
+        form.methods.len(),
+        if form.methods.len() == 1 { "" } else { "s" }
+    ))
+}
+
+fn form_document_symbol(form: &crate::ast::FormDecl, text: &str) -> Option<DocumentSymbol> {
+    let selection_range = declaration_name_range(text, "form", &form.name)?;
+    let lines = text.lines().collect::<Vec<_>>();
+    let start_line = selection_range.start.line as usize;
+    let mut end_line = start_line;
+    let mut depth = 0_u32;
+    let mut opened = false;
+
+    for (line_index, line) in lines.iter().enumerate().skip(start_line) {
+        end_line = line_index;
+        for ch in line.chars() {
+            match ch {
+                '{' => {
+                    opened = true;
+                    depth += 1;
+                }
+                '}' if opened => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end_line = line_index;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if opened && depth == 0 {
+            break;
+        }
+    }
+
+    let children = form
+        .methods
+        .iter()
+        .filter_map(|method| {
+            lines[start_line..=end_line]
+                .iter()
+                .enumerate()
+                .find_map(|(relative_line, line)| {
+                    let marker = format!("fun {}", method.name);
+                    let marker_start = line.find(&marker)?;
+                    let name_start = marker_start + "fun ".len();
+                    let line_index = start_line + relative_line;
+                    Some(document_symbol(
+                        method.name.clone(),
+                        Some(format!(
+                            "Required method with {} parameters -> {}",
+                            method.params.len(),
+                            method.return_type
+                        )),
+                        SymbolKind::METHOD,
+                        Range::new(
+                            Position::new(line_index as u32, 0),
+                            Position::new(line_index as u32, line.encode_utf16().count() as u32),
+                        ),
+                        Range::new(
+                            Position::new(
+                                line_index as u32,
+                                byte_to_character(line, name_start) as u32,
+                            ),
+                            Position::new(
+                                line_index as u32,
+                                byte_to_character(line, name_start + method.name.len()) as u32,
+                            ),
+                        ),
+                    ))
+                })
+        })
+        .collect::<Vec<_>>();
+
+    let mut symbol = document_symbol(
+        form.name.clone(),
+        Some(format!(
+            "Form with {} required method{}",
+            form.methods.len(),
+            if form.methods.len() == 1 { "" } else { "s" }
+        )),
+        SymbolKind::INTERFACE,
+        Range::new(
+            Position::new(start_line as u32, 0),
+            Position::new(
+                end_line as u32,
+                lines
+                    .get(end_line)
+                    .map_or(0, |line| line.encode_utf16().count() as u32),
+            ),
+        ),
+        selection_range,
+    );
+    symbol.children = (!children.is_empty()).then_some(children);
+    Some(symbol)
 }
 
 fn qualified_enum_variant_at_word(
@@ -1084,9 +1217,24 @@ impl RestrictLanguageServer {
                 .map(|range| Location::new(uri.clone(), range));
         }
 
+        if ast
+            .declarations
+            .iter()
+            .any(|decl| form_decl_from_top_decl(decl).is_some_and(|form| form.name == word))
+        {
+            // A resolved imported form is present in the AST but has no
+            // declaration range in this document. Do not jump to an `of` or
+            // `takes` use merely because it appears on a `fun` line.
+            return declaration_name_range(text, "form", word)
+                .map(|range| Location::new(uri.clone(), range));
+        }
+
         // Search for function and type definitions.
         for (line_idx, line) in lines.iter().enumerate() {
-            if (line.contains("fun ") || line.contains("record ") || line.contains("enum "))
+            if (line.contains("fun ")
+                || line.contains("record ")
+                || line.contains("enum ")
+                || line.contains("form "))
                 && line.contains(word)
             {
                 if let Some(pos) = line.find(word) {
@@ -1155,6 +1303,18 @@ impl RestrictLanguageServer {
                     "**enum** - Closed sum type definition\n\nDefines qualified variants with zero or one payload."
                         .to_string(),
                 ),
+                "form" => Some(
+                    "**form** - Behavioral contract\n\nDeclares required, fully typed methods for compile-time dispatch."
+                        .to_string(),
+                ),
+                "takes" => Some(
+                    "**takes** - Form adoption\n\nImplements a form for a concrete, non-generic record."
+                        .to_string(),
+                ),
+                "of" => Some(
+                    "**of** - Form constraint\n\nConstrains a generic type parameter to one or more forms."
+                        .to_string(),
+                ),
                 "then" => Some(
                     "**then** - Conditional expression\n\nConditional branch keyword.".to_string(),
                 ),
@@ -1178,7 +1338,9 @@ impl RestrictLanguageServer {
                 _ => {
                     // Check if it's a standard library function
                     match word {
-                        "println" => Some("**fun println: (s: String) -> ()**\n\nPrints a string followed by a newline.".to_string()),
+                        "display" => Some("**fun display: &lt;T of Display&gt;(value: T) -&gt; String**\n\nFormats a Display value as a string.".to_string()),
+                        "print" => Some("**fun print: &lt;T of Display&gt;(value: T) -&gt; ()**\n\nPrints a Display value.".to_string()),
+                        "println" => Some("**fun println: &lt;T of Display&gt;(value: T) -&gt; ()**\n\nPrints a Display value followed by a newline.".to_string()),
                         "abs" => Some("**fun abs: (x: Int32) -> Int32**\n\nReturns the absolute value of an integer.".to_string()),
                         "max" => Some("**fun max: (a: Int32, b: Int32) -> Int32**\n\nReturns the maximum of two integers.".to_string()),
                         "min" => Some("**fun min: (a: Int32, b: Int32) -> Int32**\n\nReturns the minimum of two integers.".to_string()),
@@ -1187,6 +1349,7 @@ impl RestrictLanguageServer {
                         "option_unwrap_or" => Some("**fun option_unwrap_or: <T>(opt: Option<T>, default: T) -> T**\n\nUnwraps an Option or returns a default value.".to_string()),
                         _ => enum_variant
                             .or_else(|| enum_hover_info(ast, word))
+                            .or_else(|| form_hover_info(ast, word))
                             .or_else(|| Some(format!("Symbol: **{}**", word))),
                     }
                 }
@@ -1228,6 +1391,13 @@ impl RestrictLanguageServer {
                         ));
                         break;
                     }
+                }
+                continue;
+            }
+
+            if let Some(form) = form_decl_from_top_decl(decl) {
+                if let Some(symbol) = form_document_symbol(form, text) {
+                    symbols.push(symbol);
                 }
                 continue;
             }
@@ -1503,6 +1673,9 @@ impl RestrictLanguageServer {
             ("freeze", SEMANTIC_TOKEN_KEYWORD),
             ("record", SEMANTIC_TOKEN_KEYWORD),
             ("enum", SEMANTIC_TOKEN_KEYWORD),
+            ("form", SEMANTIC_TOKEN_KEYWORD),
+            ("takes", SEMANTIC_TOKEN_KEYWORD),
+            ("of", SEMANTIC_TOKEN_KEYWORD),
             ("true", SEMANTIC_TOKEN_KEYWORD),
             ("false", SEMANTIC_TOKEN_KEYWORD),
             ("Some", SEMANTIC_TOKEN_KEYWORD),
@@ -1510,11 +1683,12 @@ impl RestrictLanguageServer {
         ];
 
         for (keyword, token_type) in keywords {
-            if remaining.starts_with(keyword) {
+            if let Some(suffix) = remaining.strip_prefix(keyword) {
                 // Check word boundary
-                let end_idx = char_idx + keyword.len();
-                if end_idx >= line.len()
-                    || !line.chars().nth(end_idx).unwrap_or(' ').is_alphanumeric()
+                if suffix
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_identifier_continue(ch))
                 {
                     return Some((keyword.len(), token_type));
                 }
@@ -1853,6 +2027,9 @@ fun main: () -> Int32 = {
         assert!(joined_details.contains("fun list_is_empty: <T>(list: List<T>) -> Boolean"));
         assert!(joined_details.contains("fun assert: (condition: Boolean, message: String) -> ()"));
         assert!(items.iter().any(|item| item.label == "enum"));
+        assert!(items.iter().any(|item| item.label == "form"));
+        assert!(items.iter().any(|item| item.label == "takes"));
+        assert!(items.iter().any(|item| item.label == "of"));
 
         for item in &items {
             assert_ne!(item.label, "let");
@@ -1985,6 +2162,83 @@ fun message_error: (message: String) -> ParseError = {
         assert_eq!(definition.uri, uri);
         assert_eq!(definition.range.start, Position::new(2, 4));
         assert_eq!(definition.range.end, Position::new(2, 11));
+    }
+
+    #[test]
+    fn form_symbols_hover_and_definitions_are_available() {
+        let text = r#"pub form Showable {
+    fun show: (self: Self) -> String
+    fun size: (self: Self) -> Int32
+}
+
+record Widget { label: String }
+
+Widget takes Showable {
+    fun show: (self: Widget) -> String = { self.label }
+    fun size: (self: Widget) -> Int32 = { 1 }
+}
+
+fun render: <T of Showable>(value: T) -> String = {
+    (value) show
+}
+"#;
+        let ast = parse_lsp_test_program(text);
+
+        let symbols = RestrictLanguageServer::extract_document_symbols(&ast, text);
+        let form_symbol = symbols
+            .iter()
+            .find(|symbol| symbol.name == "Showable")
+            .expect("public form should have a document symbol");
+        assert_eq!(form_symbol.kind, SymbolKind::INTERFACE);
+        assert_eq!(
+            form_symbol.detail.as_deref(),
+            Some("Form with 2 required methods")
+        );
+        let children = form_symbol
+            .children
+            .as_ref()
+            .expect("form methods should be nested symbols");
+        assert_eq!(
+            children
+                .iter()
+                .map(|child| (child.name.as_str(), child.kind))
+                .collect::<Vec<_>>(),
+            vec![("show", SymbolKind::METHOD), ("size", SymbolKind::METHOD)]
+        );
+
+        assert_eq!(
+            form_hover_info(&ast, "Showable").as_deref(),
+            Some("**form Showable**\n\nCompile-time contract with 2 required methods.")
+        );
+
+        let uri = Url::parse("file:///tmp/restrict/form.rl").unwrap();
+        let bound_reference = position_of_word(text, "Showable", 2);
+        let definition =
+            RestrictLanguageServer::find_definition_at_position(&uri, &ast, text, &bound_reference)
+                .expect("an of constraint should resolve to the local form declaration");
+        assert_eq!(definition.range.start, Position::new(0, 9));
+        assert_eq!(definition.range.end, Position::new(0, 17));
+    }
+
+    #[test]
+    fn imported_form_definition_does_not_jump_to_a_current_file_use() {
+        let resolved_source = r#"form Showable {
+    fun show: (self: Self) -> String
+}
+fun render: <T of Showable>(value: T) -> String = { (value) show }
+"#;
+        let ast = parse_lsp_test_program(resolved_source);
+        let current_text = "fun render: <T of Showable>(value: T) -> String = { (value) show }\n";
+        let uri = Url::parse("file:///tmp/restrict/imported-form.rl").unwrap();
+        let reference = position_of_word(current_text, "Showable", 0);
+
+        assert!(RestrictLanguageServer::find_definition_at_position(
+            &uri,
+            &ast,
+            current_text,
+            &reference,
+        )
+        .is_none());
     }
 
     #[test]
@@ -2156,6 +2410,26 @@ fun current: () -> Status = { () Status::Ready }
         assert!(decoded.contains(&(3, 13, 2, SEMANTIC_TOKEN_NUMBER)));
         assert!(decoded.contains(&(4, 0, 3, SEMANTIC_TOKEN_KEYWORD)));
         assert!(decoded.contains(&(4, 14, 4, SEMANTIC_TOKEN_STRING)));
+    }
+
+    #[test]
+    fn form_surface_words_are_semantic_keywords_with_identifier_boundaries() {
+        assert_eq!(
+            RestrictLanguageServer::classify_token_at_position("form Showable", 0),
+            Some((4, SEMANTIC_TOKEN_KEYWORD))
+        );
+        assert_eq!(
+            RestrictLanguageServer::classify_token_at_position("Widget takes Showable", 7),
+            Some((5, SEMANTIC_TOKEN_KEYWORD))
+        );
+        assert_eq!(
+            RestrictLanguageServer::classify_token_at_position("T of Showable", 2),
+            Some((2, SEMANTIC_TOKEN_KEYWORD))
+        );
+        assert_eq!(
+            RestrictLanguageServer::classify_token_at_position("of_form", 0),
+            None
+        );
     }
 
     fn assert_no_legacy_public_syntax(text: &str) {
@@ -2404,6 +2678,21 @@ impl LanguageServer for RestrictLanguageServer {
                             };
                             completions.push(CompletionItem::new_simple(qualified, detail));
                         }
+                        continue;
+                    }
+
+                    if let Some(form) = form_decl_from_top_decl(decl) {
+                        if crate::module::is_internal_module_name(&form.name) {
+                            continue;
+                        }
+                        completions.push(CompletionItem::new_simple(
+                            form.name.clone(),
+                            format!(
+                                "Form with {} required method{}",
+                                form.methods.len(),
+                                if form.methods.len() == 1 { "" } else { "s" }
+                            ),
+                        ));
                         continue;
                     }
 

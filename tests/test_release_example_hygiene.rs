@@ -41,6 +41,7 @@ const RELEASE_EXAMPLES: &[&str] = &[
     "examples/generic_function_value_pipeline.rl",
     "examples/release_decision_engine.rl",
     "examples/typed_impl_dispatch.rl",
+    "examples/forms_display.rl",
     "examples/context_policy_gate.rl",
     "examples/subscription_billing.rl",
     "examples/modular_release_gate.rl",
@@ -308,6 +309,50 @@ fn authoritative_specs_include_impl_release_surface() {
     assert!(
         ebnf.contains("impl_decl") && ebnf.contains("\"impl\" identifier"),
         "RESTRICT_LANG_EBNF.md should include impl block grammar"
+    );
+}
+
+#[test]
+fn authoritative_specs_and_examples_include_static_forms() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let spec = read_source(root, "LANGUAGE_SPECIFICATION.md");
+    let ebnf = read_source(root, "RESTRICT_LANG_EBNF.md");
+    let example = read_source(root, "examples/forms_display.rl");
+
+    for required in [
+        "Forms, Adoptions, and Form Bounds (Post-v0.0.1)",
+        "<T of A + B>",
+        "monomorphizes form-bounded generic calls",
+        "Form calls use ordinary affine function semantics",
+        "as `self` consumes it",
+        "pub form Display",
+    ] {
+        assert!(
+            spec.contains(required),
+            "LANGUAGE_SPECIFICATION.md should document static forms with `{required}`"
+        );
+    }
+    for required in ["form_decl", "takes_decl", "form_bounds"] {
+        assert!(
+            ebnf.contains(required),
+            "RESTRICT_LANG_EBNF.md should make `{required}` reachable"
+        );
+    }
+    for required in [
+        "Notice takes Display",
+        "fun display: (self: Notice) -> String",
+        "42 |> print",
+    ] {
+        assert!(
+            example.contains(required),
+            "examples/forms_display.rl should demonstrate `{required}`"
+        );
+    }
+    assert!(
+        KNOWN_EXPERIMENTAL_OR_STALE_EXAMPLES
+            .iter()
+            .any(|entry| entry.path == "examples/form_container.rl"),
+        "the stale form_container sketch should remain explicitly non-release"
     );
 }
 
@@ -612,7 +657,7 @@ fn assert_current_example_syntax(label: &str, source: &str) {
         assert_no_stale_function_declaration(label, line_number, line);
         assert_no_object_style_method_call(label, line_number, line);
         assert_no_traditional_function_call(label, line_number, line);
-        assert_no_future_form_syntax(label, line_number, line);
+        assert_no_deferred_form_syntax(label, line_number, line);
     }
 }
 
@@ -722,20 +767,16 @@ fn assert_no_traditional_function_call(label: &str, line_number: usize, line: &s
     }
 }
 
-fn assert_no_future_form_syntax(label: &str, line_number: usize, line: &str) {
+fn assert_no_deferred_form_syntax(label: &str, line_number: usize, line: &str) {
     let code = line.split("//").next().unwrap_or(line).trim();
 
     assert!(
-        !contains_word(code, "form"),
-        "{label}:{line_number} should not use future-only `form` declarations in release examples"
-    );
-    assert!(
-        !contains_word(code, "takes"),
-        "{label}:{line_number} should not use future-only `takes` adoption syntax in release examples"
-    );
-    assert!(
         !(contains_word(code, "where") && contains_word(code, "of")),
-        "{label}:{line_number} should not use future-only `where T of Form` bounds in release examples"
+        "{label}:{line_number} should use current `<T of Form>` bounds instead of deferred `where T of Form` syntax"
+    );
+    assert!(
+        !contains_word(code, "trait"),
+        "{label}:{line_number} should use current `form` declarations instead of trait syntax"
     );
 }
 

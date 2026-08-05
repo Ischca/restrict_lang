@@ -571,10 +571,12 @@ fn typed_impl_dispatch_example_compiles_to_wat() {
 
     let wat = compile_to_wat(&source).expect("typed impl dispatch example should compile");
 
-    assert!(wat.contains("(func $HealthSignal_risk_score"));
-    assert!(wat.contains("(func $RolloutSignal_risk_score"));
-    assert!(wat.contains("call $HealthSignal_risk_score"));
-    assert!(wat.contains("call $RolloutSignal_risk_score"));
+    let health_risk = "__restrict_impl@4865616c74685369676e616c@7269736b5f73636f7265";
+    let rollout_risk = "__restrict_impl@526f6c6c6f75745369676e616c@7269736b5f73636f7265";
+    assert!(wat.contains(&format!("(func ${health_risk}")));
+    assert!(wat.contains(&format!("call ${health_risk}")));
+    assert!(wat.contains(&format!("(func ${rollout_risk}")));
+    assert!(wat.contains(&format!("call ${rollout_risk}")));
     assert!(wat.contains("(func $decide_dispatch"));
 }
 
@@ -728,8 +730,8 @@ fn modular_policy_context_gate_example_compiles_with_imported_context_and_impl_d
     assert!(wat.contains("(func $modular_policy_context_score"));
     assert!(wat.contains("(func $decide_review"));
     assert!(wat.contains("call $decide_review"));
-    assert!(wat.contains("ReviewSignal_policy_penalty"));
-    assert!(wat.contains("RolloutSignal_policy_penalty"));
+    assert!(wat.contains("__restrict_impl@5265766965775369676e616c@706f6c6963795f70656e616c7479"));
+    assert!(wat.contains("__restrict_impl@526f6c6c6f75745369676e616c@706f6c6963795f70656e616c7479"));
 
     let (mut store, instance) = instantiate_wat("modular policy-context gate runtime", &wat);
     let modular_policy_context_score = instance

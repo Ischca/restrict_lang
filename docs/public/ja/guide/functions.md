@@ -191,12 +191,15 @@ fun transform: (value: Int32, f: Int32 -> Int32) -> Int32 = {
 }
 ```
 
-## v0.0.1 の current example ではないもの
+## 現在の境界
 
-次の機能は、仕様上予約済みまたは将来の設計対象です。このページでは current Restrict のコード例として扱いません。
+現在のpost-v0.0.1 compilerでは、method-only `form`、具体recordの`takes`、
+`<T of Form>`境界を利用できます。詳細は[Form と静的ポリモーフィズム](forms.md)を参照してください。
 
-- レコードに対するメソッド定義構文
-- trait や impl による型クラス風の拡張
+次の機能は将来の設計対象です。
+
+- associated type、generic form、default method
+- generic/conditional/enum adoption と dynamic dispatch
 - 属性付きテスト関数
 - 関数名を先に置く呼び出し形式
 - 標準コレクション用の包括的な高階 API

@@ -36,7 +36,12 @@ the release intentionally presents as stable, explicitly rejected, or reserved.
 | Surface | Reason |
 | --- | --- |
 | TAT outside default gate | Temporal Affine Types are planned/experimental and remain outside the v0.0.1 default release gate. |
-| Source-level `form` / `takes` | Reserved for a later type-system pass. v0.0.1 only exposes the compiler-internal `Container` behavior for `List` and `Option`. |
+| Source-level `form` / `takes` in the v0.0.1 tag | Historically reserved. v0.0.1 only exposed the compiler-internal `Container` behavior for `List` and `Option`; the current post-v0.0.1 slice is recorded below. |
 | Closed user-defined enums | Added after v0.0.1. The current compiler accepts non-generic, non-recursive enums whose variants have zero or one payload. Constructors use qualified `Type::Variant` names in OSV order, patterns use the same qualified names, and matches are exhaustive. `pub enum` crosses source-module boundaries only and creates no host-visible enum ABI. |
+| Method-only forms | Added after v0.0.1. `form Name` declares fully typed method signatures; forms are non-generic and have no associated types or default method bodies. |
+| Concrete record `takes` | Added after v0.0.1. A concrete, non-generic record can adopt a form by supplying every method body. `takes` declarations cannot be public, generic, conditional, or target an enum. |
+| Generic `of` bounds | Added after v0.0.1. `<T of Form>` and `<T of First + Second>` require adoptions at each concrete call. Dispatch is static and monomorphized to direct method calls. |
+| Standard `Display` | Added after v0.0.1. `display`, `print`, and `println` accept `<T of Display>`; `String`, `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `Unit` have compiler-provided adoptions. Records adopt Display explicitly. stderr remains String-only and `print_int` / `print_float` remain compatibility helpers. |
 | Generic/recursive enums and `?` | Remain future work. Custom closed enums can be used as `Result<T, CustomError>` errors, but ergonomic `?` propagation is not implemented. |
+| Advanced form features | Associated types, generic forms, default methods, generic or conditional adoptions, enum adoptions, and dynamic dispatch remain future work. |
 | Generic export ABI | Host-visible WebAssembly ABI rules for exported generic and composite values are still design work, not a supported release contract. |

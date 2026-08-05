@@ -477,8 +477,8 @@ fn has_form_rejects_non_adopted_type() {
     let message = err.to_string();
     assert!(matches!(err, TypeError::UnsupportedFeature(_)));
     assert!(
-        message.contains("built-in Container constraint"),
-        "error should not imply user-defined forms are current syntax, got: {message}"
+        message.contains("String does not take form Container"),
+        "error should identify the missing form adoption, got: {message}"
     );
 }
 
@@ -860,8 +860,8 @@ fn unresolved_form_reports_form_bound_origin() {
         "unexpected error: {message}"
     );
     assert!(
-        message.contains("built-in Container constraint"),
-        "error should identify Container as a built-in constraint, got: {message}"
+        message.contains("could not prove") && message.contains("takes form Container"),
+        "error should identify the unresolved Container form bound, got: {message}"
     );
     assert_user_diagnostic_does_not_expose_inference_internals(&message);
 }

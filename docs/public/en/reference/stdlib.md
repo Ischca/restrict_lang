@@ -1,9 +1,10 @@
 # Standard Library Reference
 
-This page documents the v0.0.1 standard-library surface that is currently
-registered by the compiler. The files under `std/` are source-adjacent indexes
-for readers and tests; the runtime behavior is implemented in the compiler and
-WebAssembly code generator.
+This page documents the compiler-registered standard-library surface. It keeps
+v0.0.1 compatibility helpers while recording the current post-v0.0.1 Display
+addition. The files under `std/` are source-adjacent indexes for readers and
+tests; runtime behavior is implemented in the compiler and WebAssembly code
+generator.
 
 The current standard library is intentionally small. APIs listed as absent below
 are not user-facing v0.0.1 features, even if their names appear in older
@@ -15,7 +16,7 @@ Standard-library calls use the same OSV syntax as user functions:
 
 ```restrict
 "hello" |> println
-42 |> print_int
+42 |> print
 (left, right) max
 values |> list_count
 (maybe_value, fallback) option_unwrap_or
@@ -62,11 +63,35 @@ the current compiler-registered surface.
 
 ## IO
 
+`Display` is the standard compiler form for turning a value into `String`:
+
+```restrict
+form Display {
+    fun display: (self: Self) -> String
+}
+```
+
+The compiler provides adoptions for `String`, `Int32`, `Int64`, `Float64`,
+`Boolean`, `Char`, and `()`. A user record adopts `Display` explicitly:
+
+```restrict
+record Notice {
+    text: String
+}
+
+Notice takes Display {
+    fun display: (self: Notice) -> String = {
+        self.text
+    }
+}
+```
+
 Current IO functions:
 
 ```text
-println: (String) -> ()
-print: (String) -> ()
+display: <T of Display>(T) -> String
+println: <T of Display>(T) -> ()
+print: <T of Display>(T) -> ()
 print_int: (Int32) -> ()
 print_float: (Float64) -> ()
 eprint: (String) -> ()
@@ -77,11 +102,19 @@ Canonical call shapes:
 
 ```restrict
 "hello" |> println
-"hello" |> print
-42 |> print_int
+42 |> print
+Notice { text: "records too" } |> println
 3.14 |> print_float
 "error" |> eprintln
 ```
+
+`print_int` and `print_float` remain compatibility helpers. `eprint` and
+`eprintln` intentionally remain String-only. Form selection is static and
+monomorphized; these functions do not use runtime interface objects.
+`display`, `print`, and `println` are compiler-reserved direct call targets and
+cannot be declared as top-level source functions or ordinary/custom-form method
+selectors. The builtins themselves are direct-call-only and cannot be captured
+as first-class function values.
 
 Stdin and file APIs are outside the v0.0.1 std surface. That includes
 `readLine`, `readFile`, `writeFile`, path metadata, directory operations, and
@@ -241,21 +274,21 @@ The code generator lowers these through runtime helpers such as
 `string_concat` and `string_eq`. Length, parsing, formatting, case conversion,
 splitting, and trimming helpers are outside the current std surface.
 
-## Outside The v0.0.1 Std Surface
+## Outside The Current Std Surface
 
-The following areas are absent from the compiler-registered v0.0.1 surface:
+The following areas are absent from the current compiler-registered surface:
 
 - File-system and path APIs
 - Time and date APIs
 - Synchronization primitives
 - Borrowing/reference-oriented memory helpers
-- Conversion traits
-- Hashing traits
-- Display/debug formatting traits
+- Conversion forms
+- Hashing forms
+- Debug formatting
 - Random-number APIs
 - Networking APIs
 - Environment and process APIs
-- User-defined traits/typeclasses and associated types
+- Associated types and advanced form features
 
 When adding std documentation, document only APIs backed by compiler/runtime
 behavior and keep design sketches out of current-reference examples.

@@ -235,6 +235,43 @@ WebAssembly host ABI is still outside the v0.0.1 release surface. Exported
 records are source-level module metadata only and do not emit direct
 host-visible Wasm exports.
 
+## Forms And Static Polymorphism
+
+The current post-v0.0.1 compiler supports non-generic, method-only forms.
+Generic functions can require one or more forms with `of`; the compiler checks
+each concrete call and monomorphizes it to a direct adoption method call.
+
+```restrict
+pub form Labelled {
+    fun label: (self: Self) -> String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -> String = {
+        self.text
+    }
+}
+
+fun read_label: <T of Labelled>(value: T) -> String = {
+    value |> label
+}
+```
+
+Multiple bounds use `+`, as in `<T of Labelled + Comparable>`. Form methods
+must have complete parameter and return types. An adoption targets one concrete,
+non-generic record and supplies every method body. `pub form` is importable by
+other Restrict source modules; a `takes` declaration itself is not public.
+
+Because `self` is an ordinary affine parameter, calling a form method consumes
+a non-Copy receiver unless the method returns a replacement value. This initial
+slice has no associated types, generic forms, default method bodies,
+conditional or generic adoptions, enum adoptions, or dynamic dispatch. See
+[Forms and Static Polymorphism](./forms.md) for the complete boundary.
+
 ## Option And Result
 
 `Option` and `Result` are built-in generic sum types with constructor and
@@ -343,7 +380,8 @@ These remain outside the current compiler surface:
 - Direct host WebAssembly ABI for user enum values
 - Ergonomic `?` propagation
 - Direct WebAssembly ABI for exported generic functions and host-visible record values
-- User-defined `form`, `takes`, `of`, traits/typeclasses, and associated-type declarations
+- Associated types, generic forms, default form methods, conditional or generic
+  adoptions, enum adoptions, and dynamic dispatch
 - Borrowed slices/references
 - Traditional function-first calls
 

@@ -74,6 +74,22 @@ fun collapse: (result: Result<Int32, CustomError>) -> Int32 = {
 
 fun main: () -> () = {
     1 |> decode |> collapse |> print_int
+}`,
+    formsDisplay: `// Display lets one output function handle many concrete types.
+record Notice {
+    text: String
+}
+
+Notice takes Display {
+    fun display: (self: Notice) -> String = {
+        self.text
+    }
+}
+
+fun main: () -> () = {
+    42 |> print
+    " · " |> print
+    Notice { text: "records too" } |> println
 }`
 };
 
@@ -128,18 +144,8 @@ function errorMessage(error) {
     return String(error);
 }
 
-function formatCompilerDiagnostic(message, source) {
-    const diagnostic = message || 'The compiler returned an unknown error.';
-    const mismatch = diagnostic.match(/Type mismatch: expected String, found (Int32|Float64)\b/);
-    const usesStringPrint = /\|>\s*print\b/.test(source);
-
-    if (!mismatch || !usesStringPrint) {
-        return diagnostic;
-    }
-
-    const valueType = mismatch[1];
-    const printFunction = valueType === 'Int32' ? 'print_int' : 'print_float';
-    return `${diagnostic}\n\nHint: print accepts String. Use ${printFunction} for ${valueType} values.`;
+function formatCompilerDiagnostic(message) {
+    return message || 'The compiler returned an unknown error.';
 }
 
 function applyCompilationOutputs(result) {
@@ -246,7 +252,7 @@ async function run() {
         const result = compile_restrict_lang(sourceValue());
 
         if (!result.success) {
-            setOutput('error', formatCompilerDiagnostic(result.error, sourceValue()), true);
+            setOutput('error', formatCompilerDiagnostic(result.error), true);
             if (result.tokens) {
                 setOutput('tokens', result.tokens);
             }

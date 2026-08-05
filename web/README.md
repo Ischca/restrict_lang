@@ -8,7 +8,7 @@ A web-based compiler for the Restrict Language that runs entirely in the browser
 - **Interactive Interface**: Compile, lex, and parse actions from a browser editor
 - **Restrict Syntax Highlighting**: The source editor highlights keywords, types, literals, comments, strings, numbers, and OSV operators
 - **Step-by-Step Analysis**: View tokens, AST, and compilation errors separately
-- **Example Programs**: Built-in examples using current v0.0.1 public syntax
+- **Example Programs**: Built-in examples using the current public syntax, including Forms and Display
 - **No Server Required**: Runs entirely in the browser
 
 ## Building
@@ -62,7 +62,7 @@ The web compiler consists of:
 - **JavaScript Frontend**: Web interface that calls the compiler, instantiates generated WebAssembly, captures WASI stdout/stderr, and keeps the source editor highlight layer in sync
 - **HTML/CSS**: User interface and styling
 
-## Supported v0.0.1 Syntax Surface
+## Supported Syntax Surface
 
 The web demo examples use the current public syntax surface. Some planned or
 experimental language features may be reserved by the parser or documented in
@@ -74,16 +74,24 @@ browser demo.
 - Variable declarations with `val` and `mut val`
 - OSV calls such as `value |> function` and `(left, right) add`
 - Record declarations and literals with colon-delimited fields
+- Method-only `form` declarations, concrete record `takes` adoptions, and `of` bounds
+- Display-polymorphic `display`, `print`, and `println`
 - `then`/`else` expressions, pattern matching, type checking, and WASM-oriented output where implemented
+
+The initial form slice is deliberately static: forms and adoptions are
+non-generic, form methods have complete signatures, and each adoption provides
+every method body. Associated types, default methods, conditional or generic
+adoptions, enum adoptions, and dynamic dispatch are not supported.
 
 ## Browser Runtime
 
 `Run` assembles the generated WAT inside the compiler bundle, instantiates the
 program with a small browser-side WASI bridge, invokes the generated `_start`
 entry point, and displays stdout and stderr in the Output tab. A runnable
-program needs a zero-argument `main`; use `print`, `println`, `print_int`, or
-`print_float` to produce visible output. The source and generated program stay
-in the browser.
+program needs a zero-argument `main`; use Display-polymorphic `print` or
+`println` to produce visible output. The String-only `eprint` and `eprintln`
+write to stderr, while `print_int` and `print_float` remain available for
+compatibility. The source and generated program stay in the browser.
 
 ## Browser Compatibility
 

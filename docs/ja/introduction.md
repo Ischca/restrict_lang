@@ -86,7 +86,7 @@ Restrictは以下のファーストクラスサポートを持つWebAssemblyに�
 
 1. [インストール](./getting-started/installation.md) - 開発環境のセットアップ
 2. [Hello World](./getting-started/hello-world.md) - 最初のRestrictプログラムを書く
-3. [Warderパッケージマネージャー](./getting-started/warder.md) - パッケージ管理について学ぶ
+3. [Warderパッケージマネージャー](./guide/warder.md) - パッケージ管理について学ぶ
 
 ## サンプルプログラム
 

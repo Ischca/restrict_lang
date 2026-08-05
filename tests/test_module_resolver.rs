@@ -91,6 +91,21 @@ fn internal_module_name(module_path: &[&str], name: &str) -> String {
     mangled
 }
 
+fn impl_method_symbol(target: &str, method: &str) -> String {
+    fn encode(component: &str) -> String {
+        component.as_bytes().iter().fold(
+            String::with_capacity(component.len() * 2),
+            |mut encoded, byte| {
+                use std::fmt::Write;
+                write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+                encoded
+            },
+        )
+    }
+
+    format!("__restrict_impl@{}@{}", encode(target), encode(method))
+}
+
 struct RemoveFileOnDrop(PathBuf);
 
 impl Drop for RemoveFileOnDrop {
@@ -193,6 +208,145 @@ fun main: () -> Int32 = {
     assert!(wat.contains("call $public_score"));
 
     let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn resolver_renames_forms_takes_and_of_constraints_together() {
+    let dir = temp_module_dir("form_exports");
+    fs::write(
+        dir.join("contract.rl"),
+        r#"
+pub form Showable {
+    fun show: (self: Self) -> String
+}
+
+record HiddenWidget {
+    label: String
+}
+
+record HiddenBox<T of Showable> {
+    value: T
+}
+
+HiddenWidget takes Showable {
+    fun show: (self: HiddenWidget) -> String = {
+        self.label
+    }
+}
+
+pub fun render: <T of Showable>(value: HiddenBox<T>) -> String = {
+    "ready"
+}
+"#,
+    )
+    .expect("module source should be written");
+
+    // Import only the function so the form and concrete takes target must use
+    // the resolver's private canonical aliases throughout the flattened AST.
+    let root = parse_complete(
+        r#"
+import contract.{render}
+
+fun main: () -> String = {
+    "ready"
+}
+"#,
+    );
+
+    let mut resolver = ModuleResolver::new();
+    resolver
+        .add_search_path(dir.clone())
+        .expect("module search root should be registered");
+    let resolved = resolver
+        .resolve_program_imports(root)
+        .expect("form metadata and takes bodies should resolve");
+
+    let internal_form = internal_module_name(&["contract"], "Showable");
+    let internal_target = internal_module_name(&["contract"], "HiddenWidget");
+    let internal_box = internal_module_name(&["contract"], "HiddenBox");
+
+    assert!(resolved.declarations.iter().any(|decl| {
+        matches!(
+            decl,
+            TopDecl::Export(export)
+                if matches!(export.item.as_ref(), TopDecl::Form(form) if form.name == internal_form)
+        )
+    }));
+
+    let takes = resolved
+        .declarations
+        .iter()
+        .find_map(|decl| match decl {
+            TopDecl::Takes(takes) => Some(takes),
+            _ => None,
+        })
+        .expect("takes metadata should be emitted");
+    assert_eq!(takes.target, internal_target);
+    assert_eq!(takes.form_name, internal_form);
+    assert_eq!(takes.functions[0].name, "show");
+    assert_eq!(
+        takes.functions[0].params[0].ty,
+        Type::Named(internal_target.clone())
+    );
+
+    let render = resolved
+        .declarations
+        .iter()
+        .find_map(|decl| match decl {
+            TopDecl::Function(function) if function.name == "render" => Some(function),
+            _ => None,
+        })
+        .expect("requested function should keep its root-visible alias");
+    assert_eq!(render.type_params[0].of_forms, vec![internal_form.clone()]);
+    assert_eq!(
+        render.params[0].ty,
+        Type::Generic(internal_box.clone(), vec![Type::Named("T".to_string())])
+    );
+
+    let bounded_record = resolved
+        .declarations
+        .iter()
+        .find_map(|decl| match decl {
+            TopDecl::Record(record) if record.name == internal_box => Some(record),
+            _ => None,
+        })
+        .expect("private bounded record dependency should use its canonical name");
+    assert_eq!(bounded_record.type_params[0].of_forms, vec![internal_form]);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn resolver_rejects_reserved_prelude_forms_before_private_name_mangling() {
+    for form_name in ["Display", "Container"] {
+        let root = parse_complete(
+            r#"
+import contract.{score}
+fun main: () -> Int32 = { () score }
+"#,
+        );
+        let mut sources = HashMap::new();
+        sources.insert(
+            "contract".to_string(),
+            format!(
+                r#"
+form {form_name} {{
+    fun marker: (self: Self) -> Int32
+}}
+pub fun score: () -> Int32 = {{ 42 }}
+"#
+            ),
+        );
+
+        let error = resolve_program_imports_with_module_source_map(root, sources)
+            .expect_err("private module forms must not hide reserved prelude declarations");
+        let message = error.to_string();
+        assert!(
+            message.contains(form_name)
+                && (message.contains("compiler-provided") || message.contains("compiler-internal")),
+            "diagnostic should identify the reserved form before mangling: {message}"
+        );
+    }
 }
 
 #[test]
@@ -1272,10 +1426,12 @@ fun main: () -> Int32 = {
     let wat = codegen
         .generate(&resolved)
         .expect("resolved program with private impl should generate WAT");
-    assert!(wat.contains(&format!("(func ${internal_signal}_risk_score")));
-    assert!(wat.contains(&format!("(func ${internal_signal}_risk_bucket")));
-    assert!(wat.contains(&format!("call ${internal_signal}_risk_score")));
-    assert!(wat.contains(&format!("call ${internal_signal}_risk_bucket")));
+    let risk_score = impl_method_symbol(&internal_signal, "risk_score");
+    let risk_bucket = impl_method_symbol(&internal_signal, "risk_bucket");
+    assert!(wat.contains(&format!("(func ${risk_score}")));
+    assert!(wat.contains(&format!("(func ${risk_bucket}")));
+    assert!(wat.contains(&format!("call ${risk_score}")));
+    assert!(wat.contains(&format!("call ${risk_bucket}")));
     assert!(wat.contains("call $public_score"));
 
     let _ = fs::remove_dir_all(dir);
@@ -1827,6 +1983,90 @@ export fun public_score: () -> Int32 = {
             .call(&mut store, ())
             .expect("namespace regression export should execute"),
         42
+    );
+}
+
+#[test]
+fn generic_specializations_distinguish_module_and_root_nominal_types() {
+    let root = parse_complete(
+        r#"
+import a.{Scored, score_value, module_score}
+
+record __rl_mod_1_a_5_Thing {
+    value: Int32
+}
+
+__rl_mod_1_a_5_Thing takes Scored {
+    fun score: (self: __rl_mod_1_a_5_Thing) -> Int32 = {
+        self.value
+    }
+}
+
+export fun specialization_identity_score: () -> Int32 = {
+    val from_module = () module_score;
+    val from_root = __rl_mod_1_a_5_Thing { value: 32 } |> score_value;
+    from_module + from_root
+}
+"#,
+    );
+
+    let mut sources = HashMap::new();
+    sources.insert(
+        "a".to_string(),
+        r#"
+pub form Scored {
+    fun score: (self: Self) -> Int32
+}
+
+record Thing {
+    value: Int32
+}
+
+Thing takes Scored {
+    fun score: (self: Thing) -> Int32 = {
+        self.value
+    }
+}
+
+pub fun score_value: <T of Scored>(value: T) -> Int32 = {
+    value |> score
+}
+
+pub fun module_score: () -> Int32 = {
+    Thing { value: 10 } |> score_value
+}
+"#
+        .to_string(),
+    );
+
+    let resolved = resolve_program_imports_with_module_source_map(root, sources)
+        .expect("module and root nominal identities should resolve");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("both nominal types should satisfy the imported form");
+    let mut codegen = WasmCodeGen::new();
+    let wat = codegen
+        .generate(&resolved)
+        .expect("both generic form specializations should generate WAT");
+
+    assert_eq!(
+        wat.matches("(func $score_value____rl_mod_1_a_5_Thing$sid$")
+            .count(),
+        2,
+        "the readable legacy prefix may collide, but specialization identities must not:\n{wat}"
+    );
+
+    let (mut store, instance) = instantiate_wat("generic nominal specialization identity", &wat);
+    let score = instance
+        .get_typed_func::<(), i32>(&store, "specialization_identity_score")
+        .expect("specialization identity regression export should be host-callable");
+    assert_eq!(
+        score
+            .call(&mut store, ())
+            .expect("both specializations should execute their own form adoption"),
+        42,
+        "module and root specializations must keep distinct form behavior"
     );
 }
 

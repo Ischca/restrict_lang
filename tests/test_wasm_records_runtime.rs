@@ -447,6 +447,49 @@ export fun method_score: () -> Float64 = {
 }
 
 #[test]
+fn impl_method_symbols_do_not_collide_with_each_other_or_source_functions(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+record B {
+    value: Int32
+}
+
+record B_c {
+    value: Int32
+}
+
+fun B_c_d: (value: Int32) -> Int32 = {
+    value + 1
+}
+
+impl B {
+    fun c_d: (self: B) -> Int32 = {
+        self.value
+    }
+}
+
+impl B_c {
+    fun d: (self: B_c) -> Int32 = {
+        self.value
+    }
+}
+
+export fun impl_symbol_collision_score: () -> Int32 = {
+    val source_function = 39 |> B_c_d;
+    val left_method = (B { value: 1 }) c_d;
+    val right_method = (B_c { value: 1 }) d;
+    source_function + left_method + right_method
+}
+"#;
+
+    let (mut store, instance) = instantiate(source)?;
+    let score = instance.get_typed_func::<(), i32>(&store, "impl_symbol_collision_score")?;
+
+    assert_eq!(score.call(&mut store, ())?, 42);
+    Ok(())
+}
+
+#[test]
 fn generic_impl_method_dispatch_executes() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 record ScoreBox {

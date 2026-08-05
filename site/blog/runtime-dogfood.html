@@ -72,9 +72,14 @@ export fun dogfood_score: () -&gt; Int32 = {
         tokens, AST, compiler output, and errors separately. They are not a mock
         interpreter. The compiler is built to WebAssembly and runs locally in the
         page, so a visitor can inspect the same stages the repository tests. The
-        current <strong>Forms and Display</strong> preset also proves visible
-        output from both <code>42 |&gt; print</code> and a record with an explicit
-        Display adoption.
+        curated presets are generated from checked-in Restrict source files,
+        and the release gate executes every runnable example with exact stdout
+        assertions. <strong>Generic form contract</strong> exposes the full
+        <code>form</code>, <code>takes</code>, and <code>of</code> path, while
+        <strong>Display across types</strong> separately proves output from
+        prelude types and a record with an explicit Display adoption. The
+        diagnostics group also asserts an intentional affine
+        use-after-consume error.
       </p>
       <div class="article-actions">
         <a class="button primary" href="../compiler/">Open the playground</a>

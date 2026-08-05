@@ -29,6 +29,7 @@ run_step() {
 }
 
 run_step "Check patch whitespace" git diff --check
+run_step "Check generated playground samples" bash scripts/sync_samples.sh --check
 run_step "Check Rust formatting" cargo fmt --all -- --check
 run_step "Lint workspace" cargo clippy --workspace --locked -- -D warnings
 run_step "Run high-signal regression gates" \

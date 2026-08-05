@@ -1,0 +1,90 @@
+{
+  "groups": [
+    {
+      "id": "start",
+      "title": "Start here"
+    },
+    {
+      "id": "current",
+      "title": "Current compiler"
+    },
+    {
+      "id": "diagnostics",
+      "title": "Diagnostics"
+    }
+  ],
+  "samples": [
+    {
+      "id": "hello",
+      "title": "Hello output",
+      "group": "start",
+      "description": "Run one expression and see its output immediately.",
+      "file": "hello.rl",
+      "kind": "run",
+      "expectedOutput": "Hello, Restrict!\n"
+    },
+    {
+      "id": "functionsOsv",
+      "title": "Functions and OSV",
+      "group": "start",
+      "description": "Put arguments before verbs, then continue the value through a pipe.",
+      "file": "functions_osv.rl",
+      "kind": "run",
+      "expectedOutput": "42\n"
+    },
+    {
+      "id": "records",
+      "title": "Build a record",
+      "group": "start",
+      "description": "Construct a record with colon fields and pass it to a function.",
+      "file": "records.rl",
+      "kind": "run",
+      "expectedOutput": "42\n"
+    },
+    {
+      "id": "optionMatch",
+      "title": "Match an option",
+      "group": "start",
+      "description": "Handle both Some and None with an exhaustive match.",
+      "file": "option_match.rl",
+      "kind": "run",
+      "expectedOutput": "42\n"
+    },
+    {
+      "id": "resultError",
+      "title": "Result with a custom error",
+      "group": "current",
+      "description": "Carry a domain-specific enum through Result and turn the error into useful output.",
+      "file": "result_error.rl",
+      "kind": "run",
+      "expectedOutput": "invalid code\n"
+    },
+    {
+      "id": "formContract",
+      "title": "Generic form contract",
+      "group": "current",
+      "description": "Follow a form from its contract, through a concrete adoption, into an explicit generic bound.",
+      "file": "form_contract.rl",
+      "kind": "run",
+      "expectedOutput": "ready\n"
+    },
+    {
+      "id": "displayTypes",
+      "title": "Display across types",
+      "group": "current",
+      "description": "Use one output function for prelude types and a record that explicitly adopts Display.",
+      "file": "display_types.rl",
+      "kind": "run",
+      "expectedOutput": "42\nbuilt-in String\nrecord adoption\n"
+    },
+    {
+      "id": "affineDiagnostic",
+      "title": "Use-after-consume error",
+      "group": "diagnostics",
+      "description": "See the compiler reject a second use of an affine String binding.",
+      "file": "affine_diagnostic.rl",
+      "kind": "diagnostic",
+      "expectedDiagnostic": "affine type violation"
+    }
+  ]
+}

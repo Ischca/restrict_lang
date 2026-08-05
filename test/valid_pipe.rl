@@ -1,5 +1,5 @@
-fun add = a: Int b: Int { a + b }
-fun inc = x: Int { x + 1 }
+fun add: (a: Int, b: Int) = { a + b }
+fun inc: (x: Int) = { x + 1 }
 
 // Simple pipe
 val x = 42 |> inc

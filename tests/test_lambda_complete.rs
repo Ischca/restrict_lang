@@ -43,7 +43,7 @@ fn test_lambda_examples() {
     // Lambda application with OSV syntax
     check_and_print(
         "Application",
-        r#"fun test = {
+        r#"fun test: () = {
         val add = |x, y| x + y;
         val result = (5, 10) add;
         result
@@ -53,7 +53,7 @@ fn test_lambda_examples() {
     // Higher-order function (returns a function)
     check_and_print(
         "Higher Order",
-        r#"fun make_adder = n: Int32 {
+        r#"fun make_adder: (n: Int32) = {
         val adder = |x| x + n;
         adder
     }"#,
@@ -62,7 +62,7 @@ fn test_lambda_examples() {
     // Lambda capturing variables (closure)
     check_and_print(
         "Closure",
-        r#"fun test = {
+        r#"fun test: () = {
         val x = 10;
         val add_x = |y| x + y;
         val result = (5) add_x;
@@ -73,7 +73,7 @@ fn test_lambda_examples() {
     // Nested lambdas
     check_and_print(
         "Nested",
-        r#"fun test = {
+        r#"fun test: () = {
         val f = |x| |y| |z| x + y + z;
         val g = (1) f;
         val h = (2) g;
@@ -87,7 +87,7 @@ fn test_lambda_examples() {
 fn test_lambda_type_inference() {
     // Currently we assume all parameters are Int32
     // This test documents the current behavior
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         val id: Int32 -> Int32 = |x| x;
         val num = (42) id;
         val add: (Int32, Int32) -> Int32 = |x, y| x + y;

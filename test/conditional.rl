@@ -1,4 +1,4 @@
-fun max = a: Int b: Int {
+fun max: (a: Int, b: Int) = {
     a > b then {
         a
     } else {
@@ -6,7 +6,7 @@ fun max = a: Int b: Int {
     }
 }
 
-fun main = {
+fun main: () = {
     val x = 42
     val y = 73
     val result = (x, y) max

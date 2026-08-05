@@ -9,7 +9,7 @@ fun process<~p> = {
     }
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~main> {
         process()
     }

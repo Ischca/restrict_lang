@@ -1,1 +1,1 @@
-fun foo = n: Int { n }
+fun foo: (n: Int) = { n }

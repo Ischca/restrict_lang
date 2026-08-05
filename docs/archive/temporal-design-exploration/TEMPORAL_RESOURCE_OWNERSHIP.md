@@ -24,7 +24,7 @@ record Database<'db> {
 }
 
 // Usage
-fun processData = {
+fun processData: () = {
     val db = Database.connect("postgres://localhost");  // db: Database<'1>
     db.connection.query("SELECT * FROM users");
     // db.drop() automatically called
@@ -259,7 +259,7 @@ record File<'f> {
     handle: FileHandle
 }
 
-fun openFile = path: String -> File<'?> {
+fun openFile: (path: String) -> File<'?> = {
     // Lifetime inference needed
 }
 ```

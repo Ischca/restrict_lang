@@ -1,6 +1,6 @@
 // Example demonstrating Option type usage in Restrict Language
 
-fun main = {
+fun main: () = {
     // Basic Option usage
     val x = Some(42);
 

@@ -1,4 +1,4 @@
-fun test_ops = a: Int b: Int {
+fun test_ops: (a: Int, b: Int) = {
     val add = 10 + 3
     val sub = 10 - 3
     val mul = 10 * 3
@@ -13,6 +13,6 @@ fun test_ops = a: Int b: Int {
     42
 }
 
-fun main = {
+fun main: () = {
     (10, 3) test_ops
 }

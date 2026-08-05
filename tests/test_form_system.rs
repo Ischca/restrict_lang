@@ -87,7 +87,7 @@ fn form_methods_require_typed_signatures_without_defaults() {
     let missing_signature = parse_error_message(
         r#"
 form Showable {
-    fun show = { "default" }
+    fun show: () = { "default" }
 }
 "#,
     );

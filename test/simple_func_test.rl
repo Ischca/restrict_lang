@@ -1,1 +1,1 @@
-fun test = { 42 }
+fun test: () = { 42 }

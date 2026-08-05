@@ -31,7 +31,7 @@ The key insight: **Lifetimes are inferred from resource acquisition patterns**, 
 
 ### Example 1: Automatic Lifetime Inference
 ```restrict
-fun processFile = filename: String {
+fun processFile: (filename: String) = {
     val file = fs.open(filename);  // file: File<'1>
     val content = file.read();      // OK within '1
     content.process();
@@ -41,7 +41,7 @@ fun processFile = filename: String {
 
 ### Example 2: Lifetime Extension
 ```restrict
-fun getFileContent = filename: String {
+fun getFileContent: (filename: String) = {
     val file = fs.open(filename);  // file: File<'1>
     val content = file.read();      // content depends on '1
     content  // ERROR: cannot return content that depends on '1
@@ -57,7 +57,7 @@ fun processWithFile<'t> = filename: String processor: (File<'t>) -> Result {
 
 ### Example 3: Nested Lifetimes
 ```restrict
-fun copyFile = source: String dest: String {
+fun copyFile: (source: String, dest: String) = {
     val input = fs.open(source);    // input: File<'1>
     val output = fs.create(dest);    // output: File<'2>
     
@@ -102,7 +102,7 @@ conn.close();  // Explicit close consumes conn
 
 ### 3. **OSV Syntax Remains Clean**
 ```restrict
-fun fetchData = url: String {
+fun fetchData: (url: String) = {
     val response = (url) http.get;  // response: Response<'t>
     val data = (response) parseJson;  // OK within 't
     val processed = (data) transform; // OK within 't
@@ -115,7 +115,7 @@ fun fetchData = url: String {
 
 ### 1. **Database Transaction**
 ```restrict
-fun transferMoney = from: Account to: Account amount: Money {
+fun transferMoney: (from: Account, to: Account, amount: Money) = {
     val tx = db.beginTransaction();  // tx: Transaction<'t>
     
     (from, amount) tx.debit;  // Can use tx multiple times
@@ -132,7 +132,7 @@ fun transferMoney = from: Account to: Account amount: Money {
 
 ### 2. **Network Connection**
 ```restrict
-fun handleClient = client: TcpStream<'conn> {
+fun handleClient: (client: TcpStream<'conn>) = {
     loop {
         val request = client.read();  // OK: multiple reads
         if request.isNone() { break; }
@@ -146,7 +146,7 @@ fun handleClient = client: TcpStream<'conn> {
 
 ### 3. **File Processing Pipeline**
 ```restrict
-fun pipeline = input: String output: String {
+fun pipeline: (input: String, output: String) = {
     val source = fs.open(input);     // source: File<'1>
     val dest = fs.create(output);     // dest: File<'2>
     val buffer = Array.new(1024);     // buffer: Array<u8, 1024>

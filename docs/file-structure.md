@@ -155,7 +155,7 @@ import lib.A.{bar}  // 循環依存！
 
 // ✅ 良い例: 共通モジュールを作る
 // src/lib/Common.rl
-export fun shared = ...
+pub fun shared: () = { ... }
 
 // src/lib/A.rl
 import lib.Common.{shared}

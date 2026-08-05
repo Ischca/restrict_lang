@@ -1,2 +1,2 @@
-fun foo = { 1 }
-fun main = { 42 }
+fun foo: () = { 1 }
+fun main: () = { 42 }

@@ -1,10 +1,10 @@
-fun countdown = n: Int {
+fun countdown: (n: Int) = {
     n > 0 while {
         Unit
     }
     n
 }
 
-fun main = {
+fun main: () = {
     (5) countdown
 }

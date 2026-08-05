@@ -1,10 +1,10 @@
-fun test_while = {
+fun test_while: () = {
     true while {
         42
     }
     10
 }
 
-fun main = {
+fun main: () = {
     () test_while
 }

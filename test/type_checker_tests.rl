@@ -28,7 +28,7 @@ val fixed = 100
 fixed = 200  // Error: cannot reassign immutable
 
 // Test 7: Function parameters are consumed
-fun use_point = p: Point {
+fun use_point: (p: Point) = {
     val x = p.x
     val y = p.y  // Error: p already used
 }

@@ -17,7 +17,7 @@ record File<~f> {
     content: String
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~f> {
         val file = File { path = "test.txt", content = "data" };
         file.content  // ~f スコープ内でのみ有効
@@ -41,7 +41,7 @@ record Transaction<~tx, ~db> where ~tx within ~db {
     db: Database<~db>
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~db> {
         with lifetime<~tx> where ~tx within ~db {
             val db = Database { name = "mydb", connection = "localhost" };
@@ -61,7 +61,7 @@ record Task<T, ~async> {
     id: Int32
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~async> {
         with AsyncRuntime<~async> {
             val task = spawn { User { id = 42, name = "Test" } };
@@ -139,7 +139,7 @@ fun readFile<~f> = path: String -> File<~f> {
     File { path = path, content = "file content" }
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~f> {
         val file = readFile("data.txt");
         file.content
@@ -165,7 +165,7 @@ record Query<~q, ~tx, ~db> where ~q within ~tx, ~tx within ~db {
     tx: Transaction<~tx, ~db>
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~db> {
         with lifetime<~tx> where ~tx within ~db {
             with lifetime<~q> where ~q within ~tx {
@@ -191,7 +191,7 @@ record User {
     name: String
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~async> {
         with AsyncRuntime<~async> {
             // 複数のタスクを並行実行
@@ -221,7 +221,7 @@ record AsyncFile<~f, ~async> where ~f within ~async {
     status: String
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~async> {
         with lifetime<~f> where ~f within ~async {
             with AsyncRuntime<~async> {
@@ -269,7 +269,7 @@ record Transaction<~tx, ~db> where ~tx within ~db {
     id: Int32
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~tx> {
         with lifetime<~db> where ~db within ~tx {  // エラー！
             val tx = Transaction { id = 1 };
@@ -283,7 +283,7 @@ fun main = {
 
 ```rust
 // エラー例：AsyncRuntime コンテキストなしでspawn
-fun main = {
+fun main: () = {
     with lifetime<~async> {
         val task = spawn { 42 };  // エラー！AsyncRuntime コンテキストが必要
         await task
@@ -295,7 +295,7 @@ fun main = {
 
 ```rust
 // エラー例：未定義のライフタイム
-fun main = {
+fun main: () = {
     with lifetime<~valid> {
         with AsyncRuntime<~invalid> {  // エラー！~invalid は未定義
             val task = spawn { 42 };

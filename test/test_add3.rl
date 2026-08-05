@@ -1,7 +1,7 @@
-fun add3 = a: Int b: Int c: Int {
+fun add3: (a: Int, b: Int, c: Int) = {
     a + b + c
 }
 
-fun main = {
+fun main: () = {
     (10, 20, 30) add3
 }

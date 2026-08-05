@@ -42,7 +42,7 @@ fn test_lambda_with_block() {
 
 #[test]
 fn test_lambda_in_function() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         val add_one: Int32 -> Int32 = |x| x + 1;
         val result = 5;
         result
@@ -54,7 +54,7 @@ fn test_lambda_in_function() {
 fn test_lambda_application() {
     // Due to OSV syntax, add(5, 10) is parsed as 10(add, 5)
     // So we need to use the pipe syntax or parentheses
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         val add: (Int32, Int32) -> Int32 = |x, y| x + y;
         val result = (5, 10) add;
         result
@@ -64,7 +64,7 @@ fn test_lambda_application() {
 
 #[test]
 fn test_lambda_captures_variable() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         val x = 10;
         val add_x: Int32 -> Int32 = |y| x + y;
         val result = 5;
@@ -84,7 +84,7 @@ fn test_lambda_affine_types() {
         amount + token.id
     }
 
-    fun test = {
+    fun test: () = {
         val x = Token { id: 10 };
         val use_x: Int32 -> Int32 = |y| (x, y) use_token;
         val another: Int32 -> Int32 = |z| (x, z) use_token;

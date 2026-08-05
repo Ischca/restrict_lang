@@ -17,7 +17,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_default_arena_in_main() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             // Default arena should be available automatically
             42
         }
@@ -70,7 +70,7 @@ fn test_no_default_arena_in_other_functions() {
 #[test]
 fn test_global_current_arena() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             42
         }
     "#;
@@ -86,7 +86,7 @@ fn test_global_current_arena() {
 #[test]
 fn test_allocate_function() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             42
         }
     "#;

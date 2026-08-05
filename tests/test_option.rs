@@ -34,7 +34,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_some_constructor() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             val x = Some(42);
             x
         }
@@ -83,7 +83,7 @@ fn test_option_match() {
 #[test]
 fn test_option_exhaustiveness() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             val x = Some(42);
             x match {
                 Some(n) => { n }
@@ -100,7 +100,7 @@ fn test_option_exhaustiveness() {
 #[test]
 fn test_nested_option() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             val x = Some(Some(42));
             x match {
                 Some(inner) => {
@@ -121,7 +121,7 @@ fn test_nested_option() {
 #[test]
 fn test_option_type_mismatch() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             val x = Some(42);
             x match {
                 Some(s) => { s } // s is Int32
@@ -165,7 +165,7 @@ fn test_safe_divide() {
 #[test]
 fn test_option_code_generation() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             val x = Some(42);
             x match {
                 Some(n) => { n }

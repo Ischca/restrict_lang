@@ -16,14 +16,14 @@ fn compile(source: &str) -> Result<String, String> {
 
 #[test]
 fn test_simple_mutable_binding() {
-    let input = "fun test = { mut val x = 5; val result = x; result }";
+    let input = "fun test: () = { mut val x = 5; val result = x; result }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("local.get"));
 }
 
 #[test]
 fn test_mutable_reassignment() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         mut val x = 5
         x = 10
         x
@@ -34,7 +34,7 @@ fn test_mutable_reassignment() {
 
 #[test]
 fn test_immutable_reassignment_error() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
     val x = 5;
     x = 10;
     x
@@ -54,7 +54,7 @@ fn test_immutable_reassignment_error() {
 
 #[test]
 fn test_mutable_with_arithmetic() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         mut val x = 5
         x = x + 1
         x
@@ -65,7 +65,7 @@ fn test_mutable_with_arithmetic() {
 
 #[test]
 fn test_while_with_mutable() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
     mut val x = 0
     mut val sum = 0
     (x < 10) while {
@@ -85,7 +85,7 @@ fn test_while_with_mutable() {
 
 #[test]
 fn test_mutable_parameter_reassignment() {
-    let input = r#"fun add_one = x: Int32 {
+    let input = r#"fun add_one: (x: Int32) = {
         mut val y = x
         y = y + 1
         y
@@ -96,7 +96,7 @@ fn test_mutable_parameter_reassignment() {
 
 #[test]
 fn test_multiple_reassignments() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         mut val x = 1
         x = 2
         x = 3
@@ -109,7 +109,7 @@ fn test_multiple_reassignments() {
 
 #[test]
 fn test_affine_with_mutable() {
-    let input = r#"fun test = {
+    let input = r#"fun test: () = {
         val y = 5
         mut val x = y
         x = x + 1
@@ -124,7 +124,7 @@ fn test_mutable_record_field() {
     let input = r#"
     record Point { x: Int32, y: Int32 }
 
-    fun test = {
+    fun test: () = {
         with Arena {
             val p = Point { x: 10, y: 20 }
             mut val x = p.x

@@ -3,11 +3,11 @@ use restrict_lang::parse_program;
 #[test]
 #[ignore = "Uses non-EBNF v1.0 syntax"]
 fn test_simple_two_functions() {
-    let input = r#"fun first = {
+    let input = r#"fun first: () = {
     42
 }
 
-fun second = {
+fun second: () = {
     84
 }"#;
 
@@ -52,7 +52,7 @@ fn test_temporal_record_then_function() {
     handle: Int32
 }
 
-fun useFile = {
+fun useFile: () = {
     ()
 }"#;
 

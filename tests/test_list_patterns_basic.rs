@@ -14,7 +14,7 @@ fn compile(source: &str) -> Result<String, String> {
 #[test]
 fn test_basic_empty_list_pattern() {
     // Most basic test - empty list - need Arena for list allocation
-    let input = "fun main = { with Arena { val x: List<Int32> = [] val r = (x) match { [] => { 1 } _ => { 0 } } r } }";
+    let input = "fun main: () = { with Arena { val x: List<Int32> = [] val r = (x) match { [] => { 1 } _ => { 0 } } r } }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("i32.load")); // Should load list length
 }
@@ -22,7 +22,7 @@ fn test_basic_empty_list_pattern() {
 #[test]
 fn test_basic_cons_pattern() {
     // Basic cons pattern without using tail - need Arena for list allocation
-    let input = "fun main = { with Arena { val x = [42] val r = (x) match { [] => { 0 } [h | t] => { h } _ => { 2 } } r } }";
+    let input = "fun main: () = { with Arena { val x = [42] val r = (x) match { [] => { 0 } [h | t] => { h } _ => { 2 } } r } }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("i32.gt")); // Check for non-empty
 }
@@ -30,7 +30,7 @@ fn test_basic_cons_pattern() {
 #[test]
 fn test_basic_exact_pattern() {
     // Basic exact pattern matching - need Arena for list allocation
-    let input = "fun main = { with Arena { val x = [1, 2] val r = (x) match { [a, b] => { a + b } _ => { 0 } } r } }";
+    let input = "fun main: () = { with Arena { val x = [1, 2] val r = (x) match { [a, b] => { a + b } _ => { 0 } } r } }";
     let wat = compile(input).unwrap();
     assert!(wat.contains("i32.const 2")); // Check for length 2
 }

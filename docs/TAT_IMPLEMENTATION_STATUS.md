@@ -175,7 +175,7 @@ record Transaction<~tx, ~db> where ~tx within ~db {
     txId: Int32
 }
 
-fun main = {
+fun main: () = {
     with lifetime<~db> {
         val database = Database { id = 1 };
         with lifetime<~tx> where ~tx within ~db {
@@ -188,7 +188,7 @@ fun main = {
 
 ### Target (Not Yet Working)
 ```restrict
-fun processFile = filename: String {
+fun processFile: (filename: String) = {
     with lifetime<~f> {  // Anonymous lifetime
         val file = (filename) fs.open;  // Inferred: File<~f>
         val content = file.read;

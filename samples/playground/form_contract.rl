@@ -17,6 +17,6 @@ fun render: <T of Labelled>(value: T) -> String = {
     value |> label
 }
 
-fun main: () -> () = {
+fun main: () = {
     Badge { text: "ready" } |> render |> println
 }

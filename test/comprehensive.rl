@@ -3,11 +3,11 @@ record Point { x: Int, y: Int }
 record Enemy { hp: Int, atk: Int name: String }
 
 // Functions
-fun makePoint = x: Int y: Int {
+fun makePoint: (x: Int, y: Int) = {
     Point { x = x, y = y }
 }
 
-fun distance = p: Point {
+fun distance: (p: Point) = {
     p.x
 }
 

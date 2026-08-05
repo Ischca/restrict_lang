@@ -16,5 +16,5 @@ val x = 42 |> doubled
 val y = doubled + 10
 
 // Function with pipe
-fun square = n: Int { n * n }
+fun square: (n: Int) = { n * n }
 val result = 5 |> square

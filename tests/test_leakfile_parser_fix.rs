@@ -66,7 +66,7 @@ fun main: () -> Int = {
     handle: Int32
 }
 
-fun leakFile = {
+fun leakFile: () = {
     val file = File { handle: 1 };
     file
 }"#;

@@ -1,8 +1,8 @@
-fun add = a: Int b: Int {
+fun add: (a: Int, b: Int) = {
     a + b
 }
 
-fun main = {
+fun main: () = {
     val result = (10, 20) add
     result
 }

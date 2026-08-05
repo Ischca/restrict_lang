@@ -1,4 +1,4 @@
 // Simple string example
-fun main = {
+fun main: () = {
     "Hello, World!" println
 }

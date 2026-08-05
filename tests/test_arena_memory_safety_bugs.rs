@@ -43,7 +43,7 @@ fn test_arena_use_after_free() {
         }  // @temp arena is freed here
     }
 
-    fun main = {
+    fun main: () = {
         val dangling = create_dangling_reference();
         dangling.len()  // Use after free!
     }"#;
@@ -76,7 +76,7 @@ fn test_arena_double_free() {
         }  // @first freed - double free?
     }
 
-    fun main = {
+    fun main: () = {
         double_arena_trouble()
     }"#;
 
@@ -117,7 +117,7 @@ fn test_arena_stack_overflow() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         with arena<@root> {
             create_deep_tree(1000)  // Stack overflow from nested arenas
         }
@@ -154,7 +154,7 @@ fn test_arena_cross_contamination() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         leak_between_arenas()
     }"#;
 
@@ -189,7 +189,7 @@ fn test_arena_allocation_overflow() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         overflow_arena_size()
     }"#;
 
@@ -221,7 +221,7 @@ fn test_arena_pointer_smuggling() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         with arena<@destination> {
             val smuggled = smuggle_pointer();
             unsafe { *smuggled.ptr }  // Dereferencing freed memory
@@ -274,7 +274,7 @@ fn test_arena_fragmentation_attack() {
         };
     }
 
-    fun main = {
+    fun main: () = {
         with arena<@target> size = 1_000_000 {
             fragment_arena()
         }
@@ -315,7 +315,7 @@ fn test_arena_type_confusion() {
         float_data.value  // Type confusion!
     }
 
-    fun main = {
+    fun main: () = {
         with arena<@pun> {
             type_pun()
         }
@@ -351,7 +351,7 @@ fn test_arena_reset_invalidation() {
         unsafe { *cached.cache_ptr }
     }
 
-    fun main = {
+    fun main: () = {
         with arena<@resetable> {
             arena_reset_bug()
         }
@@ -402,7 +402,7 @@ fn test_arena_alignment_chaos() {
         };
     }
 
-    fun main = {
+    fun main: () = {
         with arena<@chaotic> {
             alignment_chaos()
         }

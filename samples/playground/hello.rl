@@ -1,4 +1,4 @@
 // Start with visible program output.
-fun main: () -> () = {
+fun main: () = {
     "Hello, Restrict!" |> println
 }

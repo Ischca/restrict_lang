@@ -1,7 +1,7 @@
-fun inc = x: Int {
+fun inc: (x: Int) = {
     x + 1
 }
 
-fun main = {
+fun main: () = {
     42 |> inc
 }

@@ -39,7 +39,7 @@ fn test_tokenize_generic_function() {
 #[test]
 fn test_parse_function_variations() {
     let test_cases = vec![
-        ("fun test = { () }", true, "simple function"),
+        ("fun test: () = { () }", true, "inferred-return function"),
         (
             "fun identity: <T>(value: T) -> T = { value }",
             true,
@@ -78,5 +78,21 @@ fn test_parse_function_variations() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn test_rejects_stale_function_declaration_fallbacks() {
+    for input in [
+        "fun test = { () }",
+        "fun identity = value: Int32 { value }",
+        "fun identity: value: Int32 = { value }",
+    ] {
+        let error = parse_program(input).expect_err("stale function syntax must be rejected");
+        let diagnostic = format!("{error:?}");
+        assert!(
+            diagnostic.contains("stale function declaration syntax is not valid Restrict"),
+            "unexpected diagnostic for `{input}`: {diagnostic}"
+        );
     }
 }

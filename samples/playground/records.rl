@@ -8,6 +8,6 @@ fun read_x: (point: Point) -> Int32 = {
     point.x
 }
 
-fun main: () -> () = {
+fun main: () = {
     Point { x: 42, y: 7 } |> read_x |> println
 }

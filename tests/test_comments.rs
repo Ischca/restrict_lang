@@ -7,7 +7,7 @@ fn test_single_line_comments() {
     val x = 42  // Another comment
 
     // Function with comments
-    fun test = {
+    fun test: () = {
         // Comment inside function
         val y = 10;  // Inline comment
         y
@@ -28,7 +28,7 @@ fn test_multi_line_comments() {
 
     /* Function with
        multi-line comments */
-    fun test = {
+    fun test: () = {
         /* Comment
            inside function */
         val y = 10;
@@ -50,7 +50,7 @@ fn test_mixed_comments() {
 
     /* Mixed
        comments */
-    fun test = {
+    fun test: () = {
         // Single line
         val y = /* inline multi */ 10;
         y  /* trailing */
@@ -66,7 +66,7 @@ fn test_mixed_comments() {
 fn test_lambda_with_comments() {
     let input = r#"
     // Lambda with comments
-    fun test = {
+    fun test: () = {
         // Create a lambda
         val add_one: Int32 -> Int32 = |x| /* param x */ x + 1;  // adds one
 
@@ -84,7 +84,7 @@ fn test_lambda_with_comments() {
 #[test]
 fn test_comments_between_tokens() {
     let input = r#"
-    fun /* function */ test /* name */ = /* equals */ {
+    fun /* function */ test /* name */ : /* signature */ ( /* parameters */ ) = /* equals */ {
         val /* val keyword */ x /* var name */ = /* equals */ 42 /* value */;
         x /* return */
     }

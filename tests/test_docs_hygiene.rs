@@ -872,6 +872,138 @@ fn supported_examples_do_not_use_removed_binding_pipe_or_record_initializers() {
     }
 }
 
+#[test]
+fn tracked_sources_do_not_reintroduce_legacy_function_declarations() {
+    const ALLOWED_MIGRATION_OR_REJECTION_FILES: &[&str] = &[
+        "LANGUAGE_SPECIFICATION.md",
+        "tests/test_fun_decl_parsing.rs",
+        "tests/test_release_example_hygiene.rs",
+        "tests/test_warder_hygiene.rs",
+    ];
+    const TEXT_EXTENSIONS: &[&str] = &[
+        "html", "js", "json", "md", "rl", "rs", "sh", "toml", "yaml", "yml",
+    ];
+
+    let commented_simple = ["fun /* keyword */", " test /* name */", " = { () }"].concat();
+    assert!(has_legacy_function_declaration(&commented_simple));
+    let commented_inline = [
+        "fun identity /* name */",
+        " : /* signature */ value: Int32 = { value }",
+    ]
+    .concat();
+    assert!(has_legacy_function_declaration(&commented_inline));
+
+    let mut failures = Vec::new();
+    for relative_path in tracked_workspace_files() {
+        if ALLOWED_MIGRATION_OR_REJECTION_FILES.contains(&relative_path.as_str()) {
+            continue;
+        }
+        let Some(extension) = Path::new(&relative_path)
+            .extension()
+            .and_then(|value| value.to_str())
+        else {
+            continue;
+        };
+        if !TEXT_EXTENSIONS.contains(&extension) {
+            continue;
+        }
+
+        let source = fs::read_to_string(workspace_root().join(&relative_path))
+            .unwrap_or_else(|err| panic!("{relative_path} should be readable: {err}"));
+        for (line_index, line) in source.lines().enumerate() {
+            if has_legacy_function_declaration(line) {
+                failures.push(format!("{relative_path}:{}: {line}", line_index + 1));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "tracked sources must use `fun name: (...) = ...`; stale declarations:\n{}",
+        failures.join("\n")
+    );
+}
+
+fn has_legacy_function_declaration(line: &str) -> bool {
+    let line = strip_inline_block_comments(line);
+    for (fun_index, _) in line.match_indices("fun ") {
+        let after_fun = &line[fun_index + "fun ".len()..];
+        let chars = after_fun.chars().collect::<Vec<_>>();
+        let mut index = 0;
+        while chars.get(index).is_some_and(|char_| char_.is_whitespace()) {
+            index += 1;
+        }
+        if !chars
+            .get(index)
+            .is_some_and(|char_| is_identifier_start(*char_))
+        {
+            continue;
+        }
+        while chars
+            .get(index)
+            .is_some_and(|char_| is_identifier_continue(*char_))
+        {
+            index += 1;
+        }
+        while chars.get(index).is_some_and(|char_| char_.is_whitespace()) {
+            index += 1;
+        }
+
+        if chars.get(index) == Some(&'=') {
+            return true;
+        }
+        if chars.get(index) != Some(&':') {
+            continue;
+        }
+        index += 1;
+        while chars.get(index).is_some_and(|char_| char_.is_whitespace()) {
+            index += 1;
+        }
+        if chars.get(index..index + 3) == Some(&['.', '.', '.']) {
+            continue;
+        }
+        if chars.get(index) == Some(&'<') {
+            let Some(close_offset) = chars[index..].iter().position(|char_| *char_ == '>') else {
+                continue;
+            };
+            index += close_offset + 1;
+        } else {
+            let tail = chars[index..].iter().collect::<String>();
+            if let Some(after_generic) = tail
+                .strip_prefix("&lt;")
+                .and_then(|generic| generic.find("&gt;").map(|end| end + "&gt;".len()))
+            {
+                index += "&lt;".chars().count() + after_generic;
+            }
+        }
+        while chars.get(index).is_some_and(|char_| char_.is_whitespace()) {
+            index += 1;
+        }
+        if chars.get(index) != Some(&'(') {
+            return true;
+        }
+    }
+    false
+}
+
+fn strip_inline_block_comments(line: &str) -> String {
+    let mut code = String::with_capacity(line.len());
+    let mut remaining = line;
+
+    while let Some(comment_start) = remaining.find("/*") {
+        code.push_str(&remaining[..comment_start]);
+        let comment = &remaining[comment_start + "/*".len()..];
+        let Some(comment_end) = comment.find("*/") else {
+            return code;
+        };
+        code.push(' ');
+        remaining = &comment[comment_end + "*/".len()..];
+    }
+
+    code.push_str(remaining);
+    code
+}
+
 fn assert_no_removed_binding_pipe_or_record_initializer(label: &str, source: &str) {
     let failures = removed_binding_pipe_or_record_initializer_failures(source);
 

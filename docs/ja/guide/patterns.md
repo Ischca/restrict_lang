@@ -81,7 +81,7 @@ result match {
 Resultは失敗する可能性のある関数に便利です：
 
 ```rust
-fun safe_divide = (a: Int, b: Int) -> Result<Int, String> {
+fun safe_divide: (a: Int, b: Int) -> Result<Int, String> = {
     b == 0 then {
         Err("ゼロ除算")
     } else {

@@ -34,7 +34,7 @@ context FileSystem {
     read: File<'current> -> String
 }
 
-fun processFile = filename: String {
+fun processFile: (filename: String) = {
     with FileSystem {
         val file = open(filename);
         val content = read(file);
@@ -93,7 +93,7 @@ record File<'f> {
     handle: FileHandle
 }
 
-fun copyFile = source: String dest: String {
+fun copyFile: (source: String, dest: String) = {
     val input = fs.open(source);   // File<'1>
     val output = fs.create(dest);   // File<'2>
     
@@ -114,7 +114,7 @@ record Transaction<'tx, 'db> where 'tx within 'db {
     id: TransactionId
 }
 
-fun transferMoney = from: Account to: Account amount: Money {
+fun transferMoney: (from: Account, to: Account, amount: Money) = {
     val db = Database.connect();
     val tx = db.beginTransaction();  // 'tx within 'db enforced
     
@@ -133,7 +133,7 @@ context Database<'db> {
     query: String -> Result<'db>
 }
 
-fun getUsers = {
+fun getUsers: () = {
     with Database {
         val result = query("SELECT * FROM users");
         result.toList()

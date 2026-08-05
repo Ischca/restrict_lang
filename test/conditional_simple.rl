@@ -1,4 +1,4 @@
-fun max = a: Int b: Int {
+fun max: (a: Int, b: Int) = {
     // Simple version without reusing variables
     10 > 5 then {
         42
@@ -7,6 +7,6 @@ fun max = a: Int b: Int {
     }
 }
 
-fun main = {
+fun main: () = {
     (0, 0) max
 }

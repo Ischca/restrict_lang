@@ -23,7 +23,7 @@ fn compile_to_wat(source: &str) -> Result<String, String> {
 #[test]
 fn test_arithmetic_wat_generation() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             10 + 20
         }
     "#;
@@ -44,11 +44,11 @@ fn test_arithmetic_wat_generation() {
 #[test]
 fn test_function_call_wat_generation() {
     let source = r#"
-        fun double = x: Int32 {
+        fun double: (x: Int32) = {
             x * 2
         }
 
-        fun main = {
+        fun main: () = {
             21 |> double
         }
     "#;
@@ -72,7 +72,7 @@ fn test_function_call_wat_generation() {
 #[test]
 fn test_local_variables_wat_generation() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             val a = 100;
             val b = 50;
             val result = a - b;
@@ -104,7 +104,7 @@ fn test_local_variables_wat_generation() {
 #[test]
 fn test_conditional_wat_generation() {
     let source = r#"
-        fun is_positive = x: Int32 {
+        fun is_positive: (x: Int32) = {
             x > 0 then {
                 1
             } else {
@@ -112,7 +112,7 @@ fn test_conditional_wat_generation() {
             }
         }
 
-        fun main = {
+        fun main: () = {
             42 |> is_positive
         }
     "#;
@@ -135,11 +135,11 @@ fn test_conditional_wat_generation() {
 #[test]
 fn test_pipe_operator_wat_generation() {
     let source = r#"
-        fun inc = x: Int32 {
+        fun inc: (x: Int32) = {
             x + 1
         }
 
-        fun main = {
+        fun main: () = {
             42 |> inc
         }
     "#;
@@ -154,7 +154,7 @@ fn test_pipe_operator_wat_generation() {
 #[test]
 fn test_all_binary_operators() {
     let source = r#"
-        fun test_ops = {
+        fun test_ops: () = {
             val add = 10 + 3;
             val sub = 10 - 3;
             val mul = 10 * 3;
@@ -169,7 +169,7 @@ fn test_all_binary_operators() {
             42
         }
 
-        fun main = {
+        fun main: () = {
             test_ops
         }
     "#;
@@ -193,7 +193,7 @@ fn test_all_binary_operators() {
 #[test]
 fn test_multiple_locals() {
     let source = r#"
-        fun main = {
+        fun main: () = {
             val a = 10;
             val b = 5;
             val sum = a + b;
@@ -213,11 +213,11 @@ fn test_multiple_locals() {
 #[test]
 fn test_multiple_parameters() {
     let source = r#"
-        fun add3 = a: Int32 b: Int32 c: Int32 {
+        fun add3: (a: Int32, b: Int32, c: Int32) = {
             a + b + c
         }
 
-        fun main = {
+        fun main: () = {
             val result = (10, 20, 30) add3
             result
         }

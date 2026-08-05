@@ -54,7 +54,7 @@ fn test_simple_prototype_cycle() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         val cycle = create_ouroboros();
         walk_parents(cycle, 0)
     }"#;
@@ -100,7 +100,7 @@ fn test_mutual_prototype_cycle() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         val cycle = create_cycle();
         trace_cycle(cycle, 0)
     }"#;
@@ -153,7 +153,7 @@ fn test_clone_cycle_amplification() {
         count  // Will hit limit due to cycle
     }
 
-    fun main = {
+    fun main: () = {
         val list = create_circular_list();
         count_nodes(list, 1000)
     }"#;
@@ -190,7 +190,7 @@ fn test_type_level_recursion() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         42  // Can't even call impossible()
     }"#;
 
@@ -244,7 +244,7 @@ fn test_prototype_method_recursion() {
         obj.process()  // Which process() is called?
     }
 
-    fun main = {
+    fun main: () = {
         create_dispatch_loop()
     }"#;
 
@@ -288,7 +288,7 @@ fn test_lazy_evaluation_cycle() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         val infinite = create_infinite_stream();
         take_n(infinite, 10)
     }"#;
@@ -327,7 +327,7 @@ fn test_constraint_solver_cycle() {
         c.t_val.convert().convert().convert().convert()
     }
 
-    fun main = {
+    fun main: () = {
         val c = Constrained {
             t_val = 42,
             u_val = "42"
@@ -384,7 +384,7 @@ fn test_clone_freeze_cycle() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         val cyclic = freeze_cycle();
         detect_frozen_cycle(cyclic, Set::new())
     }"#;
@@ -423,7 +423,7 @@ fn test_generic_instantiation_loop() {
         }
     }
 
-    fun main = {
+    fun main: () = {
         instantiate_monster()
     }"#;
 
@@ -470,7 +470,7 @@ fn test_affine_cycle_paradox() {
         // In a cycle, we'd revisit nodes whose tokens were consumed!
     }
 
-    fun main = {
+    fun main: () = {
         val cycle = create_affine_cycle();
         consume_cycle(cycle)
     }"#;

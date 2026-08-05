@@ -48,7 +48,7 @@ fun withDatabase<T> = f: (Database<'db>) -> T {
 }
 
 // 使用例
-fun getUser = userId: Int32 {
+fun getUser: (userId: Int32) = {
     withDatabase(|db| {
         db.query("SELECT * FROM users WHERE id = $1", [userId])
           .fetchOne()
@@ -63,7 +63,7 @@ temporal<'server> record Server {
     connections: List<Connection<'conn>> where 'conn ⊆ 'server
 }
 
-fun startServer = port: Int32 {
+fun startServer: (port: Int32) = {
     with lifetime<'server> {
         val server = Server.bind(port);
         
@@ -122,7 +122,7 @@ impl Drop for Connection {
 **Restrict（時間的アフィン型）:**
 ```restrict
 // 自動的なライフタイム管理
-fun processData = data: Data<'t> {
+fun processData: (data: Data<'t>) = {
     with lifetime<'t> {
         data.process()
     }  // 自動クリーンアップ
@@ -149,7 +149,7 @@ func processFile(filename string) error {
 **Restrict（時間的アフィン型）:**
 ```restrict
 // 自動クリーンアップ
-fun processFile = filename: String {
+fun processFile: (filename: String) = {
     with lifetime {
         val file = (filename) fs.open;
         file.process()

@@ -116,7 +116,7 @@ enum TypeParam {
 ### 3. **Gradual Complexity**
 ```restrict
 // Level 1: No variables
-fun readFile = path: String -> String
+fun readFile: (path: String) -> String
 
 // Level 2: Type variables
 fun map<T> = list: List<T>, f: T -> T -> List<T>

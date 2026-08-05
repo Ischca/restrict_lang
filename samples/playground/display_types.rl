@@ -9,7 +9,7 @@ Notice takes Display {
     }
 }
 
-fun main: () -> () = {
+fun main: () = {
     42 |> println
     "built-in String" |> println
     Notice { text: "record adoption" } |> println

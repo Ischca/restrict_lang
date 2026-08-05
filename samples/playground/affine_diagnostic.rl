@@ -3,7 +3,7 @@ fun consume: (value: String) -> () = {
     value |> println
 }
 
-fun main: () -> () = {
+fun main: () = {
     val message = "use me once"
     message |> consume
     message |> consume

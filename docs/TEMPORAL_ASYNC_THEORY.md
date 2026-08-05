@@ -71,7 +71,7 @@ fun processAsync<~res> = resource: Resource<~res> {
 ### Pattern 2: Owned Async
 ```restrict
 // Resource moved into async
-fun processOwned = {
+fun processOwned: () = {
     with Resources {
         val res = acquire();  // res: Resource<~ctx>
         spawn {

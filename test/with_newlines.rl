@@ -1,7 +1,7 @@
-fun foo = { 
+fun foo: () = {
     1 
 }
 
-fun main = { 
+fun main: () = {
     42 
 }

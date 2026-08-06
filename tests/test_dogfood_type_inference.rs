@@ -248,7 +248,7 @@ enum ReviewError {
 }
 
 fun review: (message: String) -> Result<Int32, ReviewError> = {
-    Err(message |> ReviewError::Invalid)
+    (message |> ReviewError::Invalid) Result::Err
 }
 "#;
 

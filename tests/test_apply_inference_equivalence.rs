@@ -164,7 +164,7 @@ fun main: () -> List<Int32> = {
             "Option map with immediate lambda mapper",
             r#"
 fun main: () -> Option<Int32> = {
-    val maybe: Option<Int32> = Some(1);
+    val maybe: Option<Int32> = (1) Option::Some;
     (maybe, |value| value + 1) map
 }
 "#,
@@ -177,7 +177,7 @@ fun keep_int: (value: Int32) -> Int32 = {
 }
 
 fun main: () -> Option<Int32> = {
-    val maybe: Option<Int32> = Some(1);
+    val maybe: Option<Int32> = (1) Option::Some;
     val mapper = keep_int;
     (maybe, mapper) map
 }
@@ -187,7 +187,7 @@ fun main: () -> Option<Int32> = {
             "Option map with local deferred lambda mapper",
             r#"
 fun main: () -> Option<Int32> = {
-    val maybe: Option<Int32> = Some(1);
+    val maybe: Option<Int32> = (1) Option::Some;
     val mapper = |value| value;
     (maybe, mapper) map
 }
@@ -223,7 +223,7 @@ fun main: () -> List<String> = {
             "first-class Option map preserves value-changing Container projection",
             r#"
 fun main: () -> Option<String> = {
-    val maybe: Option<Int32> = None;
+    val maybe: Option<Int32> = () Option::None;
     val apply_map = map;
     (maybe, |value| "x") apply_map
 }
@@ -243,7 +243,7 @@ fun main: () -> List<Int32> = {
             "first-class Option filter lowers item projection",
             r#"
 fun main: () -> Option<Int32> = {
-    val maybe: Option<Int32> = Some(3);
+    val maybe: Option<Int32> = (3) Option::Some;
     val apply_filter = filter;
     (maybe, |value| value > 1) apply_filter
 }
@@ -324,7 +324,7 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> Option<Int32> = {
-    (None, Some(1)) choose_first
+    (() Option::None, (1) Option::Some) choose_first
 }
 "#,
         ),
@@ -348,7 +348,7 @@ fun identity_local: <T>(value: T) -> T = {
 }
 
 fun main: () -> Option<Int32> = {
-    None |> identity_local
+    () Option::None |> identity_local
 }
 "#,
         ),
@@ -374,7 +374,7 @@ fun identity_local: <T>(value: T) -> T = {
 
 fun main: () -> Option<Int32> = {
     val keep = identity_local;
-    None |> keep
+    () Option::None |> keep
 }
 "#,
         ),
@@ -390,7 +390,7 @@ fun main: () -> List<Int32> = {
             "None through immediate lambda call",
             r#"
 fun main: () -> Option<Int32> = {
-    None |> (|maybe| maybe)
+    () Option::None |> (|maybe| maybe)
 }
 "#,
         ),
@@ -408,7 +408,7 @@ fun main: () -> List<Int32> = {
             r#"
 fun main: () -> Option<Int32> = {
     val keep = |maybe| maybe;
-    None |> keep
+    () Option::None |> keep
 }
 "#,
         ),

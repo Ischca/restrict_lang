@@ -2,7 +2,7 @@
 
 fun main: () = {
     // Basic Option usage
-    val x = Some(42);
+    val x = (42) Option::Some;
 
     // Pattern matching on Options (checking presence)
     val is_some = x match {

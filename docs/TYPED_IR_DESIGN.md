@@ -303,7 +303,7 @@ to a full rewrite.
 
 Implemented Wasm MIR optimization levels are ordered as validation barriers:
 
-- `None`: preserve the MIR exactly.
+- `() Option::None`: preserve the MIR exactly.
 - `Hygiene`: remove semantically empty instructions such as `nop`.
 - `Local`: run hygiene first, then local stack rewrites to a fixpoint.
 

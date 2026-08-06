@@ -524,7 +524,7 @@ fun main: () -> List<Int32> = {
 fn unannotated_user_generic_option_mapper_generates_valid_wat() {
     let source = r#"
 fun wrap: <T>(value: T) = {
-    Some(value)
+    (value) Option::Some
 }
 
 fun main: () -> List<Option<Float64>> = {
@@ -599,7 +599,7 @@ fun main: () -> List<Float64> = {
 fn user_generic_empty_option_uses_binding_annotation_for_codegen() {
     let source = r#"
 fun empty_option: <T>() -> Option<T> = {
-    None
+    () Option::None
 }
 
 fun main: () -> Option<Int32> = {
@@ -948,7 +948,7 @@ fun main: () -> Int32 = {
     assert_runtime_top_level_binding_rejected(
         "option",
         r#"
-val maybe_score: Option<Int32> = Some(42)
+val maybe_score: Option<Int32> = (42) Option::Some
 
 fun main: () -> Int32 = {
     1
@@ -959,7 +959,7 @@ fun main: () -> Int32 = {
     assert_runtime_top_level_binding_rejected(
         "result",
         r#"
-val route: Result<Int32, String> = Ok(42)
+val route: Result<Int32, String> = (42) Result::Ok
 
 fun main: () -> Int32 = {
     1
@@ -1296,8 +1296,8 @@ fun main: () -> Float64 = {
 fn std_option_functions_generate_valid_wat() {
     let source = r#"
 fun main: () -> Int32 = {
-    mut val some: Option<Int32> = Some(42);
-    mut val none: Option<Int32> = None;
+    mut val some: Option<Int32> = (42) Option::Some;
+    mut val none: Option<Int32> = () Option::None;
     val has_value = some |> option_is_some;
     val is_missing = none |> option_is_none;
     val value = (some, 0) option_unwrap_or;
@@ -1318,8 +1318,8 @@ fun main: () -> Int32 = {
 fn float_option_unwrap_or_uses_f64_helper() {
     let source = r#"
 fun main: () -> Float64 = {
-    mut val some: Option<Float64> = Some(1.5);
-    mut val none: Option<Float64> = None;
+    mut val some: Option<Float64> = (1.5) Option::Some;
+    mut val none: Option<Float64> = () Option::None;
     val value = (some, 0.0) option_unwrap_or;
     val fallback = (none, 2.5) option_unwrap_or;
 
@@ -1381,7 +1381,7 @@ fun main: () -> List<Float64> = {
         "float_option_map",
         r#"
 fun main: () -> Option<Float64> = {
-    val reading: Option<Float64> = Some(1.5);
+    val reading: Option<Float64> = (1.5) Option::Some;
     (reading, |value| value + 1.0) map
 }
 "#,
@@ -1391,7 +1391,7 @@ fun main: () -> Option<Float64> = {
         "float_option_filter",
         r#"
 fun main: () -> Option<Float64> = {
-    val reading: Option<Float64> = Some(1.5);
+    val reading: Option<Float64> = (1.5) Option::Some;
     (reading, |value| value > 1.0) filter
 }
 "#,
@@ -1666,7 +1666,7 @@ fn binding_patterns_generate_valid_wat() {
         "option_binding_pattern",
         r#"
 fun main: () -> Int32 = {
-    val Some(value) = Some(42);
+    val Some(value) = (42) Option::Some;
     value
 }
 "#,
@@ -1676,7 +1676,7 @@ fun main: () -> Int32 = {
         "result_float_binding_pattern",
         r#"
 fun main: () -> Float64 = {
-    val Ok(reading): Result<Float64, Int32> = Ok(1.5);
+    val Ok(reading): Result<Float64, Int32> = (1.5) Result::Ok;
     reading
 }
 "#,
@@ -2067,7 +2067,7 @@ fun choose: (maybe: Option<Envelope>, fallback: Envelope) = {
 fun main: () -> Int32 = {
     val item = Envelope { value: 9, ok: true };
     val fallback = Envelope { value: 1, ok: false };
-    val chosen = (Some(item), fallback) choose;
+    val chosen = ((item) Option::Some, fallback) choose;
     chosen.value
 }
 "#;
@@ -2506,7 +2506,7 @@ fun unwrap_or_zero: (maybe: Option<Float64>) -> Float64 = {
 }
 
 fun main: () -> Float64 = {
-    val maybe: Option<Float64> = Some(1.5);
+    val maybe: Option<Float64> = (1.5) Option::Some;
     maybe |> unwrap_or_zero
 }
 "#;
@@ -2529,7 +2529,7 @@ fun decode_score: (result: Result<Float64, Int32>) -> Float64 = {
 }
 
 fun main: () -> Float64 = {
-    val result: Result<Float64, Int32> = Ok(2.5);
+    val result: Result<Float64, Int32> = (2.5) Result::Ok;
     result |> decode_score
 }
 "#;
@@ -2542,9 +2542,9 @@ fn function_returned_option_float_payload_match_generates_valid_wat() {
     let source = r#"
 fun choose_offset: (enabled: Boolean) -> Option<Float64> = {
     enabled then {
-        Some(0.25)
+        (0.25) Option::Some
     } else {
-        None
+        () Option::None
     }
 }
 
@@ -2569,9 +2569,9 @@ fn function_returned_result_float_payload_match_generates_valid_wat() {
     let source = r#"
 fun decode: (ok: Boolean) -> Result<Float64, Int32> = {
     ok then {
-        Ok(2.5)
+        (2.5) Result::Ok
     } else {
-        Err(1)
+        (1) Result::Err
     }
 }
 

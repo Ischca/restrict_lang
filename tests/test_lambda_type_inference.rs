@@ -141,7 +141,7 @@ fun main: () -> List<Int32> = {
 fn immediate_lambda_pipe_infers_none_from_expected_return() {
     let input = r#"
 fun main: () -> Option<Int32> = {
-    None |> (|value| value)
+    () Option::None |> (|value| value)
 }
 "#;
 
@@ -152,7 +152,7 @@ fun main: () -> Option<Int32> = {
 fn immediate_lambda_pipe_infers_nested_empty_list_from_expected_return() {
     let input = r#"
 fun main: () -> Option<List<Int32>> = {
-    Some([]) |> (|value| value)
+    ([]) Option::Some |> (|value| value)
 }
 "#;
 
@@ -183,8 +183,8 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> Option<Int32> = {
-    val fallback = Some(1);
-    None |> (|empty| (empty, fallback) choose_first)
+    val fallback = (1) Option::Some;
+    () Option::None |> (|empty| (empty, fallback) choose_first)
 }
 "#;
 

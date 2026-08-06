@@ -124,9 +124,9 @@ fun main: () -> () = {
 ```restrict
 fun greeting_for_hour: (hour: Int32) -> Result<String, String> = {
     hour < 0 then {
-        Err("時刻が不正です")
+        "時刻が不正です" Result::Err
     } else {
-        Ok("Hello from Restrict")
+        "Hello from Restrict" Result::Ok
     }
 }
 

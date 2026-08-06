@@ -57,11 +57,11 @@ fun first_missing_owner: (
     ticket_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(ticket_id) }
+                Some(person) => { () Option::None }
+                None => { (ticket_id) Option::Some }
             }
         }
     }
@@ -122,7 +122,7 @@ fun build_board: (tickets: List<RuntimeTicket>) -> RuntimeBoardReport = {
     val initial = RuntimeBoardState {
         score_total: 0,
         page_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         escalation_codes: [],
         scores: []
     };
@@ -152,7 +152,7 @@ fun sample_bug_triage_board: () -> RuntimeBoardReport = {
         severity: 4,
         age_hours: 80,
         customer_impact: true,
-        owner: Some(7),
+        owner: (7) Option::Some,
         signals: first_signals
     };
     val second_signals: List<Int32> = [5];
@@ -161,7 +161,7 @@ fun sample_bug_triage_board: () -> RuntimeBoardReport = {
         severity: 2,
         age_hours: 18,
         customer_impact: false,
-        owner: None,
+        owner: () Option::None,
         signals: second_signals
     };
     val tickets: List<RuntimeTicket> = [

@@ -11,7 +11,7 @@ fun make_window: (base: Int32) -> ReleaseWindow = {
     ReleaseWindow {
         span: [base..base + 4],
         checkpoints: [base, base + 2, base + 4],
-        fallback: [None, Some(base)]
+        fallback: [() Option::None, (base) Option::Some]
     }
 }
 

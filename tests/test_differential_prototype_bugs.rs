@@ -87,12 +87,12 @@ fn test_cyclic_prototype_inheritance() {
     }
 
     fun create_cycle() -> Proto {
-        val a = Proto { name = "A", parent = None };
-        val b = clone a with { name = "B", parent = Some(a) };
-        val c = clone b with { name = "C", parent = Some(b) };
+        val a = Proto { name = "A", parent = () Option::None };
+        val b = clone a with { name = "B", parent = (a) Option::Some };
+        val c = clone b with { name = "C", parent = (b) Option::Some };
 
         // Now create the cycle by updating A
-        a.parent = Some(c);  // A -> C -> B -> A
+        a.parent = (c) Option::Some;  // A -> C -> B -> A
 
         // Walk the chain - infinite loop?
         val current = a;

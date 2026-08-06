@@ -200,11 +200,11 @@ Option<T> takes Container<T> {
 
     // Empty Option is always None.
     // 空のOptionは常にNone。
-    empty: || { None }
+    empty: || { () Option::None }
 
     // Appending to an Option replaces its content.
     // Optionへの追加はその内容を置き換える。
-    append: |self, elem| { Some(elem) }
+    append: |self, elem| { (elem) Option::Some }
 }
 
 
@@ -299,7 +299,7 @@ fun main() = {
 
     // --- Option operations ---
 
-    val maybe = Some(42);
+    val maybe = (42) Option::Some;
 
     // Map over an Option: Some(42) becomes Some(43)
     // Optionに対するmap: Some(42)がSome(43)になる

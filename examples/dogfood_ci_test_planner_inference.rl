@@ -113,17 +113,17 @@ fun route_candidate: (
     suite: Int32
 ) -> Result<Int32, Int32> = {
     selected then {
-        Ok(change_id)
+        (change_id) Result::Ok
     } else {
-        Err(suite)
+        (suite) Result::Err
     }
 }
 
 fun route_plan: (selected_count: Int32, total_score: Int32) -> Result<Int32, Int32> = {
     selected_count > 0 then {
-        Ok(total_score)
+        (total_score) Result::Ok
     } else {
-        Err(total_score)
+        (total_score) Result::Err
     }
 }
 
@@ -134,15 +134,15 @@ fun remember_unowned: (
 ) -> Option<Int32> = {
     current match {
         Some(existing) => {
-            Some(existing)
+            (existing) Option::Some
         }
         None => {
             owner match {
                 Some(person) => {
-                    None
+                    () Option::None
                 }
                 None => {
-                    Some(change_id)
+                    (change_id) Option::Some
                 }
             }
         }
@@ -201,7 +201,7 @@ fun initial_state: () -> CiPlannerState = {
         total_score: 0,
         selected_count: 0,
         flaky_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         selected_ids: [],
         quarantined_suites: []
     }
@@ -212,12 +212,12 @@ fun blank_plan: () -> CiPlan = {
         total_score: 0,
         selected_count: 0,
         flaky_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         candidates: [],
         selected_ids: [],
         quarantined_suites: [],
-        skipped_suites: Some([]),
-        route: Ok(0)
+        skipped_suites: ([]) Option::Some,
+        route: (0) Result::Ok
     }
 }
 
@@ -314,7 +314,7 @@ fun plan_ci_tests: (
         candidates: candidates,
         selected_ids: selected_ids,
         quarantined_suites: quarantined_suites,
-        skipped_suites: None,
+        skipped_suites: () Option::None,
         route: route
     }
 }
@@ -326,7 +326,7 @@ fun main: () -> CiPlan = {
             suite: 1,
             risk: 8,
             touched_files: 3,
-            owner: Some(42),
+            owner: (42) Option::Some,
             status: 0
         },
         CiChange {
@@ -334,7 +334,7 @@ fun main: () -> CiPlan = {
             suite: 2,
             risk: 4,
             touched_files: 8,
-            owner: None,
+            owner: () Option::None,
             status: 2
         }
     ];
@@ -344,7 +344,7 @@ fun main: () -> CiPlan = {
             suite: 1,
             risk: 7,
             touched_files: 6,
-            owner: Some(7),
+            owner: (7) Option::Some,
             status: 0
         },
         CiChange {
@@ -352,13 +352,13 @@ fun main: () -> CiPlan = {
             suite: 3,
             risk: 2,
             touched_files: 2,
-            owner: None,
+            owner: () Option::None,
             status: 2
         }
     ];
     val suite_bias = InferenceBox {
         value: 4,
-        fallback: None,
+        fallback: () Option::None,
         history: []
     };
     val policy = CiPolicy {

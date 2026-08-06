@@ -26,9 +26,9 @@ fun exercise2: () -> Int32 = {
 // 演習 3: エラー処理
 fun safe_divide: (a: Int32, b: Int32) -> Result<Int32, String> = {
     b == 0 then {
-        Err("division_by_zero")
+        ("division_by_zero") Result::Err
     } else {
-        Ok(a / b)
+        (a / b) Result::Ok
     }
 }
 

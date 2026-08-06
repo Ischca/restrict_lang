@@ -51,9 +51,9 @@ fun severity_code: (module: Int32) -> Int32 = {
 
 fun maybe_review: (score: Int32) -> Option<Int32> = {
     score < 75 then {
-        Some(score)
+        (score) Option::Some
     } else {
-        None
+        () Option::None
     }
 }
 
@@ -83,8 +83,8 @@ fun main: () -> GateReport = {
             warnings: 2,
             flaky: true
         },
-        review_score: Some(10),
-        risk_flags: Some([]),
+        review_score: (10) Option::Some,
+        risk_flags: ([]) Option::Some,
         touched_modules: [1, 2, 3]
     };
 

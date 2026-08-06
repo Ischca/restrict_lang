@@ -278,7 +278,7 @@ After:  Affine type violation: variable 'p' has already been used.
 
 **Completed**:
 - [x] Result<T, E> type implementation
-  - Ok(expr) and Err(expr) constructors
+  - Qualified OSV `Result::Ok` and `Result::Err` constructors
   - Pattern matching with Ok(x) and Err(e)
   - Type inference for Result types
   - WASM codegen with tagged unions

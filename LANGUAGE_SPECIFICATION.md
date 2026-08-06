@@ -361,6 +361,33 @@ or pipe. Traditional call order remains invalid:
 ParseError::Message("invalid input") // ERROR: traditional call syntax
 ```
 
+### 5.10 Built-in Option and Result Construction
+
+`Option` and `Result` use the same qualified OSV constructor form as
+user-defined enums. The pipe is optional, and a single direct object does not
+need parentheses:
+
+```rust
+42 Option::Some
+42 |> Option::Some
+() Option::None
+42 Result::Ok
+error Result::Err
+error |> Result::Err
+```
+
+The built-in namespaces are required in value expressions. The older
+unqualified or traditional forms `Some(42)`, `None`, `Ok(42)`, and
+`Err(error)` are invalid. Match patterns remain unqualified because they
+decompose an already typed built-in sum value:
+
+```rust
+value match {
+    Some(inner) => { inner }
+    None => { 0 }
+}
+```
+
 ## 6. Patterns (for match expressions)
 
 ### 6.1 Basic Patterns
@@ -825,10 +852,12 @@ then returns normally, allowing the outer wrapper to restore its entry state.
 8. Logical OR: `||`
 9. Pipe: `|>` (left associative)
 
-Single-argument calls should use pipe form: `value |> f`. Direct OSV calls are
-for grouped unit, tuple, or parenthesized objects such as `() now`, `(left,
-right) max`, and `(1 + 2) double`. Pipe starts from a complete expression, so
-`1 + 2 |> double` is parsed as `(1 + 2) |> double`.
+Single-argument calls may use pipe form (`value |> f`) or direct OSV form
+(`value f`). Parentheses are optional for a single simple direct object, as in
+`42 Option::Some`. Unit and tuple objects stay grouped (`() now`, `(left,
+right) max`), and compound objects should be grouped when precedence would
+otherwise change their meaning (`(1 + 2) double`). Pipe starts from a complete
+expression, so `1 + 2 |> double` is parsed as `(1 + 2) |> double`.
 
 ## 14. Standard Library Types
 
@@ -838,8 +867,8 @@ right) max`, and `(1 + 2) double`. Pipe starts from a complete expression, so
 - `Range<Int32>` - Range type from `[start..end]` with Int32 endpoints
 
 ### 14.2 Error Handling
-- `Option<T>` - May contain value (`Some(T)`) or `None`
-- `Result<T, E>` - Success (`Ok(T)`) or error (`Err(E)`)
+- `Option<T>` - May contain `value Option::Some` or `() Option::None`
+- `Result<T, E>` - Success via `value Result::Ok` or error via `error Result::Err`
 
 A user-defined enum may be used as the error parameter of `Result<T, E>`:
 
@@ -850,7 +879,7 @@ enum DecodeError {
 }
 
 fun fail: (message: String) -> Result<Int32, DecodeError> = {
-    Err(message |> DecodeError::Invalid)
+    (message |> DecodeError::Invalid) Result::Err
 }
 ```
 
@@ -895,6 +924,10 @@ The following syntax is **NO LONGER SUPPORTED** and will cause compilation error
 - `[|1, 2, 3|]` array literals (use `[1, 2, 3]`)
 - `if condition { ... }` (use `condition then { ... }`)
 - `while condition { ... }` (use `condition while { ... }`)
+- `Some(value)` / `None` in value expressions (use qualified `Option::Some` /
+  `Option::None` OSV calls; unqualified forms remain match patterns)
+- `Ok(value)` / `Err(error)` in value expressions (use qualified
+  `Result::Ok` / `Result::Err` OSV calls)
 
 ## 16. EXAMPLES
 
@@ -1010,7 +1043,7 @@ fun classify: (error: CheckoutError) -> Int32 = {
 }
 
 fun reject: (message: String) -> Result<Int32, CheckoutError> = {
-    Err(message |> CheckoutError::PaymentDeclined)
+    (message |> CheckoutError::PaymentDeclined) Result::Err
 }
 ```
 
@@ -1087,6 +1120,23 @@ if condition { ... } else { ... }
 
 // NEW (correct)
 condition then { ... } else { ... }
+```
+
+### 17.5 Built-in Sum Constructors
+
+```rust
+// OLD (not supported in value expressions)
+Some(42)
+None
+Ok(42)
+Err("missing")
+
+// NEW (qualified OSV; pipe and direct forms are both valid)
+42 Option::Some
+42 |> Option::Some
+() Option::None
+42 Result::Ok
+"missing" Result::Err
 ```
 
 ---

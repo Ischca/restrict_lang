@@ -122,9 +122,9 @@ fun unwrap_or_zero: (maybe: Option<Int32>) -> Int32 = {
 
 fun main: (flag: Boolean) -> Int32 = {
     val maybe = flag then {
-        None
+        () Option::None
     } else {
-        Some(7)
+        (7) Option::Some
     };
     maybe |> unwrap_or_zero
 }
@@ -188,8 +188,8 @@ fun unwrap_or_zero: (maybe: Option<Int32>) -> Int32 = {
 
 fun main: (flag: Boolean) -> Int32 = {
     val maybe = flag match {
-        true => { None }
-        false => { Some(7) }
+        true => { () Option::None }
+        false => { (7) Option::Some }
     };
     maybe |> unwrap_or_zero
 }
@@ -202,7 +202,7 @@ fun main: (flag: Boolean) -> Int32 = {
 fn empty_list_in_some_uses_nested_option_context() {
     let input = r#"
 fun main: () -> Option<List<Boolean>> = {
-    val maybe: Option<List<Boolean>> = Some([]);
+    val maybe: Option<List<Boolean>> = ([]) Option::Some;
     maybe
 }
 "#;
@@ -229,7 +229,7 @@ fun result_list_total: (result: Result<List<Int32>, String>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val result = Ok([]);
+    val result = ([]) Result::Ok;
     result |> result_list_total
 }
 "#;
@@ -241,7 +241,7 @@ fun main: () -> Int32 = {
 fn list_elements_use_expected_option_context() {
     let input = r#"
 fun main: () -> List<Option<Int32>> = {
-    [None, Some(1)]
+    [() Option::None, (1) Option::Some]
 }
 "#;
 
@@ -252,7 +252,7 @@ fun main: () -> List<Option<Int32>> = {
 fn list_elements_infer_none_from_sibling_some() {
     let input = r#"
 fun main: () -> List<Option<Int32>> = {
-    val values = [None, Some(1)];
+    val values = [() Option::None, (1) Option::Some];
     values
 }
 "#;
@@ -275,7 +275,7 @@ fun main: () -> List<List<Int32>> = {
 fn singleton_none_list_still_requires_context() {
     let input = r#"
 fun main: () -> Int32 = {
-    val values = [None];
+    val values = [() Option::None];
     1
 }
 "#;
@@ -309,7 +309,7 @@ fun main: () -> Int32 = {
 fn none_infers_from_binding_annotation() {
     let input = r#"
 fun main: () -> Option<Int32> = {
-    val maybe: Option<Int32> = None;
+    val maybe: Option<Int32> = () Option::None;
     maybe
 }
 "#;
@@ -322,7 +322,7 @@ fn none_in_nested_block_uses_return_context() {
     let input = r#"
 fun main: () -> Option<Int32> = {
     {
-        None
+        () Option::None
     }
 }
 "#;
@@ -351,7 +351,7 @@ fun main: () -> List<Int32> = {
 fn contextless_none_is_rejected() {
     let input = r#"
 fun main: () -> Int32 = {
-    val maybe = None;
+    val maybe = () Option::None;
     1
 }
 "#;

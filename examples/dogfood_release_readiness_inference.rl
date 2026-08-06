@@ -16,9 +16,9 @@ fun choose_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 
 fun classify_release: (score: Int32) -> Result<Int32, Int32> = {
     score >= 250 then {
-        Ok(score)
+        (score) Result::Ok
     } else {
-        Err(250 - score)
+        (250 - score) Result::Err
     }
 }
 
@@ -28,7 +28,7 @@ fun main: () -> Int32 = {
     val buffered_scores = (check_scores, apply_buffer) map;
     val passing_scores = (buffered_scores, |score| score >= 80) filter;
     val total_score = (passing_scores, 0, |total, score| total + score) fold;
-    val manual_override: Option<Int32> = None;
+    val manual_override: Option<Int32> = () Option::None;
     val final_score = (manual_override, total_score) choose_or;
     val release = final_score |> classify_release;
 

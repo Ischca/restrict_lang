@@ -490,10 +490,14 @@ fun main: () -> Int32 = {
         (
             "none_type_argument",
             r#"fun main: () -> Option<Int32> = {
-    None<Int32>
+    () Option::None<Int32>
 }
 "#,
-            ["`None<T>`", "`None`", "Option<T>"],
+            [
+                "built-in constructors",
+                "`() Option::None`",
+                "Option or Result",
+            ],
         ),
         (
             "lowercase_some",
@@ -501,7 +505,7 @@ fun main: () -> Int32 = {
     42 |> some
 }
 "#,
-            ["lowercase `some`", "Option constructor", "Some(value)"],
+            ["lowercase `some`", "Option constructor", "Option::Some"],
         ),
         (
             "lowercase_some_direct_call",
@@ -509,7 +513,7 @@ fun main: () -> Int32 = {
     42 some
 }
 "#,
-            ["lowercase `some`", "Option constructor", "Some(value)"],
+            ["lowercase `some`", "Option constructor", "Option::Some"],
         ),
         (
             "lowercase_none",
@@ -517,7 +521,7 @@ fun main: () -> Int32 = {
     () none
 }
 "#,
-            ["lowercase `none`", "Option constructor", "`None`"],
+            ["lowercase `none`", "Option constructor", "Option::None"],
         ),
         (
             "lowercase_none_bare",
@@ -525,7 +529,7 @@ fun main: () -> Int32 = {
     none
 }
 "#,
-            ["lowercase `none`", "Option constructor", "`None`"],
+            ["lowercase `none`", "Option constructor", "Option::None"],
         ),
     ];
 
@@ -639,7 +643,7 @@ fn cli_none_without_expected_type_identifies_binding_context() {
     let (source_path, output) = run_check_temp_source(
         "none_without_expected_type",
         r#"fun main: () -> Int32 = {
-    val maybe = None;
+    val maybe = () Option::None;
     0
 }
 "#,
@@ -652,7 +656,7 @@ fn cli_none_without_expected_type_identifies_binding_context() {
         "stderr should identify the unresolved Option binding, got: {stderr}"
     );
     assert!(
-        stderr.contains("None requires an expected Option type"),
+        stderr.contains("Option::None requires an expected Option type"),
         "stderr should explain the Option context requirement, got: {stderr}"
     );
     assert_no_inference_internals("None inference diagnostic", &stderr);
@@ -665,7 +669,7 @@ fn cli_ok_without_expected_type_identifies_binding_context() {
     let (source_path, output) = run_check_temp_source(
         "ok_without_expected_type",
         r#"fun main: () -> Int32 = {
-    val result = Ok(1);
+    val result = (1) Result::Ok;
     0
 }
 "#,
@@ -678,7 +682,7 @@ fn cli_ok_without_expected_type_identifies_binding_context() {
         "stderr should identify the unresolved Result binding, got: {stderr}"
     );
     assert!(
-        stderr.contains("Ok/Err requires an expected Result type"),
+        stderr.contains("Result::Ok/Result::Err requires an expected Result type"),
         "stderr should explain the Result context requirement, got: {stderr}"
     );
     assert_no_inference_internals("Ok inference diagnostic", &stderr);
@@ -691,7 +695,7 @@ fn cli_err_without_expected_type_identifies_binding_context() {
     let (source_path, output) = run_check_temp_source(
         "err_without_expected_type",
         r#"fun main: () -> Int32 = {
-    val result = Err("network");
+    val result = ("network") Result::Err;
     0
 }
 "#,
@@ -704,7 +708,7 @@ fn cli_err_without_expected_type_identifies_binding_context() {
         "stderr should identify the unresolved Result binding, got: {stderr}"
     );
     assert!(
-        stderr.contains("Ok/Err requires an expected Result type"),
+        stderr.contains("Result::Ok/Result::Err requires an expected Result type"),
         "stderr should explain the Result context requirement, got: {stderr}"
     );
     assert_no_inference_internals("Err inference diagnostic", &stderr);
@@ -765,7 +769,7 @@ fn cli_compile_unresolved_inference_stops_before_codegen() {
         (
             "none",
             r#"fun main: () -> Int32 = {
-    val maybe = None;
+    val maybe = () Option::None;
     0
 }
 "#,
@@ -774,7 +778,7 @@ fn cli_compile_unresolved_inference_stops_before_codegen() {
         (
             "ok",
             r#"fun main: () -> Int32 = {
-    val result = Ok(1);
+    val result = (1) Result::Ok;
     0
 }
 "#,
@@ -1485,9 +1489,9 @@ fun add_risk: (total: Int32, candidate: ReleaseCandidate) -> Int32 = {
 
 fun decide_release: (risk_total: Int32, risk_limit: Int32, owner: Int32) -> Result<Int32, Int32> = {
     risk_total <= risk_limit then {
-        Ok(owner)
+        (owner) Result::Ok
     } else {
-        Err(risk_total - risk_limit)
+        (risk_total - risk_limit) Result::Err
     }
 }
 
@@ -1495,8 +1499,8 @@ fun empty_plan: () -> ReleasePlan = {
     ReleasePlan {
         selected_ids: [],
         owner: 0,
-        decision: Err(0),
-        sampled_ids: Some([])
+        decision: (0) Result::Err,
+        sampled_ids: ([]) Option::Some
     }
 }
 
@@ -1518,7 +1522,7 @@ fun plan_release: (queue: ReleaseQueue) -> ReleasePlan = {
         selected_ids: selected_ids,
         owner: owner,
         decision: decision,
-        sampled_ids: None
+        sampled_ids: () Option::None
     }
 }
 
@@ -1527,30 +1531,30 @@ fun build_release_identity_plan: () -> ReleasePlan = {
         ReleaseCandidate {
             id: 101,
             risk: 42,
-            owner: Some(7)
+            owner: (7) Option::Some
         },
         ReleaseCandidate {
             id: 102,
             risk: 31,
-            owner: None
+            owner: () Option::None
         }
     ];
     val ship_candidates: List<ReleaseCandidate> = [
         ReleaseCandidate {
             id: 201,
             risk: 21,
-            owner: Some(9)
+            owner: (9) Option::Some
         },
         ReleaseCandidate {
             id: 202,
             risk: 91,
-            owner: None
+            owner: () Option::None
         }
     ];
     val queue = ReleaseQueue {
         audit_candidates: audit_candidates,
         ship_candidates: ship_candidates,
-        manual_owner: None,
+        manual_owner: () Option::None,
         fallback_owner: 44,
         risk_limit: 90
     };

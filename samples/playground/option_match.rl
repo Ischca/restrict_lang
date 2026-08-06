@@ -7,5 +7,5 @@ fun choose: (value: Option<Int32>) -> Int32 = {
 }
 
 fun main: () = {
-    Some(42) |> choose |> println
+    42 Option::Some |> choose |> println
 }

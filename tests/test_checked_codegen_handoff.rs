@@ -120,12 +120,39 @@ fn checked_codegen_preserves_first_class_container_builtin_calls() {
     let wat = generate_checked(
         r#"
 fun main: () -> Option<String> = {
-    val maybe: Option<Int32> = Some(7);
+    val maybe: Option<Int32> = (7) Option::Some;
     val apply_map = map;
     (maybe, |value| "ok") apply_map
 }
 "#,
     );
+
+    assert_valid_wat(&wat);
+}
+
+#[test]
+fn checked_codegen_supports_inferred_result_constructor_locals() {
+    let wat = generate_checked(include_str!(
+        "../examples/dogfood_result_local_inference.rl"
+    ));
+
+    assert_valid_wat(&wat);
+}
+
+#[test]
+fn checked_codegen_supports_release_readiness_inference() {
+    let wat = generate_checked(include_str!(
+        "../examples/dogfood_release_readiness_inference.rl"
+    ));
+
+    assert_valid_wat(&wat);
+}
+
+#[test]
+fn checked_codegen_supports_generic_constructor_context_inference() {
+    let wat = generate_checked(include_str!(
+        "../examples/dogfood_generic_context_inference.rl"
+    ));
 
     assert_valid_wat(&wat);
 }

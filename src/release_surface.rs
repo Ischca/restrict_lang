@@ -852,12 +852,9 @@ fn reject_tat_expr(expr: &Expr) -> Result<(), ReleaseSurfaceError> {
             reject_tat_record_lit(&clone_expr.updates)
         }
         ExprKind::PrototypeClone(proto_clone) => reject_tat_record_lit(&proto_clone.updates),
-        ExprKind::Freeze(inner)
-        | ExprKind::Some(inner)
-        | ExprKind::Ok(inner)
-        | ExprKind::Err(inner)
-        | ExprKind::Await(inner)
-        | ExprKind::Spawn(inner) => reject_tat_expr(inner),
+        ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
+            reject_tat_expr(inner)
+        }
         ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
             for element in elements {
                 reject_tat_expr(element)?;
@@ -917,8 +914,7 @@ fn reject_tat_expr(expr: &Expr) -> Result<(), ReleaseSurfaceError> {
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
         | ExprKind::Ident(_)
-        | ExprKind::VariantRef(_)
-        | ExprKind::None => Ok(()),
+        | ExprKind::VariantRef(_) => Ok(()),
     }
 }
 

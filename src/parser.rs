@@ -58,8 +58,12 @@ const STALE_VAL_MUT_ERROR: &str =
     "stale syntax `val mut` is not valid Restrict; write mutable bindings as `mut val`";
 const TRADITIONAL_CALL_ERROR: &str =
     "traditional calls like `add(1, 2)` are not valid Restrict; use OSV syntax such as `(1, 2) add` or `value |> add`";
-const NONE_TYPE_ARGUMENT_ERROR: &str =
-    "stale syntax `None<T>` is not valid Restrict; write `None` and provide an expected `Option<T>` type through an annotation or typed context";
+const STALE_OPTION_VALUE_ERROR: &str =
+    "unqualified Option value construction is not valid Restrict; write `value Option::Some` or `() Option::None` (pipe is optional for `Option::Some`)";
+const STALE_RESULT_VALUE_ERROR: &str =
+    "traditional Result value construction is not valid Restrict; write `value Result::Ok` or `error Result::Err` (pipe is optional)";
+const BUILTIN_CONSTRUCTOR_TYPE_ARGUMENT_ERROR: &str =
+    "write qualified OSV such as `() Option::None`; built-in constructors for Option or Result do not take source type arguments, so provide the full type through an annotation or typed context";
 const STALE_UNIT_ERROR: &str =
     "stale syntax `Unit` is not valid Restrict; use `()` for the unit value or unit type";
 const STALE_FUNCTION_DECL_ERROR: &str =
@@ -772,11 +776,8 @@ fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
         literal,
         unit_expr,
         lambda_expr, // Try lambda before other expressions that use |
-        some_expr,   // Try Some before ident
-        none_expr,   // Try None before ident
-        ok_expr,     // Try Ok before ident
-        err_expr,    // Try Err before ident
-        list_lit,    // Try list literal before record
+        stale_option_value_expr,
+        list_lit, // Try list literal before record
         map(record_lit, |r| Expr::new(ExprKind::RecordLit(r))), // Try record_lit before ident
         variant_ref_expr, // Try qualified variants before identifiers
         map(ident, |i| Expr::new(ExprKind::Ident(i))),
@@ -793,14 +794,19 @@ fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
 fn variant_path(input: &str) -> ParseResult<'_, VariantPath> {
     let (input, enum_name) = ident(input)?;
     let (input, _) = expect_token(Token::ColonColon)(input)?;
-    let (input, variant_name) = ident(input)?;
-    Ok((
-        input,
-        VariantPath {
-            enum_name,
-            variant_name,
-        },
-    ))
+    let (input, variant_name) = alt((
+        ident,
+        value("Some".to_string(), expect_token(Token::Some)),
+        value("None".to_string(), expect_token(Token::None)),
+    ))(input)?;
+    let path = VariantPath {
+        enum_name,
+        variant_name,
+    };
+    if path.builtin().is_some() && expect_token::<'_>(Token::Lt)(input).is_ok() {
+        return user_syntax_failure(BUILTIN_CONSTRUCTOR_TYPE_ARGUMENT_ERROR);
+    }
+    Ok((input, path))
 }
 
 fn variant_ref_expr(input: &str) -> ParseResult<'_, Expr> {
@@ -813,50 +819,14 @@ fn unit_expr(input: &str) -> ParseResult<'_, Expr> {
     Ok((input, Expr::new(ExprKind::Unit)))
 }
 
-fn none_expr(input: &str) -> ParseResult<'_, Expr> {
-    let (input, _) = expect_token(Token::None)(input)?;
-
-    if expect_token::<'_>(Token::Lt)(input).is_ok() {
-        user_syntax_failure(NONE_TYPE_ARGUMENT_ERROR)
-    } else {
-        Ok((input, Expr::new(ExprKind::None)))
-    }
-}
-
-fn some_expr(input: &str) -> ParseResult<'_, Expr> {
-    let (input, _) = expect_token(Token::Some)(input)?;
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, expr) = expression(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
-    Ok((input, Expr::new(ExprKind::Some(Box::new(expr)))))
-}
-
-fn result_constructor_expr<'a>(input: &'a str, expected: &'static str) -> ParseResult<'a, Expr> {
-    let (input, name) = ident(input)?;
-    if name != expected {
-        return Err(nom::Err::Error(nom::error::Error::new(
+fn stale_option_value_expr(input: &str) -> ParseResult<'_, Expr> {
+    match lex_token(input) {
+        Ok((_, Token::Some | Token::None)) => user_syntax_failure(STALE_OPTION_VALUE_ERROR),
+        _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Tag,
-        )));
+        ))),
     }
-
-    let (input, _) = expect_token(Token::LParen)(input)?;
-    let (input, expr) = expression(input)?;
-    let (input, _) = expect_token(Token::RParen)(input)?;
-
-    match expected {
-        "Ok" => Ok((input, Expr::new(ExprKind::Ok(Box::new(expr))))),
-        "Err" => Ok((input, Expr::new(ExprKind::Err(Box::new(expr))))),
-        _ => unreachable!(),
-    }
-}
-
-fn ok_expr(input: &str) -> ParseResult<'_, Expr> {
-    result_constructor_expr(input, "Ok")
-}
-
-fn err_expr(input: &str) -> ParseResult<'_, Expr> {
-    result_constructor_expr(input, "Err")
 }
 
 fn list_lit(input: &str) -> ParseResult<'_, Expr> {
@@ -1506,6 +1476,10 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
                 ExprKind::Ident(_) | ExprKind::FieldAccess(_, _) | ExprKind::VariantRef(_)
                     if input.trim_start().starts_with('(') =>
                 {
+                    if matches!(&first.kind, ExprKind::Ident(name) if name == "Ok" || name == "Err")
+                    {
+                        return user_syntax_failure(STALE_RESULT_VALUE_ERROR);
+                    }
                     // This is traditional syntax like func() or obj.method() - REJECT IT
                     return user_syntax_failure(TRADITIONAL_CALL_ERROR);
                 }
@@ -1556,6 +1530,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
                                 | Token::False
                                 | Token::LParen
                                 | Token::LBracket
+                                | Token::ColonColon
                         ))
                     ) {
                         // No token after identifier - definitely standalone
@@ -2244,6 +2219,109 @@ mod tests {
                     ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
                         if enum_name == "CheckoutError" && variant_name == "PaymentDeclined")
         ));
+    }
+
+    #[test]
+    fn test_qualified_builtin_value_constructors() {
+        let (remaining, direct_some) = call_expr("42 Option::Some").unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(direct_some) = direct_some.kind else {
+            panic!("expected direct Option::Some call");
+        };
+        assert_eq!(direct_some.args.len(), 1);
+        assert!(matches!(
+            direct_some.function.kind,
+            ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                if enum_name == "Option" && variant_name == "Some"
+        ));
+
+        let (remaining, direct_none) = call_expr("() Option::None").unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(direct_none) = direct_none.kind else {
+            panic!("expected direct Option::None call");
+        };
+        assert!(direct_none.args.is_empty());
+        assert!(matches!(
+            direct_none.function.kind,
+            ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                if enum_name == "Option" && variant_name == "None"
+        ));
+
+        let (remaining, piped_ok) = pipe_expr("42 |> Result::Ok").unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Pipe(piped_ok) = piped_ok.kind else {
+            panic!("expected piped Result::Ok call");
+        };
+        assert!(matches!(
+            piped_ok.target,
+            PipeTarget::Expr(target)
+                if matches!(target.kind,
+                    ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                        if enum_name == "Result" && variant_name == "Ok")
+        ));
+
+        let (remaining, direct_err) = call_expr(r#""missing" Result::Err"#).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(direct_err) = direct_err.kind else {
+            panic!("expected direct Result::Err call");
+        };
+        assert_eq!(direct_err.args.len(), 1);
+        assert!(matches!(
+            direct_err.function.kind,
+            ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                if enum_name == "Result" && variant_name == "Err"
+        ));
+
+        let source = r#"
+            fun main: () -> Option<Int32> = {
+                42 Option::Some
+            }
+        "#;
+        let (remaining, program) = parse_program(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let TopDecl::Function(main) = &program.declarations[0] else {
+            panic!("expected main function");
+        };
+        assert!(matches!(
+            main.body.expr.as_deref().map(|expr| &expr.kind),
+            Some(ExprKind::Call(call))
+                if matches!(call.function.kind,
+                    ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
+                        if enum_name == "Option" && variant_name == "Some")
+        ));
+    }
+
+    #[test]
+    fn test_legacy_builtin_value_constructors_are_rejected() {
+        for source in ["Some(42)", "None"] {
+            let err = expression(source).unwrap_err();
+            assert!(matches!(
+                err,
+                nom::Err::Failure(error) if error.input == STALE_OPTION_VALUE_ERROR
+            ));
+        }
+
+        for source in ["Ok(42)", "Err(42)"] {
+            let err = expression(source).unwrap_err();
+            assert!(matches!(
+                err,
+                nom::Err::Failure(error) if error.input == STALE_RESULT_VALUE_ERROR
+            ));
+        }
+
+        assert_eq!(
+            pattern("Some(value)").unwrap().1,
+            Pattern::Some(Box::new(Pattern::Ident("value".to_string())))
+        );
+        assert_eq!(pattern("None").unwrap().1, Pattern::None);
+        assert_eq!(
+            pattern("Ok(value)").unwrap().1,
+            Pattern::Ok(Box::new(Pattern::Ident("value".to_string())))
+        );
+        assert_eq!(
+            pattern("Err(error)").unwrap().1,
+            Pattern::Err(Box::new(Pattern::Ident("error".to_string())))
+        );
     }
 
     #[test]

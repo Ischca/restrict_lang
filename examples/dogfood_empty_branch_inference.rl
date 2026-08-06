@@ -33,17 +33,17 @@ fun resolve_reviewer: (
     fallback_owner: Int32
 ) -> Option<Int32> = {
     freeze_rollout then {
-        None
+        () Option::None
     } else {
         manual_owner match {
             Some(owner) => {
-                Some(owner)
+                (owner) Option::Some
             }
             None => {
                 risk >= 75 then {
-                    Some(fallback_owner)
+                    (fallback_owner) Option::Some
                 } else {
-                    None
+                    () Option::None
                 }
             }
         }
@@ -75,24 +75,24 @@ fun deferred_codes_for: (
     risk: Int32
 ) -> Option<List<Int32>> = {
     freeze_rollout then {
-        Some([])
+        ([]) Option::Some
     } else {
         risk >= 90 then {
-            Some([risk, 90])
+            ([risk, 90]) Option::Some
         } else {
-            None
+            () Option::None
         }
     }
 }
 
 fun route_for: (risk: Int32, freeze_rollout: Boolean) -> Result<Int32, Int32> = {
     freeze_rollout then {
-        Err(risk)
+        (risk) Result::Err
     } else {
         risk >= 80 then {
-            Ok(risk)
+            (risk) Result::Ok
         } else {
-            Err(80 - risk)
+            (80 - risk) Result::Err
         }
     }
 }
@@ -125,7 +125,7 @@ fun main: () -> Int32 = {
         ticket_id: 42,
         customer_tier: 4,
         failed_checks: 2,
-        manual_owner: None,
+        manual_owner: () Option::None,
         freeze_rollout: false
     };
     val plan = (request, 77) build_plan;

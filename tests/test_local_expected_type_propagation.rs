@@ -36,7 +36,7 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 }
 
 fun main: () -> Int32 = {
-    val maybe = None;
+    val maybe = () Option::None;
     (maybe, 0) unwrap_or
 }
 "#;
@@ -55,7 +55,7 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 }
 
 fun main: () -> Int32 = {
-    mut val maybe = None;
+    mut val maybe = () Option::None;
     (maybe, 7) unwrap_or
 }
 "#;
@@ -87,8 +87,8 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 }
 
 fun main: () -> Int32 = {
-    mut val maybe: Option<Int32> = Some(1);
-    maybe = None;
+    mut val maybe: Option<Int32> = (1) Option::Some;
+    maybe = () Option::None;
     (maybe, 0) unwrap_or
 }
 "#;
@@ -141,7 +141,7 @@ fun main: () -> Int32 = {
 fn local_array_literal_uses_expected_return_context() {
     let input = r#"
 fun main: () -> Array<Option<Int32>, 2> = {
-    val reviewers = [None, Some(42)];
+    val reviewers = [() Option::None, (42) Option::Some];
     reviewers
 }
 "#;
@@ -180,7 +180,7 @@ fn local_empty_array_infers_from_later_array_set_value() {
     let input = r#"
 fun main: () -> () = {
     val reviewers = [];
-    (reviewers, 0, Some(42)) array_set
+    (reviewers, 0, (42) Option::Some) array_set
 }
 "#;
 
@@ -214,7 +214,7 @@ fun use_i64s: (values: List<Int64>) -> Int64 = {
 
 fun main: () -> Int64 = {
     val box = Box {
-        result: Ok([1])
+        result: ([1]) Result::Ok
     };
     box.result match {
         Ok(values) => { values |> use_i64s }
@@ -327,8 +327,8 @@ fun result_value_or_zero: (result: Result<Int32, String>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val ok_result = Ok(41);
-    val err_result = Err("missing");
+    val ok_result = (41) Result::Ok;
+    val err_result = ("missing") Result::Err;
     (ok_result |> result_value_or_zero) + (err_result |> result_value_or_zero)
 }
 "#;
@@ -348,7 +348,7 @@ fun error_score: (message: String) -> Int64 = {
 }
 
 fun main: () -> Int64 = {
-    val result = Ok([1]);
+    val result = ([1]) Result::Ok;
     result match {
         Ok(values) => { values |> first_i64 }
         Err(message) => { message |> error_score }
@@ -375,7 +375,7 @@ fun result_value_or_code: (result: Result<Int32, Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val result = Ok(41);
+    val result = (41) Result::Ok;
     val first = result;
     val second = result;
     (first |> result_value_or_code) + (second |> result_value_or_code)
@@ -400,7 +400,7 @@ fun result_value_or_code: (result: Result<String, Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val result = Ok("ready");
+    val result = ("ready") Result::Ok;
     val first = result;
     val second = result;
     (first |> result_value_or_code) + (second |> result_value_or_code)
@@ -429,7 +429,7 @@ fun result_value_or_zero: (result: Result<Int32, String>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val result = Ok(41);
+    val result = (41) Result::Ok;
     val first = result;
     val second = result;
     (first |> result_value_or_zero) + (second |> result_value_or_zero)
@@ -458,7 +458,7 @@ fun result_value_or_code: (result: Result<String, Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val result = Err(7);
+    val result = (7) Result::Err;
     val first = result;
     val second = result;
     (first |> result_value_or_code) + (second |> result_value_or_code)
@@ -488,7 +488,7 @@ fun result_value_or_code: (result: Result<Int32, Int32>) -> Int32 = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val result = Ok(41);
+    val result = (41) Result::Ok;
     val chosen = flag then {
         result |> result_value_or_code
     } else {
@@ -517,7 +517,7 @@ fun result_value_or_code: (result: Result<String, Int32>) -> Int32 = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val result = Ok("ready");
+    val result = ("ready") Result::Ok;
     val chosen = flag then {
         result |> result_value_or_code
     } else {
@@ -550,11 +550,11 @@ fun result_value_or_code: (result: Result<Int32, Int32>) -> Int32 = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val result = Ok(41);
+    val result = (41) Result::Ok;
     val selected = flag then {
         result
     } else {
-        Err(7)
+        (7) Result::Err
     };
     val first = selected |> result_value_or_code;
     first + (result |> result_value_or_code)
@@ -580,11 +580,11 @@ fun result_value_or_code: (result: Result<String, Int32>) -> Int32 = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val result = Ok("ready");
+    val result = ("ready") Result::Ok;
     val selected = flag then {
         result
     } else {
-        Err(7)
+        (7) Result::Err
     };
     val first = selected |> result_value_or_code;
     first + (result |> result_value_or_code)
@@ -614,10 +614,10 @@ fun result_value_or_code: (result: Result<Int32, Int32>) -> Int32 = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val result = Ok(41);
+    val result = (41) Result::Ok;
     val selected = flag match {
         true => { result }
-        false => { Err(7) }
+        false => { (7) Result::Err }
     };
     val first = selected |> result_value_or_code;
     first + (result |> result_value_or_code)
@@ -643,10 +643,10 @@ fun result_value_or_code: (result: Result<String, Int32>) -> Int32 = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val result = Ok("ready");
+    val result = ("ready") Result::Ok;
     val selected = flag match {
         true => { result }
-        false => { Err(7) }
+        false => { (7) Result::Err }
     };
     val first = selected |> result_value_or_code;
     first + (result |> result_value_or_code)
@@ -664,11 +664,11 @@ fun main: () -> Int32 = {
 fn result_then_sibling_constructor_constrains_pending_ok_binding_error_side() {
     let input = r#"
 fun main: (flag: Boolean) -> Int32 = {
-    val result = Ok(41);
+    val result = (41) Result::Ok;
     val selected = flag then {
         result
     } else {
-        Err("missing")
+        ("missing") Result::Err
     };
     selected match {
         Ok(value) => {
@@ -688,13 +688,13 @@ fun main: (flag: Boolean) -> Int32 = {
 fn result_match_sibling_constructor_constrains_pending_ok_binding_error_side() {
     let input = r#"
 fun main: (flag: Boolean) -> Int32 = {
-    val result = Ok(41);
+    val result = (41) Result::Ok;
     val selected = flag match {
         true => {
             result
         }
         false => {
-            Err("missing")
+            ("missing") Result::Err
         }
     };
     selected match {
@@ -716,11 +716,11 @@ fun main: (flag: Boolean) -> Int32 = {
 fn none_then_direct_match_constrains_pending_option_payload() {
     let input = r#"
 fun main: (flag: Boolean) -> Int32 = {
-    val maybe = None;
+    val maybe = () Option::None;
     val selected = flag then {
         maybe
     } else {
-        Some(1)
+        (1) Option::Some
     };
     selected match {
         Some(value) => {
@@ -740,13 +740,13 @@ fun main: (flag: Boolean) -> Int32 = {
 fn none_match_direct_match_constrains_pending_option_payload() {
     let input = r#"
 fun main: (flag: Boolean) -> Int32 = {
-    val maybe = None;
+    val maybe = () Option::None;
     val selected = flag match {
         true => {
             maybe
         }
         false => {
-            Some(1)
+            (1) Option::Some
         }
     };
     selected match {
@@ -774,7 +774,7 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 }
 
 fun main: () -> Int32 = {
-    val maybe = None;
+    val maybe = () Option::None;
     val first = maybe;
     val second = maybe;
     val a = (first, 1) unwrap_or;
@@ -797,7 +797,7 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val maybe = None;
+    val maybe = () Option::None;
     val chosen = flag then {
         (maybe, 1) unwrap_or
     } else {
@@ -822,11 +822,11 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 
 fun main: () -> Int32 = {
     val flag: Boolean = true;
-    val maybe = None;
+    val maybe = () Option::None;
     val selected = flag then {
         maybe
     } else {
-        None
+        () Option::None
     };
     val first = (selected, 1) unwrap_or;
     first + ((maybe, 2) unwrap_or)
@@ -848,11 +848,11 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 
 fun main: () -> String = {
     val flag: Boolean = true;
-    val maybe = None;
+    val maybe = () Option::None;
     val selected = flag then {
         maybe
     } else {
-        None
+        () Option::None
     };
     val first = (selected, "first") unwrap_or;
     first + ((maybe, "second") unwrap_or)
@@ -879,10 +879,10 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 
 fun main: () -> String = {
     val flag: Boolean = true;
-    val maybe = None;
+    val maybe = () Option::None;
     val selected = flag match {
         true => { maybe }
-        false => { None }
+        false => { () Option::None }
     };
     val first = (selected, "first") unwrap_or;
     first + ((maybe, "second") unwrap_or)
@@ -907,7 +907,7 @@ fun unwrap_or: <T>(maybe: Option<T>, fallback: T) -> T = {
 }
 
 fun main: () -> String = {
-    val maybe = None;
+    val maybe = () Option::None;
     val first = maybe;
     val second = maybe;
     val a = (first, "a") unwrap_or;
@@ -964,7 +964,7 @@ fun main: () -> Int32 = {
 fn local_match_callable_arms_mix_function_value_and_lambda() {
     let input = r#"
 fun main: () -> Int32 = {
-    val maybe_mapper: Option<Int32 -> Int32> = Some(|score| score + 1);
+    val maybe_mapper: Option<Int32 -> Int32> = (|score| score + 1) Option::Some;
     val mapper = maybe_mapper match {
         Some(f) => {
             f

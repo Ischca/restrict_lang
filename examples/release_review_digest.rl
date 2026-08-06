@@ -40,7 +40,7 @@ fun summarize_slice: (slice: ReleaseSlice) -> Digest = {
 fun main: () -> Digest = {
     val slice = ReleaseSlice {
         owner: OwnerSignal {
-            confidence: Some(8),
+            confidence: (8) Option::Some,
             queue: [3, 5]
         },
         blocker_codes: [101, 202],

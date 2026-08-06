@@ -258,15 +258,15 @@ first-class constructors, and a host enum ABI remain outside this slice.
 ```restrict
 fun count_scores: () -> Int32 = {
     val numbers: List<Int32> = [1, 2, 3];
-    val maybe_score: Option<Int32> = Some(42);
-    val no_score: Option<Int32> = None;
-    val success: Result<Int32, String> = Ok(42);
-    val failure: Result<Int32, String> = Err("invalid");
+    val maybe_score: Option<Int32> = 42 Option::Some;
+    val no_score: Option<Int32> = () Option::None;
+    val success: Result<Int32, String> = 42 Result::Ok;
+    val failure: Result<Int32, String> = "invalid" Result::Err;
     numbers |> list_count
 }
 ```
 
-Empty `[]` and `None` need context from an annotation, expected return type, or
+Empty `[]` and `() Option::None` need context from an annotation, expected return type, or
 neighboring generic argument.
 
 The example above uses local bindings. In v0.0.1, list, `Option`, and `Result`

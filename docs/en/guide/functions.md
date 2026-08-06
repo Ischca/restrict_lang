@@ -103,7 +103,7 @@ fun identity: <T>(value: T) -> T = {
 }
 
 fun keep_some: <T>(value: T) -> Option<T> = {
-    Some(value)
+    value Option::Some
 }
 ```
 
@@ -211,8 +211,8 @@ Higher-order functions work naturally with `match`:
 ```restrict
 fun map_option: <T, U>(value: Option<T>, f: T -> U) -> Option<U> = {
     value match {
-        Some(inner) => { Some(inner |> f) }
-        None => { None }
+        Some(inner) => { inner |> f |> Option::Some }
+        None => { () Option::None }
     }
 }
 ```

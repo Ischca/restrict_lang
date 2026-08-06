@@ -83,11 +83,11 @@ fun first_missing_owner: (
     change_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(change_id) }
+                Some(person) => { () Option::None }
+                None => { (change_id) Option::Some }
             }
         }
     }
@@ -125,7 +125,7 @@ fun finish_decision: (
         first_unowned
     } = state;
     val blocker_codes: List<Int32> = [] |> (|empty_codes| (empty_codes, fallback_codes) choose_first);
-    val missing_owner: Option<Int32> = None |> (|empty_owner| (empty_owner, first_unowned) choose_first);
+    val missing_owner: Option<Int32> = () Option::None |> (|empty_owner| (empty_owner, first_unowned) choose_first);
     val approval_threshold = customer_visible_count |> (|count| count * 15 + 80);
 
     ReleaseDecision {
@@ -147,7 +147,7 @@ fun assess_release: (
         total_risk: 0,
         uncovered_count: 0,
         customer_visible_count: 0,
-        first_unowned: None
+        first_unowned: () Option::None
     };
     val final_state = (changes, initial, |state, change| (state, change) accumulate_change) fold;
     val scores = scores_input |> review_scores;
@@ -161,14 +161,14 @@ fun main: () -> ReleaseDecision = {
             risk: 22,
             test_coverage: 91,
             customer_visible: true,
-            owner: Some(7)
+            owner: (7) Option::Some
         },
         Change {
             id: 102,
             risk: 45,
             test_coverage: 73,
             customer_visible: false,
-            owner: None
+            owner: () Option::None
         }
     ];
     val scoring_changes: List<Change> = [
@@ -177,14 +177,14 @@ fun main: () -> ReleaseDecision = {
             risk: 55,
             test_coverage: 85,
             customer_visible: true,
-            owner: Some(9)
+            owner: (9) Option::Some
         },
         Change {
             id: 202,
             risk: 12,
             test_coverage: 72,
             customer_visible: false,
-            owner: Some(10)
+            owner: (10) Option::Some
         }
     ];
     val fallback_codes = [900, 901];

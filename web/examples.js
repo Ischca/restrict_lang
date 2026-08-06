@@ -55,7 +55,7 @@ export const examples = [
         "file": "option_match.rl",
         "kind": "run",
         "expectedOutput": "42\n",
-        "source": "// Built-in options are handled with an exhaustive match.\nfun choose: (value: Option<Int32>) -> Int32 = {\n    value match {\n        Some(number) => { number }\n        None => { 0 }\n    }\n}\n\nfun main: () = {\n    Some(42) |> choose |> println\n}\n"
+        "source": "// Built-in options are handled with an exhaustive match.\nfun choose: (value: Option<Int32>) -> Int32 = {\n    value match {\n        Some(number) => { number }\n        None => { 0 }\n    }\n}\n\nfun main: () = {\n    42 Option::Some |> choose |> println\n}\n"
     },
     {
         "id": "resultError",
@@ -65,7 +65,7 @@ export const examples = [
         "file": "result_error.rl",
         "kind": "run",
         "expectedOutput": "invalid code\n",
-        "source": "// A closed enum gives Result a domain-specific error type.\nenum DecodeError {\n    Invalid(String)\n}\n\nfun decode: (code: Int32) -> Result<Int32, DecodeError> = {\n    code == 0 then {\n        Ok(42)\n    } else {\n        Err(\"invalid code\" |> DecodeError::Invalid)\n    }\n}\n\nfun explain: (result: Result<Int32, DecodeError>) -> String = {\n    result match {\n        Ok(value) => { \"valid code\" }\n        Err(error) => {\n            error match {\n                DecodeError::Invalid(message) => { message }\n            }\n        }\n    }\n}\n\nfun main: () = {\n    1 |> decode |> explain |> println\n}\n"
+        "source": "// A closed enum gives Result a domain-specific error type.\nenum DecodeError {\n    Invalid(String)\n}\n\nfun decode: (code: Int32) -> Result<Int32, DecodeError> = {\n    code == 0 then {\n        42 Result::Ok\n    } else {\n        \"invalid code\" DecodeError::Invalid Result::Err\n    }\n}\n\nfun explain: (result: Result<Int32, DecodeError>) -> String = {\n    result match {\n        Ok(value) => { \"valid code\" }\n        Err(error) => {\n            error match {\n                DecodeError::Invalid(message) => { message }\n            }\n        }\n    }\n}\n\nfun main: () = {\n    1 |> decode |> explain |> println\n}\n"
     },
     {
         "id": "formContract",

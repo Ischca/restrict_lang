@@ -852,7 +852,6 @@ fn is_literal_expr(expr: &Expr) -> bool {
             | ExprKind::Unit
             | ExprKind::ListLit(_)
             | ExprKind::ArrayLit(_)
-            | ExprKind::None
     )
 }
 

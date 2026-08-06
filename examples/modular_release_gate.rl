@@ -10,7 +10,7 @@ fun build_modular_release_gate: () -> ReleaseVerdict = {
         lead_time_days: 3,
         failing_checks: 1,
         risk_signals: [4, 2, 1],
-        manual_owner: None
+        manual_owner: () Option::None
     };
 
     (input, default_owner) evaluate_release

@@ -31,8 +31,8 @@ fn test_simple_match_some_none() {
         }
 
         fun main: () -> Int32 = {
-            val some_val = Some(42);
-            val none_val: Option<Int32> = None;
+            val some_val = (42) Option::Some;
+            val none_val: Option<Int32> = () Option::None;
             val a = some_val |> test_option;
             val b = none_val |> test_option;
             a + b
@@ -63,9 +63,9 @@ fn test_nested_pattern_match() {
         }
 
         fun main: () -> Int32 = {
-            val nested = Some(Some(42));
-            val some_none: Option<Option<Int32> > = Some(None);
-            val missing: Option<Option<Int32> > = None;
+            val nested = ((42) Option::Some) Option::Some;
+            val some_none: Option<Option<Int32> > = (() Option::None) Option::Some;
+            val missing: Option<Option<Int32> > = () Option::None;
             val a = nested |> test_nested;
             val b = some_none |> test_nested;
             val c = missing |> test_nested;
@@ -167,8 +167,8 @@ fn test_wildcard_pattern() {
         }
 
         fun main: () -> Int32 = {
-            val some_val = Some(42);
-            val none_val: Option<Int32> = None;
+            val some_val = (42) Option::Some;
+            val none_val: Option<Int32> = () Option::None;
             val a = some_val |> handle_option;
             val b = none_val |> handle_option;
             a + b
@@ -214,7 +214,7 @@ fn test_exhaustive_pattern_checking() {
         }
 
         fun main: () -> Int32 = {
-            Some(42) |> incomplete
+            (42) Option::Some |> incomplete
         }
     "#;
 
@@ -246,7 +246,7 @@ fn test_pattern_binding_affine_types() {
         }
 
         fun main: () -> Int32 = {
-            Some(Token { id: 42 }) |> test_affine
+            (Token { id: 42 }) Option::Some |> test_affine
         }
     "#;
 
@@ -274,7 +274,7 @@ fn test_pattern_match_tuple() {
 fn test_pattern_match_in_let_binding() {
     let source = r#"
         fun main: () -> Int32 = {
-            val Some(x) = Some(42);
+            val Some(x) = (42) Option::Some;
             x
         }
     "#;
@@ -359,7 +359,7 @@ fn test_pattern_match_osv_syntax() {
 fn test_pattern_match_with_complex_expressions() {
     let source = r#"
         fun complex_match: () -> Int32 = {
-            val opt = Some(10 + 20);
+            val opt = (10 + 20) Option::Some;
             opt match {
                 Some(n) => { n * 2 }
                 None => { 0 }
@@ -388,7 +388,7 @@ fn test_match_return_different_types() {
         }
 
         fun main: () -> Int32 = {
-            Some(42) |> test_types
+            (42) Option::Some |> test_types
         }
     "#;
 

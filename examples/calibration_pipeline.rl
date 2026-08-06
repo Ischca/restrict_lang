@@ -42,6 +42,6 @@ fun quality_score: (
 
 fun main: () -> Float64 = {
     val raw_samples = [42, 512, 901];
-    val manual_offset: Option<Float64> = Some(0.75);
+    val manual_offset: Option<Float64> = (0.75) Option::Some;
     (raw_samples, manual_offset, 10.0, 11.0) quality_score
 }

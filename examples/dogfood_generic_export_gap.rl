@@ -33,9 +33,9 @@ pub fun select_override: <T>(override_value: Option<T>, fallback: T) -> T = {
 
 fun route_release: (risk_score: Int32, owner_id: Int32) -> Result<Int32, Int32> = {
     risk_score < 50 then {
-        Ok(owner_id)
+        (owner_id) Result::Ok
     } else {
-        Err(risk_score)
+        (risk_score) Result::Err
     }
 }
 
@@ -63,8 +63,8 @@ fun main: () -> PublishDecision = {
     val candidate = ReleaseCandidate {
         build_id: 1001,
         risk_score: 27,
-        owner_override: Some(314),
-        check_override: None,
+        owner_override: (314) Option::Some,
+        check_override: () Option::None,
         default_checks: [10, 20, 30]
     };
 

@@ -84,11 +84,11 @@ fun choose_first_unowned: (
     ticket_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(ticket_id) }
+                Some(person) => { () Option::None }
+                None => { (ticket_id) Option::Some }
             }
         }
     }
@@ -121,7 +121,7 @@ fun build_report: (
     val initial = QueueState {
         total_score: 0,
         overdue_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         routed_count: 0
     };
     val final_state = (tickets, initial, |current, ticket| (current, ticket) add_ticket) fold;
@@ -145,14 +145,14 @@ fun main: () -> QueueReport = {
             severity: 4,
             age_hours: 72,
             vip: true,
-            owner: Some(7)
+            owner: (7) Option::Some
         },
         Ticket {
             id: 11,
             severity: 1,
             age_hours: 12,
             vip: false,
-            owner: None
+            owner: () Option::None
         }
     ];
     val scores = scoring_tickets |> routed_scores;
@@ -163,14 +163,14 @@ fun main: () -> QueueReport = {
             severity: 4,
             age_hours: 72,
             vip: true,
-            owner: Some(7)
+            owner: (7) Option::Some
         },
         Ticket {
             id: 12,
             severity: 2,
             age_hours: 60,
             vip: false,
-            owner: None
+            owner: () Option::None
         }
     ];
     val fallback_codes = [800];

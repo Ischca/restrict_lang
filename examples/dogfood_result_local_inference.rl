@@ -25,8 +25,8 @@ fun add_score: (total: Int32, score: Int32) -> Int32 = {
 
 fun main: () -> Int32 = {
     val release_ready: Boolean = true;
-    val primary = Ok(42);
-    val fallback = Err(8);
+    val primary = (42) Result::Ok;
+    val fallback = (8) Result::Err;
     val primary_copy = primary;
     val selected = release_ready then {
         primary

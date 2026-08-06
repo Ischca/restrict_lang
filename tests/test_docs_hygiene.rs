@@ -151,6 +151,10 @@ fn v001_core_guides_do_not_reintroduce_stale_syntax() {
                 &format!("{path}:{}", block.start_line),
                 &block.source,
             );
+            assert_no_unqualified_builtin_value_constructors(
+                &format!("{path}:{}", block.start_line),
+                &block.source,
+            );
             assert_current_import_surface(&format!("{path}:{}", block.start_line), &block.source);
             assert_no_traditional_call_syntax(
                 &format!("{path}:{}", block.start_line),
@@ -175,6 +179,10 @@ fn stdlib_reference_code_blocks_do_not_reintroduce_stale_syntax() {
             &block.source,
         );
         assert_no_record_shaped_builtin_variants(
+            &format!("{path}:{}", block.start_line),
+            &block.source,
+        );
+        assert_no_unqualified_builtin_value_constructors(
             &format!("{path}:{}", block.start_line),
             &block.source,
         );
@@ -684,6 +692,10 @@ fn docs_en_restrict_blocks_do_not_use_removed_binding_pipe_or_record_initializer
                 &format!("{relative_path}:{}", block.start_line),
                 &block.source,
             );
+            assert_no_unqualified_builtin_value_constructors(
+                &format!("{relative_path}:{}", block.start_line),
+                &block.source,
+            );
             assert_current_import_surface(
                 &format!("{relative_path}:{}", block.start_line),
                 &block.source,
@@ -701,6 +713,7 @@ fn current_japanese_docs_do_not_reintroduce_stale_syntax() {
             assert_no_removed_v001_syntax_patterns(&label, &block.source);
             assert_no_removed_binding_pipe_or_record_initializer(&label, &block.source);
             assert_no_record_shaped_builtin_variants(&label, &block.source);
+            assert_no_unqualified_builtin_value_constructors(&label, &block.source);
             assert_no_traditional_call_syntax(&label, &block.source);
             assert_current_import_surface(&label, &block.source);
         }
@@ -724,6 +737,7 @@ fn public_doc_snippets_do_not_reintroduce_stale_syntax() {
                 assert_no_removed_v001_syntax_patterns(&label, &block.source);
                 assert_no_removed_binding_pipe_or_record_initializer(&label, &block.source);
                 assert_no_record_shaped_builtin_variants(&label, &block.source);
+                assert_no_unqualified_builtin_value_constructors(&label, &block.source);
                 assert_no_traditional_call_syntax(&label, &block.source);
                 assert_current_import_surface(&label, &block.source);
             }
@@ -770,6 +784,7 @@ fn code_examples_toml_restrict_snippets_do_not_reintroduce_stale_syntax() {
         assert_no_removed_v001_syntax_patterns(&label, &example.source);
         assert_no_removed_binding_pipe_or_record_initializer(&label, &example.source);
         assert_no_record_shaped_builtin_variants(&label, &example.source);
+        assert_no_unqualified_builtin_value_constructors(&label, &example.source);
         assert_no_traditional_call_syntax(&label, &example.source);
         assert_current_import_surface(&label, &example.source);
         assert_no_unsupported_codegen_helper_names(&label, &example.source);
@@ -868,7 +883,20 @@ fn supported_examples_do_not_use_removed_binding_pipe_or_record_initializers() {
             .unwrap_or_else(|err| panic!("{} should be readable: {err}", path.display()));
         assert_no_removed_binding_pipe_or_record_initializer(&relative_path, &source);
         assert_no_record_shaped_builtin_variants(&relative_path, &source);
+        assert_no_unqualified_builtin_value_constructors(&relative_path, &source);
         assert_current_import_surface(&relative_path, &source);
+    }
+}
+
+#[test]
+fn tracked_restrict_sources_use_qualified_builtin_value_constructors() {
+    for root in ["examples", "samples", "std", "docs/code-examples"] {
+        for path in tracked_files_with_extension_under(root, "rl") {
+            let relative_path = relative_workspace_path(&path);
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("{} should be readable: {err}", path.display()));
+            assert_no_unqualified_builtin_value_constructors(&relative_path, &source);
+        }
     }
 }
 
@@ -1038,6 +1066,143 @@ fn assert_no_record_shaped_builtin_variants(label: &str, source: &str) {
             "{label} has stale record-shaped `{variant}` syntax; use `{variant}(...)` or `{variant}` as appropriate:\n{source}"
         );
     }
+}
+
+fn assert_no_unqualified_builtin_value_constructors(label: &str, source: &str) {
+    let failures = unqualified_builtin_value_constructor_failures(source);
+    assert!(
+        failures.is_empty(),
+        "{label} has unqualified built-in value construction; use qualified OSV while keeping match patterns unqualified:\n{}",
+        failures.join("\n")
+    );
+}
+
+fn unqualified_builtin_value_constructor_failures(source: &str) -> Vec<String> {
+    let code = source
+        .lines()
+        .map(strip_line_comment)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = code.as_bytes();
+    let mut failures = Vec::new();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'"' || bytes[index] == b'\'' {
+            let quote = bytes[index];
+            index += 1;
+            while index < bytes.len() {
+                if bytes[index] == b'\\' {
+                    index += 2;
+                } else if bytes[index] == quote {
+                    index += 1;
+                    break;
+                } else {
+                    index += 1;
+                }
+            }
+            continue;
+        }
+
+        if !bytes[index].is_ascii_alphabetic() && bytes[index] != b'_' {
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        index += 1;
+        while index < bytes.len() && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+        {
+            index += 1;
+        }
+        let word = &code[start..index];
+        if !matches!(word, "Some" | "None" | "Ok" | "Err") {
+            continue;
+        }
+        let qualified = code[..start].trim_end().ends_with("::");
+        if qualified {
+            continue;
+        }
+
+        let mut after = index;
+        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        let statement_start = code[..start]
+            .rfind(|character| matches!(character, '\n' | ';' | '{'))
+            .map_or(0, |position| position + 1);
+        let binding_pattern = code[statement_start..start].trim() == "val";
+
+        if word == "None" {
+            if code[after..].starts_with("=>") || binding_pattern {
+                continue;
+            }
+            let line = code[..start].bytes().filter(|byte| *byte == b'\n').count() + 1;
+            failures.push(format!("line {line}: unqualified `None` value"));
+            continue;
+        }
+
+        if bytes.get(after) != Some(&b'(') {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut cursor = after;
+        let mut close = None;
+        while cursor < bytes.len() {
+            match bytes[cursor] {
+                b'"' | b'\'' => {
+                    let quote = bytes[cursor];
+                    cursor += 1;
+                    while cursor < bytes.len() {
+                        if bytes[cursor] == b'\\' {
+                            cursor += 2;
+                        } else if bytes[cursor] == quote {
+                            cursor += 1;
+                            break;
+                        } else {
+                            cursor += 1;
+                        }
+                    }
+                    continue;
+                }
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(cursor);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            cursor += 1;
+        }
+        let Some(close) = close else {
+            continue;
+        };
+        let mut after_close = close + 1;
+        while after_close < bytes.len() && bytes[after_close].is_ascii_whitespace() {
+            after_close += 1;
+        }
+        let statement_end = code[after_close..]
+            .find(';')
+            .map_or(code.len(), |offset| after_close + offset);
+        let nested_binding_pattern = code[after_close..statement_end]
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+            .contains("}=");
+        if code[after_close..].starts_with("=>") || binding_pattern || nested_binding_pattern {
+            index = close + 1;
+            continue;
+        }
+
+        let line = code[..start].bytes().filter(|byte| *byte == b'\n').count() + 1;
+        failures.push(format!("line {line}: unqualified `{word}(...)` value"));
+        index = close + 1;
+    }
+
+    failures
 }
 
 fn assert_current_import_surface(label: &str, source: &str) {

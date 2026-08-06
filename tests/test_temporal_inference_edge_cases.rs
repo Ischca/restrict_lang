@@ -175,9 +175,9 @@ fn test_temporal_inference_option_types() {
 
     fun findResource: <~r>(name: String) -> Option<Resource<~r>> = {
         if name == "test" {
-            Some(Resource { name: name })
+            (Resource { name: name }) Option::Some
         } else {
-            None
+            () Option::None
         }
     }
 
@@ -376,8 +376,8 @@ fn test_temporal_inference_error_propagation() {
 
     fun tryOperation: <~op>() -> Result<Int32, ~op> = {
         Result {
-            value: Some(42),
-            error: None
+            value: (42) Option::Some,
+            error: () Option::None
         }
     }
 

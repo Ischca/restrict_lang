@@ -34,11 +34,11 @@ fn test_simple_prototype_cycle() {
     fun create_ouroboros() -> SelfRef {
         val snake = SelfRef {
             name = "ouroboros",
-            parent = None
+            parent = () Option::None
         };
 
         // Make it reference itself
-        snake.parent = Some(snake);  // Cycle created!
+        snake.parent = (snake) Option::Some;  // Cycle created!
 
         snake
     }
@@ -77,11 +77,11 @@ fn test_mutual_prototype_cycle() {
     }
 
     fun create_cycle() -> Yin {
-        val yin = Yin { name = "yin", yang = None };
-        val yang = Yang { name = "yang", yin = Some(yin) };
+        val yin = Yin { name = "yin", yang = () Option::None };
+        val yang = Yang { name = "yang", yin = (yin) Option::Some };
 
         // Complete the cycle
-        yin.yang = Some(yang);
+        yin.yang = (yang) Option::Some;
 
         yin
     }
@@ -119,18 +119,18 @@ fn test_clone_cycle_amplification() {
     }
 
     fun create_circular_list() -> Node {
-        val n1 = Node { id = 1, next = None, prev = None };
+        val n1 = Node { id = 1, next = () Option::None, prev = () Option::None };
         val n2 = clone n1 with { id = 2 };
         val n3 = clone n2 with { id = 3 };
 
         // Create circular linked list
-        n1.next = Some(n2);
-        n2.next = Some(n3);
-        n3.next = Some(n1);  // Back to start
+        n1.next = (n2) Option::Some;
+        n2.next = (n3) Option::Some;
+        n3.next = (n1) Option::Some;  // Back to start
 
-        n1.prev = Some(n3);
-        n2.prev = Some(n1);
-        n3.prev = Some(n2);
+        n1.prev = (n3) Option::Some;
+        n2.prev = (n1) Option::Some;
+        n3.prev = (n2) Option::Some;
 
         // Now clone the whole cycle
         clone n1 with { id = 4 }  // What happens to next/prev?
@@ -271,7 +271,7 @@ fn test_lazy_evaluation_cycle() {
             head = 1,
             tail = Lazy {
                 thunk = || stream,  // Captures reference to itself!
-                cached = None
+                cached = () Option::None
             }
         };
 
@@ -351,21 +351,21 @@ fn test_clone_freeze_cycle() {
     fun freeze_cycle() -> Freezable {
         val base = Freezable {
             name = "base",
-            frozen_parent = None
+            frozen_parent = () Option::None
         };
 
         val child = clone base with {
             name = "child",
-            frozen_parent = Some(freeze base)
+            frozen_parent = (freeze base) Option::Some
         };
 
         val grandchild = clone child with {
             name = "grandchild",
-            frozen_parent = Some(freeze child)
+            frozen_parent = (freeze child) Option::Some
         };
 
         // Try to create cycle by updating base
-        base.frozen_parent = Some(freeze grandchild);  // Frozen cycle?
+        base.frozen_parent = (freeze grandchild) Option::Some;  // Frozen cycle?
 
         grandchild
     }
@@ -404,22 +404,22 @@ fn test_generic_instantiation_loop() {
     fun instantiate_monster() -> Nested<Int32> {
         Nested {
             value = 42,
-            deeper = Some(Nested {
+            deeper = (Nested {
                 value = Nested {
                     value = 1,
-                    deeper = None
+                    deeper = () Option::None
                 },
-                deeper = Some(Nested {
+                deeper = (Nested {
                     value = Nested {
                         value = Nested {
                             value = 2,
-                            deeper = None
+                            deeper = () Option::None
                         },
-                        deeper = None
+                        deeper = () Option::None
                     },
-                    deeper = None  // Type system explosion
-                })
-            })
+                    deeper = () Option::None  // Type system explosion
+                }) Option::Some
+            }) Option::Some
         }
     }
 
@@ -440,12 +440,12 @@ fn test_affine_cycle_paradox() {
     }
 
     fun create_affine_cycle() -> AffineCycle {
-        val n1 = AffineCycle { token = "one", next = None };
-        val n2 = AffineCycle { token = "two", next = Some(n1) };
-        val n3 = AffineCycle { token = "three", next = Some(n2) };
+        val n1 = AffineCycle { token = "one", next = () Option::None };
+        val n2 = AffineCycle { token = "two", next = (n1) Option::Some };
+        val n3 = AffineCycle { token = "three", next = (n2) Option::Some };
 
         // Try to complete the cycle
-        n1.next = Some(n3);  // But n1 was moved into n2!
+        n1.next = (n3) Option::Some;  // But n1 was moved into n2!
 
         n3
     }

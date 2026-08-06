@@ -121,26 +121,26 @@ fun main: () -> ReleaseDecision = {
         Signal {
             severity: 30.0,
             confidence: 0.9,
-            owner: Some(7)
+            owner: (7) Option::Some
         },
         Signal {
             severity: 12.0,
             confidence: 0.4,
-            owner: None
+            owner: () Option::None
         }
     ];
     val audit_signals: List<Signal> = [
         Signal {
             severity: 8.0,
             confidence: 0.5,
-            owner: Some(9)
+            owner: (9) Option::Some
         }
     ];
     val plan = ReleasePlan {
         scoring_signals: scoring_signals,
         audit_signals: audit_signals,
         blocker_codes: [],
-        override_owner: None,
+        override_owner: () Option::None,
         config: config
     };
 

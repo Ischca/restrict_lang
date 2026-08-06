@@ -52,9 +52,9 @@ fun add_load: (total: Int32, load: Int32) -> Int32 = {
 
 fun route_support: (total_load: Int32, limit: Int32, owner: Int32) -> Result<Int32, Int32> = {
     total_load <= limit then {
-        Ok(owner)
+        (owner) Result::Ok
     } else {
-        Err(total_load - limit)
+        (total_load - limit) Result::Err
     }
 }
 
@@ -77,10 +77,10 @@ fun build_rotation_plan: (policy: RotationPolicy, tickets: List<SupportTicket>) 
         active_window: active_window,
         owners: [fallback_owner, owner],
         scored_loads: [],
-        selected_owner: Some(owner),
+        selected_owner: (owner) Option::Some,
         route: route,
         audit_codes: [],
-        sampled_owners: Some([])
+        sampled_owners: ([]) Option::Some
     }
 }
 
@@ -89,23 +89,23 @@ fun score_rotation: () -> Int32 = {
         active_window: [3..8],
         load_limit: 75,
         fallback_owner: 31,
-        manual_owner: None
+        manual_owner: () Option::None
     };
     val tickets = [
         SupportTicket {
             severity: 2,
             age_hours: 5,
-            customer_tier: Some(3)
+            customer_tier: (3) Option::Some
         },
         SupportTicket {
             severity: 1,
             age_hours: 3,
-            customer_tier: None
+            customer_tier: () Option::None
         },
         SupportTicket {
             severity: 3,
             age_hours: 4,
-            customer_tier: Some(2)
+            customer_tier: (2) Option::Some
         }
     ];
     val plan = (policy, tickets) build_rotation_plan;

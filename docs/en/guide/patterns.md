@@ -62,12 +62,12 @@ fun value_or_zero: (maybe: Option<Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val maybe: Option<Int32> = Some(42)
+    val maybe: Option<Int32> = 42 Option::Some
     maybe |> value_or_zero
 }
 ```
 
-`None` needs type context from an annotation, expected return type, sibling
+`() Option::None` needs type context from an annotation, expected return type, sibling
 branch, or argument position.
 
 ## User-Defined Enum Patterns

@@ -939,7 +939,7 @@ fn builder_keeps_first_class_container_builtin_results_concrete() {
     let ir = checked_ir(
         r#"
 fun main: () -> Option<String> = {
-    val maybe: Option<Int32> = Some(7);
+    val maybe: Option<Int32> = (7) Option::Some;
     val apply_map = map;
     (maybe, |value| "ok") apply_map
 }

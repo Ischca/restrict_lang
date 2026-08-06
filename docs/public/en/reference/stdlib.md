@@ -205,8 +205,8 @@ Source-level constructors:
 
 ```restrict
 fun choose_score: () -> Int32 = {
-    val maybe_score: Option<Int32> = Some(42);
-    val no_score: Option<Int32> = None;
+    val maybe_score: Option<Int32> = 42 Option::Some;
+    val no_score: Option<Int32> = () Option::None;
     (maybe_score, 0) option_unwrap_or
 }
 ```
@@ -231,9 +231,9 @@ support:
 ```restrict
 fun choose_result: (flag: Boolean) -> Result<Int32, String> = {
     flag then {
-        Ok(42)
+        42 Result::Ok
     } else {
-        Err("missing")
+        "missing" Result::Err
     }
 }
 ```

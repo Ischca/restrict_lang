@@ -34,9 +34,9 @@ fn result_ok_and_err_type_check_with_expected_context() {
     let source = r#"
 fun choose: (flag: Boolean) -> Result<Int32, Int32> = {
     flag then {
-        Ok(1)
+        (1) Result::Ok
     } else {
-        Err(2)
+        (2) Result::Err
     }
 }
 
@@ -61,7 +61,7 @@ fun main: () -> Int32 = {
 fn ok_string_constructor_generates_valid_wat() {
     let source = r#"
 fun main: () -> Result<String, Int32> = {
-    Ok("ok")
+    ("ok") Result::Ok
 }
 "#;
 
@@ -83,7 +83,7 @@ fun identity: <T>(value: T) -> T = {
 }
 
 fun main: () -> Result<Int32, Int32> = {
-    Ok(42) |> identity
+    (42) Result::Ok |> identity
 }
 "#;
 
@@ -98,7 +98,7 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> Result<Int32, Int32> = {
-    (Ok(42), Err(7)) choose_first
+    ((42) Result::Ok, (7) Result::Err) choose_first
 }
 "#;
 
@@ -110,9 +110,9 @@ fn result_constructors_infer_from_sibling_branches() {
     let source = r#"
 fun main: (flag: Boolean) -> Result<Int32, String> = {
     val result = flag then {
-        Ok(42)
+        (42) Result::Ok
     } else {
-        Err("missing")
+        ("missing") Result::Err
     }
     result
 }
@@ -125,7 +125,7 @@ fun main: (flag: Boolean) -> Result<Int32, String> = {
 fn result_list_elements_infer_from_sibling_constructors() {
     let source = r#"
 fun main: () -> List<Result<Int32, Int32>> = {
-    [Ok(42), Err(7)]
+    [(42) Result::Ok, (7) Result::Err]
 }
 "#;
 
@@ -136,7 +136,7 @@ fun main: () -> List<Result<Int32, Int32>> = {
 fn result_requires_expected_type_for_err() {
     let source = r#"
 fun main: () -> Int32 = {
-    val result = Err("missing");
+    val result = ("missing") Result::Err;
     0
 }
 "#;
@@ -153,7 +153,7 @@ fun main: () -> Int32 = {
 fn result_requires_expected_type_for_ok() {
     let source = r#"
 fun main: () -> Int32 = {
-    val result = Ok(42);
+    val result = (42) Result::Ok;
     0
 }
 "#;
@@ -181,8 +181,8 @@ fun result_value_or_zero: (result: Result<Int32, Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val ok_result = Ok(41);
-    val err_result = Err(5);
+    val ok_result = (41) Result::Ok;
+    val err_result = (5) Result::Err;
     (ok_result |> result_value_or_zero) + (err_result |> result_value_or_zero)
 }
 "#;
@@ -211,7 +211,7 @@ fun error_score: (message: String) -> Int64 = {
 }
 
 fun main: () -> Int64 = {
-    val result = Ok([1]);
+    val result = ([1]) Result::Ok;
     result match {
         Ok(values) => { values |> first_i64 }
         Err(message) => { message |> error_score }
@@ -241,7 +241,7 @@ fun main: () -> Int64 = {
 fn result_match_requires_ok_and_err_arms() {
     let source = r#"
 fun main: () -> Int32 = {
-    val result: Result<Int32, Int32> = Ok(42);
+    val result: Result<Int32, Int32> = (42) Result::Ok;
 
     result match {
         Ok(value) => {
@@ -278,9 +278,9 @@ fn result_match_reuses_binding_name_with_different_payload_types() {
     let source = r#"
 fun main: (flag: Boolean) -> Float64 = {
     val result: Result<Int32, Float64> = flag then {
-        Ok(42)
+        (42) Result::Ok
     } else {
-        Err(1.5)
+        (1.5) Result::Err
     };
 
     result match {
@@ -316,9 +316,9 @@ fn result_match_conflict_locals_are_deterministic_across_compiles() {
     let source = r#"
 fun main: (flag: Boolean) -> Float64 = {
     val result: Result<Int32, Float64> = flag then {
-        Ok(42)
+        (42) Result::Ok
     } else {
-        Err(1.5)
+        (1.5) Result::Err
     };
 
     result match {

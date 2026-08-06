@@ -50,9 +50,9 @@ fun option_handoff_score: (
 fun main: () -> Int32 = {
     val urgent_score = (10, true) immediate_then_score;
     val review_score = (4, false) immediate_match_score;
-    val override_mapper: Option<Int32 -> Int32> = Some(subtract_guardrail);
+    val override_mapper: Option<Int32 -> Int32> = (subtract_guardrail) Option::Some;
     val override_score = (20, override_mapper) option_handoff_score;
-    val fallback_mapper: Option<Int32 -> Int32> = None;
+    val fallback_mapper: Option<Int32 -> Int32> = () Option::None;
     val fallback_score = (5, fallback_mapper) option_handoff_score;
 
     urgent_score + review_score + override_score + fallback_score

@@ -133,7 +133,7 @@ fn test_temporal_scope_with_allocations() {
     let input = r#"fun main: () -> Int = {
     with lifetime<~temp> {
         val list = [1, 2, 3, 4, 5];
-        val opt = Some(42);
+        val opt = (42) Option::Some;
         list |> length
     }
 }"#;

@@ -75,7 +75,7 @@ This also makes ownership intent clearer to readers and tests.
 
 ## Give Ambiguous Values Context
 
-Empty lists, `None`, `Ok`, and `Err` often need expected type context:
+Empty lists, `Option::None`, `Result::Ok`, and `Result::Err` often need expected type context:
 
 ```restrict
 fun empty_scores: () -> List<Int32> = {
@@ -83,7 +83,7 @@ fun empty_scores: () -> List<Int32> = {
 }
 
 fun no_score: () -> Option<Int32> = {
-    None
+    () Option::None
 }
 ```
 

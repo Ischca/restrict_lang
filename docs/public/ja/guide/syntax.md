@@ -265,11 +265,11 @@ Boolean
 ### ジェネリック型
 
 ```restrict
-val maybe_score: Option<Int32> = Some(100)
-val no_score: Option<Int32> = None
+val maybe_score: Option<Int32> = 100 Option::Some
+val no_score: Option<Int32> = () Option::None
 
-val success: Result<Int32, String> = Ok(42)
-val failure: Result<Int32, String> = Err("error")
+val success: Result<Int32, String> = 42 Result::Ok
+val failure: Result<Int32, String> = "error" Result::Err
 ```
 
 `List<T>`、`Array<T, N>`、`Option<T>`、`Result<T, E>` は仕様上のジェネリック型です。`Range<Int32>` は v0.0.1 で Int32 の開始値と終了値だけを扱う組み込みコレクション型です。

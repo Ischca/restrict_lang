@@ -40,9 +40,9 @@ export fun dogfood_option_container_lambda_score: (
     customer_data: Boolean
 ) -> Int32 = {
     val reviewer_load: Option<Int32> = has_reviewer_load then {
-        Some(18)
+        (18) Option::Some
     } else {
-        None
+        () Option::None
     };
     val input = ReviewPolicyInput {
         base_risk: base_risk,

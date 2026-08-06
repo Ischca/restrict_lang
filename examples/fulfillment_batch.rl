@@ -77,11 +77,11 @@ fun first_unassigned_driver: (
     shipment_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             driver match {
-                Some(person) => { None }
-                None => { Some(shipment_id) }
+                Some(person) => { () Option::None }
+                None => { (shipment_id) Option::Some }
             }
         }
     }
@@ -118,7 +118,7 @@ fun build_plan: (
     val initial = FulfillmentState {
         priority_total: 0,
         fragile_count: 0,
-        first_unassigned: None,
+        first_unassigned: () Option::None,
         manual_count: 0
     };
     val final_state = (aggregate_shipments, initial, |state, shipment| (state, shipment) add_shipment) fold;
@@ -130,7 +130,7 @@ fun build_plan: (
     } = final_state;
     val manual_scores = score_shipments |> manual_scores_for;
     val audit_codes: List<Int32> = [] |> (|codes| (codes, fallback_codes) choose_first);
-    val missing_driver: Option<Int32> = None |> (|empty| (empty, first_unassigned) choose_first);
+    val missing_driver: Option<Int32> = () Option::None |> (|empty| (empty, first_unassigned) choose_first);
 
     FulfillmentPlan {
         priority_total: priority_total,
@@ -149,14 +149,14 @@ fun main: () -> FulfillmentPlan = {
             zone: 2,
             value: 65,
             fragile: true,
-            driver: Some(4)
+            driver: (4) Option::Some
         },
         Shipment {
             id: 302,
             zone: 5,
             value: 81,
             fragile: false,
-            driver: None
+            driver: () Option::None
         }
     ];
     val score_shipments: List<Shipment> = [
@@ -165,14 +165,14 @@ fun main: () -> FulfillmentPlan = {
             zone: 1,
             value: 92,
             fragile: true,
-            driver: Some(8)
+            driver: (8) Option::Some
         },
         Shipment {
             id: 402,
             zone: 3,
             value: 44,
             fragile: false,
-            driver: None
+            driver: () Option::None
         }
     ];
     val fallback_codes = [710, 711];

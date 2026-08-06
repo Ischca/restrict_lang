@@ -463,7 +463,7 @@ context ScoreContext { reading: Reading }
 
 fun match_score: () = { () match_helper }
 fun match_helper: () = {
-    Some(Reading { value: 40 }) match {
+    (Reading { value: 40 }) Option::Some match {
         Some(reading) => { reading |> match_score }
         None => { 0 }
     }

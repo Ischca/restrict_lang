@@ -117,7 +117,7 @@ fn prelude_map_filter_pipeline_compiles_to_wat() {
 fn option_map_compiles_to_wat() {
     let source = r#"
 fun main: () -> Option<Int32> = {
-    val maybe_value: Option<Int32> = Some(41);
+    val maybe_value: Option<Int32> = (41) Option::Some;
     (maybe_value, |value| value + 1) map
 }
 "#;
@@ -133,7 +133,7 @@ fun main: () -> Option<Int32> = {
 fn option_filter_compiles_to_wat() {
     let source = r#"
 fun main: () -> Option<Int32> = {
-    val maybe_value: Option<Int32> = Some(41);
+    val maybe_value: Option<Int32> = (41) Option::Some;
     (maybe_value, |value| value > 10) filter
 }
 "#;
@@ -200,7 +200,7 @@ record Bundle<T> {
 
 fun main: () -> Bundle<Int32> = {
     Bundle {
-        selected: None,
+        selected: () Option::None,
         history: []
     }
 }
@@ -234,7 +234,7 @@ record Bundle<T> {
 
 fun main: () -> Bundle<Int32> = {
     val bundle = Bundle {
-        selected: None,
+        selected: () Option::None,
         history: []
     };
     bundle
@@ -268,7 +268,7 @@ record Box<T> {
 
 fun main: () -> Int32 = {
     val box = Box {
-        value: None
+        value: () Option::None
     };
     box.value match {
         Some(value) => { value }
@@ -308,7 +308,7 @@ record Box<T> {
 
 fun main: () -> Int32 = {
     val box = Box {
-        result: Err(7)
+        result: (7) Result::Err
     };
     box.result match {
         Ok(value) => { value }
@@ -352,7 +352,7 @@ fun first_i64: (values: List<Int64>) -> Int64 = {
 
 fun main: () -> Int64 = {
     val box = Box {
-        result: Ok([1])
+        result: ([1]) Result::Ok
     };
     box.result match {
         Ok(values) => { values |> first_i64 }
@@ -432,7 +432,7 @@ fun main: () -> Option<Int32> = {
     val mapper = OptionMapper {
         f: |maybe| maybe
     };
-    val maybe = None;
+    val maybe = () Option::None;
     maybe |> (mapper.f)
 }
 "#;
@@ -500,7 +500,7 @@ record Mapper<T> {
 
 fun main: () -> Int32 = {
     val mapper = Mapper {
-        f: Some(|value| value + 1)
+        f: (|value| value + 1) Option::Some
     };
     mapper.f match {
         Some(f) => { 41 |> f }
@@ -539,7 +539,7 @@ record Mapper<T> {
 
 fun main: () -> Int32 = {
     val mapper = Mapper {
-        f: None
+        f: () Option::None
     };
     mapper.f match {
         Some(f) => { 41 |> f }
@@ -576,12 +576,12 @@ record Bundle<T> {
 fun choose_bundle: (flag: Boolean) -> Bundle<Int32> = {
     flag then {
         Bundle {
-            selected: None,
+            selected: () Option::None,
             history: []
         }
     } else {
         Bundle {
-            selected: Some(41),
+            selected: (41) Option::Some,
             history: [1, 2]
         }
     }
@@ -634,7 +634,7 @@ fun main: () -> List<Float64> = {
 fn float_option_filter_compiles_to_wat() {
     let source = r#"
 fun main: () -> Option<Float64> = {
-    val reading: Option<Float64> = Some(1.5);
+    val reading: Option<Float64> = (1.5) Option::Some;
     (reading, |value| value > 1.0) filter
 }
 "#;
@@ -649,7 +649,7 @@ fun main: () -> Option<Float64> = {
 fn float_option_map_compiles_to_wat() {
     let source = r#"
 fun main: () -> Option<Float64> = {
-    val reading: Option<Float64> = Some(1.5);
+    val reading: Option<Float64> = (1.5) Option::Some;
     (reading, |value| value + 1.0) map
 }
 "#;
@@ -707,7 +707,7 @@ fun main: () -> Int64 = {
 fn int64_option_map_filter_compile_to_wat() {
     let source = r#"
 fun main: () -> Option<Int64> = {
-    val reading: Option<Int64> = Some(5000000000);
+    val reading: Option<Int64> = (5000000000) Option::Some;
     val shifted = (reading, |value| value + 10000000000) map;
     (shifted, |value| value > 12000000000) filter
 }
@@ -798,7 +798,7 @@ fun main: () -> Int32 = {
 fn empty_local_option_infers_item_type_from_lambda_map_codegen_context() {
     let source = r#"
 fun main: () -> Option<Int32> = {
-    val maybe = None;
+    val maybe = () Option::None;
     (maybe, |value| value + 1) map
 }
 "#;
@@ -1043,7 +1043,7 @@ fun main: (flag: Boolean) -> Int32 = {
 fn match_produced_lambda_alias_with_pattern_capture_compiles_to_wat() {
     let source = r#"
 fun main: () -> Int32 = {
-    val maybe_bonus: Option<Int32> = Some(2);
+    val maybe_bonus: Option<Int32> = (2) Option::Some;
     val adjust = maybe_bonus match {
         Some(bonus) => { |score| score + bonus }
         None => { |score| score }
@@ -1092,7 +1092,7 @@ fun main: () -> Int32 = {
 fn option_match_produced_callable_pipe_declares_pattern_locals() {
     let source = r#"
 fun main: () -> Int32 = {
-    val maybe_mapper: Option<Int32 -> Int32> = None;
+    val maybe_mapper: Option<Int32 -> Int32> = () Option::None;
     3 |> (maybe_mapper match {
         Some(mapper) => { mapper }
         None => { |value| value + 2 }

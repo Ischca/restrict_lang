@@ -150,7 +150,7 @@ fn test_lambda_in_match_arm() {
     // Use EBNF v-1.0 compliant syntax: fun name: (params) -> Type = body
     // This returns a lambda function from the match
     let input = r#"val test = {
-        val opt = Some(5)
+        val opt = (5) Option::Some
         opt match {
             Some(x) => { |y| x + y }
             None => { |y| y }

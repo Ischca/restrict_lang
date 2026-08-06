@@ -58,11 +58,11 @@ fun score_or_default: (score: Option<Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    Some(42) |> score_or_default
+    42 Option::Some |> score_or_default
 }
 ```
 
-`None` often needs type context from a function parameter, return type,
+`() Option::None` often needs type context from a function parameter, return type,
 annotation, or sibling branch.
 
 ## Result Handling
@@ -70,9 +70,9 @@ annotation, or sibling branch.
 ```restrict
 fun checked_divide: (left: Int32, right: Int32) -> Result<Int32, String> = {
     right == 0 then {
-        Err("division by zero")
+        "division by zero" Result::Err
     } else {
-        Ok(left / right)
+        (left / right) Result::Ok
     }
 }
 
@@ -102,9 +102,9 @@ enum CustomError {
 
 fun decode: (code: Int32) -> Result<Int32, CustomError> = {
     code == 0 then {
-        Ok(42)
+        42 Result::Ok
     } else {
-        Err("invalid code" |> CustomError::Invalid)
+        "invalid code" CustomError::Invalid Result::Err
     }
 }
 

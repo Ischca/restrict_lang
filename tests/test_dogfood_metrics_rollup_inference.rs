@@ -191,7 +191,7 @@ fun main: () -> Int32 = {
     val sample = MetricSample {
         key: 1,
         current: 42,
-        previous: Some(41),
+        previous: (41) Option::Some,
         weight: 1
     };
 
@@ -222,7 +222,7 @@ fun read_plus_one: (slot: MetricSlot<Int32>) -> Int32 = {
 fun main: () -> Int32 = {
     val slot: MetricSlot<Int32> = MetricSlot {
         value: 41,
-        fallback: None
+        fallback: () Option::None
     };
 
     slot |> read_plus_one

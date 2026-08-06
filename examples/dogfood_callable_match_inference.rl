@@ -34,8 +34,8 @@ fun prioritize_ticket: (
 }
 
 fun main: () -> Int32 = {
-    val urgent_mapper: Option<Int32 -> Int32> = Some(incident_boost);
-    val normal_mapper: Option<Int32 -> Int32> = None;
+    val urgent_mapper: Option<Int32 -> Int32> = (incident_boost) Option::Some;
+    val normal_mapper: Option<Int32 -> Int32> = () Option::None;
     val urgent_score = (10, urgent_mapper, [1, 2]) prioritize_ticket;
     val normal_score = (20, normal_mapper, [3]) prioritize_ticket;
 

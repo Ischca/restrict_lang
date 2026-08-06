@@ -73,9 +73,9 @@ fun sum_samples: (samples: List<Int32>) -> Int32 = {
 
 fun route_score: (score: Int32) -> Result<Int32, Int32> = {
     score < 1_000_000 then {
-        Ok(score)
+        (score) Result::Ok
     } else {
-        Err(score)
+        (score) Result::Err
     }
 }
 
@@ -97,7 +97,7 @@ fun plan_profile: (profile: LiteralProfile) -> LiteralPlan = {
         score: score,
         route: route,
         audit_ids: [],
-        owner_seen: Some(owner_id)
+        owner_seen: (owner_id) Option::Some
     }
 }
 
@@ -108,7 +108,7 @@ fun main: () -> LiteralPlan = {
         scale: 1.5e10,
         base: 0xFF,
         samples: [1_000, 2, 3],
-        owner: None
+        owner: () Option::None
     };
 
     profile |> plan_profile

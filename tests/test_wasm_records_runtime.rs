@@ -194,7 +194,7 @@ record Bundle<T> {
 
 fun make_bundle: () -> Bundle<Int32> = {
     val bundle = Bundle {
-        selected: None,
+        selected: () Option::None,
         history: []
     };
     bundle
@@ -228,7 +228,7 @@ record Box<T> {
 
 export fun local_generic_field_score: () -> Int32 = {
     val box = Box {
-        value: None
+        value: () Option::None
     };
     box.value match {
         Some(value) => { value }
@@ -255,7 +255,7 @@ record Box<T> {
 
 export fun local_generic_result_field_score: () -> Int32 = {
     val box = Box {
-        result: Err(7)
+        result: (7) Result::Err
     };
     box.result match {
         Ok(value) => { value }
@@ -286,7 +286,7 @@ fun first_i64: (values: List<Int64>) -> Int64 = {
 
 export fun local_generic_result_list_score: () -> Int64 = {
     val box = Box {
-        result: Ok([1])
+        result: ([1]) Result::Ok
     };
     box.result match {
         Ok(values) => { values |> first_i64 }

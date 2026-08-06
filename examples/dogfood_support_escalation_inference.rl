@@ -125,17 +125,17 @@ fun route_ticket: (
     score: Int32
 ) -> Result<Int32, Int32> = {
     urgent then {
-        Ok(ticket_id)
+        (ticket_id) Result::Ok
     } else {
-        Err(score)
+        (score) Result::Err
     }
 }
 
 fun route_plan: (urgent_count: Int32, total_score: Int32) -> Result<Int32, Int32> = {
     urgent_count > 0 then {
-        Ok(total_score)
+        (total_score) Result::Ok
     } else {
-        Err(total_score)
+        (total_score) Result::Err
     }
 }
 
@@ -215,15 +215,15 @@ fun remember_first_unowned: (
 ) -> Option<Int32> = {
     current match {
         Some(existing) => {
-            Some(existing)
+            (existing) Option::Some
         }
         None => {
             owner match {
                 Some(person) => {
-                    None
+                    () Option::None
                 }
                 None => {
-                    Some(ticket_id)
+                    (ticket_id) Option::Some
                 }
             }
         }
@@ -235,7 +235,7 @@ fun initial_state: (audit_notes: List<Int32>) -> SupportState = {
         total_score: 0,
         urgent_count: 0,
         stale_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         escalation_ids: [],
         audit_notes: audit_notes
     }
@@ -347,7 +347,7 @@ fun plan_support_escalation: (
         candidates: candidates,
         escalation_ids: escalation_ids,
         audit_notes: audit_notes,
-        deferred_owner: None,
+        deferred_owner: () Option::None,
         route: route
     }
 }
@@ -359,7 +359,7 @@ fun main: () -> EscalationPlan = {
             severity: 4,
             wait_minutes: 90,
             tier: 1,
-            owner: Some(42),
+            owner: (42) Option::Some,
             tags: [5, 9],
             reopen_count: 1
         },
@@ -368,7 +368,7 @@ fun main: () -> EscalationPlan = {
             severity: 2,
             wait_minutes: 35,
             tier: 3,
-            owner: None,
+            owner: () Option::None,
             tags: [2],
             reopen_count: 0
         }
@@ -379,7 +379,7 @@ fun main: () -> EscalationPlan = {
             severity: 5,
             wait_minutes: 120,
             tier: 1,
-            owner: Some(8),
+            owner: (8) Option::Some,
             tags: [10, 4],
             reopen_count: 2
         },
@@ -388,7 +388,7 @@ fun main: () -> EscalationPlan = {
             severity: 1,
             wait_minutes: 20,
             tier: 2,
-            owner: None,
+            owner: () Option::None,
             tags: [1],
             reopen_count: 0
         }

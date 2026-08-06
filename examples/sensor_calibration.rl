@@ -40,10 +40,10 @@ fun apply_offset: (value: Float64, offset: Option<Float64>) -> Float64 = {
 fun calibration_offset: (needs_adjustment: Boolean) -> Option<Float64> = {
     needs_adjustment match {
         true => {
-            Some(-0.25)
+            (-0.25) Option::Some
         }
         false => {
-            None
+            () Option::None
         }
     }
 }

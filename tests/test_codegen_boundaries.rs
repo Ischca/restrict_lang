@@ -664,7 +664,7 @@ fun main: () -> Int32 = {
 fn exported_option_return_rejects_generic_composite_host_abi() {
     let source = r#"
 export fun public_score: () -> Option<Int32> = {
-    Some(1)
+    (1) Option::Some
 }
 
 fun main: () -> Int32 = {
@@ -853,7 +853,7 @@ fun main: () -> Int32 = {
 #[test]
 fn exported_option_global_rejects_composite_host_abi_before_runtime_initialization() {
     let source = r#"
-export val release_owner: Option<Int32> = Some(7)
+export val release_owner: Option<Int32> = (7) Option::Some
 
 fun main: () -> Int32 = {
     1
@@ -870,7 +870,7 @@ fun main: () -> Int32 = {
 #[test]
 fn exported_result_global_rejects_composite_host_abi_before_runtime_initialization() {
     let source = r#"
-export val release_route: Result<Int32, Int32> = Ok(42)
+export val release_route: Result<Int32, Int32> = (42) Result::Ok
 
 fun main: () -> Int32 = {
     1

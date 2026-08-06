@@ -11,8 +11,10 @@
 // - option_unwrap_or: <T>(Option<T>, T) -> T
 //
 // Source-level constructors:
-// - Some(value): Option<T> constructor syntax
-// - None: Option<T> empty value syntax
+// - value Option::Some: Option<T> payload constructor syntax
+// - () Option::None: Option<T> empty constructor syntax
+// - value |> Option::Some: equivalent piped payload form
+// Match patterns stay unqualified: Some(value) and None.
 //
 // Canonical call shapes:
 // - maybe_value |> option_is_some

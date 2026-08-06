@@ -108,7 +108,7 @@ enum DecodeError {
 }
 
 fun reject: (message: String) -> Result<Int32, DecodeError> = {
-    Err(message |> DecodeError::Invalid)
+    (message |> DecodeError::Invalid) Result::Err
 }
 
 fun error_code: (error: DecodeError) -> Int32 = {

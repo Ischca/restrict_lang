@@ -39,11 +39,11 @@ fun remember_unowned: (
     probe_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(probe_id) }
+                Some(person) => { () Option::None }
+                None => { (probe_id) Option::Some }
             }
         }
     }
@@ -72,15 +72,15 @@ fun evidence_codes: (
     stale_count: Int32
 ) -> Result<List<Int32>, Int32> = {
     failed_count < 0 then {
-        Err(500)
+        (500) Result::Err
     } else {
         failed_count > 0 then {
-            Ok([100, failed_count])
+            ([100, failed_count]) Result::Ok
         } else {
             stale_count > 0 then {
-                Ok([200, stale_count])
+                ([200, stale_count]) Result::Ok
             } else {
-                Ok([])
+                ([]) Result::Ok
             }
         }
     }
@@ -142,7 +142,7 @@ fun main: () -> ServiceAlert = {
         total_latency: 0,
         failed_count: 0,
         stale_count: 0,
-        first_unowned: None
+        first_unowned: () Option::None
     };
     val probes: List<ServiceProbe> = [
         ServiceProbe {
@@ -150,14 +150,14 @@ fun main: () -> ServiceAlert = {
             latency_ms: 120,
             failures: 0,
             stale: false,
-            owner: Some(7)
+            owner: (7) Option::Some
         },
         ServiceProbe {
             id: 11,
             latency_ms: 920,
             failures: 1,
             stale: true,
-            owner: None
+            owner: () Option::None
         }
     ];
     val rollup = (probes, initial, |state, probe| (state, probe) add_probe) fold;

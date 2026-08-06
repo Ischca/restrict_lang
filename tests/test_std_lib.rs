@@ -49,7 +49,7 @@ fun test_list: () -> Int32 = {
 fn std_option_functions_use_osv_calls() {
     let input = r#"
 fun test_option: () -> Int32 = {
-    val opt = Some(42);
+    val opt = (42) Option::Some;
     val has_value = opt |> option_is_some;
     val is_empty = opt |> option_is_none;
     val value = (opt, 0) option_unwrap_or;
@@ -113,13 +113,13 @@ fun test_generic_lists: () -> Int32 = {
 fn generic_option_functions_infer_payload_types() {
     let input = r#"
 fun test_generic_options: () -> Int32 = {
-    val int_opt = Some(42);
+    val int_opt = (42) Option::Some;
     val int_value = (int_opt, 0) option_unwrap_or;
 
-    val string_opt = Some("hello");
+    val string_opt = ("hello") Option::Some;
     val string_value = (string_opt, "default") option_unwrap_or;
 
-    val none_opt: Option<Int32> = None;
+    val none_opt: Option<Int32> = () Option::None;
     val default_value = (none_opt, 999) option_unwrap_or;
     int_value + default_value
 }

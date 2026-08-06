@@ -34,7 +34,7 @@ fun main: () -> Int32 = {
     val scenario = Scenario {
         score: 25,
         covered: true,
-        owner: Some(7)
+        owner: (7) Option::Some
     };
     val decision = scenario |> decide;
 

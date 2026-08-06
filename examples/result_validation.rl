@@ -1,16 +1,16 @@
 fun validate_stock: (requested: Int32, available: Int32) -> Result<Int32, Int32> = {
     requested <= available then {
-        Ok(requested)
+        (requested) Result::Ok
     } else {
-        Err(409)
+        (409) Result::Err
     }
 }
 
 fun authorize_payment: (amount: Int32, approved: Boolean) -> Result<Int32, Int32> = {
     approved then {
-        Ok(amount)
+        (amount) Result::Ok
     } else {
-        Err(402)
+        (402) Result::Err
     }
 }
 

@@ -103,9 +103,9 @@ fun route_sample: (
     fallback_owner: Int32
 ) -> Result<Int32, Int32> = {
     healthy then {
-        Ok(key)
+        (key) Result::Ok
     } else {
-        Err(fallback_owner)
+        (fallback_owner) Result::Err
     }
 }
 
@@ -156,15 +156,15 @@ fun remember_missing_previous: (
 ) -> Option<Int32> = {
     current_missing match {
         Some(existing) => {
-            Some(existing)
+            (existing) Option::Some
         }
         None => {
             previous match {
                 Some(value) => {
-                    None
+                    () Option::None
                 }
                 None => {
-                    Some(key)
+                    (key) Option::Some
                 }
             }
         }
@@ -176,7 +176,7 @@ fun initial_state: () -> MetricRollupState = {
         total_weighted: 0,
         warning_count: 0,
         critical_count: 0,
-        first_missing_previous: None,
+        first_missing_previous: () Option::None,
         warning_keys: []
     }
 }
@@ -186,10 +186,10 @@ fun blank_report: () -> MetricReport = {
         total_weighted: 0,
         warning_count: 0,
         critical_count: 0,
-        first_missing_previous: None,
+        first_missing_previous: () Option::None,
         scored: [],
         warning_keys: [],
-        sampled_keys: Some([])
+        sampled_keys: ([]) Option::Some
     }
 }
 
@@ -268,7 +268,7 @@ fun rollup_metrics: (
         first_missing_previous: first_missing_previous,
         scored: scored,
         warning_keys: warning_keys,
-        sampled_keys: None
+        sampled_keys: () Option::None
     }
 }
 
@@ -277,13 +277,13 @@ fun main: () -> MetricReport = {
         MetricSample {
             key: 11,
             current: 72,
-            previous: Some(70),
+            previous: (70) Option::Some,
             weight: 2
         },
         MetricSample {
             key: 12,
             current: 96,
-            previous: None,
+            previous: () Option::None,
             weight: 3
         }
     ];
@@ -291,13 +291,13 @@ fun main: () -> MetricReport = {
         MetricSample {
             key: 21,
             current: 81,
-            previous: Some(80),
+            previous: (80) Option::Some,
             weight: 1
         },
         MetricSample {
             key: 22,
             current: 41,
-            previous: None,
+            previous: () Option::None,
             weight: 1
         }
     ];
@@ -306,7 +306,7 @@ fun main: () -> MetricReport = {
         critical_limit: 90,
         owner_hint: MetricSlot {
             value: 404,
-            fallback: None
+            fallback: () Option::None
         }
     };
 

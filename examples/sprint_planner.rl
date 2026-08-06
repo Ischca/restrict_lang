@@ -70,11 +70,11 @@ fun first_unowned_task: (
     task_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(task_id) }
+                Some(person) => { () Option::None }
+                None => { (task_id) Option::Some }
             }
         }
     }
@@ -109,12 +109,12 @@ fun build_plan: (
         ready_effort: 0,
         ready_impact: 0,
         blocked_count: 0,
-        first_unowned: None
+        first_unowned: () Option::None
     };
     val state = (tasks, initial, |current, task| (current, task) add_task) fold;
     val PlanningState { ready_effort, ready_impact, blocked_count, first_unowned } = state;
     val escalation_codes = ([], fallback_codes) choose_first;
-    val unowned_task = (None, first_unowned) choose_first;
+    val unowned_task = (() Option::None, first_unowned) choose_first;
 
     SprintPlan {
         score: ready_impact * 10 - ready_effort,
@@ -133,14 +133,14 @@ fun main: () -> SprintPlan = {
             effort: 3,
             impact: 8,
             blocked: false,
-            owner: Some(42)
+            owner: (42) Option::Some
         },
         Task {
             id: 2,
             effort: 5,
             impact: 13,
             blocked: false,
-            owner: None
+            owner: () Option::None
         }
     ];
     val candidate_scores = scoring_tasks |> score_candidates;
@@ -151,14 +151,14 @@ fun main: () -> SprintPlan = {
             effort: 3,
             impact: 8,
             blocked: false,
-            owner: Some(42)
+            owner: (42) Option::Some
         },
         Task {
             id: 3,
             effort: 8,
             impact: 21,
             blocked: true,
-            owner: None
+            owner: () Option::None
         }
     ];
     val fallback_codes = [700, 701];

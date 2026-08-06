@@ -204,7 +204,7 @@ option_unwrap_or: <T>(Option<T>, T) -> T
 
 ```restrict
 fun option_example: () -> Int32 = {
-    mut val maybe = Some(42)
+    mut val maybe = 42 Option::Some
 
     val has_value = maybe |> option_is_some
     val is_empty = maybe |> option_is_none
@@ -214,7 +214,7 @@ fun option_example: () -> Int32 = {
 }
 ```
 
-`Some(value)` と `None` は source-level constructor syntax として扱います。option map、flatten、and-then、zip などの高階 helper は current surface には含まれていません。
+値の構築にはqualified OSVの `value Option::Some` と `() Option::None` を使います。matchでの分解は従来どおり `Some(value)` と `None` です。option map、flatten、and-then、zip などの高階 helper は current surface には含まれていません。
 
 ## 組み合わせ例
 

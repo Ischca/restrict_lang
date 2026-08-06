@@ -142,8 +142,8 @@ fun main: () -> ExperimentDecision = {
             revenue: 7.5
         }
     ];
-    val Some(seed_bonus) = Some(1.5);
-    val fallback_input: Option<Float64> = Some(seed_bonus);
+    val Some(seed_bonus) = (1.5) Option::Some;
+    val fallback_input: Option<Float64> = (seed_bonus) Option::Some;
 
     (scoring_metrics, report_metrics, preview_metric, fallback_input, 3.0, 5.0) evaluate_experiment
 }

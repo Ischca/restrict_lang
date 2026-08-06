@@ -71,7 +71,7 @@ fun result_or_zero: (result: Result<Int32, String>) -> Int32 = {
 Result型に対するマッチングでエラーハンドリング：
 
 ```rust
-val result: Result<Int, String> = Ok(42)
+val result: Result<Int, String> = 42 Result::Ok
 result match {
     Ok(value) => { value * 2 }
     Err(msg) => { 0 }
@@ -83,9 +83,9 @@ Resultは失敗する可能性のある関数に便利です：
 ```rust
 fun safe_divide: (a: Int, b: Int) -> Result<Int, String> = {
     b == 0 then {
-        Err("ゼロ除算")
+        "ゼロ除算" Result::Err
     } else {
-        Ok(a / b)
+        (a / b) Result::Ok
     }
 }
 

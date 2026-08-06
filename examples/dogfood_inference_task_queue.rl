@@ -84,9 +84,9 @@ fun score_from_fields: (
 
 fun route_for: (ready: Boolean, task_id: Int32) -> Result<Int32, Int32> = {
     ready then {
-        Ok(task_id)
+        (task_id) Result::Ok
     } else {
-        Err(task_id + 900)
+        (task_id + 900) Result::Err
     }
 }
 
@@ -134,11 +134,11 @@ fun first_missing_owner: (
     task_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(task_id) }
+                Some(person) => { () Option::None }
+                None => { (task_id) Option::Some }
             }
         }
     }
@@ -149,7 +149,7 @@ fun initial_state: () -> QueueState = {
         total_score: 0,
         ready_count: 0,
         blocked_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         alert_codes: []
     }
 }
@@ -197,10 +197,10 @@ fun empty_plan: () -> QueuePlan = {
         total_score: 0,
         ready_count: 0,
         blocked_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         cards: [],
         alert_codes: [],
-        deferred_ids: Some([])
+        deferred_ids: ([]) Option::Some
     }
 }
 
@@ -237,7 +237,7 @@ fun plan_queue: (
         first_unowned: first_unowned,
         cards: cards,
         alert_codes: alert_codes,
-        deferred_ids: None
+        deferred_ids: () Option::None
     }
 }
 
@@ -248,14 +248,14 @@ fun main: () -> QueuePlan = {
             priority: 9,
             estimate: 3,
             blocked: false,
-            owner: Some(42)
+            owner: (42) Option::Some
         },
         Task {
             id: 102,
             priority: 5,
             estimate: 13,
             blocked: true,
-            owner: None
+            owner: () Option::None
         }
     ];
     val card_tasks: List<Task> = [
@@ -264,14 +264,14 @@ fun main: () -> QueuePlan = {
             priority: 9,
             estimate: 3,
             blocked: false,
-            owner: Some(42)
+            owner: (42) Option::Some
         },
         Task {
             id: 103,
             priority: 6,
             estimate: 5,
             blocked: false,
-            owner: None
+            owner: () Option::None
         }
     ];
     val policy = QueuePolicy {

@@ -13,16 +13,16 @@ Result<T, E>  // T: 成功時の値の型, E: エラーの型
 ### Resultの生成
 ```restrict
 // Ok: 成功の場合
-val x = Ok(42)        // Result<Int, E>
-val y = Ok("hello")   // Result<String, E>
+val x: Result<Int32, String> = 42 Result::Ok
+val y: Result<String, Int32> = "hello" Result::Ok
 
 // Err: エラーの場合
-val z = Err("not found")  // Result<T, String>
+val z: Result<Int32, String> = "not found" Result::Err
 ```
 
 ### パターンマッチング
 ```restrict
-fun unwrap_or: (result: Result<Int, String>, default: Int) -> Int = {
+fun unwrap_or: (result: Result<Int32, String>, default: Int32) -> Int32 = {
     result match {
         Ok(n) => { n }
         Err(_) => { default }
@@ -33,11 +33,11 @@ fun unwrap_or: (result: Result<Int, String>, default: Int) -> Int = {
 ### 推奨される使用方法
 ```restrict
 // 失敗する可能性のある関数
-fun safe_divide: (a: Int, b: Int) -> Result<Int, String> = {
+fun safe_divide: (a: Int32, b: Int32) -> Result<Int32, String> = {
     b == 0 then {
-        Err("Division by zero")
+        "Division by zero" Result::Err
     } else {
-        Ok(a / b)
+        (a / b) Result::Ok
     }
 }
 
@@ -55,8 +55,8 @@ fun main: () = {
 
 | 型 | 値あり | 値なし/エラー | 用途 |
 |---|---|---|---|
-| `Option<T>` | `Some(value)` | `None` | 値の存在/不在 |
-| `Result<T, E>` | `Ok(value)` | `Err(error)` | 成功/失敗（エラー情報付き） |
+| `Option<T>` | `value Option::Some` | `() Option::None` | 値の存在/不在 |
+| `Result<T, E>` | `value Result::Ok` | `error Result::Err` | 成功/失敗（エラー情報付き） |
 
 ## 標準ライブラリ関数
 
@@ -101,8 +101,8 @@ fun err: <T, E> (result: Result<T, E>) -> Option<E>
 ## 実装詳細
 
 ### AST
-- `Expr::Ok(Box<Expr>)` - Ok コンストラクタ
-- `Expr::Err(Box<Expr>)` - Err コンストラクタ
+- 値構築は `Call` / `Pipe` とqualified `VariantRef` に統一
+- `Result::Ok` / `Result::Err` はbuiltin namespaceとして解決
 - `Pattern::Ok(Box<Pattern>)` - Ok パターン
 - `Pattern::Err(Box<Pattern>)` - Err パターン
 
@@ -117,7 +117,7 @@ fun err: <T, E> (result: Result<T, E>) -> Option<E>
 - discriminant: `1 = Ok`, `0 = Err`
 
 ```wat
-;; Ok(value) の生成
+;; value Result::Ok の生成
 i32.const 8        ;; 8バイト確保
 call $allocate
 local.tee $ptr
@@ -134,9 +134,9 @@ i32.add
 ### エラー伝播演算子 `?`
 ```restrict
 // 将来実装予定
-fun process: (data: String) -> Result<Int, Error> = {
+fun process: (data: String) -> Result<Int32, Error> = {
     val parsed = data parse?  // エラー時は早期リターン
-    Ok(parsed * 2)
+    (parsed * 2) Result::Ok
 }
 ```
 

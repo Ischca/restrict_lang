@@ -37,5 +37,5 @@ fun score_batch: (
 fun main: () -> Int32 = {
     val scores = [10, 20];
 
-    (true, Some(3), scores) score_batch
+    (true, (3) Option::Some, scores) score_batch
 }

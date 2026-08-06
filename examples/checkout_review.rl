@@ -52,8 +52,8 @@ fun main: () -> Int32 = {
     val sample: Checkout = Checkout {
         subtotal: 120,
         expedited: true,
-        discount: None,
-        risk_flags: Some([])
+        discount: () Option::None,
+        risk_flags: ([]) Option::Some
     };
 
     sample |> review_checkout

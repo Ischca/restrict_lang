@@ -67,7 +67,7 @@ enum ParseError {
 }
 
 fun fail: (message: String) -> Result<Int32, ParseError> = {
-    Err(message |> ParseError::Message)
+    (message |> ParseError::Message) Result::Err
 }
 
 fun error_code: (error: ParseError) -> Int32 = {

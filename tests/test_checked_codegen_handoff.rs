@@ -120,7 +120,7 @@ fn checked_codegen_preserves_first_class_container_builtin_calls() {
     let wat = generate_checked(
         r#"
 fun main: () -> Option<String> = {
-    val maybe: Option<Int32> = Some(7);
+    val maybe: Option<Int32> = (7) Option::Some;
     val apply_map = map;
     (maybe, |value| "ok") apply_map
 }

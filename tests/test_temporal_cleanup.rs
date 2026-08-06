@@ -209,7 +209,7 @@ fn test_temporal_cleanup_with_match() {
     }
 
     fun main: () -> Unit = {
-        val option = Some(42);
+        val option = (42) Option::Some;
 
         match option {
             Some(n) => {

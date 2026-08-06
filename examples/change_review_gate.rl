@@ -48,13 +48,13 @@ fun assess_change: (change: Change) -> ReviewPlan = {
     val score = base_risk + migration_points;
     val escalation: Option<Int32> = risky_canary match {
         Some(signal) => {
-            Some(id + signal)
+            (id + signal) Option::Some
         }
         None => {
             score >= 75 then {
-                Some(id)
+                (id) Option::Some
             } else {
-                None
+                () Option::None
             }
         }
     };
@@ -72,7 +72,7 @@ fun main: () -> ReviewPlan = {
         id: 42,
         base_risk: 55,
         has_migration: true,
-        canary_signal: Some(120)
+        canary_signal: (120) Option::Some
     };
 
     change |> assess_change

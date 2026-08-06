@@ -56,9 +56,9 @@ fn test_temporal_in_recursive_types() {
 
     fun main: () -> Unit = {
         with lifetime<~list> {
-            val node3 = Node { value: 3, next: None };
-            val node2 = Node { value: 2, next: Some(node3) };
-            val node1 = Node { value: 1, next: Some(node2) };
+            val node3 = Node { value: 3, next: () Option::None };
+            val node2 = Node { value: 2, next: (node3) Option::Some };
+            val node1 = Node { value: 1, next: (node2) Option::Some };
             match node1.next {
                 Some(n) => n.value,
                 None => 0
@@ -173,8 +173,8 @@ fn test_temporal_in_match_patterns() {
         with lifetime<~op> {
             val result = Result {
                 variant: 0,
-                ok: Some(42),
-                err: None
+                ok: (42) Option::Some,
+                err: () Option::None
             };
             val value = processResult(result);
             Unit

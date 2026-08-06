@@ -1276,24 +1276,6 @@ fn rename_expr(
                 .map(|expr| Box::new(rename_expr(*expr, rename_map, type_params, bound)))
                 .collect(),
         )),
-        ExprKind::Some(expr) => Expr::new(ExprKind::Some(Box::new(rename_expr(
-            *expr,
-            rename_map,
-            type_params,
-            bound,
-        )))),
-        ExprKind::Ok(expr) => Expr::new(ExprKind::Ok(Box::new(rename_expr(
-            *expr,
-            rename_map,
-            type_params,
-            bound,
-        )))),
-        ExprKind::Err(expr) => Expr::new(ExprKind::Err(Box::new(rename_expr(
-            *expr,
-            rename_map,
-            type_params,
-            bound,
-        )))),
         ExprKind::Lambda(lambda) => {
             let mut lambda_bound = bound.clone();
             for param in &lambda.params {

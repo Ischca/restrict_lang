@@ -96,9 +96,9 @@ enum DecodeError {
 
 fun decode: (code: Int32) -> Result<Int32, DecodeError> = {
     code == 0 then {
-        Ok(42)
+        (42) Result::Ok
     } else {
-        Err("invalid" |> DecodeError::Invalid)
+        ("invalid" |> DecodeError::Invalid) Result::Err
     }
 }
 

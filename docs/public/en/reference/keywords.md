@@ -103,7 +103,7 @@ fun next_counter: () -> Int32 = {
 | `true` | Boolean true literal. |
 | `false` | Boolean false literal. |
 | `Some` | Built-in `Option<T>` present constructor. |
-| `None` | Built-in `Option<T>` absent constructor. |
+| `None` | Built-in `Option<T>` absent match pattern; construct with `() Option::None`. |
 | `with` | Bind a context value for a block. |
 
 ```restrict
@@ -123,16 +123,16 @@ fun option_score: (value: Option<Int32>) -> Int32 = {
 }
 ```
 
-`Ok` and `Err` are built-in `Result<T, E>` constructors. They are constructor
-names rather than reserved keywords, but they are part of the current source
-surface:
+`Result::Ok` and `Result::Err` are qualified built-in `Result<T, E>`
+constructors. The unqualified names remain match patterns; value construction
+uses the qualified namespace:
 
 ```restrict
 fun checked_score: (score: Int32) -> Result<Int32, String> = {
     score >= 0 then {
-        Ok(score)
+        score Result::Ok
     } else {
-        Err("negative")
+        "negative" Result::Err
     }
 }
 ```

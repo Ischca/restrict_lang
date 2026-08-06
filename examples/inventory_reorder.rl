@@ -10,9 +10,9 @@ record StockItem {
 
 fun validate_item: (item: StockItem) -> Result<StockItem, Int32> = {
     item.reserved <= item.on_hand then {
-        Ok(item)
+        (item) Result::Ok
     } else {
-        Err(422)
+        (422) Result::Err
     }
 }
 

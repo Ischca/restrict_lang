@@ -78,7 +78,7 @@ enum ParseError {
 }
 
 fun fail_empty: () -> Result<Int32, ParseError> = {
-    Err(() ParseError::Empty)
+    (() ParseError::Empty) Result::Err
 }
 
 fun recover: (result: Result<Int32, ParseError>) -> Int32 = {

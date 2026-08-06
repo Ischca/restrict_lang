@@ -108,7 +108,7 @@ record Bag<T> {
 
 fun main: () -> Int32 = {
     val bag: Bag<Int32> = Bag {
-        current: Some(1),
+        current: (1) Option::Some,
         history: [1, 2, 3]
     };
 
@@ -142,7 +142,7 @@ fun read_plus_one: (slot: Slot<Int32>) -> Int32 = {
 fun main: () -> Int32 = {
     val slot: Slot<Int32> = Slot {
         value: 41,
-        fallback: None
+        fallback: () Option::None
     };
 
     slot |> read_plus_one
@@ -163,7 +163,7 @@ record Slot<T> {
 fun main: () -> Int32 = {
     val slot = Slot {
         value: 41,
-        fallback: Some(40)
+        fallback: (40) Option::Some
     };
 
     slot.value

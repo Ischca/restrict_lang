@@ -5224,9 +5224,6 @@ impl WasmCodeGen {
             ExprKind::Freeze(expr) => {
                 self.collect_strings_from_expr(expr)?;
             }
-            ExprKind::Some(expr) | ExprKind::Ok(expr) | ExprKind::Err(expr) => {
-                self.collect_strings_from_expr(expr)?;
-            }
             ExprKind::Lambda(lambda) => {
                 self.collect_strings_from_expr(&lambda.body)?;
             }
@@ -7494,7 +7491,13 @@ impl WasmCodeGen {
     ) -> Option<Type> {
         let container_name = match &value.kind {
             ExprKind::ListLit(_) => "List",
-            ExprKind::None | ExprKind::Some(_) => "Option",
+            _ if matches!(
+                Self::builtin_variant_in_expr(value),
+                Some(BuiltinVariant::OptionSome | BuiltinVariant::OptionNone)
+            ) =>
+            {
+                "Option"
+            }
             _ => return None,
         };
 
@@ -7515,6 +7518,34 @@ impl WasmCodeGen {
         }
 
         None
+    }
+
+    fn builtin_variant_in_expr(expr: &Expr) -> Option<BuiltinVariant> {
+        Self::builtin_constructor_in_expr(expr).map(|(variant, _)| variant)
+    }
+
+    fn builtin_constructor_in_expr(expr: &Expr) -> Option<(BuiltinVariant, Option<&Expr>)> {
+        match &expr.kind {
+            ExprKind::Call(call) => match &call.function.kind {
+                ExprKind::VariantRef(path) => {
+                    let payload = match call.args.as_slice() {
+                        [] => None,
+                        [payload] => Some(payload.as_ref()),
+                        _ => None,
+                    };
+                    Some((path.builtin()?, payload))
+                }
+                _ => None,
+            },
+            ExprKind::Pipe(pipe) => match &pipe.target {
+                PipeTarget::Expr(target) => match &target.kind {
+                    ExprKind::VariantRef(path) => Some((path.builtin()?, Some(pipe.expr.as_ref()))),
+                    _ => None,
+                },
+                PipeTarget::Ident(_) => None,
+            },
+            _ => None,
+        }
     }
 
     fn find_iteration_item_context_for_ident_in_stmt(
@@ -7649,10 +7680,7 @@ impl WasmCodeGen {
             ExprKind::FieldAccess(object, _) => {
                 self.find_iteration_item_context_for_ident_in_expr(name, container_name, object)
             }
-            ExprKind::Some(inner)
-            | ExprKind::Ok(inner)
-            | ExprKind::Err(inner)
-            | ExprKind::Freeze(inner) => {
+            ExprKind::Freeze(inner) => {
                 self.find_iteration_item_context_for_ident_in_expr(name, container_name, inner)
             }
             ExprKind::Unary(unary) => self.find_iteration_item_context_for_ident_in_expr(
@@ -7929,12 +7957,9 @@ impl WasmCodeGen {
             ExprKind::FieldAccess(object, _) => {
                 self.infer_ident_source_type_from_expr_usage(name, object)
             }
-            ExprKind::Freeze(inner)
-            | ExprKind::Some(inner)
-            | ExprKind::Ok(inner)
-            | ExprKind::Err(inner)
-            | ExprKind::Await(inner)
-            | ExprKind::Spawn(inner) => self.infer_ident_source_type_from_expr_usage(name, inner),
+            ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
+                self.infer_ident_source_type_from_expr_usage(name, inner)
+            }
             ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => items
                 .iter()
                 .find_map(|item| self.infer_ident_source_type_from_expr_usage(name, item)),
@@ -7979,8 +8004,7 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
-            | ExprKind::VariantRef(_)
-            | ExprKind::None => None,
+            | ExprKind::VariantRef(_) => None,
         }
     }
 
@@ -9257,29 +9281,6 @@ impl WasmCodeGen {
             ExprKind::Freeze(expr) => {
                 self.generate_freeze_expr(expr)?;
             }
-            ExprKind::None => {
-                // Tagged union: allocate 8 bytes (4 for tag, 4 for padding)
-                self.output.push_str("    ;; None literal\n");
-                self.output.push_str("    i32.const 8\n");
-                self.output.push_str("    call $allocate\n");
-                self.output.push_str("    local.tee $match_tmp\n");
-
-                // Store tag (0 for None)
-                self.output.push_str("    i32.const 0\n");
-                self.output.push_str("    i32.store\n");
-
-                // Leave pointer on stack
-                self.output.push_str("    local.get $match_tmp\n");
-            }
-            ExprKind::Some(inner) => {
-                self.generate_variant_constructor("Some", 1, inner)?;
-            }
-            ExprKind::Ok(inner) => {
-                self.generate_variant_constructor("Ok", 1, inner)?;
-            }
-            ExprKind::Err(inner) => {
-                self.generate_variant_constructor("Err", 0, inner)?;
-            }
             ExprKind::Lambda(lambda) => {
                 self.generate_lambda_expr(lambda)?;
             }
@@ -9780,12 +9781,6 @@ impl WasmCodeGen {
                 self.collect_free_variables_for_codegen(&range.start, bound, seen, free_vars)?;
                 self.collect_free_variables_for_codegen(&range.end, bound, seen, free_vars)?;
             }
-            ExprKind::Some(value) => {
-                self.collect_free_variables_for_codegen(value, bound, seen, free_vars)?;
-            }
-            ExprKind::Ok(value) | ExprKind::Err(value) => {
-                self.collect_free_variables_for_codegen(value, bound, seen, free_vars)?;
-            }
             ExprKind::Lambda(lambda) => {
                 let mut lambda_bound = bound.clone();
                 for param in &lambda.params {
@@ -9804,8 +9799,7 @@ impl WasmCodeGen {
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
-            | ExprKind::VariantRef(_)
-            | ExprKind::None => {}
+            | ExprKind::VariantRef(_) => {}
         }
 
         Ok(())
@@ -10322,7 +10316,28 @@ impl WasmCodeGen {
         &mut self,
         path: &VariantPath,
         argument: Option<&Expr>,
+        expected_source: Option<&Type>,
     ) -> Result<(), CodeGenError> {
+        if let Some(variant) = path.builtin() {
+            return self.generate_builtin_variant_constructor(
+                path,
+                variant,
+                argument,
+                expected_source,
+            );
+        }
+
+        if let Some(expected_source) = expected_source {
+            let expected_enum =
+                matches!(expected_source, Type::Named(name) if name == &path.enum_name);
+            if !expected_enum {
+                return Err(CodeGenError::UnsupportedType(format!(
+                    "enum constructor '{}::{}' cannot produce expected type {}",
+                    path.enum_name, path.variant_name, expected_source
+                )));
+            }
+        }
+
         let (tag, payload_source) = self.enum_variant_definition(path)?;
         let label = format!("{}::{}", path.enum_name, path.variant_name);
 
@@ -10344,6 +10359,62 @@ impl WasmCodeGen {
         }
     }
 
+    fn generate_builtin_variant_constructor(
+        &mut self,
+        path: &VariantPath,
+        variant: BuiltinVariant,
+        argument: Option<&Expr>,
+        expected_source: Option<&Type>,
+    ) -> Result<(), CodeGenError> {
+        let label = format!("{}::{}", path.enum_name, path.variant_name);
+        let runtime_label = path.variant_name.as_str();
+        let (tag, expected_name, payload_index) = match variant {
+            BuiltinVariant::OptionSome => (1, "Option", Some(0)),
+            BuiltinVariant::OptionNone => (0, "Option", None),
+            BuiltinVariant::ResultOk => (1, "Result", Some(0)),
+            BuiltinVariant::ResultErr => (0, "Result", Some(1)),
+        };
+
+        let expected_args = match expected_source {
+            Some(Type::Generic(name, args)) if name == expected_name => Some(args),
+            // Type checking has already validated the constructor's logical
+            // result type. Some generic-call codegen paths carry a lowered
+            // payload expectation here instead (for example `Int32` for an
+            // `Option<Int32>` value), so only matching container context is
+            // useful for payload generation.
+            Some(_) | None => None,
+        };
+
+        match (payload_index, argument) {
+            (None, None) => self.generate_nullary_variant(runtime_label, tag),
+            (None, Some(_)) => Err(CodeGenError::UnsupportedFeature(format!(
+                "enum constructor '{}' takes unit and no payload",
+                label
+            ))),
+            (Some(_), None) => Err(CodeGenError::UnsupportedFeature(format!(
+                "enum constructor '{}' requires one payload",
+                label
+            ))),
+            (Some(payload_index), Some(argument)) => {
+                if let Some(args) = expected_args {
+                    let payload_source = args.get(payload_index).ok_or_else(|| {
+                        CodeGenError::UnsupportedType(format!(
+                            "{} requires {} type argument{}",
+                            expected_name,
+                            payload_index + 1,
+                            if payload_index == 0 { "" } else { "s" }
+                        ))
+                    })?;
+                    let payload_ty = self.convert_type(payload_source)?;
+                    self.generate_expr_with_expected_source(argument, payload_source)?;
+                    self.generate_variant_from_stack(runtime_label, tag, payload_ty)
+                } else {
+                    self.generate_variant_constructor(runtime_label, tag, argument)
+                }
+            }
+        }
+    }
+
     fn generate_call_expr(&mut self, call: &CallExpr) -> Result<(), CodeGenError> {
         if let ExprKind::VariantRef(path) = &call.function.kind {
             let argument = match call.args.as_slice() {
@@ -10356,7 +10427,7 @@ impl WasmCodeGen {
                     )));
                 }
             };
-            return self.generate_enum_variant_constructor(path, argument);
+            return self.generate_enum_variant_constructor(path, argument, None);
         }
 
         if let ExprKind::Ident(func_name) = &call.function.kind {
@@ -10854,14 +10925,6 @@ impl WasmCodeGen {
     ) -> Result<(), CodeGenError> {
         if let ExprKind::Call(call) = &expr.kind {
             if let ExprKind::VariantRef(path) = &call.function.kind {
-                let expected_enum =
-                    matches!(expected_source, Type::Named(name) if name == &path.enum_name);
-                if !expected_enum {
-                    return Err(CodeGenError::UnsupportedType(format!(
-                        "enum constructor '{}::{}' cannot produce expected type {}",
-                        path.enum_name, path.variant_name, expected_source
-                    )));
-                }
                 let argument = match call.args.as_slice() {
                     [] => None,
                     [argument] => Some(argument.as_ref()),
@@ -10872,7 +10935,11 @@ impl WasmCodeGen {
                         )));
                     }
                 };
-                return self.generate_enum_variant_constructor(path, argument);
+                return self.generate_enum_variant_constructor(
+                    path,
+                    argument,
+                    Some(expected_source),
+                );
             }
 
             if let ExprKind::Ident(func_name) = &call.function.kind {
@@ -10926,15 +10993,11 @@ impl WasmCodeGen {
         if let ExprKind::Pipe(pipe) = &expr.kind {
             if let PipeTarget::Expr(target) = &pipe.target {
                 if let ExprKind::VariantRef(path) = &target.kind {
-                    let expected_enum =
-                        matches!(expected_source, Type::Named(name) if name == &path.enum_name);
-                    if !expected_enum {
-                        return Err(CodeGenError::UnsupportedType(format!(
-                            "enum constructor '{}::{}' cannot produce expected type {}",
-                            path.enum_name, path.variant_name, expected_source
-                        )));
-                    }
-                    return self.generate_enum_variant_constructor(path, Some(pipe.expr.as_ref()));
+                    return self.generate_enum_variant_constructor(
+                        path,
+                        Some(pipe.expr.as_ref()),
+                        Some(expected_source),
+                    );
                 }
             }
 
@@ -11104,48 +11167,6 @@ impl WasmCodeGen {
                 if self.source_record_name(expected_source) == Some(record_lit.name.as_str()) {
                     return self
                         .generate_record_literal_with_source_type(record_lit, expected_source);
-                }
-            }
-            ExprKind::Some(inner) => {
-                if let Type::Generic(name, args) = expected_source {
-                    if name == "Option" {
-                        let payload_source = args.first().ok_or_else(|| {
-                            CodeGenError::UnsupportedType(
-                                "Option requires one type argument".into(),
-                            )
-                        })?;
-                        let payload_ty = self.convert_type(payload_source)?;
-                        self.generate_expr_with_expected_source(inner, payload_source)?;
-                        return self.generate_variant_from_stack("Some", 1, payload_ty);
-                    }
-                }
-            }
-            ExprKind::Ok(inner) => {
-                if let Type::Generic(name, args) = expected_source {
-                    if name == "Result" {
-                        let payload_source = args.first().ok_or_else(|| {
-                            CodeGenError::UnsupportedType(
-                                "Result requires two type arguments".into(),
-                            )
-                        })?;
-                        let payload_ty = self.convert_type(payload_source)?;
-                        self.generate_expr_with_expected_source(inner, payload_source)?;
-                        return self.generate_variant_from_stack("Ok", 1, payload_ty);
-                    }
-                }
-            }
-            ExprKind::Err(inner) => {
-                if let Type::Generic(name, args) = expected_source {
-                    if name == "Result" {
-                        let payload_source = args.get(1).ok_or_else(|| {
-                            CodeGenError::UnsupportedType(
-                                "Result requires two type arguments".into(),
-                            )
-                        })?;
-                        let payload_ty = self.convert_type(payload_source)?;
-                        self.generate_expr_with_expected_source(inner, payload_source)?;
-                        return self.generate_variant_from_stack("Err", 0, payload_ty);
-                    }
                 }
             }
             ExprKind::ListLit(items) => {
@@ -12962,9 +12983,6 @@ impl WasmCodeGen {
             ExprKind::RecordLit(record) => self.infer_record_lit_source_type(record),
             ExprKind::Clone(clone) => self.infer_expr_source_type(&clone.base),
             ExprKind::Freeze(inner) => self.infer_expr_source_type(inner),
-            ExprKind::Some(inner) => self
-                .infer_expr_source_type(inner)
-                .map(|ty| Type::Generic("Option".to_string(), vec![ty])),
             ExprKind::Binary(binary) => match binary.op {
                 BinaryOp::Eq
                 | BinaryOp::Ne
@@ -13032,6 +13050,17 @@ impl WasmCodeGen {
             }
             ExprKind::Call(call) => {
                 if let ExprKind::VariantRef(path) = &call.function.kind {
+                    if path.builtin() == Some(BuiltinVariant::OptionSome) {
+                        return match call.args.as_slice() {
+                            [inner] => self
+                                .infer_expr_source_type(inner)
+                                .map(|ty| Type::Generic("Option".to_string(), vec![ty])),
+                            _ => None,
+                        };
+                    }
+                    if path.builtin().is_some() {
+                        return None;
+                    }
                     return self
                         .enums
                         .contains_key(&path.enum_name)
@@ -13162,6 +13191,14 @@ impl WasmCodeGen {
                 }
                 PipeTarget::Expr(target) => {
                     if let ExprKind::VariantRef(path) = &target.kind {
+                        if path.builtin() == Some(BuiltinVariant::OptionSome) {
+                            return self
+                                .infer_expr_source_type(&pipe.expr)
+                                .map(|ty| Type::Generic("Option".to_string(), vec![ty]));
+                        }
+                        if path.builtin().is_some() {
+                            return None;
+                        }
                         return self
                             .enums
                             .contains_key(&path.enum_name)
@@ -13645,9 +13682,6 @@ impl WasmCodeGen {
             ExprKind::CharLit(_) => Some(Type::Named("Char".to_string())),
             ExprKind::StringLit(_) => Some(Type::Named("String".to_string())),
             ExprKind::Unit => Some(Type::Named("Unit".to_string())),
-            ExprKind::Some(inner) => self
-                .infer_expr_source_type_with_bindings(inner, bindings)
-                .map(|ty| Type::Generic("Option".to_string(), vec![ty])),
             ExprKind::Unary(unary) => match unary.op {
                 UnaryOp::Not => Some(Type::Named("Boolean".to_string())),
                 UnaryOp::Neg => self.infer_expr_source_type_with_bindings(&unary.expr, bindings),
@@ -13658,6 +13692,17 @@ impl WasmCodeGen {
             }
             ExprKind::Call(call) => {
                 if let ExprKind::VariantRef(path) = &call.function.kind {
+                    if path.builtin() == Some(BuiltinVariant::OptionSome) {
+                        return match call.args.as_slice() {
+                            [inner] => self
+                                .infer_expr_source_type_with_bindings(inner, bindings)
+                                .map(|ty| Type::Generic("Option".to_string(), vec![ty])),
+                            _ => None,
+                        };
+                    }
+                    if path.builtin().is_some() {
+                        return None;
+                    }
                     return self
                         .enums
                         .contains_key(&path.enum_name)
@@ -13796,9 +13841,15 @@ impl WasmCodeGen {
                     }
                     PipeTarget::Expr(target) => {
                         if let ExprKind::VariantRef(path) = &target.kind {
-                            self.enums
-                                .contains_key(&path.enum_name)
-                                .then(|| Type::Named(path.enum_name.clone()))
+                            if path.builtin() == Some(BuiltinVariant::OptionSome) {
+                                Some(Type::Generic("Option".to_string(), vec![arg_ty]))
+                            } else if path.builtin().is_some() {
+                                None
+                            } else {
+                                self.enums
+                                    .contains_key(&path.enum_name)
+                                    .then(|| Type::Named(path.enum_name.clone()))
+                            }
                         } else if let ExprKind::Ident(name) = &target.kind {
                             if let Some(Type::Function(params, return_ty)) = bindings
                                 .get(name)
@@ -14798,14 +14849,23 @@ impl WasmCodeGen {
         expr: &Expr,
         bindings: &HashMap<String, Type>,
     ) -> bool {
+        if let Some((variant, payload)) = Self::builtin_constructor_in_expr(expr) {
+            return match (variant, payload) {
+                (BuiltinVariant::OptionNone, None) => true,
+                (_, Some(payload)) => {
+                    self.expr_is_replay_safe_for_deferred_callable_with_bindings(payload, bindings)
+                }
+                _ => false,
+            };
+        }
+
         match &expr.kind {
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
-            | ExprKind::Unit
-            | ExprKind::None => true,
+            | ExprKind::Unit => true,
             ExprKind::Ident(name) => bindings
                 .get(name)
                 .cloned()
@@ -14824,9 +14884,6 @@ impl WasmCodeGen {
             }
             ExprKind::Cast(cast) => {
                 self.expr_is_replay_safe_for_deferred_callable_with_bindings(&cast.expr, bindings)
-            }
-            ExprKind::Some(inner) | ExprKind::Ok(inner) | ExprKind::Err(inner) => {
-                self.expr_is_replay_safe_for_deferred_callable_with_bindings(inner, bindings)
             }
             ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
                 elements.iter().all(|element| {
@@ -15365,9 +15422,6 @@ impl WasmCodeGen {
                 }
             }
             ExprKind::Freeze(inner)
-            | ExprKind::Some(inner)
-            | ExprKind::Ok(inner)
-            | ExprKind::Err(inner)
             | ExprKind::Await(inner)
             | ExprKind::Spawn(inner)
             | ExprKind::FieldAccess(inner, _) => {
@@ -15405,8 +15459,7 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
-            | ExprKind::VariantRef(_)
-            | ExprKind::None => {}
+            | ExprKind::VariantRef(_) => {}
         }
 
         (found_array_use, elem_ty)
@@ -15820,12 +15873,9 @@ impl WasmCodeGen {
             }
             ExprKind::Clone(clone) => Self::max_record_tmp_depth_in_expr(&clone.base)
                 .max(Self::max_record_tmp_depth_in_record_lit(&clone.updates)),
-            ExprKind::Freeze(inner)
-            | ExprKind::Await(inner)
-            | ExprKind::Spawn(inner)
-            | ExprKind::Some(inner)
-            | ExprKind::Ok(inner)
-            | ExprKind::Err(inner) => Self::max_record_tmp_depth_in_expr(inner),
+            ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
+                Self::max_record_tmp_depth_in_expr(inner)
+            }
             ExprKind::Then(then) => {
                 let else_if_depth = then
                     .else_ifs
@@ -15914,8 +15964,7 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
-            | ExprKind::VariantRef(_)
-            | ExprKind::None => 0,
+            | ExprKind::VariantRef(_) => 0,
         }
     }
 
@@ -16422,9 +16471,6 @@ impl WasmCodeGen {
                     )?;
                 }
             },
-            ExprKind::Ok(inner) | ExprKind::Err(inner) | ExprKind::Some(inner) => {
-                self.collect_locals_from_expr(inner, locals)?;
-            }
             ExprKind::RangeLit(range) => {
                 self.collect_locals_from_expr(&range.start, locals)?;
                 self.collect_locals_from_expr(&range.end, locals)?;
@@ -16549,7 +16595,7 @@ impl WasmCodeGen {
             }
             PipeTarget::Expr(target_expr) => {
                 if let ExprKind::VariantRef(path) = &target_expr.kind {
-                    return self.generate_enum_variant_constructor(path, Some(&pipe.expr));
+                    return self.generate_enum_variant_constructor(path, Some(&pipe.expr), None);
                 }
 
                 // This is a complex expression

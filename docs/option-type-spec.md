@@ -16,11 +16,11 @@ Option<T>
 ### Optionの生成
 ```restrict
 // Some: 値がある場合
-val x = Some(42)      // Option<Int>
-val y = Some("hello") // Option<String>
+val x = 42 Option::Some      // Option<Int32>
+val y = "hello" Option::Some // Option<String>
 
 // None: 値がない場合
-val z = None          // Option<T> (型は文脈から推論)
+val z: Option<Int32> = () Option::None
 ```
 
 ### パターンマッチング
@@ -38,9 +38,9 @@ fun unwrap_or: (opt: Option<Int32>, default: Int32) -> Int32 = {
 // 失敗する可能性のある関数
 fun safe_divide: (a: Int32, b: Int32) -> Option<Int32> = {
     b == 0 then {
-        None
+        () Option::None
     } else {
-        Some(a / b)
+        (a / b) Option::Some
     }
 }
 
@@ -56,14 +56,14 @@ fun main: () = {
 
 ## 実装計画
 
-1. **AST拡張**
-   - `Some(expr)` コンストラクタ
-   - `None` リテラル
-   - パターンマッチングでのSome/Noneパターン
+1. **AST**
+   - 値構築は `Call` / `Pipe` とqualified `VariantRef` に統一
+   - `value Option::Some` と `() Option::None`
+   - パターンマッチングではunqualified `Some` / `None` パターンを維持
 
 2. **型チェッカー**
    - Option<T>型のサポート
-   - Some/Noneの型推論
+   - qualified Option constructorの型推論
    - パターンマッチングでの網羅性チェック
 
 3. **コード生成**

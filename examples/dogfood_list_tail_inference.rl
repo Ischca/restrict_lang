@@ -55,16 +55,16 @@ export fun dogfood_list_tail_inference_score: () -> Int64 = {
     val snapshot = readings match {
         [] => {
             TailSnapshot {
-                head: None,
+                head: () Option::None,
                 tail: [],
-                route: Err(3_000_000_000)
+                route: (3_000_000_000) Result::Err
             }
         }
         [head | tail] => {
             TailSnapshot {
-                head: Some(head),
+                head: (head) Option::Some,
                 tail: tail,
-                route: Ok(head)
+                route: (head) Result::Ok
             }
         }
     };

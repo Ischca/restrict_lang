@@ -122,10 +122,10 @@ Common examples:
 val numbers: List<Int32> = [1, 2, 3]
 val fixed: Array<Int32, 3> = [1, 2, 3]
 val indexes: Range<Int32> = [1..10]
-val maybe_score: Option<Int32> = Some(42)
-val no_score: Option<Int32> = None
-val success: Result<Int32, String> = Ok(42)
-val failure: Result<Int32, String> = Err("missing")
+val maybe_score: Option<Int32> = 42 Option::Some
+val no_score: Option<Int32> = () Option::None
+val success: Result<Int32, String> = 42 Result::Ok
+val failure: Result<Int32, String> = "missing" Result::Err
 ```
 
 Collection literals use `[ ... ]` for both lists and fixed arrays. Without an
@@ -293,25 +293,26 @@ fun result_or_zero: (score: Result<Int32, String>) -> Int32 = {
 }
 ```
 
-The constructors `Some(value)`, `Ok(value)`, and `Err(error)` carry payload
-types, but `Ok` and `Err` still need the full expected `Result<T, E>` shape to
-fill the opposite side. `None` carries no payload, so it needs an expected
+The qualified constructors `value Option::Some`, `value Result::Ok`, and
+`error Result::Err` carry payload types, but `Result::Ok` and `Result::Err`
+still need the full expected `Result<T, E>` shape to fill the opposite side.
+`Option::None` carries no payload, so it needs an expected
 `Option<T>` unless a sibling `Some` or branch supplies the type.
 
 ```restrict
 fun choose_result: (flag: Boolean) -> Result<Int32, String> = {
     flag then {
-        Ok(42)
+        42 Result::Ok
     } else {
-        Err("missing")
+        "missing" Result::Err
     }
 }
 
 fun choose_option: (flag: Boolean) -> Option<Int32> = {
     flag then {
-        None
+        () Option::None
     } else {
-        Some(42)
+        42 Option::Some
     }
 }
 ```
@@ -329,7 +330,7 @@ enum DecodeError {
 }
 
 fun fail: (message: String) -> Result<Int32, DecodeError> = {
-    Err(message |> DecodeError::Invalid)
+    (message |> DecodeError::Invalid) Result::Err
 }
 ```
 
@@ -368,7 +369,7 @@ remaining parameter context.
 Unconstrained lambdas such as `|value| value` are rejected unless an expected
 function type or a later local direct use supplies the parameter type.
 
-If the compiler cannot infer an empty collection, `Ok`, `Err`, `None`, or a
+If the compiler cannot infer an empty collection, `Result::Ok`, `Result::Err`, `Option::None`, or a
 lambda parameter, add a type annotation at the nearest useful boundary.
 
 ## Current Boundaries

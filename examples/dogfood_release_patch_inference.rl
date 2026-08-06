@@ -25,12 +25,12 @@ fun add_int: (total: Int32, value: Int32) -> Int32 = {
 
 fun route_for: (risk_score: Int32, freeze_rollout: Boolean) -> Result<Int32, Int32> = {
     freeze_rollout then {
-        Err(risk_score)
+        (risk_score) Result::Err
     } else {
         risk_score <= 20 then {
-            Ok(risk_score)
+            (risk_score) Result::Ok
         } else {
-            Err(risk_score - 20)
+            (risk_score - 20) Result::Err
         }
     }
 }
@@ -42,7 +42,7 @@ fun hold_owner_for: (
     freeze_rollout then {
         reviewer
     } else {
-        None
+        () Option::None
     }
 }
 
@@ -74,14 +74,14 @@ fun main: () -> Int32 = {
         risk_score: 0,
         required_checks: 3,
         passing_checks: 1,
-        hold_owner: None,
+        hold_owner: () Option::None,
         audit_codes: [100],
-        route: Ok(0)
+        route: (0) Result::Ok
     };
     val review = ReviewInput {
         checks_delta: 2,
         new_findings: 1,
-        reviewer: Some(42),
+        reviewer: (42) Option::Some,
         freeze_rollout: false
     };
     val patched = (base, review) patch_release;

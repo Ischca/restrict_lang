@@ -61,17 +61,17 @@ fun add_risk: (total: Int32, risk: Int32) -> Int32 = {
 
 fun escalation_code: (approved: Boolean, owner: Int32) -> Result<Int32, Int32> = {
     approved then {
-        Ok(owner)
+        (owner) Result::Ok
     } else {
-        Err(503)
+        (503) Result::Err
     }
 }
 
 fun default_audit_sidecar: () -> ReviewAuditSidecar = {
     ReviewAuditSidecar {
         reviewer_notes: [],
-        skipped_reviewer: None,
-        sampled_signal_ids: Some([])
+        skipped_reviewer: () Option::None,
+        sampled_signal_ids: ([]) Option::Some
     }
 }
 
@@ -102,17 +102,17 @@ fun main: () -> ReviewSummary = {
         ReviewSignal {
             severity: 3,
             confidence: 4,
-            reviewer: Some(7)
+            reviewer: (7) Option::Some
         },
         ReviewSignal {
             severity: 1,
             confidence: 2,
-            reviewer: None
+            reviewer: () Option::None
         }
     ];
     val batch = ReviewBatch {
         signals: signals,
-        manual_override: None,
+        manual_override: () Option::None,
         fallback_owner: 42,
         launch_risk_limit: 30
     };

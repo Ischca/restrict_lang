@@ -63,9 +63,9 @@ fun route_candidate: (
     risk: Int32
 ) -> Result<Int32, Int32> = {
     page then {
-        Ok(service_id)
+        (service_id) Result::Ok
     } else {
-        Err(risk)
+        (risk) Result::Err
     }
 }
 
@@ -107,15 +107,15 @@ fun remember_first_unowned: (
 ) -> Option<Int32> = {
     current match {
         Some(existing) => {
-            Some(existing)
+            (existing) Option::Some
         }
         None => {
             owner match {
                 Some(person) => {
-                    None
+                    () Option::None
                 }
                 None => {
-                    Some(service_id)
+                    (service_id) Option::Some
                 }
             }
         }
@@ -166,28 +166,28 @@ fun main: () -> Int32 = {
             tier: 1,
             latency_ms: 145,
             error_rate: 3,
-            owner: Some(7)
+            owner: (7) Option::Some
         },
         ServiceSignal {
             service_id: 12,
             tier: 3,
             latency_ms: 98,
             error_rate: 1,
-            owner: None
+            owner: () Option::None
         },
         ServiceSignal {
             service_id: 13,
             tier: 2,
             latency_ms: 180,
             error_rate: 5,
-            owner: Some(9)
+            owner: (9) Option::Some
         }
     ];
     val candidates = (signals, |signal| (signal, policy) candidate_for) map;
     val paged = (candidates, |candidate| candidate |> is_paged) filter;
     val routed_risks = (paged, |candidate| candidate |> routed_risk) map;
     val total_risk = (routed_risks, 0, |total, risk| total + risk) fold;
-    val first_unowned = (None, None, 12) remember_first_unowned;
+    val first_unowned = (() Option::None, () Option::None, 12) remember_first_unowned;
 
     (first_unowned, total_risk) choose_value
 }

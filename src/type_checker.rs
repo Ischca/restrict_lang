@@ -282,12 +282,12 @@ impl fmt::Display for TypeError {
                         } else if unresolved_option_type(&detail) {
                             write!(
                                 f,
-                                "Cannot infer type for binding '{binding_name}': None requires an expected Option type. Add an Option annotation or use the binding where a concrete Option type is expected"
+                                "Cannot infer type for binding '{binding_name}': Option::None requires an expected Option type. Add an Option annotation or use the binding where a concrete Option type is expected"
                             )
                         } else if unresolved_result_type(&detail) {
                             write!(
                                 f,
-                                "Cannot infer type for binding '{binding_name}': Ok/Err requires an expected Result type. Add a Result annotation or use the binding where a concrete Result type is expected"
+                                "Cannot infer type for binding '{binding_name}': Result::Ok/Result::Err requires an expected Result type. Add a Result annotation or use the binding where a concrete Result type is expected"
                             )
                         } else {
                             write!(
@@ -551,9 +551,9 @@ fn expected_type_mismatch(expected: impl Into<String>, found: &TypedType) -> Typ
 
 fn lowercase_option_constructor_error(name: &str) -> TypeError {
     let replacement = match name {
-        "some" => "`Some(value)`",
-        "none" => "`None` with an expected `Option<T>` type",
-        _ => "`Some(value)` or `None`",
+        "some" => "qualified OSV `value Option::Some`",
+        "none" => "qualified OSV `() Option::None` with an expected `Option<T>` type",
+        _ => "qualified `Option::Some` or `Option::None` OSV syntax",
     };
 
     TypeError::UnsupportedFeature(format!(
@@ -4724,12 +4724,7 @@ impl TypeChecker {
                     }
                 }
             }
-            ExprKind::Freeze(inner)
-            | ExprKind::Some(inner)
-            | ExprKind::Ok(inner)
-            | ExprKind::Err(inner)
-            | ExprKind::Await(inner)
-            | ExprKind::Spawn(inner) => {
+            ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
                 deps.extend(self.collect_unannotated_function_deps_in_expr(
                     inner,
                     bound_vars,
@@ -4889,8 +4884,7 @@ impl TypeChecker {
             | ExprKind::StringLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
-            | ExprKind::Unit
-            | ExprKind::None => {}
+            | ExprKind::Unit => {}
         }
 
         deps
@@ -6512,8 +6506,7 @@ impl TypeChecker {
             | ExprKind::StringLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
-            | ExprKind::Unit
-            | ExprKind::None => true,
+            | ExprKind::Unit => true,
             ExprKind::Ident(name) => self.ident_is_replay_safe_for_deferred_callable(name),
             ExprKind::Binary(binary) => {
                 self.expr_is_replay_safe_for_deferred_callable(&binary.left)
@@ -6521,9 +6514,6 @@ impl TypeChecker {
             }
             ExprKind::Unary(unary) => self.expr_is_replay_safe_for_deferred_callable(&unary.expr),
             ExprKind::Cast(cast) => self.expr_is_replay_safe_for_deferred_callable(&cast.expr),
-            ExprKind::Some(inner) | ExprKind::Ok(inner) | ExprKind::Err(inner) => {
-                self.expr_is_replay_safe_for_deferred_callable(inner)
-            }
             ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => elements
                 .iter()
                 .all(|element| self.expr_is_replay_safe_for_deferred_callable(element)),
@@ -7156,70 +7146,6 @@ impl TypeChecker {
                 ExprKind::ListLit(elements) => self.check_list_lit(elements, expected),
                 ExprKind::RangeLit(range) => self.check_range_lit(range, expected),
                 ExprKind::ArrayLit(elements) => self.check_array_lit(elements, expected),
-                ExprKind::Some(expr) => {
-                    let inferred_inner;
-                    let expected_inner = if let Some(TypedType::Option(inner)) = expected {
-                        Some(inner.as_ref())
-                    } else if matches!(expected, Some(TypedType::InferVar(_))) {
-                        inferred_inner = self.type_var_generator.fresh_var();
-                        Some(&inferred_inner)
-                    } else {
-                        None
-                    };
-                    let inner_type = self.check_expr_with_expected(expr, expected_inner)?;
-                    Ok(TypedType::Option(Box::new(inner_type)))
-                }
-                ExprKind::None => {
-                    // Use expected type if available
-                    if let Some(TypedType::Option(inner)) = expected {
-                        Ok(TypedType::Option(inner.clone()))
-                    } else if matches!(expected, Some(TypedType::InferVar(_))) {
-                        Ok(TypedType::Option(Box::new(
-                            self.type_var_generator.fresh_var(),
-                        )))
-                    } else {
-                        Err(TypeError::CannotInferType(
-                            "None requires an expected Option type".to_string(),
-                        ))
-                    }
-                }
-                ExprKind::Ok(expr) => match expected {
-                    Some(TypedType::Result(ok_ty, err_ty)) => {
-                        let actual_ok = self.check_expr_with_expected(expr, Some(ok_ty))?;
-                        Ok(TypedType::Result(Box::new(actual_ok), err_ty.clone()))
-                    }
-                    Some(TypedType::InferVar(_)) => {
-                        let inferred_ok = self.type_var_generator.fresh_var();
-                        let inferred_err = self.type_var_generator.fresh_var();
-                        let actual_ok = self.check_expr_with_expected(expr, Some(&inferred_ok))?;
-                        Ok(TypedType::Result(
-                            Box::new(actual_ok),
-                            Box::new(inferred_err),
-                        ))
-                    }
-                    _ => Err(TypeError::CannotInferType(
-                        "Ok requires an expected Result type".to_string(),
-                    )),
-                },
-                ExprKind::Err(expr) => match expected {
-                    Some(TypedType::Result(ok_ty, err_ty)) => {
-                        let actual_err = self.check_expr_with_expected(expr, Some(err_ty))?;
-                        Ok(TypedType::Result(ok_ty.clone(), Box::new(actual_err)))
-                    }
-                    Some(TypedType::InferVar(_)) => {
-                        let inferred_ok = self.type_var_generator.fresh_var();
-                        let inferred_err = self.type_var_generator.fresh_var();
-                        let actual_err =
-                            self.check_expr_with_expected(expr, Some(&inferred_err))?;
-                        Ok(TypedType::Result(
-                            Box::new(inferred_ok),
-                            Box::new(actual_err),
-                        ))
-                    }
-                    _ => Err(TypeError::CannotInferType(
-                        "Err requires an expected Result type".to_string(),
-                    )),
-                },
                 ExprKind::Lambda(lambda) => self.check_lambda_expr(lambda, expected),
                 ExprKind::PrototypeClone(proto_clone) => {
                     self.check_prototype_clone_expr(proto_clone)
@@ -8290,6 +8216,17 @@ impl TypeChecker {
     }
 
     fn expr_requires_expected_type(expr: &Expr) -> bool {
+        if let Some((variant, payload)) = Self::builtin_constructor_expr(expr) {
+            return match variant {
+                BuiltinVariant::OptionSome => {
+                    payload.is_some_and(Self::expr_requires_expected_type)
+                }
+                BuiltinVariant::OptionNone
+                | BuiltinVariant::ResultOk
+                | BuiltinVariant::ResultErr => true,
+            };
+        }
+
         match &expr.kind {
             ExprKind::ListLit(elements) | ExprKind::ArrayLit(elements) => {
                 elements.is_empty()
@@ -8301,9 +8238,6 @@ impl TypeChecker {
                 Self::expr_requires_expected_type(&range.start)
                     || Self::expr_requires_expected_type(&range.end)
             }
-            ExprKind::None => true,
-            ExprKind::Some(inner) => Self::expr_requires_expected_type(inner),
-            ExprKind::Ok(_) | ExprKind::Err(_) => true,
             ExprKind::Unary(unary) => Self::expr_requires_expected_type(&unary.expr),
             ExprKind::Cast(cast) => Self::expr_requires_expected_type(&cast.expr),
             ExprKind::RecordLit(record_lit) => record_lit.fields.iter().any(|field| match field {
@@ -8671,6 +8605,10 @@ impl TypeChecker {
         args: &[Box<Expr>],
         expected_return: Option<&TypedType>,
     ) -> Result<TypedType, TypeError> {
+        if let Some(variant) = path.builtin() {
+            return self.check_builtin_constructor_call(variant, args, expected_return);
+        }
+
         let payload = self.enum_variant_payload(path)?;
         let enum_ty = TypedType::Enum {
             name: path.enum_name.clone(),
@@ -8700,6 +8638,117 @@ impl TypeChecker {
         }
 
         Ok(enum_ty)
+    }
+
+    fn check_builtin_constructor_call(
+        &mut self,
+        variant: BuiltinVariant,
+        args: &[Box<Expr>],
+        expected: Option<&TypedType>,
+    ) -> Result<TypedType, TypeError> {
+        let expected_arity = match variant {
+            BuiltinVariant::OptionNone => 0,
+            BuiltinVariant::OptionSome | BuiltinVariant::ResultOk | BuiltinVariant::ResultErr => 1,
+        };
+        if args.len() != expected_arity {
+            return Err(TypeError::ArityMismatch {
+                expected: expected_arity,
+                found: args.len(),
+            });
+        }
+
+        match variant {
+            BuiltinVariant::OptionSome => {
+                let inferred_inner;
+                let expected_inner = if let Some(TypedType::Option(inner)) = expected {
+                    Some(inner.as_ref())
+                } else if matches!(expected, Some(TypedType::InferVar(_))) {
+                    inferred_inner = self.type_var_generator.fresh_var();
+                    Some(&inferred_inner)
+                } else {
+                    None
+                };
+                let inner_type = self.check_expr_with_expected(&args[0], expected_inner)?;
+                Ok(TypedType::Option(Box::new(inner_type)))
+            }
+            BuiltinVariant::OptionNone => {
+                if let Some(TypedType::Option(inner)) = expected {
+                    Ok(TypedType::Option(inner.clone()))
+                } else if matches!(expected, Some(TypedType::InferVar(_))) {
+                    Ok(TypedType::Option(Box::new(
+                        self.type_var_generator.fresh_var(),
+                    )))
+                } else {
+                    Err(TypeError::CannotInferType(
+                        "Option::None requires an expected Option type".to_string(),
+                    ))
+                }
+            }
+            BuiltinVariant::ResultOk => match expected {
+                Some(TypedType::Result(ok_ty, err_ty)) => {
+                    let actual_ok = self.check_expr_with_expected(&args[0], Some(ok_ty))?;
+                    Ok(TypedType::Result(Box::new(actual_ok), err_ty.clone()))
+                }
+                Some(TypedType::InferVar(_)) => {
+                    let inferred_ok = self.type_var_generator.fresh_var();
+                    let inferred_err = self.type_var_generator.fresh_var();
+                    let actual_ok = self.check_expr_with_expected(&args[0], Some(&inferred_ok))?;
+                    Ok(TypedType::Result(
+                        Box::new(actual_ok),
+                        Box::new(inferred_err),
+                    ))
+                }
+                _ => Err(TypeError::CannotInferType(
+                    "Result::Ok requires an expected Result type".to_string(),
+                )),
+            },
+            BuiltinVariant::ResultErr => match expected {
+                Some(TypedType::Result(ok_ty, err_ty)) => {
+                    let actual_err = self.check_expr_with_expected(&args[0], Some(err_ty))?;
+                    Ok(TypedType::Result(ok_ty.clone(), Box::new(actual_err)))
+                }
+                Some(TypedType::InferVar(_)) => {
+                    let inferred_ok = self.type_var_generator.fresh_var();
+                    let inferred_err = self.type_var_generator.fresh_var();
+                    let actual_err =
+                        self.check_expr_with_expected(&args[0], Some(&inferred_err))?;
+                    Ok(TypedType::Result(
+                        Box::new(inferred_ok),
+                        Box::new(actual_err),
+                    ))
+                }
+                _ => Err(TypeError::CannotInferType(
+                    "Result::Err requires an expected Result type".to_string(),
+                )),
+            },
+        }
+    }
+
+    fn builtin_constructor_expr(expr: &Expr) -> Option<(BuiltinVariant, Option<&Expr>)> {
+        match &expr.kind {
+            ExprKind::Call(call) => {
+                let ExprKind::VariantRef(path) = &call.function.kind else {
+                    return None;
+                };
+                let variant = path.builtin()?;
+                let payload = match call.args.as_slice() {
+                    [] => None,
+                    [payload] => Some(payload.as_ref()),
+                    _ => None,
+                };
+                Some((variant, payload))
+            }
+            ExprKind::Pipe(pipe) => {
+                let PipeTarget::Expr(target) = &pipe.target else {
+                    return None;
+                };
+                let ExprKind::VariantRef(path) = &target.kind else {
+                    return None;
+                };
+                Some((path.builtin()?, Some(pipe.expr.as_ref())))
+            }
+            _ => None,
+        }
     }
 
     fn check_block_expr(&mut self, block: &BlockExpr) -> Result<TypedType, TypeError> {
@@ -8827,10 +8876,7 @@ impl TypeChecker {
         final_expr: Option<&Expr>,
         expected: Option<&TypedType>,
     ) -> Result<Option<TypedType>, TypeError> {
-        if !matches!(
-            &value.kind,
-            ExprKind::Some(_) | ExprKind::None | ExprKind::Ok(_) | ExprKind::Err(_)
-        ) {
+        if Self::builtin_constructor_expr(value).is_none() {
             return Ok(None);
         }
 
@@ -8896,16 +8942,22 @@ impl TypeChecker {
             }
         }
 
-        Ok(match &value.kind {
-            ExprKind::Some(_) | ExprKind::None => {
-                option_payload.map(|payload| TypedType::Option(Box::new(payload)))
-            }
-            ExprKind::Ok(_) | ExprKind::Err(_) => match (result_ok, result_err) {
-                (Some(ok), Some(err)) => Some(TypedType::Result(Box::new(ok), Box::new(err))),
+        Ok(
+            match Self::builtin_constructor_expr(value).map(|(variant, _)| variant) {
+                Some(BuiltinVariant::OptionSome | BuiltinVariant::OptionNone) => {
+                    option_payload.map(|payload| TypedType::Option(Box::new(payload)))
+                }
+                Some(BuiltinVariant::ResultOk | BuiltinVariant::ResultErr) => {
+                    match (result_ok, result_err) {
+                        (Some(ok), Some(err)) => {
+                            Some(TypedType::Result(Box::new(ok), Box::new(err)))
+                        }
+                        _ => None,
+                    }
+                }
                 _ => None,
             },
-            _ => None,
-        })
+        )
     }
 
     fn expected_type_for_payload_pattern(
@@ -9464,6 +9516,14 @@ impl TypeChecker {
     }
 
     fn non_consuming_expected_context_expr_type(&self, expr: &Expr) -> Option<TypedType> {
+        if let Some((BuiltinVariant::OptionSome, Some(inner))) =
+            Self::builtin_constructor_expr(expr)
+        {
+            return self
+                .non_consuming_expected_context_expr_type(inner)
+                .map(|ty| TypedType::Option(Box::new(ty)));
+        }
+
         match &expr.kind {
             ExprKind::IntLit(value) => Some(Self::int_literal_type(*value)),
             ExprKind::FloatLit(_) => Some(TypedType::Float64),
@@ -9474,9 +9534,6 @@ impl TypeChecker {
             ExprKind::Ident(name) => self
                 .peek_var_type(name)
                 .and_then(|ty| (!Self::contains_inference_internal_type(&ty)).then_some(ty)),
-            ExprKind::Some(inner) => self
-                .non_consuming_expected_context_expr_type(inner)
-                .map(|ty| TypedType::Option(Box::new(ty))),
             ExprKind::ListLit(elements) => {
                 let mut element_ty = None;
                 for element in elements {
@@ -11664,7 +11721,7 @@ fun main: (item: Box<Int64>) -> Box<Int64> = {
     fn checker_owned_form_environment_controls_container_projection() {
         let input = r#"
             fun main: () -> Option<String> = {
-                val maybe: Option<Int32> = Some(1);
+                val maybe: Option<Int32> = (1) Option::Some;
                 (maybe, |value| "x") map
             }
         "#;
@@ -12546,12 +12603,6 @@ impl TypeChecker {
                     }
                 }
             }
-            ExprKind::Some(expr) => {
-                free_vars.extend(self.collect_free_variables(expr, bound_vars));
-            }
-            ExprKind::Ok(expr) | ExprKind::Err(expr) => {
-                free_vars.extend(self.collect_free_variables(expr, bound_vars));
-            }
             ExprKind::Await(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
@@ -12559,14 +12610,13 @@ impl TypeChecker {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
             ExprKind::VariantRef(_) => {}
-            // Literals and None have no free variables
+            // Literals have no free variables
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
-            | ExprKind::Unit
-            | ExprKind::None => {}
+            | ExprKind::Unit => {}
         }
 
         free_vars

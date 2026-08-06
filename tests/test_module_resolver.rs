@@ -952,7 +952,7 @@ fun main: () -> Option<Float64> = {
         "release".to_string(),
         r#"
 export fun wrap: <T>(value: T) = {
-    Some(value)
+    (value) Option::Some
 }
 "#
         .to_string(),
@@ -991,9 +991,9 @@ import modules.generics
 
 export fun imported_release_score: (manual_owner_id: Int32) -> Int32 = {
     val manual_owner: Option<Int32> = manual_owner_id > 0 then {
-        Some(manual_owner_id)
+        (manual_owner_id) Option::Some
     } else {
-        None
+        () Option::None
     };
     val selected_owner = (manual_owner, 102) choose_or;
     val base_score = (5, 10) sum_score;

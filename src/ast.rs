@@ -511,16 +511,6 @@ pub enum ExprKind {
     /// Array literal with fixed size
     ArrayLit(Vec<Box<Expr>>),
 
-    // Option constructors
-    /// Some variant of Option type
-    Some(Box<Expr>),
-    /// None variant of Option type
-    None,
-    /// Ok variant of Result type
-    Ok(Box<Expr>),
-    /// Err variant of Result type
-    Err(Box<Expr>),
-
     // Lambda expression
     /// Anonymous function (e.g., `|x| x + 1`)
     Lambda(LambdaExpr),
@@ -539,6 +529,31 @@ pub struct VariantPath {
     pub enum_name: String,
     /// Variant name scoped within the enum
     pub variant_name: String,
+}
+
+/// Compiler-provided variants that use the same qualified constructor syntax
+/// as user-defined enums.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BuiltinVariant {
+    OptionSome,
+    OptionNone,
+    ResultOk,
+    ResultErr,
+}
+
+impl VariantPath {
+    /// Resolve a qualified path in the compiler-provided `Option` or `Result`
+    /// namespaces. Unqualified pattern syntax is represented separately by
+    /// [`Pattern`] and intentionally does not use this helper.
+    pub fn builtin(&self) -> Option<BuiltinVariant> {
+        match (self.enum_name.as_str(), self.variant_name.as_str()) {
+            ("Option", "Some") => Some(BuiltinVariant::OptionSome),
+            ("Option", "None") => Some(BuiltinVariant::OptionNone),
+            ("Result", "Ok") => Some(BuiltinVariant::ResultOk),
+            ("Result", "Err") => Some(BuiltinVariant::ResultErr),
+            _ => None,
+        }
+    }
 }
 
 /// Record literal for creating record instances.
@@ -1156,12 +1171,9 @@ fn visit_expr_subtree_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
             visit_expr_subtree_mut(&mut range.start, f);
             visit_expr_subtree_mut(&mut range.end, f);
         }
-        ExprKind::Some(inner)
-        | ExprKind::Ok(inner)
-        | ExprKind::Err(inner)
-        | ExprKind::Freeze(inner)
-        | ExprKind::Await(inner)
-        | ExprKind::Spawn(inner) => visit_expr_subtree_mut(inner, f),
+        ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
+            visit_expr_subtree_mut(inner, f)
+        }
         ExprKind::Lambda(lambda) => visit_expr_subtree_mut(&mut lambda.body, f),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
@@ -1170,8 +1182,7 @@ fn visit_expr_subtree_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
         | ExprKind::Ident(_)
-        | ExprKind::VariantRef(_)
-        | ExprKind::None => {}
+        | ExprKind::VariantRef(_) => {}
     }
 }
 
@@ -1290,12 +1301,9 @@ fn collect_expr_ids(expr: &Expr, ids: &mut Vec<NodeId>) {
             collect_expr_ids(&range.start, ids);
             collect_expr_ids(&range.end, ids);
         }
-        ExprKind::Some(inner)
-        | ExprKind::Ok(inner)
-        | ExprKind::Err(inner)
-        | ExprKind::Freeze(inner)
-        | ExprKind::Await(inner)
-        | ExprKind::Spawn(inner) => collect_expr_ids(inner, ids),
+        ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
+            collect_expr_ids(inner, ids)
+        }
         ExprKind::Lambda(lambda) => collect_expr_ids(&lambda.body, ids),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
@@ -1304,8 +1312,7 @@ fn collect_expr_ids(expr: &Expr, ids: &mut Vec<NodeId>) {
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
         | ExprKind::Ident(_)
-        | ExprKind::VariantRef(_)
-        | ExprKind::None => {}
+        | ExprKind::VariantRef(_) => {}
     }
 }
 
@@ -1316,7 +1323,7 @@ mod tests {
 
     // Exercises bindings, records, field access, pipes, match, then/else,
     // while, ranges, lists, lambdas, casts, unary and binary operators,
-    // and Some/None so the dual numbering/collection walks are pinned
+    // and qualified enum constructors so the dual numbering/collection walks are pinned
     // across expression families.
     const NUMBERING_SOURCE: &str = r#"
 record Point { x: Int32, y: Int32 }
@@ -1352,7 +1359,7 @@ fun main: () -> Int32 = {
     val f = |x| x + 1
     val casted = 7 as Int64
     val negated = -1
-    val opt = Some(5)
+    val opt = (5) Option::Some
     mut val count = 0
     count = count + 1
     true |> pick |> classify |> countdown

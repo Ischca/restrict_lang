@@ -150,7 +150,7 @@ export fun literal_profile_score: () -> Int32 = {
         scale: 1.5e10,
         base: 0xFF,
         samples: [1_000, 2, 3],
-        owner: None
+        owner: () Option::None
     };
     val LiteralPlan {
         score,

@@ -54,16 +54,16 @@ impl Keeper {
 
 export fun impl_dispatch_inference_score: () -> Int32 = {
     val service_scores = ([
-        ServiceSignal { failures: 2, latency_ms: 15, owner: Some(4) }
+        ServiceSignal { failures: 2, latency_ms: 15, owner: (4) Option::Some }
     ], |signal| (signal, 3) risk) map
     val rollout_scores = ([
-        RolloutSignal { canary_failures: 1, exposure_percent: 20, owner: None }
+        RolloutSignal { canary_failures: 1, exposure_percent: 20, owner: () Option::None }
     ], |signal| (signal, 5) risk) map
 
     val service_total = (service_scores, 0, add_int) fold
     val rollout_total = (rollout_scores, 0, add_int) fold
     val keeper = Keeper { seed: 1 }
-    val kept = (keeper, Some(service_total)) keep
+    val kept = (keeper, (service_total) Option::Some) keep
     val kept_score = kept match {
         Some(score) => { score }
         None => { 0 }

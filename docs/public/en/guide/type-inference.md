@@ -259,7 +259,7 @@ fun choose_option: <T>(value: Option<T>, fallback: Option<T>) -> Option<T> = {
 
 fun main: () -> List<Int32> = {
     val numbers = ([], [1, 2, 3]) choose_list
-    val maybe_limit = (None, Some(10)) choose_option
+    val maybe_limit = (() Option::None, 10 Option::Some) choose_option
 
     maybe_limit match {
         Some(limit) => { (numbers, |n| n + limit) map }
@@ -268,13 +268,13 @@ fun main: () -> List<Int32> = {
 }
 ```
 
-The ambiguous forms `Ok(value)`, `Err(error)`, `None`, and `[]` require one of
+The ambiguous forms `value Result::Ok`, `error Result::Err`, `() Option::None`, and `[]` require one of
 those sources of context. Used alone in a local binding, they are rejected
 because the compiler will not guess the missing generic type:
 
 ```restrict
 fun main: () -> Int32 = {
-    val result = Ok(1)
+    val result = 1 Result::Ok
     0
 }
 ```
@@ -284,9 +284,9 @@ Sibling branches can provide the missing type:
 ```restrict
 fun choose_result: (flag: Boolean) -> Result<Int32, String> = {
     flag then {
-        Ok(1)
+        1 Result::Ok
     } else {
-        Err("missing")
+        "missing" Result::Err
     }
 }
 ```

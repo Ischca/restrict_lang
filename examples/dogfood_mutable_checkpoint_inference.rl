@@ -6,8 +6,8 @@ fun latest_checkpoint_id: () -> Int64 = {
 }
 
 fun selected_ratio: () -> Float64 = {
-    mut val ratio = None;
-    ratio = Some(1.5);
+    mut val ratio = () Option::None;
+    ratio = (1.5) Option::Some;
 
     ratio match {
         Some(value) => {

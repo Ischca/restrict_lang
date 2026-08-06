@@ -12,7 +12,7 @@ export fun modular_release_import_surface_score: () -> Int32 = {
         lead_time_days: 1,
         failing_checks: 2,
         risk_signals: [3, 5],
-        manual_owner: Some(99)
+        manual_owner: (99) Option::Some
     };
     val ReleaseVerdict {
         score,

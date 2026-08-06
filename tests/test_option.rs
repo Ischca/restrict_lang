@@ -35,7 +35,7 @@ fn compile(source: &str) -> Result<String, String> {
 fn test_some_constructor() {
     let source = r#"
         fun main: () = {
-            val x = Some(42);
+            val x = (42) Option::Some;
             x
         }
     "#;
@@ -48,7 +48,7 @@ fn test_some_constructor() {
 fn test_none_constructor() {
     let source = r#"
         fun main: () -> Option<Int32> = {
-            val x: Option<Int32> = None;
+            val x: Option<Int32> = () Option::None;
             x
         }
     "#;
@@ -68,7 +68,7 @@ fn test_option_match() {
         }
 
         fun main: () -> Int32 = {
-            val x = Some(42);
+            val x = (42) Option::Some;
             (x, 0) unwrap_or
         }
     "#;
@@ -84,7 +84,7 @@ fn test_option_match() {
 fn test_option_exhaustiveness() {
     let source = r#"
         fun main: () = {
-            val x = Some(42);
+            val x = (42) Option::Some;
             x match {
                 Some(n) => { n }
                 // Missing None case
@@ -101,7 +101,7 @@ fn test_option_exhaustiveness() {
 fn test_nested_option() {
     let source = r#"
         fun main: () = {
-            val x = Some(Some(42));
+            val x = ((42) Option::Some) Option::Some;
             x match {
                 Some(inner) => {
                     inner match {
@@ -122,7 +122,7 @@ fn test_nested_option() {
 fn test_option_type_mismatch() {
     let source = r#"
         fun main: () = {
-            val x = Some(42);
+            val x = (42) Option::Some;
             x match {
                 Some(s) => { s } // s is Int32
                 None => { "hello" } // Type mismatch
@@ -140,9 +140,9 @@ fn test_safe_divide() {
     let source = r#"
         fun safe_divide: (a: Int32, b: Int32) -> Option<Int32> = {
             b == 0 then {
-                None
+                () Option::None
             } else {
-                Some(a / b)
+                (a / b) Option::Some
             }
         }
 
@@ -166,7 +166,7 @@ fn test_safe_divide() {
 fn test_option_code_generation() {
     let source = r#"
         fun main: () = {
-            val x = Some(42);
+            val x = (42) Option::Some;
             x match {
                 Some(n) => { n }
                 None => { 0 }
@@ -186,7 +186,7 @@ fn test_option_code_generation() {
 fn some_string_constructor_generates_valid_wat() {
     let source = r#"
 fun main: () -> Option<String> = {
-    Some("ok")
+    ("ok") Option::Some
 }
 "#;
 

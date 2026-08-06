@@ -87,7 +87,7 @@ fun main: () -> Int32 = {
     val usage = Usage {
         seats: 18,
         incidents: 1,
-        coupon: None,
+        coupon: () Option::None,
         credits: credits
     };
     val invoice = (plan, usage) compute_invoice;

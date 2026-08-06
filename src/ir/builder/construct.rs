@@ -332,9 +332,6 @@ impl<'a> CheckedIrBuilder<'a> {
             ExprKind::Freeze(inner)
             | ExprKind::Await(inner)
             | ExprKind::Spawn(inner)
-            | ExprKind::Some(inner)
-            | ExprKind::Ok(inner)
-            | ExprKind::Err(inner)
             | ExprKind::FieldAccess(inner, _) => {
                 self.push_typed_exprs_from_expr(inner, exprs, sites, bindings)?;
             }
@@ -405,8 +402,7 @@ impl<'a> CheckedIrBuilder<'a> {
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
-            | ExprKind::Ident(_)
-            | ExprKind::None => {}
+            | ExprKind::Ident(_) => {}
         }
 
         if matches!(&expr.kind, ExprKind::VariantRef(_)) {
@@ -761,7 +757,7 @@ mod tests {
             mutable: false,
             pattern: Pattern::Some(Box::new(Pattern::Ident("alias".to_string()))),
             type_annotation: None,
-            value: Box::new(Expr::new(ExprKind::None)),
+            value: Box::new(Expr::new(ExprKind::Unit)),
         };
         builder
             .register_local_binding(&binding, None, &[], &mut bindings)

@@ -87,7 +87,7 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> Int32 = {
-    val chosen = (Some(|x| x + 1), Some(|y| y)) choose_first
+    val chosen = ((|x| x + 1) Option::Some, (|y| y) Option::Some) choose_first
     chosen match {
         Some(mapper) => { 41 |> mapper }
         None => { 0 }
@@ -143,7 +143,7 @@ fun main: () -> List<String> = {
 fn prelude_map_uses_container_mapped_projection_for_option() {
     let input = r#"
 fun main: () -> Option<String> = {
-    val maybe_score: Option<Int32> = Some(7)
+    val maybe_score: Option<Int32> = (7) Option::Some
     (maybe_score, |score| score > 0 then { "positive" } else { "zero" }) map
 }
 "#;
@@ -710,7 +710,7 @@ fn independent_deferred_lambda_groups_do_not_cross_resolve() {
     let input = r#"
 fun main: () -> List<String> = {
     mut val a = |x| [];
-    mut val b = |x| None;
+    mut val b = |x| () Option::None;
     val same = a == b;
     val maker: Int32 -> List<String> = a;
     1 |> b
@@ -815,7 +815,7 @@ fun ints: (value: Int32) -> List<Int32> = {
 }
 
 fun main: () -> List<Int32> = {
-    mut val source = |value| None;
+    mut val source = |value| () Option::None;
     mut val owner = source;
     owner = ints;
     1 |> source
@@ -838,7 +838,7 @@ fun ints: (value: Int32) -> List<Int32> = {
 }
 
 fun main: () -> List<Int32> = {
-    mut val build = |value| None;
+    mut val build = |value| () Option::None;
     build = ints;
     1 |> build
 }
@@ -856,11 +856,11 @@ fun main: () -> List<Int32> = {
 fn mutable_reassignment_rejects_resolved_deferred_holder() {
     let input = r#"
 fun replacement: (value: Int32) -> Option<String> = {
-    Some("replacement")
+    ("replacement") Option::Some
 }
 
 fun main: () -> Option<String> = {
-    mut val build = |value| None;
+    mut val build = |value| () Option::None;
     val typed: Int32 -> Option<String> = build;
     build = replacement;
     1 |> build
@@ -1030,7 +1030,7 @@ fun main: (flag: Boolean) -> Int32 = {
 fn match_produced_lambda_can_capture_pattern_binding() {
     let input = r#"
 fun main: () -> Int32 = {
-    val maybe_bonus: Option<Int32> = Some(2);
+    val maybe_bonus: Option<Int32> = (2) Option::Some;
     val adjust = maybe_bonus match {
         Some(bonus) => { |score| score + bonus }
         None => { |score| score }
@@ -1046,7 +1046,7 @@ fun main: () -> Int32 = {
 fn match_produced_lambda_with_prefix_binding_captures_pattern_binding() {
     let input = r#"
 fun main: () -> Int32 = {
-    val maybe_bonus: Option<Int32> = Some(2);
+    val maybe_bonus: Option<Int32> = (2) Option::Some;
     val adjust = maybe_bonus match {
         Some(bonus) => {
             val doubled = bonus * 2;
@@ -1175,7 +1175,7 @@ fn branch_produced_lambda_rejects_complex_pattern_prefix_binding() {
     let input = r#"
 fun main: (flag: Boolean) -> Int32 = {
     val adjust = flag then {
-        val Some(bonus): Option<Int32> = Some(1);
+        val Some(bonus): Option<Int32> = (1) Option::Some;
         |score| score + bonus
     } else {
         |score| score
@@ -1265,7 +1265,7 @@ fun main: () -> String = {
 fn prelude_map_rejects_result_as_non_container_input() {
     let input = r#"
 fun main: () -> Result<Int32, Int32> = {
-    val result: Result<Int32, Int32> = Ok(1);
+    val result: Result<Int32, Int32> = (1) Result::Ok;
     (result, |value| value + 1) map
 }
 "#;
@@ -1309,7 +1309,7 @@ fun main: () -> List<Int32> = {
 fn prelude_filter_uses_container_item_projection_for_option() {
     let input = r#"
 fun main: () -> Option<Int32> = {
-    val maybe_value: Option<Int32> = Some(42)
+    val maybe_value: Option<Int32> = (42) Option::Some
     (maybe_value, |value| value > 10) filter
 }
 "#;
@@ -1417,7 +1417,7 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> Option<Int32> = {
-    (None, Some(1)) choose_first
+    (() Option::None, (1) Option::Some) choose_first
 }
 "#;
 
@@ -1432,7 +1432,7 @@ fun keep_list: <T>(items: List<T>) -> List<T> = {
 }
 
 fun main: () -> List<Option<Int32>> = {
-    [None, Some(1)] |> keep_list
+    [() Option::None, (1) Option::Some] |> keep_list
 }
 "#;
 
@@ -1443,7 +1443,7 @@ fun main: () -> List<Option<Int32>> = {
 fn array_get_accepts_any_length_array_parameter() {
     let input = r#"
 fun main: () -> Option<Int32> = {
-    ([None, Some(1)], 0) array_get
+    ([() Option::None, (1) Option::Some], 0) array_get
 }
 "#;
 

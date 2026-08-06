@@ -68,11 +68,11 @@ fun first_missing_owner: (
     severity: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(severity) }
+                Some(person) => { () Option::None }
+                None => { (severity) Option::Some }
             }
         }
     }
@@ -109,7 +109,7 @@ fun triage_alerts: (alerts: List<Alert>) -> TriageReport = {
     val initial = TriageState {
         total_score: 0,
         stale_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         page_count: 0
     };
     val final_state = (alerts, initial, |state, alert| (state, alert) add_alert) fold;
@@ -120,13 +120,13 @@ fun main: () -> TriageReport = {
     val alerts: List<Alert> = [
         Alert {
             severity: 4,
-            owner: Some(17),
+            owner: (17) Option::Some,
             stale: true,
             acknowledged: false
         },
         Alert {
             severity: 2,
-            owner: None,
+            owner: () Option::None,
             stale: false,
             acknowledged: true
         }

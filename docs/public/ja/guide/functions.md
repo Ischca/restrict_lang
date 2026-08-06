@@ -92,8 +92,8 @@ fun identity: <T>(value: T) -> T = {
 
 fun map_option: <T, U>(opt: Option<T>, f: T -> U) -> Option<U> = {
     opt match {
-        Some(value) => { Some(value |> f) }
-        None => { None }
+        Some(value) => { value |> f |> Option::Some }
+        None => { () Option::None }
     }
 }
 ```

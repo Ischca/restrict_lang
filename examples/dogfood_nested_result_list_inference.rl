@@ -19,11 +19,11 @@ fun billable_delta_score: (deltas: List<Int64>) -> Int64 = {
 export fun dogfood_nested_result_list_score: () -> Int64 = {
     val batch = UsageImport {
         account_id: 42,
-        meter_deltas: Ok([
+        meter_deltas: ([
             5_000_000_000,
             6_000_000_000,
             7_000_000_000
-        ])
+        ]) Result::Ok
     };
 
     batch.meter_deltas match {

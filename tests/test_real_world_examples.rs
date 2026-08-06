@@ -759,8 +759,8 @@ record Envelope {
 fun main: () -> Envelope = {
     Envelope {
         attempts: [],
-        notes: Some([]),
-        fallback: None
+        notes: ([]) Option::Some,
+        fallback: () Option::None
     }
 }
 "#;
@@ -1020,11 +1020,11 @@ record Envelope {
 fun main: () -> Envelope = {
     val base = Envelope {
         attempts: [1],
-        fallback: Some(1)
+        fallback: (1) Option::Some
     };
     base.clone {
         attempts: [],
-        fallback: None
+        fallback: () Option::None
     }
 }
 "#;

@@ -21,7 +21,7 @@ fun arithmetic_test: () -> TestResult = {
 }
 
 fun option_test: () -> TestResult = {
-    val result = Some(42) match {
+    val result = (42) Option::Some match {
         Some(x) => { x }
         None => { 0 }
     }

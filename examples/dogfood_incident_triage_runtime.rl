@@ -70,11 +70,11 @@ fun first_missing_owner: (
     alert_id: Int32
 ) -> Option<Int32> = {
     current match {
-        Some(existing) => { Some(existing) }
+        Some(existing) => { (existing) Option::Some }
         None => {
             owner match {
-                Some(person) => { None }
-                None => { Some(alert_id) }
+                Some(person) => { () Option::None }
+                None => { (alert_id) Option::Some }
             }
         }
     }
@@ -153,7 +153,7 @@ fun initial_state: () -> TriageState = {
         total_score: 0,
         stale_count: 0,
         page_count: 0,
-        first_unowned: None,
+        first_unowned: () Option::None,
         routed_codes: []
     }
 }
@@ -212,14 +212,14 @@ fun sample_incident_report: () -> TriageReport = {
         Alert {
             id: 11,
             severity: 5,
-            owner: Some(17),
+            owner: (17) Option::Some,
             stale: true,
             acknowledged: false
         },
         Alert {
             id: 12,
             severity: 2,
-            owner: None,
+            owner: () Option::None,
             stale: false,
             acknowledged: true
         }
@@ -228,21 +228,21 @@ fun sample_incident_report: () -> TriageReport = {
         Alert {
             id: 21,
             severity: 4,
-            owner: None,
+            owner: () Option::None,
             stale: false,
             acknowledged: false
         },
         Alert {
             id: 22,
             severity: 3,
-            owner: Some(9),
+            owner: (9) Option::Some,
             stale: true,
             acknowledged: false
         },
         Alert {
             id: 23,
             severity: 5,
-            owner: Some(8),
+            owner: (8) Option::Some,
             stale: false,
             acknowledged: true
         }

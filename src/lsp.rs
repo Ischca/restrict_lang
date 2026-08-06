@@ -1758,7 +1758,7 @@ mod tests {
     #[test]
     fn type_error_diagnostic_preserves_actionable_inference_detail() {
         let none_message = lsp_type_error_message(&TypeError::CannotInferType(
-            "None requires an expected Option type".to_string(),
+            "Option::None requires an expected Option type".to_string(),
         ));
         let empty_list_message = lsp_type_error_message(&TypeError::CannotInferType(
             "empty list requires an expected List type".to_string(),
@@ -1767,7 +1767,7 @@ mod tests {
             "lambda parameter types require annotations or an expected function type".to_string(),
         ));
 
-        assert!(none_message.contains("None requires an expected Option type"));
+        assert!(none_message.contains("Option::None requires an expected Option type"));
         assert!(empty_list_message.contains("empty list requires an expected List type"));
         assert!(lambda_message
             .contains("lambda parameter types require annotations or an expected function type"));

@@ -408,9 +408,9 @@ fn exported_match_produced_lambda_executes() -> Result<(), Box<dyn std::error::E
     let source = r#"
 export fun match_lambda_score: (flag: Boolean, value: Int32) -> Int32 = {
     val maybe_bonus = flag then {
-        Some(2)
+        (2) Option::Some
     } else {
-        None
+        () Option::None
     };
     val adjust = maybe_bonus match {
         Some(bonus) => { |score| score + bonus }
@@ -564,7 +564,7 @@ export fun named_iterator_pipeline: () -> Int32 = {
 fn exported_option_map_filter_pipeline_executes() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 export fun option_pipeline_score: (input: Int32) -> Int32 = {
-    val maybe_value: Option<Int32> = Some(input);
+    val maybe_value: Option<Int32> = (input) Option::Some;
     val shifted = (maybe_value, |value| value + 1) map;
     val kept = (shifted, |value| value > 10) filter;
 
@@ -589,9 +589,9 @@ fn exported_result_match_executes_for_ok_and_err() -> Result<(), Box<dyn std::er
     let source = r#"
 fun decide_result: (ok: Boolean, score: Int32) -> Result<Int32, Int32> = {
     ok then {
-        Ok(score + 1)
+        (score + 1) Result::Ok
     } else {
-        Err(score + 10)
+        (score + 10) Result::Err
     }
 }
 
@@ -642,17 +642,17 @@ fn exported_float_option_result_payload_matches_execute() -> Result<(), Box<dyn 
     let source = r#"
 fun choose_offset: (enabled: Boolean) -> Option<Float64> = {
     enabled then {
-        Some(1.5)
+        (1.5) Option::Some
     } else {
-        None
+        () Option::None
     }
 }
 
 fun decode_ratio: (ok: Boolean) -> Result<Float64, Int32> = {
     ok then {
-        Ok(2.5)
+        (2.5) Result::Ok
     } else {
-        Err(4)
+        (4) Result::Err
     }
 }
 
@@ -699,9 +699,9 @@ fn exported_unannotated_branch_option_float_executes() -> Result<(), Box<dyn std
     let source = r#"
 fun choose_offset: (missing: Boolean) = {
     missing then {
-        None
+        () Option::None
     } else {
-        Some(1.5)
+        (1.5) Option::Some
     }
 }
 
@@ -824,8 +824,8 @@ export fun std_prelude_score: () -> Boolean = {
 }
 
 export fun std_option_score: () -> Int32 = {
-    mut val some: Option<Int32> = Some(42);
-    mut val none: Option<Int32> = None;
+    mut val some: Option<Int32> = (42) Option::Some;
+    mut val none: Option<Int32> = () Option::None;
     val has_value = some |> option_is_some;
     val is_missing = none |> option_is_none;
     val value = (some, 0) option_unwrap_or;
@@ -881,8 +881,8 @@ fn exported_float_stdlib_helpers_execute() -> Result<(), Box<dyn std::error::Err
     let source = r#"
 export fun float_stdlib_score: () -> Float64 = {
     mut val readings = [1.5, 2.5, 3.5];
-    mut val some: Option<Float64> = Some(1.5);
-    mut val none: Option<Float64> = None;
+    mut val some: Option<Float64> = (1.5) Option::Some;
+    mut val none: Option<Float64> = () Option::None;
     val maybe_head = readings |> list_head;
     val maybe_tail = readings |> list_tail;
     val reversed = readings |> list_reverse;

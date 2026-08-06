@@ -297,5 +297,5 @@ fun main: () = {
 ## 関連項目
 
 - [関数](functions.md) - 関数定義と呼び出し
+- [高階関数とコレクション変換](../advanced/higher-order.md) - `map`、`filter`、`fold`とスコープ動詞節
 - [パイプ演算子](../reference/operators.md#pipe) - `|>`演算子
-- [関数合成](../advanced/composition.md) - 高度な合成パターン

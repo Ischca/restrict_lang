@@ -48,6 +48,9 @@ assert: (Boolean, String) -> ()
 panic: (String) -> ()
 ```
 
+The supported containers, callback types, scoped call forms, and affine
+behavior are described in [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md).
+
 Canonical call shapes:
 
 ```restrict
@@ -157,7 +160,8 @@ fixed-size array. The bracket-bar array literal form is removed.
 
 Dedicated `list_map`, `list_filter`, and `list_fold_left` helpers are not part
 of the current std surface. Use the compiler-registered prelude `map`, `filter`,
-and `fold` builtins where the type checker has the required context.
+and `fold` builtins where the type checker has the required context. The
+higher-order guide records the exact v0.0.1 container boundary.
 
 ## Math
 

@@ -190,3 +190,6 @@ fun main: () -> Int32 = {
 OSV makes ownership and data flow explicit: values move from left to right,
 multi-argument calls use tuples, and `impl` functions are still called through
 OSV syntax.
+
+For the complete callback model and the current `map`, `filter`, and `fold`
+surface, continue to [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md).

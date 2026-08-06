@@ -83,6 +83,9 @@ fun main: () -> Int32 = {
 }
 ```
 
+コレクションのコールバック、スコープ動詞節、`map`、`filter`、`fold`は
+[高階関数とコレクション変換](../advanced/higher-order.md)でまとめて説明します。
+
 ## ジェネリック関数
 
 ```restrict
@@ -214,5 +217,6 @@ v0.0.1 compilerでは、method-only `form`、具体recordの`takes`、
 
 ## 関連項目
 
-- [型推論](type-inference.md) - 関数型の推論方法
+- [高階関数とコレクション変換](../advanced/higher-order.md) - コレクションのコールバックとスコープ動詞節
+- [型システム](types.md) - 関数型とジェネリック型
 - [構文リファレンス](syntax.md) - v0.0.1 の基本構文

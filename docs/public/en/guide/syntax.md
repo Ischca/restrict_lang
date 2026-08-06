@@ -176,6 +176,9 @@ The unheaded form introduces one contextual `it` binding. Explicit scope
 headers reuse lambda binders. A complete scoped clause is evaluated before a
 following clause or pipe.
 
+See [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md)
+for callback forms, collection behavior, inference, and affine captures.
+
 ## Expressions
 
 Supported operators include arithmetic, comparison, equality, and boolean

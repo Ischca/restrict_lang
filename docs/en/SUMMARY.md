@@ -17,6 +17,7 @@
 - [Type Inference](./guide/type-inference.md)
 - [Ownership & Affine Types](./guide/ownership.md)
 - [Functions](./guide/functions.md)
+- [Higher-Order Functions and Collection Transforms](./advanced/higher-order.md)
 - [Records](./guide/records.md)
 - [Pattern Matching](./guide/patterns.md)
 - [Warder Package Manager](./guide/warder.md)

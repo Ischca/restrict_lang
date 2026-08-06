@@ -9,6 +9,8 @@ and mark future boundaries where they matter.
 - **[OSV Word Order](./osv-order.md)** - Calls put arguments before functions
 - **[Syntax Reference](./syntax.md)** - Current declarations, expressions, and literals
 - **[Type System](./types.md)** - Built-ins, closed user enums, generics, and affine ownership
+- **[Functions](./functions.md)** - Function declarations, values, and OSV calls
+- **[Higher-Order Functions and Collection Transforms](../advanced/higher-order.md)** - `map`, `filter`, `fold`, and scoped callbacks
 - **[Forms and Static Polymorphism](./forms.md)** - Method-only forms, concrete adoptions, and `of` bounds
 - **[Ownership](./ownership.md)** - Memory management without GC
 - **[Pattern Matching](./patterns.md)** - Exhaustive `match` expressions

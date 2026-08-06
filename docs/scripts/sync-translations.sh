@@ -43,24 +43,27 @@ check_outdated() {
 echo -e "\n📁 Checking translation status..."
 echo "================================"
 
-# Define file mappings
-declare -A file_map=(
-    ["public/en/introduction.md"]="public/ja/introduction.md"
-    ["public/en/getting-started/installation.md"]="public/ja/getting-started/installation.md"
-    ["public/en/getting-started/hello-world.md"]="public/ja/getting-started/hello-world.md"
-    ["public/en/guide/syntax.md"]="public/ja/guide/syntax.md"
-    ["public/en/guide/types.md"]="public/ja/guide/types.md"
-    ["public/en/guide/osv-order.md"]="public/ja/guide/osv-order.md"
-    ["public/en/guide/warder.md"]="public/ja/guide/warder.md"
-    ["public/en/reference/stdlib.md"]="public/ja/reference/stdlib.md"
+# Define file mappings as portable pairs. macOS ships Bash 3, which does not
+# support associative arrays.
+file_pairs=(
+    "public/en/introduction.md|public/ja/introduction.md"
+    "public/en/getting-started/installation.md|public/ja/getting-started/installation.md"
+    "public/en/getting-started/hello-world.md|public/ja/getting-started/hello-world.md"
+    "public/en/guide/syntax.md|public/ja/guide/syntax.md"
+    "public/en/guide/types.md|public/ja/guide/types.md"
+    "public/en/guide/osv-order.md|public/ja/guide/osv-order.md"
+    "public/en/guide/warder.md|public/ja/guide/warder.md"
+    "public/en/advanced/higher-order.md|public/ja/advanced/higher-order.md"
+    "public/en/reference/stdlib.md|public/ja/reference/stdlib.md"
 )
 
 missing_count=0
 outdated_count=0
 
 # Check each file pair
-for en_file in "${!file_map[@]}"; do
-    ja_file=${file_map[$en_file]}
+for pair in "${file_pairs[@]}"; do
+    en_file=${pair%%|*}
+    ja_file=${pair#*|}
 
     if [ ! -f "$ja_file" ]; then
         ((missing_count++))
@@ -84,8 +87,9 @@ if [ $missing_count -gt 0 ] || [ $outdated_count -gt 0 ]; then
     echo -e "\n📝 TODO List"
     echo "============"
 
-    for en_file in "${!file_map[@]}"; do
-        ja_file=${file_map[$en_file]}
+    for pair in "${file_pairs[@]}"; do
+        en_file=${pair%%|*}
+        ja_file=${pair#*|}
 
         if [ ! -f "$ja_file" ]; then
             echo "- Create: $ja_file"
@@ -99,8 +103,9 @@ fi
 echo -e "\n🔍 View differences? (y/n)"
 read -r response
 if [[ "$response" =~ ^[Yy]$ ]]; then
-    for en_file in "${!file_map[@]}"; do
-        ja_file=${file_map[$en_file]}
+    for pair in "${file_pairs[@]}"; do
+        en_file=${pair%%|*}
+        ja_file=${pair#*|}
 
         if [ -f "$ja_file" ] && [ "$en_file" -nt "$ja_file" ]; then
             echo -e "\n${YELLOW}Diff for $ja_file:${NC}"

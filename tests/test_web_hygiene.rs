@@ -178,6 +178,7 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
     for path in [
         "site/index.html",
         "site/styles.css",
+        "site/logo.svg",
         "site/favicon.svg",
         "site/404.html",
         "site/robots.txt",
@@ -188,6 +189,7 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
         "site/build-pages.sh",
         "scripts/build-pages.sh",
         "docs/public/theme/index.hbs",
+        "docs/public/theme/favicon.svg",
         "docs/public/theme/restrict-highlight.js",
         "site/restrict-highlight.js",
         "site/restrict-code-blocks.js",
@@ -216,6 +218,38 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
         assert!(
             landing.contains(link),
             "landing page should link to the co-hosted route {link}"
+        );
+    }
+
+    let readme_logo = read_fixture(root, "assets/logo.svg");
+    let site_logo = read_fixture(root, "site/logo.svg");
+    assert_eq!(
+        site_logo.split_whitespace().collect::<String>(),
+        readme_logo.split_whitespace().collect::<String>(),
+        "the Pages header should use the same logo artwork as README.md"
+    );
+
+    let compact_logo = read_fixture(root, "assets/logo-small.svg");
+    for path in ["site/favicon.svg", "docs/public/theme/favicon.svg"] {
+        assert_eq!(
+            read_fixture(root, path)
+                .split_whitespace()
+                .collect::<String>(),
+            compact_logo.split_whitespace().collect::<String>(),
+            "{path} should use the compact Restrict logo artwork"
+        );
+    }
+
+    for (path, logo_src) in [
+        ("site/index.html", "logo.svg"),
+        ("site/blog/index.html", "../logo.svg"),
+        ("site/blog/introducing-restrict-v001.html", "../logo.svg"),
+        ("site/404.html", "/restrict_lang/logo.svg"),
+    ] {
+        let html = read_fixture(root, path);
+        assert!(
+            html.contains(&format!(r#"class="brand-mark" src="{logo_src}""#)),
+            "{path} should display the README logo in its header"
         );
     }
 
@@ -670,6 +704,9 @@ fn pages_build_script_fails_before_partial_artifacts() {
         "require_file \"$ROOT_DIR/web/examples.js\"",
         "require_file \"$SITE_DIR/tools/highlight-theme-lab.html\"",
         "require_file \"$SITE_DIR/blog/introducing-restrict-v001.html\"",
+        "require_file \"$SITE_DIR/logo.svg\"",
+        "cp \"$SITE_DIR/logo.svg\" \"$TMP_DIR/logo.svg\"",
+        "require_file \"$TMP_DIR/logo.svg\"",
         "cp \"$SITE_DIR/tools/\"*.html \"$TMP_DIR/tools/\"",
         "require_file \"$TMP_DIR/tools/highlight-theme-lab.html\"",
         "require_file \"$TMP_DIR/blog/introducing-restrict-v001.html\"",

@@ -82,14 +82,10 @@ a { color: inherit; }
 }
 
 .brand-mark {
-  display: inline-grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--accent);
-  color: white;
-  font-size: 0.85rem;
+  display: block;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
 }
 
 nav {

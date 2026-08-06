@@ -42,6 +42,7 @@ require_dir() {
 
 require_file "$SITE_DIR/index.html"
 require_file "$SITE_DIR/styles.css"
+require_file "$SITE_DIR/logo.svg"
 require_file "$SITE_DIR/restrict-highlight.js"
 require_file "$SITE_DIR/restrict-code-blocks.js"
 require_file "$SITE_DIR/favicon.svg"
@@ -76,6 +77,7 @@ mkdir -p "$TMP_DIR"
 
 cp "$SITE_DIR/index.html" "$TMP_DIR/index.html"
 cp "$SITE_DIR/styles.css" "$TMP_DIR/styles.css"
+cp "$SITE_DIR/logo.svg" "$TMP_DIR/logo.svg"
 cp "$SITE_DIR/restrict-highlight.js" "$TMP_DIR/restrict-highlight.js"
 cp "$SITE_DIR/restrict-code-blocks.js" "$TMP_DIR/restrict-code-blocks.js"
 cp "$SITE_DIR/favicon.svg" "$TMP_DIR/favicon.svg"
@@ -102,6 +104,7 @@ cp -R "$ROOT_DIR/web/pkg" "$TMP_DIR/compiler/pkg"
 touch "$TMP_DIR/.nojekyll"
 
 require_file "$TMP_DIR/index.html"
+require_file "$TMP_DIR/logo.svg"
 require_file "$TMP_DIR/restrict-highlight.js"
 require_file "$TMP_DIR/restrict-code-blocks.js"
 require_file "$TMP_DIR/favicon.svg"

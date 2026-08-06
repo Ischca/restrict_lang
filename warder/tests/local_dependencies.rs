@@ -73,12 +73,12 @@ fn main() {
         std::env::current_dir().unwrap().display()
     )
     .unwrap();
-    if let (path) Option::Some = std::env::var_os("WARDER_MUTATE_SOURCE") {
+    if let Some(path) = std::env::var_os("WARDER_MUTATE_SOURCE") {
         let content = std::env::var("WARDER_MUTATE_SOURCE_CONTENT")
             .unwrap_or_else(|_| "pub fun changed: () -> Int32 = { 99 }\n".to_string());
         std::fs::write(path, content).expect("fake compiler should mutate the requested source");
     }
-    if let (ready) Option::Some = std::env::var_os("WARDER_FAKE_READY") {
+    if let Some(ready) = std::env::var_os("WARDER_FAKE_READY") {
         std::fs::write(&ready, b"ready").unwrap();
         let continue_path = std::env::var_os("WARDER_FAKE_CONTINUE")
             .expect("WARDER_FAKE_CONTINUE must accompany WARDER_FAKE_READY");

@@ -1184,7 +1184,15 @@ fn unqualified_builtin_value_constructor_failures(source: &str) -> Vec<String> {
         while after_close < bytes.len() && bytes[after_close].is_ascii_whitespace() {
             after_close += 1;
         }
-        if code[after_close..].starts_with("=>") || binding_pattern {
+        let statement_end = code[after_close..]
+            .find(';')
+            .map_or(code.len(), |offset| after_close + offset);
+        let nested_binding_pattern = code[after_close..statement_end]
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+            .contains("}=");
+        if code[after_close..].starts_with("=>") || binding_pattern || nested_binding_pattern {
             index = close + 1;
             continue;
         }

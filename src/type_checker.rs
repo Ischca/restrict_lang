@@ -770,7 +770,9 @@ pub struct TypeChecker {
     enums: HashMap<String, EnumDef>,
     // Function definitions
     functions: HashMap<String, FunctionDef>,
-    // Checked expression types, keyed by stable AST node id.
+    // Checked expression types, keyed by stable AST node id. Built-in
+    // constructor facts may start with internal inference variables and are
+    // updated alongside the variable environment whenever constraints resolve.
     checked_expr_types: HashMap<NodeId, TypedType>,
     // Method implementations: record_name -> method_name -> function_def
     methods: HashMap<String, HashMap<String, FunctionDef>>,
@@ -972,7 +974,16 @@ impl TypeChecker {
             // ids, so their facts are recorded under the source node.
             return;
         }
-        if Self::contains_inference_internal_type(ty) {
+        if Self::contains_inference_internal_type(ty)
+            && Self::builtin_constructor_expr(expr).is_none()
+        {
+            return;
+        }
+        self.record_checked_expr_type_allow_inference(expr, ty);
+    }
+
+    fn record_checked_expr_type_allow_inference(&mut self, expr: &Expr, ty: &TypedType) {
+        if expr.id == NodeId::DUMMY {
             return;
         }
         self.checked_expr_types.insert(expr.id, ty.clone());
@@ -2701,6 +2712,13 @@ impl TypeChecker {
         substitution: &ConstraintSubstitution,
     ) -> Result<(), TypeError> {
         let mut updates = Vec::new();
+        let mut checked_expr_updates = Vec::new();
+
+        for (node_id, ty) in &self.checked_expr_types {
+            if Self::contains_inference_internal_type(ty) {
+                checked_expr_updates.push((*node_id, substitution.apply(ty)?));
+            }
+        }
 
         for (scope_idx, scope) in self.var_env.iter().enumerate() {
             for (name, var) in scope {
@@ -2837,6 +2855,10 @@ impl TypeChecker {
                     var.used = true;
                 }
             }
+        }
+
+        for (node_id, resolved) in checked_expr_updates {
+            self.checked_expr_types.insert(node_id, resolved);
         }
 
         if !finalized_group_ids.is_empty() {
@@ -8669,6 +8691,11 @@ impl TypeChecker {
                     None
                 };
                 let inner_type = self.check_expr_with_expected(&args[0], expected_inner)?;
+                // Constructor payloads can remain polymorphic until a later
+                // use constrains the enclosing Option. Keep the payload fact
+                // alongside the constructor fact so Checked IR can recover
+                // the argument value after substitutions are applied.
+                self.record_checked_expr_type_allow_inference(&args[0], &inner_type);
                 Ok(TypedType::Option(Box::new(inner_type)))
             }
             BuiltinVariant::OptionNone => {
@@ -8687,12 +8714,14 @@ impl TypeChecker {
             BuiltinVariant::ResultOk => match expected {
                 Some(TypedType::Result(ok_ty, err_ty)) => {
                     let actual_ok = self.check_expr_with_expected(&args[0], Some(ok_ty))?;
+                    self.record_checked_expr_type_allow_inference(&args[0], &actual_ok);
                     Ok(TypedType::Result(Box::new(actual_ok), err_ty.clone()))
                 }
                 Some(TypedType::InferVar(_)) => {
                     let inferred_ok = self.type_var_generator.fresh_var();
                     let inferred_err = self.type_var_generator.fresh_var();
                     let actual_ok = self.check_expr_with_expected(&args[0], Some(&inferred_ok))?;
+                    self.record_checked_expr_type_allow_inference(&args[0], &actual_ok);
                     Ok(TypedType::Result(
                         Box::new(actual_ok),
                         Box::new(inferred_err),
@@ -8705,6 +8734,7 @@ impl TypeChecker {
             BuiltinVariant::ResultErr => match expected {
                 Some(TypedType::Result(ok_ty, err_ty)) => {
                     let actual_err = self.check_expr_with_expected(&args[0], Some(err_ty))?;
+                    self.record_checked_expr_type_allow_inference(&args[0], &actual_err);
                     Ok(TypedType::Result(ok_ty.clone(), Box::new(actual_err)))
                 }
                 Some(TypedType::InferVar(_)) => {
@@ -8712,6 +8742,7 @@ impl TypeChecker {
                     let inferred_err = self.type_var_generator.fresh_var();
                     let actual_err =
                         self.check_expr_with_expected(&args[0], Some(&inferred_err))?;
+                    self.record_checked_expr_type_allow_inference(&args[0], &actual_err);
                     Ok(TypedType::Result(
                         Box::new(inferred_ok),
                         Box::new(actual_err),

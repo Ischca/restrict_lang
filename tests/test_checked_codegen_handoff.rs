@@ -131,6 +131,33 @@ fun main: () -> Option<String> = {
 }
 
 #[test]
+fn checked_codegen_supports_inferred_result_constructor_locals() {
+    let wat = generate_checked(include_str!(
+        "../examples/dogfood_result_local_inference.rl"
+    ));
+
+    assert_valid_wat(&wat);
+}
+
+#[test]
+fn checked_codegen_supports_release_readiness_inference() {
+    let wat = generate_checked(include_str!(
+        "../examples/dogfood_release_readiness_inference.rl"
+    ));
+
+    assert_valid_wat(&wat);
+}
+
+#[test]
+fn checked_codegen_supports_generic_constructor_context_inference() {
+    let wat = generate_checked(include_str!(
+        "../examples/dogfood_generic_context_inference.rl"
+    ));
+
+    assert_valid_wat(&wat);
+}
+
+#[test]
 fn checked_codegen_preserves_current_unit_parameter_and_result_abi() {
     let wat = generate_checked(
         r#"

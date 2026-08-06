@@ -161,16 +161,25 @@ fun main: () -&gt; String = {
     value
 }
 
-fun main: () -&gt; List&lt;Int32&gt; = {
-    val values = [1, 2, 3]
-    val shifted = (values, |value| value + 1) map
-    shifted |&gt; identity
+fun main: () -&gt; Int32 = {
+    with Arena { } {
+        val values = [1, 2, 3]
+        val shifted = (values, |value| value + 1) map
+        shifted
+            |&gt; identity
+            |&gt; list_count
+    }
 }</code></pre>
       <p>
-        The compiler does not silently guess unresolved generic types. Empty
-        collections, absent options, and one-sided results must eventually receive
-        enough context from an annotation or a real use. When inference cannot
-        finish, the error asks for a boundary instead of inventing a fallback.
+        The <code>Arena</code> scope keeps the source and mapped lists inside one
+        explicit allocation boundary; only the inferred <code>Int32</code> count
+        leaves it. Across that pipeline, the literal, lambda, generic
+        <code>map</code>, generic <code>identity</code>, and final
+        <code>list_count</code> all contribute type information. The compiler does
+        not silently guess unresolved generic types. Empty collections, absent
+        options, and one-sided results must eventually receive enough context from
+        an annotation or a real use. When inference cannot finish, the error asks
+        for a boundary instead of inventing a fallback.
       </p>
 
       <h2>Records describe products; enums describe choices</h2>

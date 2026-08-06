@@ -332,6 +332,7 @@ fn release_blog_explains_the_language_and_establishes_the_v001_baseline() {
         "DecodeError::Invalid",
         "context Logging",
         "with RequestScope",
+        "with Arena { }",
         "&lt;T of Labelled&gt;",
         "value |&gt; label",
     ] {

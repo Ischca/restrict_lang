@@ -164,7 +164,9 @@ fun main: () -&gt; String = {
 fun main: () -&gt; Int32 = {
     with Arena { } {
         val values = [1, 2, 3]
-        val shifted = (values, |value| value + 1) map
+        val shifted = values map {
+            it + 1
+        }
         shifted
             |&gt; identity
             |&gt; list_count
@@ -173,8 +175,11 @@ fun main: () -&gt; Int32 = {
       <p>
         The <code>Arena</code> scope keeps the source and mapped lists inside one
         explicit allocation boundary; only the inferred <code>Int32</code> count
-        leaves it. Across that pipeline, the literal, lambda, generic
-        <code>map</code>, generic <code>identity</code>, and final
+        leaves it. <code>map</code> opens a focused scope whose contextual
+        <code>it</code> binding is inferred from the collection element type. The
+        complete mapping clause then becomes the next pipeline value. Across
+        that flow, the literal, scoped lambda, generic <code>map</code>, generic
+        <code>identity</code>, and final
         <code>list_count</code> all contribute type information. The compiler does
         not silently guess unresolved generic types. Empty collections, absent
         options, and one-sided results must eventually receive enough context from

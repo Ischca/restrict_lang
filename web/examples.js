@@ -38,6 +38,16 @@ export const examples = [
         "source": "// Arguments come before verbs; pipes continue the value flow.\nfun add: (left: Int32, right: Int32) -> Int32 = {\n    left + right\n}\n\nfun increment: (value: Int32) -> Int32 = {\n    value + 1\n}\n\nfun main: () = {\n    val total = (20, 21) add\n    total |> increment |> println\n}\n"
     },
     {
+        "id": "scopedCollections",
+        "title": "Map through a scope",
+        "group": "start",
+        "description": "Let map open an implicit focus scope, then name both values in a fold scope.",
+        "file": "scoped_collections.rl",
+        "kind": "run",
+        "expectedOutput": "43\n",
+        "source": "// A verb can open a typed scope; the complete clause feeds the next value flow.\nfun main: () = {\n    val values = [20, 21]\n    val shifted = values map {\n        it + 1\n    }\n    (shifted, 0) fold { |total, value|\n        total + value\n    } |> println\n}\n"
+    },
+    {
         "id": "records",
         "title": "Build a record",
         "group": "start",

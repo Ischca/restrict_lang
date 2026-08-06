@@ -410,7 +410,15 @@ fn param(input: &str) -> ParseResult<'_, Param> {
 
 fn block_expr(input: &str) -> ParseResult<'_, BlockExpr> {
     let (input, _) = expect_token(Token::LBrace)(input)?;
+    block_expr_body(input)
+}
 
+/// Parse a block after its opening brace has already been consumed.
+///
+/// Scoped verb clauses reuse the ordinary block grammar after an optional
+/// lambda-style binder header, so keeping the body parser separate prevents
+/// the two block forms from drifting apart.
+fn block_expr_body(input: &str) -> ParseResult<'_, BlockExpr> {
     // Parse statements and expressions carefully
     let mut statements = Vec::new();
     let mut remaining = input;
@@ -867,6 +875,7 @@ fn lambda_expr(input: &str) -> ParseResult<'_, Expr> {
             Expr::new(ExprKind::Lambda(LambdaExpr {
                 params: Vec::new(),
                 body: Box::new(body),
+                implicit_focus: false,
             })),
         ));
     }
@@ -880,6 +889,7 @@ fn lambda_expr(input: &str) -> ParseResult<'_, Expr> {
         Expr::new(ExprKind::Lambda(LambdaExpr {
             params,
             body: Box::new(body),
+            implicit_focus: false,
         })),
     ))
 }
@@ -894,6 +904,54 @@ fn lambda_param(input: &str) -> ParseResult<'_, LambdaParam> {
             name,
             type_annotation,
         },
+    ))
+}
+
+/// Parse the scope attached to a scoped OSV verb clause.
+///
+/// An implicit scope introduces the contextual unary focus binding `it`:
+///
+/// ```restrict
+/// values map { it + 1 }
+/// ```
+///
+/// An explicit scope reuses Restrict's existing lambda binders as its header:
+///
+/// ```restrict
+/// values map { |value| value + 1 }
+/// (values, 0) fold { |total, value| total + value }
+/// ```
+///
+/// Both forms elaborate to an ordinary lambda whose body is an ordinary block.
+fn scoped_lambda_block(input: &str) -> ParseResult<'_, Expr> {
+    let (input, _) = expect_token(Token::LBrace)(input)?;
+
+    let (input, params, implicit_focus) =
+        if let Ok((input, _)) = expect_token::<'_>(Token::Or)(input) {
+            (input, Vec::new(), false)
+        } else if let Ok((input, _)) = expect_token::<'_>(Token::Bar)(input) {
+            let (input, params) = separated_list1(expect_token(Token::Comma), lambda_param)(input)?;
+            let (input, _) = expect_token(Token::Bar)(input)?;
+            (input, params, false)
+        } else {
+            (
+                input,
+                vec![LambdaParam {
+                    name: "it".to_string(),
+                    type_annotation: None,
+                }],
+                true,
+            )
+        };
+
+    let (input, body) = block_expr_body(input)?;
+    Ok((
+        input,
+        Expr::new(ExprKind::Lambda(LambdaExpr {
+            params,
+            body: Box::new(Expr::new(ExprKind::Block(body))),
+            implicit_focus,
+        })),
     ))
 }
 
@@ -1433,6 +1491,50 @@ fn call_expr(input: &str) -> ParseResult<'_, Expr> {
     call_expr_with_context(input, false)
 }
 
+fn is_scoped_verb_target(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(_, _))
+}
+
+/// Attach one or more verb-controlled scopes to a completed OSV call.
+///
+/// The result of each complete clause becomes the object of the next clause,
+/// so `values map { ... } filter { ... }` is left associative.
+fn scoped_clause_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult<'a, Expr> {
+    if !matches!(&expr.kind, ExprKind::Call(_))
+        || !matches!(lex_token(input), Ok((_, Token::LBrace)))
+    {
+        return Ok((input, expr));
+    }
+
+    let (after_scope, scope) = scoped_lambda_block(input)?;
+    let ExprKind::Call(mut call) = expr.kind else {
+        unreachable!("scoped clause suffix requires a completed call")
+    };
+    call.args.push(Box::new(scope));
+    expr = Expr::new(ExprKind::Call(call));
+    input = after_scope;
+
+    loop {
+        let Ok((after_target, target)) = simple_expr(input) else {
+            break;
+        };
+        if !is_scoped_verb_target(&target)
+            || !matches!(lex_token(after_target), Ok((_, Token::LBrace)))
+        {
+            break;
+        }
+
+        let (after_scope, scope) = scoped_lambda_block(after_target)?;
+        expr = Expr::new(ExprKind::Call(CallExpr {
+            function: Box::new(target),
+            args: vec![Box::new(expr), Box::new(scope)],
+        }));
+        input = after_scope;
+    }
+
+    Ok((input, expr))
+}
+
 fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Expr> {
     alt((
         // Multiple arguments with parentheses: (a,b,c) func - OSV syntax
@@ -1453,13 +1555,13 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
             }
 
             let (input, func) = simple_expr(input)?;
-            Ok((
+            scoped_clause_suffixes(
                 input,
                 Expr::new(ExprKind::Call(CallExpr {
                     function: Box::new(func),
                     args: args.into_iter().map(Box::new).collect(),
                 })),
-            ))
+            )
         },
         // Single expression or OSV style
         move |input| {
@@ -1530,6 +1632,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
                                 | Token::False
                                 | Token::LParen
                                 | Token::LBracket
+                                | Token::LBrace
                                 | Token::ColonColon
                         ))
                     ) {
@@ -1576,7 +1679,7 @@ fn call_expr_with_context(input: &str, in_statement: bool) -> ParseResult<'_, Ex
                         args: vec![Box::new(arg)],
                     }))
                 });
-                Ok((input, result))
+                scoped_clause_suffixes(input, result)
             }
         },
     ))(input)
@@ -2219,6 +2322,70 @@ mod tests {
                     ExprKind::VariantRef(VariantPath { ref enum_name, ref variant_name })
                         if enum_name == "CheckoutError" && variant_name == "PaymentDeclined")
         ));
+    }
+
+    #[test]
+    fn test_scoped_osv_clause_desugars_implicit_focus() {
+        let (remaining, expr) = call_expr("values map { it + 1 }").unwrap();
+        assert!(remaining.trim().is_empty());
+
+        let ExprKind::Call(call) = expr.kind else {
+            panic!("expected scoped map clause to elaborate to a call");
+        };
+        assert_eq!(call.args.len(), 2);
+        assert!(matches!(call.function.kind, ExprKind::Ident(ref name) if name == "map"));
+        assert!(matches!(call.args[0].kind, ExprKind::Ident(ref name) if name == "values"));
+
+        let ExprKind::Lambda(lambda) = &call.args[1].kind else {
+            panic!("expected scoped map body to elaborate to a lambda");
+        };
+        assert!(lambda.implicit_focus);
+        assert_eq!(lambda.params.len(), 1);
+        assert_eq!(lambda.params[0].name, "it");
+        assert!(matches!(lambda.body.kind, ExprKind::Block(_)));
+    }
+
+    #[test]
+    fn test_scoped_osv_clause_reuses_explicit_lambda_binders() {
+        let source = "(values, 0) fold { |total, value| total + value }";
+        let (remaining, expr) = call_expr(source).unwrap();
+        assert!(remaining.trim().is_empty());
+
+        let ExprKind::Call(call) = expr.kind else {
+            panic!("expected scoped fold clause to elaborate to a call");
+        };
+        assert_eq!(call.args.len(), 3);
+        let ExprKind::Lambda(lambda) = &call.args[2].kind else {
+            panic!("expected scoped fold body to elaborate to a lambda");
+        };
+        assert!(!lambda.implicit_focus);
+        assert_eq!(
+            lambda
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["total", "value"]
+        );
+        assert!(matches!(lambda.body.kind, ExprKind::Block(_)));
+    }
+
+    #[test]
+    fn test_scoped_osv_clauses_chain_left_associatively() {
+        let source = "values map { it + 1 } filter { it > 2 }";
+        let (remaining, expr) = call_expr(source).unwrap();
+        assert!(remaining.trim().is_empty());
+
+        let ExprKind::Call(filter_call) = expr.kind else {
+            panic!("expected outer filter call");
+        };
+        assert!(matches!(filter_call.function.kind, ExprKind::Ident(ref name) if name == "filter"));
+        assert_eq!(filter_call.args.len(), 2);
+        assert!(
+            matches!(filter_call.args[0].kind, ExprKind::Call(ref map_call)
+            if matches!(map_call.function.kind, ExprKind::Ident(ref name) if name == "map"))
+        );
+        assert!(matches!(filter_call.args[1].kind, ExprKind::Lambda(_)));
     }
 
     #[test]

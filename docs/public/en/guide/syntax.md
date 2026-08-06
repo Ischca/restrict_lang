@@ -157,6 +157,25 @@ fun main: () -> Int32 = {
 }
 ```
 
+## Scoped Verb Clauses
+
+A callable whose final remaining parameter is a function can open that
+function as a scope:
+
+```restrict
+val shifted = values map {
+    it + 1
+}
+
+val total = (shifted, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+The unheaded form introduces one contextual `it` binding. Explicit scope
+headers reuse lambda binders. A complete scoped clause is evaluated before a
+following clause or pipe.
+
 ## Expressions
 
 Supported operators include arithmetic, comparison, equality, and boolean
@@ -304,7 +323,8 @@ import release.policy.*
 
 The practical precedence order is:
 
-1. Qualified variant names such as `ParseError::Message`, then field access and clone/freeze postfix forms
+1. Qualified variant names such as `ParseError::Message`, field access,
+   clone/freeze postfix forms, grouped OSV calls, and scoped verb clauses
 2. Unary `-` and `!`
 3. `*`, `/`, `%`
 4. `+`, `-`

@@ -49,6 +49,7 @@ wasmtime hello.wat
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
 - **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for closed user enums, Option, Result, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
+- **🧭 Scoped Verb Clauses**: Higher-order verbs open typed focus scopes such as `values map { it + 1 }`
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support for the current concrete ABI surface
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition (traditional function calls not supported)
 - **🧩 Forms**: Explicit `form` / `takes` contracts with static, monomorphized dispatch
@@ -169,6 +170,28 @@ fun main: () -> Int32 = {
     (|x| x * 2, 21) apply_int
 }
 ```
+
+### Scoped Verb Clauses
+
+A higher-order verb can open its final function parameter as a lexical scope.
+The complete clause becomes the object of the next verb, preserving
+left-to-right clause-level OSV flow.
+
+```restrict
+fun main: () -> Int32 = {
+    val values = [1, 2, 3]
+    val shifted = values map {
+        it + 1
+    }
+    (shifted, 0) fold { |total, value|
+        total + value
+    }
+}
+```
+
+An unheaded unary scope receives the contextual `it` binding. Use an explicit
+lambda-style header such as `{ |value| ... }` when naming the focus or handling
+multiple parameters.
 
 ### Pattern Matching
 

@@ -248,6 +248,25 @@ val transformer: Int32 -> Int32 = |x: Int32| x * 2
 val reducer: (Int32, Int32) -> Int32 = |left: Int32, right: Int32| left + right
 ```
 
+## スコープ動詞節
+
+最後に残った仮引数が関数型である動詞は、その関数をスコープとして
+開けます。
+
+```restrict
+val shifted = values map {
+    it + 1
+}
+
+val total = (shifted, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+ヘッダーのない形式は文脈的な`it`束縛を1つ導入します。明示スコープの
+ヘッダーはラムダのバインダーを再利用します。完成したスコープ節は、
+後続の節やパイプより先に評価されます。
+
 ## 型
 
 ### 基本型
@@ -335,7 +354,7 @@ val strict = base.clone { timeout: 3 }
 
 ## 演算子の優先順位
 
-1. フィールドアクセス、修飾されたバリアント名、グループ化された直接OSV呼び出し: `.field`、`.clone`、`Type::Variant`、`freeze`、`(value) f`、`() f`
+1. フィールドアクセス、修飾されたバリアント名、グループ化された直接OSV呼び出し、スコープ動詞節: `.field`、`.clone`、`Type::Variant`、`freeze`、`(value) f`、`() f`、`values map { ... }`
 2. 単項演算子: `!`、`-`
 3. 乗除余: `*`、`/`、`%`
 4. 加減: `+`、`-`

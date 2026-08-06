@@ -33,6 +33,15 @@
       "expectedOutput": "42\n"
     },
     {
+      "id": "scopedCollections",
+      "title": "Map through a scope",
+      "group": "start",
+      "description": "Let map open an implicit focus scope, then name both values in a fold scope.",
+      "file": "scoped_collections.rl",
+      "kind": "run",
+      "expectedOutput": "43\n"
+    },
+    {
       "id": "records",
       "title": "Build a record",
       "group": "start",

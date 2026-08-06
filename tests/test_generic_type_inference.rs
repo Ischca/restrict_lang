@@ -128,6 +128,121 @@ fun main: () -> List<Int32> = {
 }
 
 #[test]
+fn prelude_map_infers_implicit_focus_scope() {
+    let input = r#"
+fun main: () -> List<Int32> = {
+    val numbers: List<Int32> = [1, 2, 3]
+    numbers map {
+        it * 2
+    }
+}
+"#;
+
+    type_check(input).expect("map should infer the implicit focus type from its container");
+}
+
+#[test]
+fn prelude_map_infers_explicit_scoped_binder() {
+    let input = r#"
+fun main: () -> List<Int32> = {
+    val numbers: List<Int32> = [1, 2, 3]
+    numbers map { |number|
+        val shifted = number + 1
+        shifted * 2
+    }
+}
+"#;
+
+    type_check(input).expect("map should type an explicit binder with an ordinary block body");
+}
+
+#[test]
+fn user_function_can_open_its_final_function_parameter_as_a_scope() {
+    let input = r#"
+fun apply: (value: Int32, transform: Int32 -> Int32) -> Int32 = {
+    value |> transform
+}
+
+fun main: () -> Int32 = {
+    41 apply {
+        it + 1
+    }
+}
+"#;
+
+    type_check(input).expect("scoped verb clauses should work for ordinary user functions");
+}
+
+#[test]
+fn zero_parameter_scope_uses_an_explicit_empty_header() {
+    let input = r#"
+fun choose: (fallback: Int32, build: () -> Int32) -> Int32 = {
+    () build
+}
+
+fun main: () -> Int32 = {
+    0 choose { ||
+        42
+    }
+}
+"#;
+
+    type_check(input).expect("an explicit empty header should supply a zero-parameter scope");
+}
+
+#[test]
+fn scoped_collection_clauses_chain_left_associatively() {
+    let input = r#"
+fun main: () -> List<Int32> = {
+    val numbers: List<Int32> = [1, 2, 3]
+    numbers map {
+        it + 1
+    } filter {
+        it > 2
+    }
+}
+"#;
+
+    type_check(input).expect("each completed scoped clause should feed the next verb");
+}
+
+#[test]
+fn nested_implicit_focus_requires_an_explicit_binder() {
+    let input = r#"
+fun main: () -> List<List<Int32>> = {
+    val groups: List<List<Int32>> = [[1, 2], [3]]
+    groups map {
+        it map {
+            it + 1
+        }
+    }
+}
+"#;
+
+    let err = type_check(input).expect_err("nested implicit focus scopes should be rejected");
+    assert!(
+        err.contains("nested implicit focus scopes") && err.contains("|value|"),
+        "diagnostic should require an explicit scope binder, got: {err}"
+    );
+}
+
+#[test]
+fn explicit_outer_binder_allows_nested_implicit_focus() {
+    let input = r#"
+fun main: () -> List<List<Int32>> = {
+    val groups: List<List<Int32>> = [[1, 2], [3]]
+    groups map { |group|
+        group map {
+            it + 1
+        }
+    }
+}
+"#;
+
+    type_check(input).expect("an explicit outer binder should disambiguate nested focus scopes");
+}
+
+#[test]
 fn prelude_map_uses_expected_return_type() {
     let input = r#"
 fun main: () -> List<String> = {
@@ -1344,6 +1459,39 @@ fun main: () -> Int32 = {
 "#;
 
     type_check(input).expect("fold should infer both accumulator and item types");
+}
+
+#[test]
+fn prelude_fold_accepts_multi_parameter_scoped_binder() {
+    let input = r#"
+fun main: () -> Int32 = {
+    val numbers: List<Int32> = [1, 2, 3]
+    (numbers, 0) fold { |total, number|
+        total + number
+    }
+}
+"#;
+
+    type_check(input).expect("fold should infer both explicit scoped binders");
+}
+
+#[test]
+fn prelude_fold_rejects_implicit_unary_focus() {
+    let input = r#"
+fun main: () -> Int32 = {
+    val numbers: List<Int32> = [1, 2, 3]
+    (numbers, 0) fold {
+        it + 1
+    }
+}
+"#;
+
+    let err = type_check(input).expect_err("fold needs two explicit focus binders");
+    assert!(
+        err.contains("implicit focus scopes require a unary function parameter")
+            && err.contains("|left, right|"),
+        "diagnostic should explain the scoped binder arity mismatch, got: {err}"
+    );
 }
 
 #[test]

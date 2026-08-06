@@ -250,8 +250,10 @@ object.method(args)         // ERROR: Traditional syntax forbidden
 ```
 
 **CRITICAL RULE**: Restrict Language **exclusively** uses OSV syntax.
-Arguments always come BEFORE the function name. Traditional parenthetical
-function calls `function(args)` will cause compilation errors.
+Ordinary value arguments always come BEFORE the function name. Traditional
+parenthetical function calls `function(args)` will cause compilation errors.
+The scoped verb clause in Section 5.9 is a separate OSV form: its trailing
+block is a scope opened by the verb, not an ordinary value argument.
 
 **OSV Pattern Examples:**
 ```rust
@@ -340,7 +342,78 @@ Point { x: 0, y: 0 }
 |x: Int32| x + 1    // With type annotations
 ```
 
-### 5.9 User-Defined Enum Construction
+### 5.9 Scoped Verb Clauses
+
+A function whose final remaining parameter is a function may open that
+function's body as a trailing scope. The ordinary value arguments remain
+before the verb:
+
+```rust
+val shifted = values map {
+    it + 1
+}
+
+val total = (values, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+This is a **scoped verb clause**, not a general trailing-argument rule. In the
+first example, `values` is the ordinary object of `map`; `map` then opens a
+scope focused on each element. The complete clause produces a value that can
+become the object of the next clause:
+
+```rust
+values map {
+    it + 1
+} filter {
+    it > 2
+} |> list_count
+```
+
+Scoped verb clauses associate left-to-right. The example above applies
+`filter` to the complete result of the `map` clause, then pipes the complete
+filtered result to `list_count`.
+
+The compiler elaborates scoped clauses through ordinary lambdas:
+
+```rust
+values map { it + 1 }
+// elaborates as:
+(values, |it| { it + 1 }) map
+
+values map { |value| value + 1 }
+// elaborates as:
+(values, |value| { value + 1 }) map
+```
+
+Rules:
+
+- An unheaded scope introduces the contextual focus binding `it` and therefore
+  supplies exactly one lambda parameter.
+- `it` is a contextual binding, not a globally reserved name. It exists only
+  inside the implicit focus scope that introduces it.
+- Explicit binders reuse the lambda parameter syntax at the start of the
+  scope: `{ |value| ... }` or `{ |left, right| ... }`.
+- A zero-parameter scope uses an explicit empty lambda header: `{ || ... }`.
+- The clause supplies only the callable's final remaining parameter, and that
+  parameter must have a function type. All earlier parameters use ordinary
+  OSV object or tuple syntax.
+- Nested implicit focus scopes are rejected because two active `it` bindings
+  make affine use and capture intent unclear. Name at least one scope binder.
+- Scope statements, the final result expression, captures, affine consumption,
+  temporal escape checks, and type inference follow the ordinary block and
+  lambda rules. The syntax does not grant captures additional uses.
+- A scoped clause may execute its body zero, one, or many times according to
+  the receiving function's contract. The braces express a lexical scope, not
+  a guarantee of immediate or single execution.
+
+This form extends clause-level OSV rather than weakening it: a value precedes
+the scope-opening verb, and the resulting complete clause precedes its next
+verb. It follows the same value-then-verb-then-scope shape as `value match {
+... }` and `condition then { ... }`.
+
+### 5.10 User-Defined Enum Construction
 
 Enum constructors are qualified direct OSV call targets:
 
@@ -359,7 +432,7 @@ or pipe. Traditional call order remains invalid:
 ParseError::Message("invalid input") // ERROR: traditional call syntax
 ```
 
-### 5.10 Built-in Option and Result Construction
+### 5.11 Built-in Option and Result Construction
 
 `Option` and `Result` use the same qualified OSV constructor form as
 user-defined enums. The pipe is optional, and a single direct object does not
@@ -839,8 +912,9 @@ then returns normally, allowing the outer wrapper to restore its entry state.
 
 ## 13. Operator Precedence (Highest to Lowest)
 
-1. Field access, qualified variant names, and grouped direct OSV calls:
-   `.field`, `.clone`, `Type::Variant`, `freeze`, `(value) f`, `() f`
+1. Field access, qualified variant names, grouped direct OSV calls, and scoped
+   verb clauses: `.field`, `.clone`, `Type::Variant`, `freeze`, `(value) f`,
+   `() f`, `values map { ... }`
 2. Unary: `!`, `-`
 3. Multiplicative: `*`, `/`, `%`
 4. Additive: `+`, `-`
@@ -856,6 +930,8 @@ Single-argument calls may use pipe form (`value |> f`) or direct OSV form
 right) max`), and compound objects should be grouped when precedence would
 otherwise change their meaning (`(1 + 2) double`). Pipe starts from a complete
 expression, so `1 + 2 |> double` is parsed as `(1 + 2) |> double`.
+Likewise, a scoped verb clause is complete before a following pipe:
+`values map { it + 1 } |> list_count` pipes the mapped collection.
 
 ## 14. Standard Library Types
 
@@ -1067,7 +1143,21 @@ fun main: () -> Float64 = {
 }
 ```
 
-### 16.6 Temporal Resource Management
+### 16.7 Scoped Collection Flow
+
+```rust
+fun main: () -> Int32 = {
+    val values = [1, 2, 3]
+    val shifted = values map {
+        it + 1
+    }
+    (shifted, 0) fold { |total, value|
+        total + value
+    }
+}
+```
+
+### 16.8 Temporal Resource Management
 ```rust
 fun processFile: (path: String) -> Result<String, Error> = {
     temporal ~file {
@@ -1150,6 +1240,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-08-06
 **Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

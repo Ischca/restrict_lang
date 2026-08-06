@@ -18,9 +18,9 @@ fun exercise1: () -> () = {
 // 演習 2: リストの処理
 fun exercise2: () -> Int32 = {
     val numbers: List<Int32> = [1, 2, 3, 4, 5]
-    val doubled = (numbers, |n| n * 2) map
-    val filtered = (doubled, |n| n > 5) filter
-    (filtered, 0, |total, n| total + n) fold
+    val doubled = numbers map { it * 2 }
+    val filtered = doubled filter { it > 5 }
+    (filtered, 0) fold { |total, number| total + number }
 }
 
 // 演習 3: エラー処理

@@ -132,6 +132,29 @@ export fun std_io_smoke: () -> () = {
 }
 
 #[test]
+fn scoped_collection_clauses_execute_through_existing_lambdas(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+export fun scoped_collection_total: () -> Int32 = {
+    val values = [20, 21]
+    val shifted = values map {
+        it + 1
+    }
+    (shifted, 0) fold { |total, value|
+        total + value
+    }
+}
+"#;
+
+    let (mut store, instance) = instantiate(source)?;
+    let scoped_collection_total =
+        instance.get_typed_func::<(), i32>(&store, "scoped_collection_total")?;
+
+    assert_eq!(scoped_collection_total.call(&mut store, ())?, 43);
+    Ok(())
+}
+
+#[test]
 fn display_formats_all_builtin_scalar_adoptions() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 export fun emit_i32: (value: Int32) -> () = { value |> println }

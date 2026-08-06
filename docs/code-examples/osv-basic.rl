@@ -4,9 +4,9 @@ fun adjust_score: (score: Int32) -> Int32 = {
 }
 
 fun process_scores: (scores: List<Int32>) -> Int32 = {
-    val kept = (scores, |score| score > 0) filter
-    val adjusted = (kept, |score| score |> adjust_score) map
-    (adjusted, 0, |total, score| total + score) fold
+    val kept = scores filter { it > 0 }
+    val adjusted = kept map { |score| score |> adjust_score }
+    (adjusted, 0) fold { |total, score| total + score }
 }
 
 // Pipe operator chains

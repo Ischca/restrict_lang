@@ -9,6 +9,7 @@ authoritative language specification; this page is the shorter release contract.
 | Surface | v0.0.1 status |
 | --- | --- |
 | OSV-only calls | Use `value |> function`, `(arg1, arg2) function`, or `() function`. Traditional `function(args)` calls are outside the surface. |
+| Scoped verb clauses | A callable's final function parameter may open a typed scope such as `values map { it + 1 }` or `(values, 0) fold { |sum, value| ... }`. Complete clauses associate left-to-right. |
 | Typed context scopes | `context Name` declares typed fields. `with Context { bindings } { body }` binds them for one lexical body, and nested scopes compose. Function-level context annotations and temporal lifetime scopes remain future work. |
 | `val` / `mut val` bindings | Immutable bindings use `val`; mutable bindings use `mut val`. |
 | Built-in generic values | `List<T>`, `Option<T>`, `Result<T, E>`, and concrete `Range<Int32>` are supported. |

@@ -1514,10 +1514,7 @@ fn scoped_clause_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult
     expr = Expr::new(ExprKind::Call(call));
     input = after_scope;
 
-    loop {
-        let Ok((after_target, target)) = simple_expr(input) else {
-            break;
-        };
+    while let Ok((after_target, target)) = simple_expr(input) {
         if !is_scoped_verb_target(&target)
             || !matches!(lex_token(after_target), Ok((_, Token::LBrace)))
         {

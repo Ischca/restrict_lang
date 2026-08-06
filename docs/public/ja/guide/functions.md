@@ -193,7 +193,7 @@ fun transform: (value: Int32, f: Int32 -> Int32) -> Int32 = {
 
 ## 現在の境界
 
-現在のpost-v0.0.1 compilerでは、method-only `form`、具体recordの`takes`、
+v0.0.1 compilerでは、method-only `form`、具体recordの`takes`、
 `<T of Form>`境界を利用できます。詳細は[Form と静的ポリモーフィズム](forms.md)を参照してください。
 
 次の機能は将来の設計対象です。

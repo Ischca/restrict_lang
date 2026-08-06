@@ -1,8 +1,8 @@
 # インストール
 
-v0.0.1 previewはGitHub Releasesから配布し、ソースからもビルドできます。パッケージレジストリ、安定版Homebrew formula、VS Code Marketplaceは今回のpreviewには含めません。
+v0.0.1はGitHub Releasesから配布し、ソースからもビルドできます。パッケージレジストリ、安定版Homebrew formula、VS Code Marketplaceは今回のリリースには含めません。
 
-## Previewバイナリをインストール
+## リリースバイナリをインストール
 
 シェルインストーラーはx86-64 Linux、Intel Mac、Apple Silicon Macに対応し、ダウンロードしたアーカイブをSHA-256マニフェストで検証します。
 
@@ -11,7 +11,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://raw.githubusercontent.com/Ischca/restrict_lang/main/install.sh | bash
 ```
 
-表示された`$HOME/.restrict-lang/bin`をPATHに追加してください。Windowsでは[GitHub pre-release](https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1)のzipを直接ダウンロードします。
+表示された`$HOME/.restrict-lang/bin`をPATHに追加してください。Windowsでは[GitHub Release](https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1)のzipを直接ダウンロードします。
 
 ## システム要件
 

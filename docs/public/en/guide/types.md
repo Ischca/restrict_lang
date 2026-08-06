@@ -1,8 +1,8 @@
 # Type System
 
 Restrict combines static typing, affine ownership, local type inference, and
-WASM-friendly data layouts. This page distinguishes the v0.0.1 type surface
-from current post-v0.0.1 additions. TAT is experimental and excluded from the
+WASM-friendly data layouts. This page distinguishes the supported v0.0.1 type
+surface from future design space. TAT is experimental and excluded from the
 default release gate.
 
 ## Built-In Types
@@ -237,7 +237,7 @@ host-visible Wasm exports.
 
 ## Forms And Static Polymorphism
 
-The current post-v0.0.1 compiler supports non-generic, method-only forms.
+The v0.0.1 compiler supports non-generic, method-only forms.
 Generic functions can require one or more forms with `of`; the compiler checks
 each concrete call and monomorphizes it to a direct adoption method call.
 
@@ -319,7 +319,7 @@ fun choose_option: (flag: Boolean) -> Option<Int32> = {
 
 ## User-Defined Enums
 
-The current post-v0.0.1 compiler supports closed, non-generic, non-recursive
+The v0.0.1 compiler supports closed, non-generic, non-recursive
 user enums. Each variant has zero or one payload and is named through its enum
 namespace:
 

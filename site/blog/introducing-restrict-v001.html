@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Restrict Language v0.0.1: values first, ownership clear</title>
+  <meta name="description" content="Introducing Restrict Language through its values-first OSV syntax, affine ownership, type inference, records, enums, forms, and WebAssembly toolchain.">
+  <meta name="theme-color" content="#ff6b35">
+  <meta property="og:site_name" content="Restrict Language">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Restrict Language v0.0.1: values first, ownership clear">
+  <meta property="og:description" content="The ideas, language features, and deliberately narrow boundaries behind the first Restrict release.">
+  <meta property="og:url" content="https://ischca.github.io/restrict_lang/blog/introducing-restrict-v001.html">
+  <meta name="twitter:card" content="summary">
+  <link rel="canonical" href="https://ischca.github.io/restrict_lang/blog/introducing-restrict-v001.html">
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="../" aria-label="Restrict Language home"><span class="brand-mark" aria-hidden="true">R</span><span>Restrict</span></a>
+      <nav aria-label="Primary navigation">
+        <a href="../docs/">Docs</a>
+        <a href="../compiler/">Playground</a>
+        <a href="./" aria-current="page">Blog</a>
+        <a href="https://github.com/Ischca/restrict_lang">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="article-shell" id="content">
+    <article>
+      <p class="eyebrow">The first release</p>
+      <h1>Restrict Language v0.0.1: values first, ownership clear</h1>
+      <p class="article-meta">Released August 6, 2026 · 12 min read</p>
+      <p class="article-lede">
+        Restrict is a small, statically typed language for WebAssembly. It puts
+        values before the operations that consume them, checks affine ownership,
+        and keeps abstraction resolvable at compile time. Version 0.0.1 is the
+        first public line: the point from which the language, tools, and release
+        contract move forward together.
+      </p>
+
+      <aside class="article-summary" aria-label="Release summary">
+        <strong>What ships in v0.0.1</strong>
+        <p>OSV calls, affine bindings, bidirectional inference, records, closed enums, Option and Result, static forms, modules, a Wasm compiler, Warder, an LSP, and a browser playground.</p>
+      </aside>
+
+      <h2>Why put the value first?</h2>
+      <p>
+        Most languages spell a call by naming an operation and then placing its
+        inputs inside it. Restrict uses Object–Subject–Verb order instead. The
+        value being transformed appears first; the verb that receives it comes
+        last.
+      </p>
+      <pre><code class="language-restrict">fun increment: (value: Int32) -&gt; Int32 = {
+    value + 1
+}
+
+fun double: (value: Int32) -&gt; Int32 = {
+    value * 2
+}
+
+fun main: () -&gt; Int32 = {
+    20
+        |&gt; increment
+        |&gt; double
+}</code></pre>
+      <p>
+        The pipe is not alternate syntax layered on top of conventional calls.
+        It is one expression of the language's only calling order. A function
+        with several inputs uses <code>(left, right) add</code>; a function with
+        no inputs uses <code>() now</code>. Traditional
+        <code>add(left, right)</code> syntax is rejected.
+      </p>
+      <p>
+        This makes a program read in the same direction as its data flow. It also
+        gives constructors and polymorphic operations a common shape: the value
+        supplies context before the compiler resolves the operation.
+      </p>
+
+      <h2 id="ownership-is-part-of-the-expression">Ownership is part of the expression</h2>
+      <p>
+        Restrict bindings are affine: a value may be used zero or one time unless
+        its type is Copy or the binding is explicitly mutable. This is less about
+        forcing ceremony and more about making accidental duplication visible.
+        Heap-backed values move; small scalar values remain reusable.
+      </p>
+      <pre><code class="language-restrict">record Message {
+    text: String
+}
+
+fun read: (message: Message) -&gt; String = {
+    message.text
+}
+
+fun main: () -&gt; String = {
+    val message = Message { text: "ownership is visible" }
+    val text = message |&gt; read
+    text
+    // `message` cannot be consumed again here.
+}</code></pre>
+      <p>
+        The compiler uses arenas rather than a tracing garbage collector. The
+        current release resets the default arena at the executable boundary and
+        rejects ownership mistakes before code generation. Temporal affine types
+        remain experimental; v0.0.1 does not claim that unfinished resource model
+        as stable language surface.
+      </p>
+
+      <h2>Inference should remove repetition, not intent</h2>
+      <p>
+        Restrict uses bidirectional type inference. Literal values, annotations,
+        function parameters, return types, neighboring branches, and later uses
+        can all contribute constraints. Generic functions and lambdas stay terse
+        when the surrounding program already makes their meaning clear.
+      </p>
+      <pre><code class="language-restrict">fun identity: &lt;T&gt;(value: T) -&gt; T = {
+    value
+}
+
+fun main: () -&gt; List&lt;Int32&gt; = {
+    val values = [1, 2, 3]
+    val shifted = (values, |value| value + 1) map
+    shifted |&gt; identity
+}</code></pre>
+      <p>
+        The compiler does not silently guess unresolved generic types. Empty
+        collections, absent options, and one-sided results must eventually receive
+        enough context from an annotation or a real use. When inference cannot
+        finish, the error asks for a boundary instead of inventing a fallback.
+      </p>
+
+      <h2>Records describe products; enums describe choices</h2>
+      <p>
+        Records are constructed with named fields. Closed enums model a finite
+        set of alternatives, and their constructors use the same qualified OSV
+        order as other calls. Built-in <code>Option</code> and
+        <code>Result</code> follow that rule too.
+      </p>
+      <pre><code class="language-restrict">enum DecodeError {
+    Empty
+    Invalid(String)
+}
+
+fun decode: (code: Int32) -&gt; Result&lt;Int32, DecodeError&gt; = {
+    code == 0 then {
+        42 Result::Ok
+    } else {
+        "invalid code" DecodeError::Invalid Result::Err
+    }
+}
+
+fun explain: (result: Result&lt;Int32, DecodeError&gt;) -&gt; String = {
+    result match {
+        Ok(value) =&gt; { "valid" }
+        Err(error) =&gt; {
+            error match {
+                DecodeError::Empty =&gt; { "empty" }
+                DecodeError::Invalid(message) =&gt; { message }
+            }
+        }
+    }
+}</code></pre>
+      <p>
+        Construction is qualified because it creates a value in a type namespace:
+        <code>42 Option::Some</code>, <code>() Option::None</code>, or
+        <code>message DecodeError::Invalid</code>. Built-in match patterns stay
+        unqualified—<code>Some(value)</code>, <code>None</code>,
+        <code>Ok(value)</code>, and <code>Err(error)</code>—because the scrutinee
+        already determines the sum type. User-enum patterns remain qualified.
+      </p>
+
+      <h2>Forms express behavior without runtime objects</h2>
+      <p>
+        A form is a compile-time contract, not a value to instantiate. A concrete
+        record adopts the contract with <code>takes</code>, and a generic function
+        names the behavior it requires with an <code>of</code> bound. Resolution is
+        closed-world, static, and monomorphized; v0.0.1 has no vtables or dynamic
+        interface objects.
+      </p>
+      <pre><code class="language-restrict">form Labelled {
+    fun label: (self: Self) -&gt; String
+}
+
+record Badge {
+    text: String
+}
+
+Badge takes Labelled {
+    fun label: (self: Badge) -&gt; String = {
+        self.text
+    }
+}
+
+fun read_label: &lt;T of Labelled&gt;(value: T) -&gt; String = {
+    value |&gt; label
+}</code></pre>
+      <p>
+        <code>Display</code> uses this model. Scalars and strings have
+        compiler-provided adoptions; records can opt in explicitly. That lets
+        <code>display</code>, <code>print</code>, and <code>println</code> remain
+        polymorphic while every selected implementation is still known at compile
+        time.
+      </p>
+
+      <h2>The compiler is inspectable from source to Wasm</h2>
+      <p>
+        Restrict compiles through a lexer, parser, affine type checker, checked IR,
+        and WebAssembly code generator. The browser playground runs that compiler
+        locally and exposes program output alongside tokens, the AST, generated
+        Wasm, and diagnostics. It is not a mock evaluator: the checked-in compiler
+        bundle compiles and executes the same curated examples used by release
+        tests.
+      </p>
+      <p>
+        The host boundary is deliberately narrower than the language. Programs
+        can use records, strings, lists, options, results, enums, lambdas, and
+        generics internally. The default public Wasm ABI exports concrete scalar
+        parameters and results. An opt-in flat record ABI is experimental; WIT,
+        the Component Model, and a stable generic or composite host ABI remain
+        future work.
+      </p>
+
+      <h2>A language also needs a working path around the compiler</h2>
+      <p>
+        The release includes <strong>Warder</strong> for creating, checking,
+        building, running, and testing projects. Direct local dependencies are
+        locked with deterministic source hashes and compiled from staged
+        snapshots. The compiler also exposes an LSP over stdio, and the repository
+        ships documentation, examples, cross-platform binaries, checksums, and the
+        browser playground from the same release contract.
+      </p>
+      <p>
+        This does not mean every distribution channel is ready. There is no public
+        package registry, stable Homebrew formula, or VS Code Marketplace release
+        yet. Version 0.0.1 is a usable foundation, not a claim that the language is
+        finished.
+      </p>
+
+      <h2>The starting line</h2>
+      <p>
+        Earlier notes described intermediate compiler states. This article replaces
+        that chronology with one coherent baseline. From v0.0.1 onward, changes can
+        be explained relative to a tagged language, a tested toolchain, and a public
+        statement of what is intentionally still outside the contract.
+      </p>
+      <p>
+        The next work should deepen the model rather than blur it: stronger resource
+        lifetimes, a designed component boundary, richer but still static forms,
+        and better tooling around packages and editors. The principle remains the
+        same—put the value first, make ownership clear, and keep the generated
+        program understandable end to end.
+      </p>
+
+      <div class="article-actions">
+        <a class="button primary" href="../compiler/">Try the playground</a>
+        <a class="button secondary" href="../docs/en/getting-started/quick-start.html">Read the quick start</a>
+        <a class="button secondary" href="https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1">Download v0.0.1</a>
+      </div>
+    </article>
+  </main>
+  <footer><span>Restrict Language · v0.0.1</span><span><a href="./">Blog index</a></span></footer>
+  <script src="../restrict-highlight.js"></script>
+  <script src="../restrict-code-blocks.js"></script>
+</body>
+</html>

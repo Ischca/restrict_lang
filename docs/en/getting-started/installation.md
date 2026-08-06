@@ -1,10 +1,10 @@
 # Installation
 
-The v0.0.1 preview is distributed through GitHub Releases and can also be built
+The v0.0.1 release is distributed through GitHub Releases and can also be built
 from source. The package registry, stable Homebrew formula, and VS Code
-Marketplace channel remain outside this preview.
+Marketplace channel remain outside this release.
 
-## Install the Preview Binary
+## Install the Release Binary
 
 The shell installer supports x86-64 Linux plus Intel and Apple Silicon macOS.
 It downloads both the compiler and Warder, then verifies the archive against
@@ -17,7 +17,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 Add the reported `$HOME/.restrict-lang/bin` directory to `PATH`. Windows users
 can download and verify the zip archive from the
-[GitHub pre-release](https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1).
+[GitHub release](https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1).
 
 ## Requirements
 

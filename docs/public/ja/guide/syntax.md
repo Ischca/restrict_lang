@@ -1,6 +1,6 @@
 # 構文リファレンス
 
-このガイドは、v0.0.1 の公開範囲と、現在のpost-v0.0.1 compilerで追加された構文を区別して説明します。将来予定の構文はcurrent surfaceには含めません。
+このガイドは、v0.0.1 の公開構文と、意図的に範囲外としている将来構文を区別して説明します。
 
 ## コメント
 
@@ -187,7 +187,7 @@ val origin = Point { x: 0, y: 0 }
 
 レコード定義とレコードリテラルのフィールドは `:` を使います。
 
-## ユーザー定義enum（post-v0.0.1）
+## ユーザー定義enum
 
 現在のcompilerでは、閉じたユーザー定義enumを宣言できます。
 
@@ -304,7 +304,7 @@ pub enum PublicError {
 }
 ```
 
-v0.0.1 では、export されたレコードや generic 関数はソースレベルのモジュールメタデータです。post-v0.0.1の`pub enum`もRestrictソースモジュール間だけの公開で、直接のhost-visible WebAssembly enum ABIは提供しません。
+v0.0.1 では、export されたレコードや generic 関数はソースレベルのモジュールメタデータです。v0.0.1の`pub enum`もRestrictソースモジュール間だけの公開で、直接のhost-visible WebAssembly enum ABIは提供しません。
 
 ## context と with
 
@@ -347,7 +347,7 @@ val strict = base.clone { timeout: 3 }
 
 ## 現在のenum境界
 
-v0.0.1の公開リリースではユーザー定義enumは未対応でした。現在のpost-v0.0.1 compilerは上記の閉じた範囲をサポートしますが、ジェネリックenum、再帰enum、1バリアントに複数の直接payloadを持たせる構文、host enum ABIは将来の設計対象です。`Result<T, E>`のエラー伝播は`match`で明示し、`?`演算子はまだ使えません。
+v0.0.1 compilerは上記の閉じたユーザー定義enumをサポートします。ジェネリックenum、再帰enum、1バリアントに複数の直接payloadを持たせる構文、host enum ABIは将来の設計対象です。`Result<T, E>`のエラー伝播は`match`で明示し、`?`演算子はまだ使えません。
 
 ## v0.0.1 の current example ではない構文
 

@@ -346,7 +346,7 @@ fn type_inference_docs_distinguish_current_enums_and_forms_from_future_features(
         "no host-visible enum ABI",
         "postfix `?` propagation remains future work",
         "Temporal Affine Types (TAT) remain outside the default v0.0.1 gate",
-        "current post-v0.0.1 compiler also supports method-only forms",
+        "v0.0.1 compiler also supports method-only forms",
         "concrete record `takes` declarations",
         "generic `of` bounds",
         "Form-bounded calls are resolved statically and monomorphized",

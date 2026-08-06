@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Build notes · Restrict Language</title>
-  <meta name="description" content="Release, compiler, and runtime notes from the Restrict Language workbench.">
+  <title>Blog · Restrict Language</title>
+  <meta name="description" content="The ideas, language features, and release decisions behind Restrict Language.">
   <meta name="theme-color" content="#ff6b35">
   <meta property="og:site_name" content="Restrict Language">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Build notes · Restrict Language">
-  <meta property="og:description" content="Release, compiler, and runtime notes from the Restrict Language workbench.">
+  <meta property="og:title" content="Blog · Restrict Language">
+  <meta property="og:description" content="The ideas, language features, and release decisions behind Restrict Language.">
   <meta property="og:url" content="https://ischca.github.io/restrict_lang/blog/">
   <meta name="twitter:card" content="summary">
   <link rel="canonical" href="https://ischca.github.io/restrict_lang/blog/">
@@ -32,35 +32,25 @@
 
   <main class="page-shell" id="content">
     <section class="page-title">
-      <p class="eyebrow">Build notes</p>
-      <h1>Decisions behind the language.</h1>
+      <p class="eyebrow">From the starting line</p>
+      <h1>The language, not just the changelog.</h1>
       <p>
-        Release engineering, compiler boundaries, and executable experiments.
-        These notes explain what Restrict does today—and the design work that
-        stays deliberately unfinished.
+        Restrict begins with one public baseline. Read about the ideas behind
+        its syntax and ownership model, the features in the first release, and
+        the boundaries that remain deliberately open.
       </p>
     </section>
 
     <section class="post-list standalone" aria-label="Articles">
-      <a href="shipping-v001-preview.html">
-        <small>Release engineering · August 4, 2026 · 6 min</small>
-        <span>What it means to ship the v0.0.1 preview</span>
-        <p>Aligning Pages, examples, binaries, and documentation around one public contract.</p>
-      </a>
-      <a href="type-inference-v001.html">
-        <small>Compiler notes · August 4, 2026 · 7 min</small>
-        <span>Type inference without widening the promise</span>
-        <p>How bidirectional inference improves everyday code while the host ABI stays narrow.</p>
-      </a>
-      <a href="runtime-dogfood.html">
-        <small>Runtime coverage · August 4, 2026 · 5 min</small>
-        <span>Dogfooding Restrict with executable examples</span>
-        <p>Why a real Wasm result catches failures that type-check-only fixtures cannot.</p>
+      <a href="introducing-restrict-v001.html">
+        <small>Language and release · August 6, 2026 · 12 min</small>
+        <span>Restrict Language v0.0.1: values first, ownership clear</span>
+        <p>OSV syntax, affine ownership, inference, data modeling, static forms, WebAssembly, and the boundaries of the first release.</p>
       </a>
     </section>
   </main>
   <footer>
-    <span>Restrict Language · v0.0.1 preview</span>
+    <span>Restrict Language · v0.0.1</span>
     <span><a href="../">Back home</a></span>
   </footer>
 </body>

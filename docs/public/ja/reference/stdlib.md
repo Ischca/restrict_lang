@@ -1,6 +1,6 @@
 # 標準ライブラリリファレンス
 
-このページは、v0.0.1 互換 helper と post-v0.0.1 の Display 追加を含む、現在の standard-library surface を説明します。標準関数は主にコンパイラへ登録された組み込み surface として提供され、`std/*.rl` は読者とテスト向けの参照インデックスです。
+このページは、Displayと互換helperを含む、v0.0.1のcompiler-registered standard-library surfaceを説明します。標準関数は主にコンパイラへ登録された組み込みsurfaceとして提供され、`std/*.rl`は読者とテスト向けの参照インデックスです。
 
 ## import について
 

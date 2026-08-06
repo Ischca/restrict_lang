@@ -1,3 +1,4 @@
+use restrict_lang::{parse_program, TypeChecker};
 use std::fs;
 use std::path::Path;
 
@@ -182,9 +183,7 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
         "site/robots.txt",
         "site/sitemap.xml",
         "site/blog/index.html",
-        "site/blog/type-inference-v001.html",
-        "site/blog/runtime-dogfood.html",
-        "site/blog/shipping-v001-preview.html",
+        "site/blog/introducing-restrict-v001.html",
         "site/tools/highlight-theme-lab.html",
         "site/build-pages.sh",
         "scripts/build-pages.sh",
@@ -198,6 +197,17 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
         assert!(
             root.join(path).is_file(),
             "Pages source should include {path}"
+        );
+    }
+
+    for removed_post in [
+        "site/blog/type-inference-v001.html",
+        "site/blog/runtime-dogfood.html",
+        "site/blog/shipping-v001-preview.html",
+    ] {
+        assert!(
+            !root.join(removed_post).exists(),
+            "the v0.0.1 starting line should not republish historical post {removed_post}"
         );
     }
 
@@ -260,6 +270,115 @@ fn pages_shell_hosts_docs_blog_and_compiler_routes() {
 }
 
 #[test]
+fn release_blog_explains_the_language_and_establishes_the_v001_baseline() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let article = read_fixture(root, "site/blog/introducing-restrict-v001.html");
+
+    for section in [
+        "Why put the value first?",
+        "Ownership is part of the expression",
+        "Inference should remove repetition, not intent",
+        "Records describe products; enums describe choices",
+        "Forms express behavior without runtime objects",
+        "The compiler is inspectable from source to Wasm",
+        "A language also needs a working path around the compiler",
+        "The starting line",
+    ] {
+        assert!(
+            article.contains(section),
+            "v0.0.1 article should explain the language through the `{section}` section"
+        );
+    }
+
+    for current_syntax in [
+        "42 Option::Some",
+        "() Option::None",
+        "42 Result::Ok",
+        "DecodeError::Invalid",
+        "&lt;T of Labelled&gt;",
+        "value |&gt; label",
+    ] {
+        assert!(
+            article.contains(current_syntax),
+            "v0.0.1 article should demonstrate current syntax `{current_syntax}`"
+        );
+    }
+
+    for stale_framing in ["post-v0.0.1", "v0.0.1 preview", "pre-release"] {
+        assert!(
+            !article.to_lowercase().contains(stale_framing),
+            "v0.0.1 article should not retain stale framing `{stale_framing}`"
+        );
+    }
+}
+
+#[test]
+fn release_blog_restrict_examples_parse_and_type_check() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let article = read_fixture(root, "site/blog/introducing-restrict-v001.html");
+    let examples = extract_restrict_code_blocks(&article);
+
+    assert_eq!(
+        examples.len(),
+        5,
+        "v0.0.1 article should keep its five language examples under test"
+    );
+
+    for (index, source) in examples.iter().enumerate() {
+        let label = format!("v0.0.1 article example {}", index + 1);
+        assert_current_web_example_syntax(&label, source);
+
+        let (remaining, program) = parse_program(source)
+            .unwrap_or_else(|error| panic!("{label} should parse: {error:?}\n{source}"));
+        assert!(
+            remaining.trim().is_empty(),
+            "{label} should parse all input, remaining: {remaining:?}\n{source}"
+        );
+
+        TypeChecker::new()
+            .check_program(&program)
+            .unwrap_or_else(|error| panic!("{label} should type-check: {error}\n{source}"));
+    }
+}
+
+#[test]
+fn tagged_releases_are_stable_and_use_curated_notes_when_available() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = read_fixture(root, ".github/workflows/release.yml");
+    let notes = read_fixture(root, "docs/releases/v0.0.1.md");
+
+    for required in [
+        "name: Publish GitHub release",
+        "notes_file=\"docs/releases/${{ github.ref_name }}.md\"",
+        "--notes-file \"$notes_file\"",
+        "--generate-notes",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "release workflow should include `{required}`"
+        );
+    }
+
+    assert!(
+        !workflow.contains("--prerelease") && !workflow.contains("pre-release"),
+        "the first tagged release should be published as a stable GitHub release"
+    );
+
+    for required in [
+        "first public release",
+        "## Language highlights",
+        "## Compiler and tools",
+        "## Deliberate boundaries",
+        "## Start here",
+    ] {
+        assert!(
+            notes.contains(required),
+            "v0.0.1 release notes should include `{required}`"
+        );
+    }
+}
+
+#[test]
 fn restrict_highlighting_is_shared_by_docs_and_compiler() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let docs_highlighter = read_fixture(root, "docs/public/theme/restrict-highlight.js");
@@ -273,9 +392,7 @@ fn restrict_highlighting_is_shared_by_docs_and_compiler() {
     let docs_rustdoc_theme = read_fixture(root, "docs/public/theme/rustdoc-restrict.css");
     let docs_template = read_fixture(root, "docs/public/theme/index.hbs");
     let landing_html = read_fixture(root, "site/index.html");
-    let inference_post = read_fixture(root, "site/blog/type-inference-v001.html");
-    let dogfood_post = read_fixture(root, "site/blog/runtime-dogfood.html");
-    let shipping_post = read_fixture(root, "site/blog/shipping-v001-preview.html");
+    let release_post = read_fixture(root, "site/blog/introducing-restrict-v001.html");
     let compiler_html = read_fixture(root, "web/index.html");
     let compiler_app = read_fixture(root, "web/app.js");
     let build_script = read_fixture(root, "site/build-pages.sh");
@@ -351,20 +468,8 @@ fn restrict_highlighting_is_shared_by_docs_and_compiler() {
             r#"src="restrict-code-blocks.js""#,
         ),
         (
-            "site/blog/type-inference-v001.html",
-            &inference_post,
-            r#"src="../restrict-highlight.js""#,
-            r#"src="../restrict-code-blocks.js""#,
-        ),
-        (
-            "site/blog/runtime-dogfood.html",
-            &dogfood_post,
-            r#"src="../restrict-highlight.js""#,
-            r#"src="../restrict-code-blocks.js""#,
-        ),
-        (
-            "site/blog/shipping-v001-preview.html",
-            &shipping_post,
+            "site/blog/introducing-restrict-v001.html",
+            &release_post,
             r#"src="../restrict-highlight.js""#,
             r#"src="../restrict-code-blocks.js""#,
         ),
@@ -417,18 +522,8 @@ fn pages_static_html_has_public_metadata() {
             "website",
         ),
         (
-            "site/blog/type-inference-v001.html",
-            "https://ischca.github.io/restrict_lang/blog/type-inference-v001.html",
-            "article",
-        ),
-        (
-            "site/blog/runtime-dogfood.html",
-            "https://ischca.github.io/restrict_lang/blog/runtime-dogfood.html",
-            "article",
-        ),
-        (
-            "site/blog/shipping-v001-preview.html",
-            "https://ischca.github.io/restrict_lang/blog/shipping-v001-preview.html",
+            "site/blog/introducing-restrict-v001.html",
+            "https://ischca.github.io/restrict_lang/blog/introducing-restrict-v001.html",
             "article",
         ),
     ] {
@@ -487,9 +582,7 @@ fn pages_auxiliary_routes_are_publishable() {
         "https://ischca.github.io/restrict_lang/docs/",
         "https://ischca.github.io/restrict_lang/compiler/",
         "https://ischca.github.io/restrict_lang/blog/",
-        "https://ischca.github.io/restrict_lang/blog/shipping-v001-preview.html",
-        "https://ischca.github.io/restrict_lang/blog/type-inference-v001.html",
-        "https://ischca.github.io/restrict_lang/blog/runtime-dogfood.html",
+        "https://ischca.github.io/restrict_lang/blog/introducing-restrict-v001.html",
     ] {
         assert!(
             sitemap.contains(&format!("<loc>{public_url}</loc>")),
@@ -556,10 +649,10 @@ fn pages_build_script_fails_before_partial_artifacts() {
         "require_file \"$ROOT_DIR/web/pkg/restrict_lang.js\"",
         "require_file \"$ROOT_DIR/web/examples.js\"",
         "require_file \"$SITE_DIR/tools/highlight-theme-lab.html\"",
-        "require_file \"$SITE_DIR/blog/shipping-v001-preview.html\"",
+        "require_file \"$SITE_DIR/blog/introducing-restrict-v001.html\"",
         "cp \"$SITE_DIR/tools/\"*.html \"$TMP_DIR/tools/\"",
         "require_file \"$TMP_DIR/tools/highlight-theme-lab.html\"",
-        "require_file \"$TMP_DIR/blog/shipping-v001-preview.html\"",
+        "require_file \"$TMP_DIR/blog/introducing-restrict-v001.html\"",
         "require_file \"$TMP_DIR/compiler/examples.js\"",
         "does not contain a .wasm bundle",
         "mktemp -d",
@@ -643,6 +736,25 @@ fn extract_example_code_divs(markup: &str) -> Vec<String> {
         let content_end = content_start + end_offset;
         snippets.push(decode_html_text(&remaining[content_start..content_end]));
         remaining = &remaining[content_end + "</div>".len()..];
+    }
+
+    snippets
+}
+
+fn extract_restrict_code_blocks(markup: &str) -> Vec<String> {
+    let marker = r#"<pre><code class="language-restrict">"#;
+    let closing = "</code></pre>";
+    let mut snippets = Vec::new();
+    let mut remaining = markup;
+
+    while let Some(start) = remaining.find(marker) {
+        let content_start = start + marker.len();
+        let Some(end_offset) = remaining[content_start..].find(closing) else {
+            break;
+        };
+        let content_end = content_start + end_offset;
+        snippets.push(decode_html_text(&remaining[content_start..content_end]));
+        remaining = &remaining[content_end + closing.len()..];
     }
 
     snippets

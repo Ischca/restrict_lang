@@ -43,7 +43,7 @@ default v0.0.1 gate.
 
 ## Are user-defined enums supported?
 
-Yes, in the current post-v0.0.1 compiler. The supported slice is closed,
+Yes, in the v0.0.1 compiler. The supported slice is closed,
 non-generic, and non-recursive; variants have zero or one payload and use
 qualified `Type::Variant` constructors and exhaustive patterns. A custom enum
 can be the error in `Result<T, CustomError>`.

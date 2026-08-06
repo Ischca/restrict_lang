@@ -5,8 +5,8 @@ boundaries. Function parameters, exported APIs, and record fields should keep
 clear types. Function bodies, local bindings, generic call sites, and lambdas can
 then use inference without drifting away from OSV syntax.
 
-This page documents the current inference surface while noting historical
-v0.0.1 boundaries. The current user-defined enum slice is closed, non-generic,
+This page documents the v0.0.1 inference surface and its deliberate boundaries.
+The current user-defined enum slice is closed, non-generic,
 and non-recursive. Constructors and patterns use qualified `Type::Variant`
 names; a constructor payload is checked against its declared type.
 Temporal Affine Types (TAT) remain outside the default v0.0.1 gate. Exported
@@ -231,9 +231,9 @@ Collection literals, `Ok`, `Err`, `None`, and higher-order container operations
 can infer their generic types from explicit result types, sibling arguments,
 sibling branches, or the surrounding expected type.
 
-The `Container` behavior behind `map` and `filter` is compiler-internal in
-v0.0.1. The current post-v0.0.1 compiler also supports method-only forms,
-concrete record `takes` declarations, and generic `of` bounds. Form-bounded
+Built-in `map` and `filter` use compiler-internal `Container` behavior. The
+v0.0.1 compiler also supports method-only forms, concrete record `takes`
+declarations, and generic `of` bounds. Form-bounded
 calls are resolved statically and monomorphized; associated types, generic
 forms or adoptions, conditional adoptions, default methods, enum adoptions, and
 dynamic dispatch remain future design work.

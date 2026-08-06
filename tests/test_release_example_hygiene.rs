@@ -320,7 +320,7 @@ fn authoritative_specs_and_examples_include_static_forms() {
     let example = read_source(root, "examples/forms_display.rl");
 
     for required in [
-        "Forms, Adoptions, and Form Bounds (Post-v0.0.1)",
+        "Forms, Adoptions, and Form Bounds",
         "<T of A + B>",
         "monomorphizes form-bounded generic calls",
         "Form calls use ordinary affine function semantics",

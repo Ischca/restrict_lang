@@ -464,7 +464,7 @@ A層の deferred / replay 経路は、推論のための先読みや再検査が
 - context: 既存の `with` / `@Context` 仕組みを維持。効果多相は v1 では入れない
 - temporal: 既存の `lifetime_inference.rs` を維持。TAT は v2.0
 
-### 将来の B層拡張（post-v0.0.1）
+### 将来の B層拡張
 
 - **効果推論**: `A -{Context}-> B` 関数型。効果変数と効果多相（Koka的）。注意: `(users, |u| (u) fetch_profile) map` で `fetch_profile` が context を要求する場合、`map` は効果多相 `(C, Item -{e}-> U) -{e}-> Mapped<U>` が必要
 - **linearity-guided generalization**: `val id = |x| x` を `∀a. a→a` にする。一般化できるのは copy/pure/no-affine-capture/no-context-leak の束縛だけ。B層が「いつ一般化が健全か」を判定

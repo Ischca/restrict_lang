@@ -1,8 +1,8 @@
 # Language Guide Overview
 
 Welcome to the Restrict Language guide. These pages describe the current
-release-facing syntax, including the closed enum slice added after v0.0.1, and
-mark historical v0.0.1 boundaries where they matter.
+v0.0.1 release-facing syntax, including its closed enum slice, and mark future
+boundaries where they matter.
 
 ## What You'll Learn
 

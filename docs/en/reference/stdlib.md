@@ -1,8 +1,7 @@
 # Standard Library Reference
 
-This page documents the compiler-registered standard-library surface. It keeps
-v0.0.1 compatibility helpers while recording the current post-v0.0.1 Display
-addition.
+This page documents the v0.0.1 compiler-registered standard-library surface,
+including Display and the compatibility helpers retained by the release.
 
 The current standard library is intentionally small. APIs listed as absent below
 are not user-facing v0.0.1 features, even if their names appear in older

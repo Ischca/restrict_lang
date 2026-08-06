@@ -1,11 +1,11 @@
 # Syntax Reference
 
-This page summarizes the current syntax surface while identifying features
-added after v0.0.1. The authoritative source is `LANGUAGE_SPECIFICATION.md`;
-this guide keeps examples practical and release oriented.
+This page summarizes the v0.0.1 syntax surface. The authoritative source is
+`LANGUAGE_SPECIFICATION.md`; this guide keeps examples practical and release
+oriented while identifying features that remain outside the release.
 
 Temporal Affine Types are experimental and outside the default v0.0.1 gate.
-The current post-v0.0.1 compiler supports the closed user enum slice described
+The v0.0.1 compiler supports the closed user enum slice described
 below.
 
 ## Comments
@@ -221,7 +221,7 @@ fun frozen_reading: (reading: Reading) -> Reading = {
 
 ## User-Defined Enums
 
-The current post-v0.0.1 slice supports closed, non-generic, non-recursive
+The v0.0.1 slice supports closed, non-generic, non-recursive
 enums. Each variant has either no payload or one payload:
 
 ```restrict

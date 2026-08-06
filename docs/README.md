@@ -71,7 +71,7 @@ When editing public docs:
 
 - edit `docs/public/en/` first
 - update `docs/public/SUMMARY.md` for visible navigation changes
-- label examples that require the current post-v0.0.1 compiler
+- keep executable examples inside the v0.0.1 release surface
 - use `val`, `mut val`, OSV calls, and `:` record fields
 - keep user enum examples within the closed, non-generic, non-recursive slice;
   keep form examples method-only with concrete non-generic `takes`; and avoid

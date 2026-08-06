@@ -23,7 +23,7 @@ A statically-typed functional programming language that compiles to WebAssembly,
 
 ## 🚀 Quick Start
 
-The current browser preview runs without an installation at the
+The browser playground runs without an installation at the
 [Restrict playground](https://ischca.github.io/restrict_lang/compiler/).
 
 ### From Source
@@ -58,16 +58,15 @@ wasmtime hello.wat
 
 ## Release Design Boundaries
 
-The v0.0.1 tag intentionally kept several language-shaping decisions out of
-its support promise. The current post-v0.0.1 compiler adds a deliberately
-small user-defined enum slice while retaining the ABI boundaries below.
+The v0.0.1 release includes a deliberately small user-defined enum and static
+form surface while retaining the ABI boundaries below.
 
 - Closed, non-generic, non-recursive user-defined `enum` declarations are
   supported. Variants have zero or one payload, constructors use qualified
   `Type::Variant` names in OSV order, patterns use the same qualified names,
   and matches must be exhaustive. `pub enum` is source-module metadata only:
   user enums have no host WebAssembly ABI.
-- The current post-v0.0.1 compiler supports non-generic, method-only `form`
+- The v0.0.1 compiler supports non-generic, method-only `form`
   contracts, concrete record `takes` declarations, and `<T of A + B>` generic
   bounds. Dispatch is static and monomorphized. Associated types, generic or
   conditional adoptions, defaults, enum adoptions, and dynamic dispatch remain
@@ -352,7 +351,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - **[Quick Start](docs/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
 - **[Language Guide](docs/en/guide/README.md)** - Current release-facing syntax and design rules
-- **[Release Surface](docs/en/reference/release-surface.md)** - Historical v0.0.1 boundaries and current post-v0.0.1 additions
+- **[Release Surface](docs/en/reference/release-surface.md)** - Current v0.0.1 language and host ABI boundaries
 - **[Examples](examples/)** - Sample programs and use cases
 
 ## 🏗️ Implementation Status

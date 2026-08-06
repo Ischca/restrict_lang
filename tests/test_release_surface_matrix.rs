@@ -10,13 +10,13 @@ const RELEASE_SURFACE_DOC: &str = "docs/v001-release-surface.md";
 const REQUIRED_PHRASES: &[&str] = &[
     "## Supported",
     "## Rejected With Explicit Diagnostics",
-    "## Experimental/Post-v0.0.1",
+    "## Experimental/Future",
     "OSV-only calls",
     "`val` / `mut val`",
     "`List<T>`, `Option<T>`, `Result<T, E>`, and concrete `Range<Int32>`",
     "Fixed-length arrays",
     "not a source-level `Array<T, 0>` release contract",
-    "Internal `Container` forms only for `List` / `Option`",
+    "Built-in container behavior",
     "Source imports without aliases/re-exports",
     "Scalar monomorphic `pub fun` / `export fun` host ABI",
     "`Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()`",
@@ -146,12 +146,10 @@ fn v001_release_surface_and_spec_keep_deferred_surfaces_outside_default_gate() {
 }
 
 #[test]
-fn release_surface_and_spec_define_the_post_v001_static_form_boundary() {
+fn release_surface_and_spec_define_the_v001_static_form_boundary() {
     let release_surface = read_fixture(RELEASE_SURFACE_DOC);
     let language_spec = read_fixture(LANGUAGE_SPEC);
     let normalized_language_spec = normalize_whitespace(&language_spec);
-    let post_v001 = section_after(&release_surface, "## Experimental/Post-v0.0.1");
-
     for phrase in [
         "Method-only forms",
         "fully typed method signatures",
@@ -167,14 +165,14 @@ fn release_surface_and_spec_define_the_post_v001_static_form_boundary() {
     ] {
         assert_doc_contains(
             RELEASE_SURFACE_DOC,
-            post_v001,
+            &release_surface,
             phrase,
-            "post-v0.0.1 static forms",
+            "v0.0.1 static forms",
         );
     }
 
     for phrase in [
-        "Forms, Adoptions, and Form Bounds (Post-v0.0.1)",
+        "Forms, Adoptions, and Form Bounds",
         "surface is intentionally method-only",
         "A `takes` declaration targets one concrete, non-generic record",
         "<T of A + B>",
@@ -189,18 +187,16 @@ fn release_surface_and_spec_define_the_post_v001_static_form_boundary() {
             LANGUAGE_SPEC,
             &normalized_language_spec,
             phrase,
-            "post-v0.0.1 static forms",
+            "v0.0.1 static forms",
         );
     }
 }
 
 #[test]
-fn release_surface_and_spec_define_the_post_v001_closed_enum_boundary() {
+fn release_surface_and_spec_define_the_v001_closed_enum_boundary() {
     let release_surface = read_fixture(RELEASE_SURFACE_DOC);
     let language_spec = read_fixture(LANGUAGE_SPEC);
     let normalized_language_spec = normalize_whitespace(&language_spec);
-    let post_v001 = section_after(&release_surface, "## Experimental/Post-v0.0.1");
-
     for phrase in [
         "Closed user-defined enums",
         "non-generic, non-recursive enums",
@@ -215,9 +211,9 @@ fn release_surface_and_spec_define_the_post_v001_closed_enum_boundary() {
     ] {
         assert_doc_contains(
             RELEASE_SURFACE_DOC,
-            post_v001,
+            &release_surface,
             phrase,
-            "post-v0.0.1 closed user-defined enums",
+            "v0.0.1 closed user-defined enums",
         );
     }
 
@@ -226,7 +222,7 @@ fn release_surface_and_spec_define_the_post_v001_closed_enum_boundary() {
         "Generic enums, recursive enums",
         "variants are scoped under their enum name",
         "pub enum PublicError",
-        "Post-v0.0.1 exported enums have the same source-module-only meaning",
+        "Exported enums have the same source-module-only meaning",
         "do not emit direct host-visible WebAssembly exports",
         "user-defined enums are rejected by both the default ABI and `flat-record-v1`",
         "A postfix `?` operator remains future work",
@@ -235,31 +231,27 @@ fn release_surface_and_spec_define_the_post_v001_closed_enum_boundary() {
             LANGUAGE_SPEC,
             &normalized_language_spec,
             phrase,
-            "post-v0.0.1 closed user-defined enums",
+            "v0.0.1 closed user-defined enums",
         );
     }
 }
 
 #[test]
-fn any_historical_enum_rejection_is_scoped_to_v001() {
+fn v001_release_surface_drops_superseded_enum_and_form_history() {
     let release_surface = read_fixture(RELEASE_SURFACE_DOC);
-    let rejected = section_between(
-        &release_surface,
-        "## Rejected With Explicit Diagnostics",
-        "## Experimental/Post-v0.0.1",
-    );
-    let post_v001 = section_after(&release_surface, "## Experimental/Post-v0.0.1");
 
-    if rejected.contains("enum declarations are unsupported") {
+    for stale_claim in [
+        "post-v0.0.1",
+        "Post-v0.0.1",
+        "Added after v0.0.1",
+        "Historically rejected",
+        "Historically reserved",
+    ] {
         assert!(
-            rejected.contains("enum declarations are unsupported in v0.0.1"),
-            "historical enum rejection must be explicitly scoped to v0.0.1"
+            !release_surface.contains(stale_claim),
+            "the first v0.0.1 release contract should not keep superseded history: {stale_claim}"
         );
     }
-    assert!(
-        !post_v001.contains("enum declarations remain unsupported"),
-        "the current post-v0.0.1 enum surface must not be described as unsupported"
-    );
 }
 
 #[test]
@@ -284,17 +276,17 @@ fn v001_release_surface_supported_section_does_not_promote_reserved_work() {
         "## Supported",
         "## Rejected With Explicit Diagnostics",
     );
-    for forbidden in [
-        "TAT",
-        "`form`",
-        "`takes`",
-        "source-level form",
-        "generic export abi",
-        "exported generic",
-    ] {
+    for forbidden in ["TAT", "generic export abi", "exported generic"] {
         assert!(
             !supported.contains(forbidden),
             "{RELEASE_SURFACE_DOC} should not claim `{forbidden}` is supported"
+        );
+    }
+
+    for required in ["Source-level forms", "`takes`", "Closed user-defined enums"] {
+        assert!(
+            supported.contains(required),
+            "{RELEASE_SURFACE_DOC} should include v0.0.1 surface `{required}`"
         );
     }
 }
@@ -395,14 +387,6 @@ fn section_between<'a>(doc: &'a str, start: &str, end: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing section end marker: {end}"));
 
     &doc[content_start..section_end]
-}
-
-fn section_after<'a>(doc: &'a str, start: &str) -> &'a str {
-    let section_start = doc
-        .find(start)
-        .unwrap_or_else(|| panic!("missing section start marker: {start}"));
-
-    &doc[section_start + start.len()..]
 }
 
 fn normalize_whitespace(value: &str) -> String {

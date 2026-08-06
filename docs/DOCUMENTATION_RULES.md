@@ -30,8 +30,8 @@ When changing user-facing language behavior:
 4. Update `README.md` if the feature is important for first-time users.
 5. Run docs hygiene tests.
 
-Public examples must distinguish the historical v0.0.1 release surface from
-the current post-v0.0.1 compiler surface:
+Public examples must stay inside the v0.0.1 release surface and distinguish
+implemented features from reserved or experimental design space:
 
 - `val`, not `let`
 - `mut val`, not `val mut`

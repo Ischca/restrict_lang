@@ -26,15 +26,13 @@ Some reserved words are for planned or experimental features. A word being
 reserved does not imply that every related syntax form is part of the current
 v0.0.1 implementation.
 
-The v0.0.1 release did not expose source-level `form` / `takes` / `of` syntax.
-The current post-v0.0.1 compiler exposes the deliberately small, method-only
-form slice specified below. Generic forms, associated types, default methods,
-generic or conditional adoptions, enum adoptions, and dynamic dispatch remain
-future work.
+The v0.0.1 release exposes the deliberately small, method-only `form` /
+`takes` / `of` slice specified below. Generic forms, associated types, default
+methods, generic or conditional adoptions, enum adoptions, and dynamic dispatch
+remain future work.
 
-The v0.0.1 release included only compiler-provided `Option<T>` and
-`Result<T, E>` sum types. The current post-v0.0.1 compiler additionally
-supports the closed, non-generic user-defined `enum` slice specified below.
+The v0.0.1 release includes compiler-provided `Option<T>` and `Result<T, E>`
+sum types plus the closed, non-generic user-defined `enum` slice specified below.
 Generic enums, recursive enums, and variants with more than one direct payload
 remain future work.
 Host-visible WebAssembly exports that would require an exported
@@ -191,7 +189,7 @@ Int32 -> String         // Function type
 (Int32, String) -> Boolean // Multi-parameter function
 ```
 
-### 4.5 User-Defined Enum Types (Post-v0.0.1)
+### 4.5 User-Defined Enum Types
 
 ```rust
 pub enum ParseError {
@@ -558,7 +556,7 @@ Rules:
   They are a scoped, type-directed function namespace that preserves Restrict's
   value-flow-first OSV model.
 
-### 8.4 Forms, Adoptions, and Form Bounds (Post-v0.0.1)
+### 8.4 Forms, Adoptions, and Form Bounds
 
 A `form` is an explicit, compile-time behavioral contract. The initial source
 surface is intentionally method-only: forms are non-generic, every method has
@@ -770,7 +768,7 @@ pub val release_bias: Int32 = 3
 ```
 
 For the v0.0.1 implementation, exported records are source-level module
-metadata. Post-v0.0.1 exported enums have the same source-module-only meaning.
+metadata. Exported enums have the same source-module-only meaning.
 Records, enums, and forms can be imported and used by other Restrict source modules,
 but they do not emit direct host-visible WebAssembly exports. Importing an enum
 imports its type namespace; callers continue to spell constructors and patterns

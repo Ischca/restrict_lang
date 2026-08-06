@@ -276,6 +276,7 @@ fn release_blog_explains_the_language_and_establishes_the_v001_baseline() {
 
     for section in [
         "Why put the value first?",
+        "Scope is a typed capability boundary",
         "Ownership is part of the expression",
         "Inference should remove repetition, not intent",
         "Records describe products; enums describe choices",
@@ -295,6 +296,8 @@ fn release_blog_explains_the_language_and_establishes_the_v001_baseline() {
         "() Option::None",
         "42 Result::Ok",
         "DecodeError::Invalid",
+        "context Logging",
+        "with RequestScope",
         "&lt;T of Labelled&gt;",
         "value |&gt; label",
     ] {
@@ -310,6 +313,23 @@ fn release_blog_explains_the_language_and_establishes_the_v001_baseline() {
             "v0.0.1 article should not retain stale framing `{stale_framing}`"
         );
     }
+
+    let scope_index = article
+        .find("Scope is a typed capability boundary")
+        .expect("v0.0.1 article should explain typed scopes");
+    let ownership_index = article
+        .find("Ownership is part of the expression")
+        .expect("v0.0.1 article should explain affine ownership");
+    assert!(
+        scope_index < ownership_index,
+        "the distinctive scope model should be introduced before ownership details"
+    );
+
+    assert!(
+        !article.contains("Restrict is a small")
+            && !article.contains("small, statically typed language"),
+        "the article should not characterize the whole language as small"
+    );
 }
 
 #[test]
@@ -320,8 +340,8 @@ fn release_blog_restrict_examples_parse_and_type_check() {
 
     assert_eq!(
         examples.len(),
-        5,
-        "v0.0.1 article should keep its five language examples under test"
+        6,
+        "v0.0.1 article should keep its six language examples under test"
     );
 
     for (index, source) in examples.iter().enumerate() {

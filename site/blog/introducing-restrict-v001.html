@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restrict Language v0.0.1: values first, ownership clear</title>
-  <meta name="description" content="Introducing Restrict Language through its values-first OSV syntax, affine ownership, type inference, records, enums, forms, and WebAssembly toolchain.">
+  <meta name="description" content="Introducing Restrict Language through its values-first OSV syntax, typed context scopes, affine ownership, type inference, records, enums, forms, and WebAssembly toolchain.">
   <meta name="theme-color" content="#ff6b35">
   <meta property="og:site_name" content="Restrict Language">
   <meta property="og:type" content="article">
   <meta property="og:title" content="Restrict Language v0.0.1: values first, ownership clear">
-  <meta property="og:description" content="The ideas, language features, and deliberately narrow boundaries behind the first Restrict release.">
+  <meta property="og:description" content="Values-first OSV syntax, typed context scopes, affine ownership, and the deliberately narrow boundaries behind the first Restrict release.">
   <meta property="og:url" content="https://ischca.github.io/restrict_lang/blog/introducing-restrict-v001.html">
   <meta name="twitter:card" content="summary">
   <link rel="canonical" href="https://ischca.github.io/restrict_lang/blog/introducing-restrict-v001.html">
@@ -34,18 +34,18 @@
     <article>
       <p class="eyebrow">The first release</p>
       <h1>Restrict Language v0.0.1: values first, ownership clear</h1>
-      <p class="article-meta">Released August 6, 2026 · 12 min read</p>
+      <p class="article-meta">Released August 6, 2026 · 14 min read</p>
       <p class="article-lede">
-        Restrict is a small, statically typed language for WebAssembly. It puts
-        values before the operations that consume them, checks affine ownership,
-        and keeps abstraction resolvable at compile time. Version 0.0.1 is the
-        first public line: the point from which the language, tools, and release
-        contract move forward together.
+        Restrict is a statically typed language designed for WebAssembly. It puts
+        values before the operations that consume them, makes capability scopes
+        explicit, checks affine ownership, and keeps abstraction resolvable at
+        compile time. Version 0.0.1 is the first public line: the point from which
+        the language, tools, and release contract move forward together.
       </p>
 
       <aside class="article-summary" aria-label="Release summary">
         <strong>What ships in v0.0.1</strong>
-        <p>OSV calls, affine bindings, bidirectional inference, records, closed enums, Option and Result, static forms, modules, a Wasm compiler, Warder, an LSP, and a browser playground.</p>
+        <p>OSV calls, typed context scopes, affine bindings, bidirectional inference, records, closed enums, Option and Result, static forms, modules, a Wasm compiler, Warder, an LSP, and a browser playground.</p>
       </aside>
 
       <h2>Why put the value first?</h2>
@@ -79,6 +79,46 @@ fun main: () -&gt; Int32 = {
         This makes a program read in the same direction as its data flow. It also
         gives constructors and polymorphic operations a common shape: the value
         supplies context before the compiler resolves the operation.
+      </p>
+
+      <h2 id="scope-is-a-typed-capability-boundary">Scope is a typed capability boundary</h2>
+      <p>
+        Restrict makes scoped inputs part of the language. A <code>context</code>
+        declares a typed environment, and a <code>with</code> expression supplies
+        that environment for one body block. The fields are neither global state
+        nor properties on a receiver object: they exist only inside that lexical
+        scope.
+      </p>
+      <pre><code class="language-restrict">context Logging {
+    level: Int32
+}
+
+context RequestScope {
+    request_id: Int32
+}
+
+fun main: () -&gt; Int32 = {
+    with Logging { level: 10 } {
+        with RequestScope { request_id: 32 } {
+            request_id + level
+        }
+    }
+}</code></pre>
+      <p>
+        Scopes compose by nesting. The inner request scope can use the logging
+        capability from its outer scope, while neither binding exists after its
+        block ends. The compiler rejects unknown fields and type mismatches, and
+        the context declaration supplies expected types when an expression—such
+        as an empty collection—would otherwise be ambiguous. Configuration,
+        policy, and capabilities can therefore be local and statically checked
+        without being stored in a singleton or threaded through receiver state.
+      </p>
+      <p>
+        The built-in <code>Arena</code> uses the same <code>with</code> shape for a
+        memory boundary. Heap-backed values created in an explicit arena cannot
+        escape its body, while scalar summaries can. These v0.0.1 context scopes
+        are distinct from temporal affine types and lifetime relations, which
+        remain experimental rather than part of the release contract.
       </p>
 
       <h2 id="ownership-is-part-of-the-expression">Ownership is part of the expression</h2>

@@ -1,6 +1,6 @@
 # Introduction
 
-Restrict is a small, WebAssembly-oriented programming language built around
+Restrict is a WebAssembly-oriented programming language built around
 object-subject-verb calls, affine ownership, and explicit release boundaries.
 The current documentation distinguishes the v0.0.1 release surface—what is
 implemented and intended for public use—from what is intentionally rejected

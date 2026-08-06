@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Language
 
 - OSV-only calls through `value |> function`, `(args) function`, and `() function`
+- Typed `context` declarations and composable `with Context { bindings } { body }` lexical scopes
 - Affine binding checks with `val` and `mut val`
 - Bidirectional type inference for generics, lambdas, branches, records, and containers
 - Records, prototype-style `clone` and `freeze`, and record destructuring

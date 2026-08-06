@@ -9,6 +9,7 @@ authoritative language specification; this page is the shorter release contract.
 | Surface | v0.0.1 status |
 | --- | --- |
 | OSV-only calls | Use `value |> function`, `(arg1, arg2) function`, or `() function`. Traditional `function(args)` calls are outside the surface. |
+| Typed context scopes | `context Name` declares typed fields. `with Context { bindings } { body }` binds them for one lexical body, and nested scopes compose. Function-level context annotations and temporal lifetime scopes remain future work. |
 | `val` / `mut val` bindings | Immutable bindings use `val`; mutable bindings use `mut val`. |
 | Built-in generic values | `List<T>`, `Option<T>`, `Result<T, E>`, and concrete `Range<Int32>` are supported. |
 | Fixed-length arrays | Source-level `Array<T, N>` is supported. Compiler-internal wildcard lengths are not a public `Array<T, 0>` contract. |

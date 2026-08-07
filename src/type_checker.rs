@@ -12310,7 +12310,7 @@ fun main: (item: Box<Int64>) -> Box<Int64> = {
         let input = "context DB { host: String, port: Int32 }
 
 val result = with DB {
-    val x = 42
+    val x = 42;
     x
 }";
         match parse_program(input) {
@@ -12349,7 +12349,7 @@ val result = with DB {
             context DB { host: String }
 
             val result = with DB {
-                val x = 42
+                val x = 42;
                 x
             }
         "#;
@@ -12360,7 +12360,7 @@ val result = with DB {
             context Cache { size: Int32 }
 
             val result = with Cache {
-                val y = 100
+                val y = 100;
                 y
             }
         "#;

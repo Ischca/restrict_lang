@@ -33,7 +33,7 @@ fun safe_divide: (a: Int32, b: Int32) -> Result<Int32, String> = {
 }
 
 fun exercise3: () -> () = {
-    val result = (10, 0) safe_divide
+    val result = (10, 0) safe_divide;
 
     result match {
         Ok(value) => {

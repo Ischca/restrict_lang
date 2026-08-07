@@ -267,7 +267,7 @@ fn cli_compiles_current_sample_syntax() {
     fs::write(
         &source_path,
         r#"fun main: () -> () = {
-    val message = "Hello, Restrict Language!"
+    val message = "Hello, Restrict Language!";
     message |> println
 }
 "#,

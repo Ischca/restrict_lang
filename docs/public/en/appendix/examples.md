@@ -36,12 +36,12 @@ record ReleaseCheck {
 }
 
 fun passed_tests: (check: ReleaseCheck) -> Int32 = {
-    val ReleaseCheck { tests, failures } = check
+    val ReleaseCheck { tests, failures } = check;
     tests - failures
 }
 
 export fun exported_passed_tests: () -> Int32 = {
-    val check = ReleaseCheck { tests: 42, failures: 2 }
+    val check = ReleaseCheck { tests: 42, failures: 2 };
     check |> passed_tests
 }
 ```

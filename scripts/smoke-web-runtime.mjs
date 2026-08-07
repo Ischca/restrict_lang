@@ -9,7 +9,11 @@ await init({ module_or_path: compilerWasm });
 
 async function runProgram(source, label) {
     const compilation = compile_restrict_lang(source);
-    assert.equal(compilation.success, true, compilation.error || `${label} should compile`);
+    assert.equal(
+        compilation.success,
+        true,
+        compilation.error ? `${label}: ${compilation.error}` : `${label} should compile`
+    );
 
     const outputChunks = [];
     let programInstance = null;

@@ -261,7 +261,7 @@ fun keep: (items: List<Int32>) -> List<Int32> = {
 }
 
 fun main: (items: List<Int32>) -> List<Int32> = {
-    val alias = items
+    val alias = items;
     alias |> keep
 }
 "#,
@@ -1360,7 +1360,7 @@ fun keep: (items: List<Int32>) -> List<Int32> = {
 }
 
 fun main: (items: List<Int32>) -> List<Int32> = {
-    val alias = items
+    val alias = items;
     alias |> keep
 }
 "#;
@@ -1408,7 +1408,7 @@ fun bump: (value: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val seed = 41
+    val seed = 41;
     seed |> bump
 }
 "#;

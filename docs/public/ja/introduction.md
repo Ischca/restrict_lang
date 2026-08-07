@@ -50,7 +50,7 @@ fun consume: (x: String) -> () = {
 }
 
 fun main: () = {
-    val msg = "Hello"
+    val msg = "Hello";
     msg |> consume
     // msgはここでは使用できません
 }
@@ -95,7 +95,7 @@ record Car {
 fun main: () = {
     val base_car = Car { wheels: 4, color: "未設定" }
     val my_car = base_car.clone { color: "赤" }
-    val frozen_car = my_car freeze
+    val frozen_car = my_car freeze;
     frozen_car
 }
 ```
@@ -134,10 +134,10 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 // メインエントリポイント
 fun main: () = {
     val name = "世界"
-    val message = name |> greet
+    val message = name |> greet;
     message |> println
 
-    val total = (20, 22) add
+    val total = (20, 22) add;
     total |> print_int
 }
 ```

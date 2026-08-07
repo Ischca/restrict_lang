@@ -124,19 +124,19 @@ fun add_int: (total: Int32, value: Int32) -> Int32 = {
 
 fun main: (urgent: Boolean, bonus: Option<Int32>) -> Int32 = {
     val adjust = urgent then {
-        val boost = 2
+        val boost = 2;
         |score| score + boost
     } else {
-        val factor = 2
+        val factor = 2;
         |score| score * factor
     }
     val normalize = bonus match {
         Some(value) => {
-            val doubled = value * 2
+            val doubled = value * 2;
             |score| score + doubled
         }
         None => {
-            val doubled = 0
+            val doubled = 0;
             |score| score + doubled
         }
     }

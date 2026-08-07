@@ -27,7 +27,7 @@
       "id": "functionsOsv",
       "title": "Functions and OSV",
       "group": "start",
-      "description": "Put arguments before verbs, then continue the value through a pipe.",
+      "description": "Put arguments before verbs, explicitly stage a local value, then continue it through a direct OSV chain.",
       "file": "functions_osv.rl",
       "kind": "run",
       "expectedOutput": "42\n"
@@ -36,7 +36,7 @@
       "id": "scopedCollections",
       "title": "Map through a scope",
       "group": "start",
-      "description": "Let map open an implicit focus scope, then name both values in a fold scope.",
+      "description": "Name map's scoped value with a lambda binder, then name both values in a fold scope.",
       "file": "scoped_collections.rl",
       "kind": "run",
       "expectedOutput": "43\n"

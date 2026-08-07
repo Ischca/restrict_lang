@@ -20,6 +20,7 @@ authoritative language specification; this page is the shorter release contract.
 | Scalar function exports | Concrete non-generic `pub fun` and `export fun` are supported when every host-visible parameter and result is scalar. |
 | Scalar top-level constants | Immutable top-level literal constants can be exported when their ABI is `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()`. |
 | Program entry | Zero-argument `main` is the executable source entry point. The generated `_start` export is a no-result wrapper that calls `$main`, drops any result, and resets the default arena. A parameterized function named `main` remains a normal function and does not emit `_start`. |
+| Compilation target | Restrict source compiles to Core WebAssembly. The current program profile uses basic WASI Preview 1 imports; browser JavaScript is host glue rather than a JavaScript backend. |
 
 ## Scalar Host ABI
 
@@ -48,7 +49,7 @@ fun total_score: (score: Score) -> Int32 = {
 }
 
 export fun exported_score: () -> Int32 = {
-    val score = Score { base: 40, bonus: 2 }
+    val score = Score { base: 40, bonus: 2 };
     score |> total_score
 }
 ```
@@ -93,6 +94,8 @@ system without widening the default host ABI:
 - postfix `?` error propagation
 - direct generic or composite host ABI
 - WebAssembly Component Model and WIT binding generation
+- general WASI filesystem, network, HTTP, and async bindings
+- direct portable browser DOM interfaces
 
 Keeping these boundaries explicit is important: Restrict can evolve without
 silently promising unstable host layouts or unfinished syntax.

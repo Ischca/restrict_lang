@@ -41,7 +41,7 @@ fun consume: (message: String) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val message = "hello"
+    val message = "hello";
     message |> consume
 }
 ```
@@ -50,7 +50,7 @@ Copyable primitives can be used repeatedly:
 
 ```restrict
 fun main: () -> Int32 = {
-    val score = 40
+    val score = 40;
     score + score
 }
 ```
@@ -59,8 +59,8 @@ Mutable bindings are declared with `mut val`:
 
 ```restrict
 fun main: () -> Int32 = {
-    mut val counter = 0
-    counter = counter + 1
+    mut val counter = 0;
+    counter = counter + 1;
     counter
 }
 ```
@@ -144,7 +144,7 @@ Empty collection literals need context:
 
 ```restrict
 fun main: () -> List<Int32> = {
-    val values: List<Int32> = []
+    val values: List<Int32> = [];
     values
 }
 ```
@@ -200,7 +200,7 @@ Record values are affine. Use destructuring when multiple fields are needed:
 
 ```restrict
 fun delta: (reading: Reading) -> Float64 = {
-    val Reading { celsius, threshold } = reading
+    val Reading { celsius, threshold } = reading;
     celsius - threshold
 }
 ```

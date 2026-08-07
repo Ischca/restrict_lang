@@ -18,7 +18,7 @@ The host entry point, normally `main`, gets a default arena automatically:
 
 ```restrict
 fun main: () -> List<Int32> = {
-    val numbers = [1, 2, 3, 4, 5]
+    val numbers = [1, 2, 3, 4, 5];
     numbers
 }
 ```
@@ -35,9 +35,9 @@ does not need fields, so the binding block is empty.
 ```restrict
 fun main: () -> Int32 = {
     val count = with Arena { } {
-        val numbers = [1, 2, 3, 4, 5]
+        val numbers = [1, 2, 3, 4, 5];
         numbers |> list_count
-    }
+    };
     count
 }
 ```
@@ -105,7 +105,7 @@ fun count_items: (items: List<Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val items = [1, 2, 3]
+    val items = [1, 2, 3];
     items |> count_items
 }
 ```
@@ -116,7 +116,7 @@ Primitive values copy, so repeated reads are allowed:
 
 ```restrict
 fun main: () -> Int32 = {
-    val score = 40
+    val score = 40;
     score >= 40 then {
         score + score
     } else {
@@ -129,8 +129,8 @@ Use `mut val` when a local slot must be reassigned:
 
 ```restrict
 fun main: () -> Int32 = {
-    mut val total = 0
-    total = total + 1
+    mut val total = 0;
+    total = total + 1;
     total = total + 2
     total
 }

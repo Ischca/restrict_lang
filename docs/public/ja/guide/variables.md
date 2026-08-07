@@ -15,7 +15,7 @@ val y = x    // xはyに移動され、もうアクセスできません
 この単一使用ルールはすべての型に適用されます：
 
 ```restrict
-val message = "Hello"
+val message = "Hello";
 message |> println    // messageはここで消費されます
 // message |> println // エラー: messageはすでに使用されています！
 ```
@@ -25,8 +25,8 @@ message |> println    // messageはここで消費されます
 値を変更する必要がある場合は、`mut`を使用します：
 
 ```restrict
-mut val counter = 0
-counter = counter + 1  // OK: 可変変数は再代入できます
+mut val counter = 0;
+counter = counter + 1; // OK: 可変変数は再代入できます
 counter = counter + 1  // OK: 複数回使用できます
 val final_count = counter  // counterはここで消費されます
 ```
@@ -42,7 +42,7 @@ fun double: (x: Int32) -> Int32 = {
 
 fun main: () = {
     val x = 42
-    val result = x |> double
+    val result = x |> double;
     result |> print_int
 }
 ```
@@ -52,8 +52,8 @@ fun main: () = {
 可変束縛も通常の宣言として書きます。パイプ演算子の可変版はv0.0.1の構文ではありません。
 
 ```restrict
-mut val counter = 0
-counter = counter + 1
+mut val counter = 0;
+counter = counter + 1;
 counter |> print_int
 ```
 
@@ -110,7 +110,7 @@ record Person {
 fun main: () = {
     val base = Person { name: "Alice", age: 0, email: "" }
     val adult = base.clone { age: 25 }
-    val ready = adult.clone { email: "alice@example.com" } freeze
+    val ready = adult.clone { email: "alice@example.com" } freeze;
     ready
 }
 ```

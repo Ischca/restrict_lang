@@ -10,7 +10,7 @@ Notice takes Display {
 }
 
 fun main: () = {
-    42 |> println
-    "built-in String" |> println
-    Notice { text: "record adoption" } |> println
+    42 println
+    "built-in String" println
+    Notice { text: "record adoption" } println
 }

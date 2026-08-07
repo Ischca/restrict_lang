@@ -87,8 +87,8 @@ Mutable bindings place `mut` before `val`:
 
 ```restrict
 fun next_counter: () -> Int32 = {
-    mut val counter = 0
-    counter = counter + 1
+    mut val counter = 0;
+    counter = counter + 1;
     counter
 }
 ```

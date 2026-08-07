@@ -9,5 +9,5 @@ fun read_x: (point: Point) -> Int32 = {
 }
 
 fun main: () = {
-    Point { x: 42, y: 7 } |> read_x |> println
+    Point { x: 42, y: 7 } read_x println
 }

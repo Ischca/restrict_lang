@@ -55,7 +55,7 @@ val reading: Float64 = 21.5
 Mutable bindings use `mut val`, with `mut` before `val`:
 
 ```restrict
-mut val counter = 0
+mut val counter = 0;
 counter = counter + 1
 ```
 
@@ -68,8 +68,35 @@ record Point {
 }
 
 fun sum_point: (point: Point) -> Int32 = {
-    val Point { x, y } = point
+    val Point { x, y } = point;
     x + y
+}
+```
+
+## Expression Boundaries
+
+Line breaks are whitespace, so a direct OSV expression may continue on the
+next line. Values that cannot act as verbs naturally begin a new expression:
+
+```restrict
+"first" println
+"second" println
+```
+
+Use `;` when a local binding is followed by an identifier-started expression
+that must not become another verb in the binding value:
+
+```restrict
+val message = "ready";
+message println
+```
+
+For a name used only inside a higher-order transformation, a scoped verb clause
+usually keeps the flow clearer and semicolon-free:
+
+```restrict
+values map { |value|
+    value + 1
 }
 ```
 
@@ -220,7 +247,7 @@ record Reading {
 }
 
 fun main: () -> Float64 = {
-    val reading = Reading { celsius: 21.5, ok: true }
+    val reading = Reading { celsius: 21.5, ok: true };
     reading.celsius
 }
 ```

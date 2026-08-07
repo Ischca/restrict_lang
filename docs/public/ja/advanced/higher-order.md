@@ -29,7 +29,7 @@ fun main: () -> Int32 = {
 
 ```restrict
 fun main: () -> List<Int32> = {
-    val numbers = [1, 2, 3]
+    val numbers = [1, 2, 3];
     (numbers, |value| value * 2) map
 }
 ```
@@ -112,7 +112,7 @@ values filter {
 
 ```restrict
 values map { |value|
-    val shifted = value + 1
+    val shifted = value + 1;
     shifted * 2
 }
 ```

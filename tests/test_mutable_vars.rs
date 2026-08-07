@@ -24,8 +24,8 @@ fn test_simple_mutable_binding() {
 #[test]
 fn test_mutable_reassignment() {
     let input = r#"fun test: () = {
-        mut val x = 5
-        x = 10
+        mut val x = 5;
+        x = 10;
         x
     }"#;
     let wat = compile(input).unwrap();
@@ -55,8 +55,8 @@ fn test_immutable_reassignment_error() {
 #[test]
 fn test_mutable_with_arithmetic() {
     let input = r#"fun test: () = {
-        mut val x = 5
-        x = x + 1
+        mut val x = 5;
+        x = x + 1;
         x
     }"#;
     let wat = compile(input).unwrap();
@@ -69,7 +69,7 @@ fn test_while_with_mutable() {
     mut val x = 0
     mut val sum = 0
     (x < 10) while {
-        sum = sum + x
+        sum = sum + x;
         x = x + 1
     }
     sum
@@ -86,8 +86,8 @@ fn test_while_with_mutable() {
 #[test]
 fn test_mutable_parameter_reassignment() {
     let input = r#"fun add_one: (x: Int32) = {
-        mut val y = x
-        y = y + 1
+        mut val y = x;
+        y = y + 1;
         y
     }"#;
     let wat = compile(input).unwrap();
@@ -97,10 +97,10 @@ fn test_mutable_parameter_reassignment() {
 #[test]
 fn test_multiple_reassignments() {
     let input = r#"fun test: () = {
-        mut val x = 1
-        x = 2
-        x = 3
-        x = 4
+        mut val x = 1;
+        x = 2;
+        x = 3;
+        x = 4;
         x
     }"#;
     let wat = compile(input).unwrap();
@@ -111,8 +111,8 @@ fn test_multiple_reassignments() {
 fn test_affine_with_mutable() {
     let input = r#"fun test: () = {
         val y = 5
-        mut val x = y
-        x = x + 1
+        mut val x = y;
+        x = x + 1;
         x
     }"#;
     let _wat = compile(input).unwrap();
@@ -127,8 +127,8 @@ fn test_mutable_record_field() {
     fun test: () = {
         with Arena {
             val p = Point { x: 10, y: 20 }
-            mut val x = p.x
-            x = x + 1
+            mut val x = p.x;
+            x = x + 1;
             x
         }
     }"#;

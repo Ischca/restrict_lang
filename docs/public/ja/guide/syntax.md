@@ -87,11 +87,38 @@ val x = 42
 val y: Int32 = 42
 val pi: Float64 = 3.14
 
-mut val counter = 0
+mut val counter = 0;
 counter = counter + 1
 ```
 
 不変束縛は `val`、複数回の使用や再代入が必要な束縛は `mut val` を使います。
+
+## 式の境界
+
+改行は空白として扱われるため、直接 OSV 式は次の行へ継続できます。一方、
+動詞になれない値が続く場合は、セミコロンなしでも新しい式が始まります。
+
+```restrict
+"first" println
+"second" println
+```
+
+ローカル束縛の直後に識別子から始まる式を置き、それを束縛値の動詞として
+解釈させたくない場合は `;` で境界を明示します。
+
+```restrict
+val message = "ready";
+message println
+```
+
+高階変換の内側だけで名前が必要なら、スコープ動詞節のラムダ引数を使うと、
+流れをセミコロンなしで表せます。
+
+```restrict
+values map { |value|
+    value + 1
+}
+```
 
 ## 基本式
 

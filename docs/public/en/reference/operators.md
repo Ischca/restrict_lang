@@ -17,7 +17,7 @@ operators either combine expressions directly or route a value into a function.
 fun arithmetic_score: () -> Int32 = {
     val base = 10 + 5 * 2
     val adjusted = base - 3
-    val divided = adjusted / 2
+    val divided = adjusted / 2;
     divided + (adjusted % 2)
 }
 
@@ -111,7 +111,7 @@ record Reading {
 }
 
 fun weighted: (reading: Reading) -> Int32 = {
-    val Reading { value, weight } = reading
+    val Reading { value, weight } = reading;
     value * weight
 }
 ```

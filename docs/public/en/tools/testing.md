@@ -69,7 +69,7 @@ fun test_math_smoke: () -> Boolean = {
 }
 
 fun test_pipeline_smoke: () -> Int32 = {
-    val value = 41
+    val value = 41;
     value + 1
 }
 ```

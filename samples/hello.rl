@@ -1,8 +1,8 @@
 // Hello World in Restrict Language
 //
-// The simplest program: a single expression piped to println.
-// Restrict uses |> (pipe) to chain operations left-to-right.
+// The simplest program: a value followed by the verb that consumes it.
+// Restrict also has |>, but a direct OSV call needs no pipe.
 
 fun main: () -> () = {
-    "Hello, World!" |> println
+    "Hello, World!" println
 }

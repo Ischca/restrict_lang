@@ -32,7 +32,7 @@ fun prelude_example: () -> Boolean = {
     val both = (true, inverted) and
     mut val result = (both, value == 42) or
 
-    (result, "prelude example should pass") assert
+    (result, "prelude example should pass") assert;
     result
 }
 ```
@@ -108,7 +108,7 @@ left != right: compare String contents and negate the result
 ```restrict
 fun string_example: () -> Boolean = {
     val joined = "Hello, " + "World"
-    val matches = joined == "Hello, World"
+    val matches = joined == "Hello, World";
     matches
 }
 ```
@@ -134,7 +134,7 @@ fun math_example: () -> Int32 = {
     val b = (10, 20) max
     val c = (3, 7) min
     val d = (2, 3) pow
-    val e = 4 |> factorial
+    val e = 4 |> factorial;
 
     a + b + c + d + e
 }
@@ -144,7 +144,7 @@ fun math_example: () -> Int32 = {
 fun float_math_example: () -> Float64 = {
     val a = -3.14 |> abs_f
     val b = (1.5, 2.7) max_f
-    val c = (0.5, 1.0) min_f
+    val c = (0.5, 1.0) min_f;
 
     a + b + c
 }
@@ -175,7 +175,7 @@ fun list_example: () -> Int32 = {
     val length = numbers |> list_length
     val first = (numbers, 0) list_get
     val extended = (numbers, 5) list_append
-    val extended_count = extended |> list_count
+    val extended_count = extended |> list_count;
 
     count + length + first + extended_count
 }
@@ -189,7 +189,7 @@ fun list_composition_example: () -> Int32 = {
 
     val a = extended |> list_count
     val b = combined |> list_count
-    val c = first |> list_count
+    val c = first |> list_count;
 
     a + b + c
 }
@@ -211,7 +211,7 @@ fun option_example: () -> Int32 = {
 
     val has_value = maybe |> option_is_some
     val is_empty = maybe |> option_is_none
-    val value = (maybe, 0) option_unwrap_or
+    val value = (maybe, 0) option_unwrap_or;
 
     value
 }
@@ -234,11 +234,11 @@ fun standard_library_flow: () -> Boolean = {
     val has_value = maybe_first |> option_is_some
 
     val above_threshold = max_result > 40
-    mut val result = (has_value, above_threshold) and
+    mut val result = (has_value, above_threshold) and;
 
-    first |> print_int
+    first |> print_int;
     list_size |> print_int
-    (result, "standard library flow should pass") assert
+    (result, "standard library flow should pass") assert;
 
     result
 }

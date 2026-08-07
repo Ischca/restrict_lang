@@ -316,7 +316,7 @@ fn review_policy_factory_example_executes() {
         r#"
 export fun review_policy_factory_score: () -> Int32 = {
     val decision = () build_review_policy_factory
-    val ReviewDecision { score, block_release, reviewer_lane } = decision
+    val ReviewDecision { score, block_release, reviewer_lane } = decision;
     score + reviewer_lane
 }
 "#,
@@ -583,7 +583,7 @@ fn typed_impl_dispatch_example_executes() {
         r#"
 export fun typed_impl_dispatch_risk: () -> Float64 = {
     val decision = () build_typed_impl_dispatch
-    val DispatchDecision { health_risk, rollout_risk, approved } = decision
+    val DispatchDecision { health_risk, rollout_risk, approved } = decision;
     health_risk + rollout_risk
 }
 "#,
@@ -612,7 +612,7 @@ fn generic_function_value_pipeline_example_executes() {
         r#"
 export fun generic_function_value_pipeline_score: () -> Float64 = {
     val summary = () build_generic_function_value_pipeline
-    val ScoreSummary { normalized, first_score, adjusted_score } = summary
+    val ScoreSummary { normalized, first_score, adjusted_score } = summary;
     first_score + adjusted_score
 }
 "#,

@@ -47,8 +47,8 @@ bindings are not constants and are also outside the current release surface.
 When you need to modify a value, use `mut`:
 
 ```restrict
-mut val counter = 0
-counter = counter + 1  // OK: mutable variables can be reassigned
+mut val counter = 0;
+counter = counter + 1; // OK: mutable variables can be reassigned
 counter = counter + 1  // OK: and used multiple times
 val final_count = counter  // counter is consumed here
 ```
@@ -69,8 +69,8 @@ val result = temp
 Mutable bindings use `mut val` and explicit assignment:
 
 ```restrict
-mut val counter = 0
-counter = counter + 1
+mut val counter = 0;
+counter = counter + 1;
 counter = counter + 1
 ```
 

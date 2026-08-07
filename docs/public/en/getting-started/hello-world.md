@@ -90,7 +90,7 @@ fun add_bonus: (base: Int32, bonus: Int32) -> Int32 = {
 }
 
 fun main: () -> () = {
-    val total = (21, 4) add_bonus
+    val total = (21, 4) add_bonus;
     total |> print_int
 }
 ```
@@ -137,13 +137,13 @@ record Score {
 }
 
 fun total_score: (score: Score) -> Int32 = {
-    val Score { base, bonus } = score
+    val Score { base, bonus } = score;
     base + bonus
 }
 
 fun main: () -> () = {
     val score = Score { base: 21, bonus: 4 }
-    val total = score |> total_score
+    val total = score |> total_score;
     total |> print_int
 }
 ```
@@ -161,7 +161,7 @@ fun double: (value: Int32) = {
 }
 
 fun main: () -> () = {
-    val total = 21 |> double
+    val total = 21 |> double;
     total |> print_int
 }
 ```

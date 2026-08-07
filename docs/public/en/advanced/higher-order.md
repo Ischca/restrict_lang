@@ -30,7 +30,7 @@ An inline lambda uses the same grouped OSV call:
 
 ```restrict
 fun main: () -> List<Int32> = {
-    val numbers = [1, 2, 3]
+    val numbers = [1, 2, 3];
     (numbers, |value| value * 2) map
 }
 ```
@@ -68,7 +68,7 @@ function body as a trailing scope:
 
 ```restrict
 fun main: () -> List<Int32> = {
-    val numbers = [1, 2, 3]
+    val numbers = [1, 2, 3];
     numbers map {
         it * 2
     }
@@ -118,7 +118,7 @@ meaning:
 
 ```restrict
 values map { |value|
-    val shifted = value + 1
+    val shifted = value + 1;
     shifted * 2
 }
 ```

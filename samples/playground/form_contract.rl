@@ -14,9 +14,9 @@ Badge takes Labelled {
 }
 
 fun render: <T of Labelled>(value: T) -> String = {
-    value |> label
+    value label
 }
 
 fun main: () = {
-    Badge { text: "ready" } |> render |> println
+    Badge { text: "ready" } render println
 }

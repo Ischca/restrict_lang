@@ -9,11 +9,11 @@ fun greet: (name: String) -> String = {
 }
 
 fun main: () -> () = {
-    val message = "World"
+    val message = "World";
 
     // First use — OK, this consumes 'message'
-    message |> greet |> println
+    message greet println
 
     // Uncommenting the next line would cause a compile error:
-    // message |> greet |> println  // Error: 'message' already consumed
+    // message greet println  // Error: 'message' already consumed
 }

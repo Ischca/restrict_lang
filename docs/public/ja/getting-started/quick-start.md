@@ -54,12 +54,12 @@ cat hello.wat
 // affine.rl
 fun main: () = {
     val x = "owned value"
-    val y = x    // xはyに移動
+    val y = x;   // xはyに移動
     // val z = x // エラー: xはすでに使用されている
     y |> println
 
-    mut val counter = 0
-    counter = counter + 1  // 可変変数は再利用可能
+    mut val counter = 0;
+    counter = counter + 1; // 可変変数は再利用可能
     counter = counter + 1
 
     counter |> print_int
@@ -115,7 +115,7 @@ fun process_option: (opt: Option<Int32>) -> Int32 = {
 }
 
 fun main: () = {
-    val result = 5 |> factorial
+    val result = 5 |> factorial;
     result |> print_int  // 120
 }
 ```
@@ -126,10 +126,10 @@ fun main: () = {
 // lists.rl
 fun main: () = {
     val square = |x: Int32| x * x
-    val value = 6 |> square
+    val value = 6 |> square;
     value |> print_int
 
-    val numbers = [1, 2, 3, 4, 5]
+    val numbers = [1, 2, 3, 4, 5];
     numbers match {
         [] => { "No numbers" |> println }
         [head | _] => { head |> print_int }  // 最初の要素を表示

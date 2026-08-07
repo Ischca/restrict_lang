@@ -35,9 +35,9 @@ fun increment: (x: Int32) -> Int32 = {
 
 fun main: () = {
     val result1 = 21 |> double
-    val result2 = 41 |> increment
+    val result2 = 41 |> increment;
 
-    result1 |> print_int
+    result1 |> print_int;
     result2 |> print_int
 }
 ```
@@ -84,7 +84,7 @@ fun main: () = {
     val result = 5
         |> increment
         |> double
-        |> square
+        |> square;
 
     result |> print_int
 }
@@ -203,7 +203,7 @@ fun main: () = {
     val result = raw_data
         |> validate
         |> normalize
-        |> transform
+        |> transform;
 
     result |> print_int
 }
@@ -228,7 +228,7 @@ fun main: () = {
     val result = 10
         |> double
         |> increment
-        |> square
+        |> square;
 
     result |> print_int
 }

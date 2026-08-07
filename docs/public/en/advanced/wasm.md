@@ -5,11 +5,50 @@ collector. The current v0.0.1 integration is deliberately small: it is strong
 enough for executable examples, scalar host exports, and the browser compiler,
 while leaving generic and composite host ABI decisions for later design work.
 
+## One Backend, Multiple Hosts
+
+WebAssembly is Restrict's sole code-generation target. A host profile selects
+imports, exports, adapters, and packaging without changing Restrict source
+semantics:
+
+```text
+Restrict source
+    |
+    v
+Core WebAssembly
+    |
+    +-- native WASI runtime
+    +-- Component Model host       (planned)
+    +-- browser adapter
+    +-- cloud or edge adapter      (planned)
+```
+
+Generated JavaScript may currently load a module or provide browser and cloud
+APIs. That code is host glue, not a JavaScript backend. Restrict does not need
+to compile source to JavaScript in order to run Wasm from JavaScript.
+
+The current execution boundary is:
+
+| Path | Status |
+| --- | --- |
+| Core Wasm with basic WASI Preview 1 program imports | Current |
+| Browser execution through the playground's JavaScript WASI bridge | Current |
+| General WASI arguments, filesystem, clocks, randomness, networking, and HTTP | Future |
+| WIT and WebAssembly Component Model output | Future |
+| Generated browser and cloud platform adapters | Future |
+| Direct portable DOM access from Wasm | Not currently standardized |
+
+Native WASI runtimes can execute a Wasm application without JavaScript. The
+browser case is different: the current WebAssembly Web API does not give a
+module direct access to the DOM or native browser UI, so a host adapter remains
+necessary. Restrict keeps that adapter separate so a future standardized host
+interface can replace it without introducing a new language backend.
+
 ## Build Outputs
 
-The compiler can emit WebAssembly text (`.wat`) and binary (`.wasm`) output.
-When building through Warder, the default project output also includes a local
-cage artifact:
+The native compiler emits WebAssembly text (`.wat`). Browser tooling can convert
+that output to binary, and Warder emits both text and binary Wasm. A default
+Warder project build also includes a local cage artifact:
 
 ```text
 dist/<package-name>-<package-version>.wat
@@ -93,7 +132,7 @@ fun total: (score: Score) -> Int32 = {
 }
 
 export fun exported_total: () -> Int32 = {
-    val score = Score { base: 30, bonus: 12 }
+    val score = Score { base: 30, bonus: 12 };
     score |> total
 }
 ```
@@ -128,6 +167,31 @@ The compiler page accepts a `?code=` query parameter, so docs and blog posts can
 open a source example directly in the browser. The mdBook theme adds "Try in
 Playground" buttons to complete `restrict` code blocks that contain `fun main`.
 
+The playground also provides the generated program's WASI Preview 1 imports
+from JavaScript so it can capture stdout and stderr. This is a browser host
+adapter around a Wasm program, not a second Restrict code-generation backend.
+
+## Deployment Environments
+
+A WASI artifact should remain independent of its launcher and packaging:
+
+- Wasmtime and other native WASI runtimes are the JavaScript-free executable
+  path for CLI, batch, server, plugin, and edge programs.
+- Docker, containerd shims, and runwasi are possible OCI packaging and execution
+  layers. They do not define a Docker-specific Restrict ABI.
+- Cloudflare Workers can execute Wasm, but its general documented integration
+  currently uses V8 and platform bindings. Restrict should use a generated
+  adapter instead of treating Cloudflare as a portable WASI contract.
+- Browsers require a host adapter for DOM, events, Fetch, and other Web APIs
+  until a portable direct Wasm interface is standardized and implemented.
+
+Platform behavior evolves independently from the language. See the official
+[WASI releases](https://wasi.dev/releases),
+[Cloudflare Workers Wasm documentation](https://developers.cloudflare.com/workers/runtime-apis/webassembly/),
+[Docker alternative runtime documentation](https://docs.docker.com/engine/daemon/alternative-runtimes/),
+and [WebAssembly Web API](https://webassembly.github.io/spec/web-api/) for the
+current host surfaces.
+
 ## Current Limits
 
 These are intentional v0.0.1 boundaries, not accidental omissions:
@@ -140,6 +204,8 @@ These are intentional v0.0.1 boundaries, not accidental omissions:
   a composite host ABI
 - Temporal Affine Types are outside the default release gate
 - WebAssembly Component Model and WIT integration are future interop work
+- general WASI filesystem, network, HTTP, and async bindings are future work
+- direct browser DOM access is not part of the current WebAssembly host surface
 
 See the [v0.0.1 Release Surface](../reference/release-surface.md) for the
 normative release-facing table.

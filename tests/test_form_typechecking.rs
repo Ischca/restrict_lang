@@ -91,7 +91,7 @@ fun show_match: (choose_left: Boolean, left: Item, right: Item) -> String = {
 
 fun show_block: (item: Item) -> String = {
     ({
-        val selected = item
+        val selected = item;
         selected
     }) |> show
 }

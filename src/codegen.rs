@@ -10979,6 +10979,18 @@ impl WasmCodeGen {
                     );
                 }
 
+                if matches!(func_name.as_str(), "display" | "print" | "println")
+                    && !self.has_local_callable_binding(func_name)
+                {
+                    if call.args.len() != 1 {
+                        return Err(CodeGenError::UnsupportedFeature(format!(
+                            "{} expects exactly one Display value",
+                            func_name
+                        )));
+                    }
+                    return self.generate_display_intrinsic(func_name, &call.args[0], false);
+                }
+
                 if func_name == "identity" {
                     if call.args.len() != 1 {
                         return Err(CodeGenError::UnsupportedFeature(

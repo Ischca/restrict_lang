@@ -132,6 +132,24 @@ export fun std_io_smoke: () -> () = {
 }
 
 #[test]
+fn bare_osv_output_stops_before_a_non_callable_value() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+export fun bare_osv_output: () -> () = {
+    "Hello, " print
+    "Restrict" println
+}
+"#;
+
+    let (mut store, instance) = instantiate(source)?;
+    let bare_osv_output = instance.get_typed_func::<(), ()>(&store, "bare_osv_output")?;
+
+    bare_osv_output.call(&mut store, ())?;
+
+    assert_eq!(store.data().stdout, b"Hello, Restrict\n");
+    Ok(())
+}
+
+#[test]
 fn scoped_collection_clauses_execute_through_existing_lambdas(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"

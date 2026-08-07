@@ -31,6 +31,14 @@ generic or composite host ABIs remain outside the current compiler surface.
 User enums may be used inside `Result<T, CustomError>`, but the `?` propagation
 operator is not implemented yet.
 
+WebAssembly is the only Restrict code-generation target. Native WASI runtimes,
+browsers, cloud/edge platforms, and container runtimes are different hosts for
+that output, not separate JavaScript or native language backends. A host may
+currently require generated JavaScript glue, but Restrict application logic
+still compiles to Wasm. The [WebAssembly Integration](./advanced/wasm.md) page
+separates the current executable surface from planned WASI, Component Model,
+Web, and edge adapters.
+
 ## Why OSV
 
 Restrict calls keep the data first and the operation last. This makes pipeline
@@ -74,7 +82,7 @@ fun choose_label: (passing: Boolean) -> String = {
 }
 
 fun main: () -> String = {
-    val passing = true
+    val passing = true;
     passing |> choose_label
 }
 ```

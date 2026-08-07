@@ -20,5 +20,6 @@ Key internal entry points:
 - [Type Inference Design](./TYPE_INFERENCE_DESIGN.md)
 - [v0.0.1 Release Surface Matrix](./v001-release-surface.md)
 - [Standard Library Architecture](./STDLIB_ARCHITECTURE.md)
+- [WebAssembly Execution Strategy](./WASM_EXECUTION_STRATEGY.md)
 - [Future Scope Layers](./FUTURE_SCOPE_LAYERS.md)
 - [Documentation Rules](./DOCUMENTATION_RULES.md)

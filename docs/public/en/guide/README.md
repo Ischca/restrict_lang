@@ -36,7 +36,7 @@ fun summarize_release: (signal: ReleaseSignal) -> String = {
 }
 
 fun main: () -> String = {
-    val signal = ReleaseSignal { score: 92, passing: true }
+    val signal = ReleaseSignal { score: 92, passing: true };
     signal |> summarize_release
 }
 ```

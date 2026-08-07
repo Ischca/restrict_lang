@@ -68,6 +68,33 @@ The Restrict Language compiler is structured as follows:
 4. **Type Checker** (`src/type_checker.rs`) - Implements affine type checking with bidirectional type inference
 5. **Code Generator** (`src/codegen.rs`) - Generates WebAssembly (WAT) output
 
+## WebAssembly Product Direction
+
+WebAssembly is the only Restrict code-generation target. Treat WASI, browser,
+cloud/edge, and container support as host profiles, generated adapters, and
+packaging around the same Wasm backend.
+
+- Do not introduce a JavaScript source backend merely because a browser or
+  cloud host currently requires JavaScript glue.
+- Keep platform APIs out of core language semantics. Model them as explicit
+  imports and capabilities whose bindings can vary by host.
+- The current default program output is Core Wasm using WASI Preview 1 imports
+  for basic program I/O. The playground supplies those imports with a browser
+  bridge; that bridge is not a JavaScript backend.
+- WIT, the Component Model, composite host values, broader WASI APIs, generated
+  Web/Cloudflare adapters, and direct DOM access are future work unless the
+  release surface explicitly says otherwise.
+- Docker and containerd are deployment options for WASI artifacts, not
+  Restrict compiler targets or ABIs.
+- Preserve a path to future browser-native host interfaces by separating Wasm
+  code generation from host adapters. Do not claim that browsers currently
+  expose the DOM directly to Wasm.
+
+Read `docs/WASM_EXECUTION_STRATEGY.md` before changing code generation, host
+imports or exports, ABI lowering, runtime integration, or deployment targets.
+Update that decision record, `LANGUAGE_SPECIFICATION.md`, `README.md`, and the
+public WebAssembly documentation when the direction changes.
+
 ## Language Features
 
 - **OSV word order**: Object-Subject-Verb syntax (e.g., `(args) function` or `value |> function`)
@@ -75,6 +102,10 @@ The Restrict Language compiler is structured as follows:
 - **Prototype-based records**: Use `clone` and `freeze` for inheritance
 - **Context binding**: Resource management with `with` blocks
 - **Pipe operator**: `|>` for OSV function composition
+- **Statement boundaries**: Newlines are whitespace. Non-callable values
+  naturally start a new expression; use `;` when a callable-shaped value would
+  otherwise extend the same OSV chain. Never put semicolons after top-level
+  declarations.
 
 ## Important Notes
 

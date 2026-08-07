@@ -62,7 +62,7 @@ fun square: (value: Int32) -> Int32 = {
 
 fun main: () -> Int32 = {
     val stepped = 5 |> increment
-    val doubled = stepped |> double
+    val doubled = stepped |> double;
     doubled |> square
 }
 ```
@@ -132,7 +132,7 @@ fun factorial: (value: Int32) -> Int32 = {
     value <= 1 then {
         1
     } else {
-        val next = value - 1
+        val next = value - 1;
         value * (next |> factorial)
     }
 }

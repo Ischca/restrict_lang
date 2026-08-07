@@ -131,7 +131,7 @@ fun main: () -> List<Int32> = {
 fn prelude_map_infers_implicit_focus_scope() {
     let input = r#"
 fun main: () -> List<Int32> = {
-    val numbers: List<Int32> = [1, 2, 3]
+    val numbers: List<Int32> = [1, 2, 3];
     numbers map {
         it * 2
     }
@@ -145,9 +145,9 @@ fun main: () -> List<Int32> = {
 fn prelude_map_infers_explicit_scoped_binder() {
     let input = r#"
 fun main: () -> List<Int32> = {
-    val numbers: List<Int32> = [1, 2, 3]
+    val numbers: List<Int32> = [1, 2, 3];
     numbers map { |number|
-        val shifted = number + 1
+        val shifted = number + 1;
         shifted * 2
     }
 }
@@ -194,7 +194,7 @@ fun main: () -> Int32 = {
 fn scoped_collection_clauses_chain_left_associatively() {
     let input = r#"
 fun main: () -> List<Int32> = {
-    val numbers: List<Int32> = [1, 2, 3]
+    val numbers: List<Int32> = [1, 2, 3];
     numbers map {
         it + 1
     } filter {
@@ -210,7 +210,7 @@ fun main: () -> List<Int32> = {
 fn nested_implicit_focus_requires_an_explicit_binder() {
     let input = r#"
 fun main: () -> List<List<Int32>> = {
-    val groups: List<List<Int32>> = [[1, 2], [3]]
+    val groups: List<List<Int32>> = [[1, 2], [3]];
     groups map {
         it map {
             it + 1
@@ -230,7 +230,7 @@ fun main: () -> List<List<Int32>> = {
 fn explicit_outer_binder_allows_nested_implicit_focus() {
     let input = r#"
 fun main: () -> List<List<Int32>> = {
-    val groups: List<List<Int32>> = [[1, 2], [3]]
+    val groups: List<List<Int32>> = [[1, 2], [3]];
     groups map { |group|
         group map {
             it + 1

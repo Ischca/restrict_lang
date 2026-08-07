@@ -36,12 +36,20 @@ implemented features from reserved or experimental design space:
 - `val`, not `let`
 - `mut val`, not `val mut`
 - OSV calls, not function-first calls
+- line breaks are whitespace; non-callable values naturally start a new
+  expression, while `;` separates a callable-shaped value from the preceding
+  maximal OSV expression
 - `:` field initializers
 - scalar host exports only
 - closed, non-generic, non-recursive user enums may use qualified
   `Type::Variant` names and exhaustive matches
 - method-only forms, concrete non-generic record adoptions, and explicit `of`
   bounds may be documented as current post-v0.0.1 behavior
+- WebAssembly is the sole code-generation target; Web, cloud, WASI, and
+  container integrations are host profiles or adapters, not additional
+  language backends
+- generated JavaScript glue may be described as a current host requirement,
+  but not as a JavaScript backend or direct Wasm access to browser APIs
 - generic or recursive user enums, enum host ABI, TAT, associated types,
   generic/conditional/enum adoptions, dynamic dispatch, and composite host ABI
   marked as future work

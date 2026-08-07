@@ -171,7 +171,7 @@ export fun public_score: (slice: ReleaseSlice) -> Int32 = {
 import release.{ReleaseSlice, public_score}
 
 fun main: () -> Int32 = {
-    val slice = ReleaseSlice { score: 41 }
+    val slice = ReleaseSlice { score: 41 };
     slice |> public_score
 }
 "#,

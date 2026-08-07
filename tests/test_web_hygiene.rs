@@ -122,8 +122,8 @@ fn playground_separates_generic_forms_from_display_output() {
     for required in [
         "Notice takes Display",
         "fun display: (self: Notice) -> String",
-        "42 |> println",
-        "Notice { text: \"record adoption\" } |> println",
+        "42 println",
+        "Notice { text: \"record adoption\" } println",
     ] {
         assert!(
             display.contains(required),
@@ -861,10 +861,10 @@ fn assert_current_web_example_syntax(label: &str, source: &str) {
             continue;
         }
 
-        assert!(
-            !trimmed.contains(';'),
-            "{label}:{line_number} should not use semicolons in embedded examples:\n{source}"
-        );
+        // Semicolons are part of the current surface when an
+        // identifier-started expression must not extend the preceding OSV
+        // chain. Parsing and sample compilation enforce valid placement; this
+        // hygiene pass should not reject the separator itself.
 
         if trimmed.starts_with("form ") || trimmed.starts_with("pub form ") {
             in_form_contract = true;

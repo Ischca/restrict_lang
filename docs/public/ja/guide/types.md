@@ -34,7 +34,7 @@ fun consume_title: (title: String) -> String = {
 }
 
 fun main: () -> String = {
-    val title = "Restrict"
+    val title = "Restrict";
     title |> consume_title
 }
 ```
@@ -47,8 +47,8 @@ fun main: () -> String = {
 
 ```restrict
 fun main: () -> Int32 = {
-    mut val counter = 0
-    counter = counter + 1
+    mut val counter = 0;
+    counter = counter + 1;
     counter
 }
 ```
@@ -59,7 +59,7 @@ fun main: () -> Int32 = {
 
 ```restrict
 fun total_first_two: () -> Int32 = {
-    val scores: List<Int32> = [10, 20, 30]
+    val scores: List<Int32> = [10, 20, 30];
     scores match {
         [first, second] => { first + second }
         [first | rest] => { first }
@@ -143,7 +143,7 @@ fun user_name: (user: User) -> String = {
 }
 
 fun main: () -> String = {
-    val user = User { name: "Alice", age: 30, active: true }
+    val user = User { name: "Alice", age: 30, active: true };
     user |> user_name
 }
 ```
@@ -181,7 +181,7 @@ fun main: () -> Int32 = {
 ```restrict
 fun main: () -> Int32 = {
     val answer = 42
-    val numbers: List<Int32> = []
+    val numbers: List<Int32> = [];
     numbers match {
         [] => { answer }
         [first | rest] => { first }

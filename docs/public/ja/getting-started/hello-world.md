@@ -68,7 +68,7 @@ Restrict の値は、基本的に最大 1 回だけ使えます。
 
 ```restrict
 fun main: () -> () = {
-    val message = "このメッセージは一度だけ使えます"
+    val message = "このメッセージは一度だけ使えます";
 
     message |> println
 
@@ -81,9 +81,9 @@ fun main: () -> () = {
 
 ```restrict
 fun main: () -> () = {
-    mut val greeting = "Hello"
+    mut val greeting = "Hello";
 
-    greeting |> println
+    greeting |> println;
     greeting |> println
 }
 ```
@@ -104,7 +104,7 @@ fun greeting_word: (hour: Int32) -> String = {
 }
 
 fun greet_with_time: (name: String, hour: Int32) -> () = {
-    val word = hour |> greeting_word
+    val word = hour |> greeting_word;
     word + "、" + name + "さん！" |> println
 }
 
@@ -131,7 +131,7 @@ fun greeting_for_hour: (hour: Int32) -> Result<String, String> = {
 }
 
 fun main: () -> () = {
-    val result = 9 |> greeting_for_hour
+    val result = 9 |> greeting_for_hour;
 
     result match {
         Ok(message) => { message |> println }

@@ -12,6 +12,45 @@ This document is the **single authoritative specification** for Restrict Languag
 - **No Side Effects**: Expression statements must be pure
 - **Arena Memory**: Deterministic memory management without garbage collection
 
+## Compilation and Host Model
+
+Restrict has one code-generation family: WebAssembly. JavaScript, native
+machine code, individual cloud platforms, and container runtimes are not
+separate Restrict language backends. A host profile may select imports,
+exports, ABI adapters, and packaging without changing Restrict source semantics.
+
+Core language behavior must remain independent of JavaScript objects, DOM APIs,
+specific cloud bindings, Docker, and individual WebAssembly runtimes. External
+operations are provided by explicit host imports or capabilities. This keeps a
+Restrict program portable between native WASI runtimes, component hosts,
+browsers, and edge environments when those hosts provide compatible
+interfaces.
+
+The current v0.0.1 program output is a Core WebAssembly module. It imports the
+WASI Preview 1 `fd_write` and `proc_exit` operations for basic program I/O, and
+a zero-argument `main` receives the `_start` wrapper specified below. The
+browser playground supplies equivalent behavior through a JavaScript bridge.
+That generated or handwritten bridge is host glue, not a JavaScript code-
+generation backend.
+
+The following remain future host-integration work and do not expand the current
+v0.0.1 release surface:
+
+- a host-neutral Core Wasm profile without the current program imports;
+- broader WASI bindings for arguments, environment, filesystem, clocks,
+  randomness, networking, HTTP, and asynchronous streams;
+- stable lifting and lowering for `String`, `List`, `Array`, records, `Option`,
+  `Result`, user enums, resources, and other composite host values;
+- WIT generation and WebAssembly Component Model packaging;
+- generated Web and cloud entry adapters; and
+- direct browser host or DOM interfaces if and when portable standards expose
+  them to WebAssembly.
+
+Docker, containerd, and similar systems may execute or package a WASI artifact,
+but do not define a Restrict ABI. Likewise, a browser or cloud host may require
+JavaScript glue today without requiring Restrict to compile source code to
+JavaScript.
+
 ## 1. Lexical Elements
 
 ### 1.1 Keywords (Reserved)
@@ -78,6 +117,52 @@ designed.
 ### 1.5 Comments
 - **Single-line**: `// comment`
 - **Multi-line**: `/* comment */` (no nesting)
+
+### 1.6 Whitespace and Expression Boundaries
+
+Spaces, tabs, comments, and line breaks are ordinary whitespace. A line break
+does not terminate an expression. The parser reads the maximal expression
+allowed by the grammar, including a direct OSV call split across lines:
+
+```rust
+val answer = 41
+    increment
+// Equivalent to: val answer = 41 increment
+```
+
+A direct OSV chain continues only while the following expression can serve as
+a verb (a function value). A literal, record, or collection value cannot be a
+verb, so it naturally begins a new expression even without a semicolon:
+
+```rust
+"first" println
+"second" println
+```
+
+A semicolon explicitly terminates the current statement when the following
+source could instead be interpreted as another verb in the same OSV chain:
+
+```rust
+val message = "ready";
+message println
+```
+
+Reserved declaration keywords, delimiters, operators, and values that cannot
+act as verbs still establish the boundaries required by their grammar, so
+semicolons are not required after every declaration or unambiguous expression.
+A block's final expression is not followed by a semicolon. Top-level
+declarations are never separated by semicolons.
+
+An explicit semicolon is appropriate when a local `val` deliberately stages a
+named value before an identifier-started expression. When the name exists only
+inside a higher-order transformation, a scoped verb clause can keep the same
+flow semicolon-free by naming the callback input instead:
+
+```rust
+values map { |value|
+    value + 1
+}
+```
 
 ## 2. Variable Declarations
 
@@ -240,6 +325,7 @@ x               // Variable reference
 ```rust
 // ✅ CORRECT: OSV syntax (Object-Subject-Verb)
 value |> function           // Single argument via pipe
+value function              // Single argument via direct OSV
 (arg1, arg2) function       // Multiple arguments via tuple
 () function                 // No arguments via unit
 
@@ -254,6 +340,10 @@ Ordinary value arguments always come BEFORE the function name. Traditional
 parenthetical function calls `function(args)` will cause compilation errors.
 The scoped verb clause in Section 5.9 is a separate OSV form: its trailing
 block is a scope opened by the verb, not an ordinary value argument.
+Whitespace, including line breaks, does not end a direct call. A following
+value that cannot be a verb begins a new expression naturally. Use `;` when a
+following callable-shaped expression must begin a new statement instead of
+extending the OSV call, as specified in Section 1.6.
 
 **OSV Pattern Examples:**
 ```rust
@@ -564,6 +654,10 @@ counter = counter + 1   // Only for mutable variables
 "hello" |> println      // Function call
 x + y                   // Must be pure (no side effects)
 ```
+
+Expression statements that could be parsed as one whitespace-adjacent OSV
+expression must be separated with `;`. A newline alone is not a statement
+terminator.
 
 ## 8. Record Types
 
@@ -1240,6 +1334,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2026-08-06
+**Last Updated**: 2026-08-07
 **Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

@@ -173,7 +173,7 @@ fun sum_point: (point: Point) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val point = Point { x: 10, y: 20 }
+    val point = Point { x: 10, y: 20 };
     point |> sum_point
 }
 ```

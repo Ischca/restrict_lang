@@ -1366,8 +1366,8 @@ fun main: () -> Int32 = {
     val casted = 7 as Int64
     val negated = -1
     val opt = (5) Option::Some
-    mut val count = 0
-    count = count + 1
+    mut val count = 0;
+    count = count + 1;
     true |> pick |> classify |> countdown
 }
 "#;

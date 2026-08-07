@@ -7,7 +7,19 @@ while leaving generic and composite host ABI decisions for later design work.
 
 ## Build Outputs
 
-The compiler can emit WebAssembly text (`.wat`) and binary (`.wasm`) output.
+The compiler emits WebAssembly text or validated binary output directly:
+
+```bash
+restrict_lang --target wasip1 --emit wat app.rl
+restrict_lang --target wasip1 --emit wasm app.rl
+restrict_lang --target wasm-core --emit wasm compute.rl
+```
+
+`wasm-core` emits no imports and rejects host output. `wasip1` is the default
+and supplies the current `fd_write`-based output surface. Arena capacity
+defaults to 4096 bytes; allocation-heavy workloads can select a larger
+multiple-of-four capacity with `--arena-bytes`.
+
 When building through Warder, the default project output also includes a local
 cage artifact:
 

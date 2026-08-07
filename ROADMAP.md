@@ -46,11 +46,11 @@ application platform.
 
 #### Target and Artifact Boundary
 
-- [ ] Separate documented `wasm-core` and `wasip1` target profiles
-- [ ] Omit WASI imports from `wasm-core` artifacts when the program does not
+- [x] Separate documented `wasm-core` and `wasip1` target profiles
+- [x] Omit WASI imports from `wasm-core` artifacts when the program does not
   use host I/O
-- [ ] Make direct `.wasm` output and validation a first-class compiler flow
-- [ ] Pin and test the reference runtime and Wasm validation tool versions
+- [x] Make direct `.wasm` output and validation a first-class compiler flow
+- [x] Pin and test the reference runtime and Wasm validation tool versions
 
 #### Release Code Generation
 
@@ -76,45 +76,45 @@ application platform.
 
 #### Memory Behavior
 
-- [ ] Replace or explicitly configure the current fixed 4 KiB arena limit
+- [x] Replace or explicitly configure the current fixed 4 KiB arena limit
 - [ ] Detect arena exhaustion and report it rather than relying on an
   accidental Wasm trap
-- [ ] Support memory growth or a configurable larger arena for benchmark
+- [x] Support memory growth or a configurable larger arena for benchmark
   workloads
 - [ ] Reset the arena reliably between iterations and expose enough data to
   measure peak memory
 
 #### In-Repository Regression Benchmarks
 
-- [ ] Add a `benchmarks/` suite for compiler time, runtime, and artifact size
-- [ ] Cover scalar loops, function calls and recursion, records, and
+- [x] Add a `benchmarks/` suite for compiler time, runtime, and artifact size
+- [x] Cover scalar loops, function calls and recursion, records, and
   `map`/`filter`/`fold`
-- [ ] Give every workload a deterministic checksum or other correctness oracle
-- [ ] Run correctness and a short smoke subset in pull-request CI
+- [x] Give every workload a deterministic checksum or other correctness oracle
+- [x] Run correctness and a short smoke subset in pull-request CI
 - [ ] Run stable timing measurements on a controlled nightly or release runner
-- [ ] Store machine-readable raw results before producing charts or summaries
+- [x] Store machine-readable raw results before producing charts or summaries
 
 #### Reproducibility Contract
 
 - [ ] Pin compiler, runtime, validator, optimizer, and comparison toolchains
-- [ ] Record source revision, target profile, flags, OS, CPU, and tool versions
+- [x] Record source revision, target profile, flags, OS, CPU, and tool versions
 - [ ] Measure compile time, raw and compressed Wasm size, cold instantiation,
   warm execution, and peak memory where the runtime exposes it
-- [ ] Specify warm-up, iteration count, process isolation, and statistical
+- [x] Specify warm-up, iteration count, process isolation, and statistical
   summary rules
-- [ ] Provide one documented command that builds, validates, runs, verifies,
+- [x] Provide one documented command that builds, validates, runs, verifies,
   and records all Restrict baselines on a clean machine
 
 #### Exit Criteria
 
-- [ ] A non-I/O `wasm-core` workload runs without JavaScript and without
+- [x] A non-I/O `wasm-core` workload runs without JavaScript and without
   unnecessary WASI imports
 - [ ] Release builds demonstrably optimize code and remove unused runtime code
-- [ ] Every language feature used by the corpus passes its semantic and Wasm
+- [x] Every language feature used by the corpus passes its semantic and Wasm
   execution checks in release mode
-- [ ] A representative workload can exceed the former 4 KiB arena boundary
+- [x] A representative workload can exceed the former 4 KiB arena boundary
   without an accidental trap
-- [ ] Every benchmark rejects an incorrect result through its correctness
+- [x] Every benchmark rejects an incorrect result through its correctness
   oracle
 - [ ] A clean machine can reproduce the complete baseline with pinned tools
 - [ ] Baseline results and an explicit regression policy are checked in

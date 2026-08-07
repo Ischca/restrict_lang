@@ -34,6 +34,7 @@
 
 - [Online Compiler](./en/tools/online-compiler.md)
 - [Testing](./en/tools/testing.md)
+- [Benchmarking](./en/tools/benchmarking.md)
 - [LSP](./en/tools/lsp.md)
 
 # Advanced Topics

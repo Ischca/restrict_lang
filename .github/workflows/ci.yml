@@ -105,12 +105,34 @@ jobs:
       - name: Smoke test checked-in web runtime
         run: node scripts/smoke-web-runtime.mjs
 
+  benchmark-smoke:
+    name: Core Wasm benchmark smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.94.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-benchmark-smoke
+
+      - name: Build benchmark tools
+        run: >-
+          cargo build --locked --release
+          --bin restrict_lang --bin restrict_bench
+
+      - name: Verify Core Wasm benchmark corpus
+        run: ./target/release/restrict_bench --smoke
+
   # Keep the historical `test` check name stable for branch protection while
   # the expensive work runs in parallel above.
   test:
     name: test
     if: always()
-    needs: [quality, test-shards, release-gates]
+    needs: [quality, test-shards, release-gates, benchmark-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Require every CI partition
@@ -118,10 +140,12 @@ jobs:
           QUALITY_RESULT: ${{ needs.quality.result }}
           TEST_SHARDS_RESULT: ${{ needs.test-shards.result }}
           RELEASE_GATES_RESULT: ${{ needs.release-gates.result }}
+          BENCHMARK_SMOKE_RESULT: ${{ needs.benchmark-smoke.result }}
         run: |
           test "$QUALITY_RESULT" = success
           test "$TEST_SHARDS_RESULT" = success
           test "$RELEASE_GATES_RESULT" = success
+          test "$BENCHMARK_SMOKE_RESULT" = success
 
   build-release:
     name: Release build smoke

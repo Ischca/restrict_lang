@@ -33,6 +33,19 @@ browser playground supplies equivalent behavior through a JavaScript bridge.
 That generated or handwritten bridge is host glue, not a JavaScript code-
 generation backend.
 
+The compiler exposes two artifact target profiles. `wasip1` is the default and
+retains the v0.0.1 program-I/O imports. `wasm-core` emits an import-free Core
+WebAssembly module for host-neutral workloads and rejects `print`, `println`,
+and other host-I/O calls. Both profiles use the same Restrict source semantics.
+The native CLI can encode and validate binary output directly with `--emit
+wasm`; text output remains available with `--emit wat`.
+
+Compiler-managed arenas default to 4096 bytes for compatibility. A build may
+select a larger multiple-of-four capacity with `--arena-bytes`; this changes
+reserved linear-memory capacity, not source semantics or host ABI. Arena
+exhaustion still traps in this initial slice and must not be treated as a
+recoverable source-level error.
+
 The following remain future host-integration work and do not expand the current
 v0.0.1 release surface:
 

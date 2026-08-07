@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "target": "wasm-core",
+  "workloads": [
+    {
+      "id": "scalar-loop",
+      "source": "corpus/scalar_loop.rl",
+      "export": "benchmark",
+      "input": 20000,
+      "expected": 599990000,
+      "arenaBytes": 65536,
+      "warmupIterations": 10,
+      "iterations": 100
+    },
+    {
+      "id": "recursive-fibonacci",
+      "source": "corpus/recursive_fibonacci.rl",
+      "export": "benchmark",
+      "input": 25,
+      "expected": 75025,
+      "arenaBytes": 65536,
+      "warmupIterations": 5,
+      "iterations": 30
+    },
+    {
+      "id": "record-loop",
+      "source": "corpus/record_loop.rl",
+      "export": "benchmark",
+      "input": 10000,
+      "expected": 1599850000,
+      "arenaBytes": 1048576,
+      "warmupIterations": 10,
+      "iterations": 100
+    },
+    {
+      "id": "collection-pipeline",
+      "source": "corpus/collection_pipeline.rl",
+      "export": "benchmark",
+      "input": 200,
+      "expected": 54400,
+      "arenaBytes": 1048576,
+      "warmupIterations": 5,
+      "iterations": 30
+    }
+  ]
+}

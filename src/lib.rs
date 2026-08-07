@@ -110,7 +110,7 @@ pub mod web;
 
 // Re-exports for convenience
 pub use ast::*;
-pub use codegen::{CodeGenError, WasmCodeGen};
+pub use codegen::{CodeGenError, WasmCodeGen, WasmTargetProfile};
 pub use lexer::*;
 pub use parser::*;
 pub use release_surface::{

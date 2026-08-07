@@ -39,14 +39,40 @@ use crate::ir::{FinalType, HostAbi, ScalarRepr, ValueRepr};
 use crate::release_surface::HostAbiProfile;
 use crate::type_checker::{ArrayLength, TypedType};
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use thiserror::Error;
 
 const RECORD_TMP_MIN_COUNT: usize = 8;
-const ARENA_SIZE_BYTES: u32 = 0x1000;
+const DEFAULT_ARENA_SIZE_BYTES: u32 = 0x1000;
+const ARENA_HEADER_BYTES: u32 = 8;
 const WITH_ARENA_TMP_COUNT: usize = 8;
 const FLAT_RECORD_V1_MAX_SLOTS: usize = 16;
 const WASM_PAGE_SIZE_BYTES: u64 = 65_536;
 const MEMORY_DECLARATION_PLACEHOLDER: &str = "  (memory __restrict_initial_memory_pages__)\n";
+
+/// Host environment expected by a generated Core WebAssembly module.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WasmTargetProfile {
+    /// Host-neutral Core Wasm. Programs using host I/O are rejected.
+    WasmCore,
+    /// Core Wasm with the v0.0.1 WASI Preview 1 program-I/O imports.
+    #[default]
+    WasiP1,
+}
+
+impl FromStr for WasmTargetProfile {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "wasm-core" => Ok(Self::WasmCore),
+            "wasip1" => Ok(Self::WasiP1),
+            _ => Err(format!(
+                "Unknown target profile '{value}'; expected 'wasm-core' or 'wasip1'"
+            )),
+        }
+    }
+}
 
 /// Code generation errors.
 #[derive(Debug, Error)]
@@ -134,6 +160,10 @@ pub struct WasmCodeGen {
     generated_host_adapter_globals: HashSet<String>,
     /// Host ABI surface selected by the caller. v0.0.1 remains the default.
     host_abi_profile: HostAbiProfile,
+    /// Host environment selected for the generated Core Wasm module.
+    target_profile: WasmTargetProfile,
+    /// Bytes reserved for each compiler-managed arena.
+    arena_size_bytes: u32,
     /// Top-level immutable globals and their Wasm ABI types.
     global_types: HashMap<String, WasmType>,
     /// Top-level immutable globals and their source-level Restrict types.
@@ -281,6 +311,8 @@ impl WasmCodeGen {
             generated_host_adapter_functions: HashSet::new(),
             generated_host_adapter_globals: HashSet::new(),
             host_abi_profile: HostAbiProfile::V001Scalar,
+            target_profile: WasmTargetProfile::WasiP1,
+            arena_size_bytes: DEFAULT_ARENA_SIZE_BYTES,
             global_types: HashMap::new(),
             global_source_types: HashMap::new(),
             methods: HashMap::new(),
@@ -327,6 +359,23 @@ impl WasmCodeGen {
         codegen
     }
 
+    /// Select the host environment for the generated Core Wasm module.
+    pub fn with_target_profile(mut self, profile: WasmTargetProfile) -> Self {
+        self.target_profile = profile;
+        self
+    }
+
+    /// Configure the capacity of every compiler-managed arena.
+    pub fn with_arena_size_bytes(mut self, bytes: u32) -> Result<Self, CodeGenError> {
+        if bytes < ARENA_HEADER_BYTES || !bytes.is_multiple_of(4) {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "arena size must be at least {ARENA_HEADER_BYTES} bytes and a multiple of 4"
+            )));
+        }
+        self.arena_size_bytes = bytes;
+        Ok(self)
+    }
+
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
         self.generate_internal(program, None)
     }
@@ -358,12 +407,13 @@ impl WasmCodeGen {
         // Process module imports first
         self.generate_imports(&program.imports)?;
 
-        // Import WASI functions for I/O
-        self.output.push_str("  ;; WASI imports\n");
-        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
-        self.output.push_str(
-            "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n",
-        );
+        if self.target_profile == WasmTargetProfile::WasiP1 {
+            self.output.push_str("  ;; WASI Preview 1 imports\n");
+            self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
+            self.output.push_str(
+                "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n",
+            );
+        }
 
         // Memory
         self.output.push_str("\n  ;; Memory\n");
@@ -578,8 +628,8 @@ impl WasmCodeGen {
 
     fn place_arena_region_after_static_data(&mut self) -> Result<(), CodeGenError> {
         let aligned_static_end = u64::from(self.next_mem_offset)
-            .div_ceil(u64::from(ARENA_SIZE_BYTES))
-            .checked_mul(u64::from(ARENA_SIZE_BYTES))
+            .div_ceil(u64::from(self.arena_size_bytes))
+            .checked_mul(u64::from(self.arena_size_bytes))
             .ok_or_else(|| {
                 CodeGenError::UnsupportedFeature(
                     "static data exceeds the WebAssembly linear-memory address space".to_string(),
@@ -598,7 +648,7 @@ impl WasmCodeGen {
         let arena_addr = self.next_arena_addr;
         self.next_arena_addr = self
             .next_arena_addr
-            .checked_add(ARENA_SIZE_BYTES)
+            .checked_add(self.arena_size_bytes)
             .ok_or_else(|| {
                 CodeGenError::UnsupportedFeature(
                     "arena layout exceeds the WebAssembly linear-memory address space".to_string(),
@@ -1080,210 +1130,213 @@ impl WasmCodeGen {
     }
 
     fn generate_builtin_functions(&mut self) -> Result<(), CodeGenError> {
-        // Internal low-level writer. Source-level `println` dispatches through Display.
         self.output.push_str("\n  ;; Built-in functions\n");
-        self.output
-            .push_str("  (func $__restrict_println_string (param $str i32)\n");
-        self.output.push_str("    (local $len i32)\n");
-        self.output.push_str("    (local $iov_base i32)\n");
-        self.output.push_str("    (local $iov_len i32)\n");
-        self.output.push_str("    (local $nwritten i32)\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    ;; Read string length from memory (first 4 bytes)\n");
-        self.output.push_str("    local.get $str\n");
-        self.output.push_str("    i32.load\n");
-        self.output.push_str("    local.set $len\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    ;; Prepare iovec structure at memory address 0\n");
-        self.output
-            .push_str("    ;; iov_base = str + 4 (skip length prefix)\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    local.get $str\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; iov_len = string length\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    local.get $len\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add newline to iovec\n");
-        self.output.push_str("    ;; Store newline at address 16\n");
-        self.output.push_str("    i32.const 16\n");
-        self.output.push_str("    i32.const 10  ;; '\\n'\n");
-        self.output.push_str("    i32.store8\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Second iovec for newline\n");
-        self.output
-            .push_str("    i32.const 8   ;; second iovec base\n");
-        self.output
-            .push_str("    i32.const 16  ;; address of newline\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    i32.const 12  ;; second iovec len\n");
-        self.output
-            .push_str("    i32.const 1   ;; length of newline\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Call fd_write\n");
-        self.output.push_str("    i32.const 1   ;; stdout\n");
-        self.output.push_str("    i32.const 0   ;; iovs\n");
-        self.output
-            .push_str("    i32.const 2   ;; iovs_len (2 iovecs)\n");
-        self.output
-            .push_str("    i32.const 20  ;; nwritten (output param)\n");
-        self.output.push_str("    call $fd_write\n");
-        self.output.push_str("    drop\n");
-        self.output.push_str("  )\n");
+        if self.target_profile == WasmTargetProfile::WasiP1 {
+            // Internal low-level writer. Source-level `println` dispatches through Display.
+            self.output
+                .push_str("  (func $__restrict_println_string (param $str i32)\n");
+            self.output.push_str("    (local $len i32)\n");
+            self.output.push_str("    (local $iov_base i32)\n");
+            self.output.push_str("    (local $iov_len i32)\n");
+            self.output.push_str("    (local $nwritten i32)\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    ;; Read string length from memory (first 4 bytes)\n");
+            self.output.push_str("    local.get $str\n");
+            self.output.push_str("    i32.load\n");
+            self.output.push_str("    local.set $len\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    ;; Prepare iovec structure at memory address 0\n");
+            self.output
+                .push_str("    ;; iov_base = str + 4 (skip length prefix)\n");
+            self.output.push_str("    i32.const 0\n");
+            self.output.push_str("    local.get $str\n");
+            self.output.push_str("    i32.const 4\n");
+            self.output.push_str("    i32.add\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; iov_len = string length\n");
+            self.output.push_str("    i32.const 4\n");
+            self.output.push_str("    local.get $len\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Add newline to iovec\n");
+            self.output.push_str("    ;; Store newline at address 16\n");
+            self.output.push_str("    i32.const 16\n");
+            self.output.push_str("    i32.const 10  ;; '\\n'\n");
+            self.output.push_str("    i32.store8\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Second iovec for newline\n");
+            self.output
+                .push_str("    i32.const 8   ;; second iovec base\n");
+            self.output
+                .push_str("    i32.const 16  ;; address of newline\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    i32.const 12  ;; second iovec len\n");
+            self.output
+                .push_str("    i32.const 1   ;; length of newline\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Call fd_write\n");
+            self.output.push_str("    i32.const 1   ;; stdout\n");
+            self.output.push_str("    i32.const 0   ;; iovs\n");
+            self.output
+                .push_str("    i32.const 2   ;; iovs_len (2 iovecs)\n");
+            self.output
+                .push_str("    i32.const 20  ;; nwritten (output param)\n");
+            self.output.push_str("    call $fd_write\n");
+            self.output.push_str("    drop\n");
+            self.output.push_str("  )\n");
 
-        // print_int function with proper integer to string conversion
-        self.output
-            .push_str("\n  (func $print_int (param $value i32)\n");
-        self.output.push_str("    (local $num i32)\n");
-        self.output.push_str("    (local $digit i32)\n");
-        self.output.push_str("    (local $buffer_start i32)\n");
-        self.output.push_str("    (local $buffer_end i32)\n");
-        self.output.push_str("    (local $is_negative i32)\n");
-        self.output.push_str("    (local $len i32)\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    ;; Use memory starting at address 400 for the buffer\n");
-        self.output
-            .push_str("    i32.const 420  ;; Start from the end of buffer and work backwards\n");
-        self.output.push_str("    local.set $buffer_end\n");
-        self.output.push_str("    local.get $buffer_end\n");
-        self.output.push_str("    local.set $buffer_start\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Check if negative\n");
-        self.output.push_str("    local.get $value\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    i32.lt_s\n");
-        self.output.push_str("    local.set $is_negative\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Get absolute value\n");
-        self.output.push_str("    local.get $is_negative\n");
-        self.output.push_str("    (if (result i32)\n");
-        self.output.push_str("      (then\n");
-        self.output.push_str("        i32.const 0\n");
-        self.output.push_str("        local.get $value\n");
-        self.output.push_str("        i32.sub\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("      (else\n");
-        self.output.push_str("        local.get $value\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("    )\n");
-        self.output.push_str("    local.set $num\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Handle zero special case\n");
-        self.output.push_str("    local.get $num\n");
-        self.output.push_str("    i32.eqz\n");
-        self.output.push_str("    (if\n");
-        self.output.push_str("      (then\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 1\n");
-        self.output.push_str("        i32.sub\n");
-        self.output.push_str("        local.set $buffer_start\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 48  ;; '0'\n");
-        self.output.push_str("        i32.store8\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("      (else\n");
-        self.output.push_str("        ;; Convert digits\n");
-        self.output.push_str("        (block $break\n");
-        self.output.push_str("          (loop $digit_loop\n");
-        self.output.push_str("            local.get $num\n");
-        self.output.push_str("            i32.eqz\n");
-        self.output.push_str("            br_if $break\n");
-        self.output.push_str("          \n");
-        self.output.push_str("          ;; Get last digit\n");
-        self.output.push_str("          local.get $num\n");
-        self.output.push_str("          i32.const 10\n");
-        self.output.push_str("          i32.rem_u\n");
-        self.output.push_str("          local.set $digit\n");
-        self.output.push_str("          \n");
-        self.output.push_str("          ;; Store digit character\n");
-        self.output.push_str("          local.get $buffer_start\n");
-        self.output.push_str("          i32.const 1\n");
-        self.output.push_str("          i32.sub\n");
-        self.output.push_str("          local.set $buffer_start\n");
-        self.output.push_str("          local.get $buffer_start\n");
-        self.output.push_str("          local.get $digit\n");
-        self.output.push_str("          i32.const 48  ;; '0'\n");
-        self.output.push_str("          i32.add\n");
-        self.output.push_str("          i32.store8\n");
-        self.output.push_str("          \n");
-        self.output.push_str("          ;; Divide by 10\n");
-        self.output.push_str("          local.get $num\n");
-        self.output.push_str("          i32.const 10\n");
-        self.output.push_str("          i32.div_u\n");
-        self.output.push_str("          local.set $num\n");
-        self.output.push_str("          \n");
-        self.output.push_str("            br $digit_loop\n");
-        self.output.push_str("          )\n");
-        self.output.push_str("        )\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("    )\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add negative sign if needed\n");
-        self.output.push_str("    local.get $is_negative\n");
-        self.output.push_str("    (if\n");
-        self.output.push_str("      (then\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 1\n");
-        self.output.push_str("        i32.sub\n");
-        self.output.push_str("        local.set $buffer_start\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 45  ;; '-'\n");
-        self.output.push_str("        i32.store8\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("    )\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add newline\n");
-        self.output.push_str("    local.get $buffer_end\n");
-        self.output.push_str("    i32.const 10  ;; '\\n'\n");
-        self.output.push_str("    i32.store8\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Calculate length\n");
-        self.output.push_str("    local.get $buffer_end\n");
-        self.output.push_str("    local.get $buffer_start\n");
-        self.output.push_str("    i32.sub\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add  ;; +1 for newline\n");
-        self.output.push_str("    local.set $len\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Setup iovec\n");
-        self.output.push_str("    i32.const 200\n");
-        self.output
-            .push_str("    local.get $buffer_start  ;; iov_base\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    i32.const 204\n");
-        self.output
-            .push_str("    local.get $len          ;; iov_len\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Call fd_write\n");
-        self.output.push_str("    i32.const 1   ;; stdout\n");
-        self.output.push_str("    i32.const 200 ;; iovec\n");
-        self.output.push_str("    i32.const 1   ;; iovec count\n");
-        self.output.push_str("    i32.const 300 ;; nwritten\n");
-        self.output.push_str("    call $fd_write\n");
-        self.output.push_str("    drop\n");
-        self.output.push_str("  )\n");
+            // print_int function with proper integer to string conversion
+            self.output
+                .push_str("\n  (func $print_int (param $value i32)\n");
+            self.output.push_str("    (local $num i32)\n");
+            self.output.push_str("    (local $digit i32)\n");
+            self.output.push_str("    (local $buffer_start i32)\n");
+            self.output.push_str("    (local $buffer_end i32)\n");
+            self.output.push_str("    (local $is_negative i32)\n");
+            self.output.push_str("    (local $len i32)\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    ;; Use memory starting at address 400 for the buffer\n");
+            self.output.push_str(
+                "    i32.const 420  ;; Start from the end of buffer and work backwards\n",
+            );
+            self.output.push_str("    local.set $buffer_end\n");
+            self.output.push_str("    local.get $buffer_end\n");
+            self.output.push_str("    local.set $buffer_start\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Check if negative\n");
+            self.output.push_str("    local.get $value\n");
+            self.output.push_str("    i32.const 0\n");
+            self.output.push_str("    i32.lt_s\n");
+            self.output.push_str("    local.set $is_negative\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Get absolute value\n");
+            self.output.push_str("    local.get $is_negative\n");
+            self.output.push_str("    (if (result i32)\n");
+            self.output.push_str("      (then\n");
+            self.output.push_str("        i32.const 0\n");
+            self.output.push_str("        local.get $value\n");
+            self.output.push_str("        i32.sub\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("      (else\n");
+            self.output.push_str("        local.get $value\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("    )\n");
+            self.output.push_str("    local.set $num\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Handle zero special case\n");
+            self.output.push_str("    local.get $num\n");
+            self.output.push_str("    i32.eqz\n");
+            self.output.push_str("    (if\n");
+            self.output.push_str("      (then\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 1\n");
+            self.output.push_str("        i32.sub\n");
+            self.output.push_str("        local.set $buffer_start\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 48  ;; '0'\n");
+            self.output.push_str("        i32.store8\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("      (else\n");
+            self.output.push_str("        ;; Convert digits\n");
+            self.output.push_str("        (block $break\n");
+            self.output.push_str("          (loop $digit_loop\n");
+            self.output.push_str("            local.get $num\n");
+            self.output.push_str("            i32.eqz\n");
+            self.output.push_str("            br_if $break\n");
+            self.output.push_str("          \n");
+            self.output.push_str("          ;; Get last digit\n");
+            self.output.push_str("          local.get $num\n");
+            self.output.push_str("          i32.const 10\n");
+            self.output.push_str("          i32.rem_u\n");
+            self.output.push_str("          local.set $digit\n");
+            self.output.push_str("          \n");
+            self.output.push_str("          ;; Store digit character\n");
+            self.output.push_str("          local.get $buffer_start\n");
+            self.output.push_str("          i32.const 1\n");
+            self.output.push_str("          i32.sub\n");
+            self.output.push_str("          local.set $buffer_start\n");
+            self.output.push_str("          local.get $buffer_start\n");
+            self.output.push_str("          local.get $digit\n");
+            self.output.push_str("          i32.const 48  ;; '0'\n");
+            self.output.push_str("          i32.add\n");
+            self.output.push_str("          i32.store8\n");
+            self.output.push_str("          \n");
+            self.output.push_str("          ;; Divide by 10\n");
+            self.output.push_str("          local.get $num\n");
+            self.output.push_str("          i32.const 10\n");
+            self.output.push_str("          i32.div_u\n");
+            self.output.push_str("          local.set $num\n");
+            self.output.push_str("          \n");
+            self.output.push_str("            br $digit_loop\n");
+            self.output.push_str("          )\n");
+            self.output.push_str("        )\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("    )\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Add negative sign if needed\n");
+            self.output.push_str("    local.get $is_negative\n");
+            self.output.push_str("    (if\n");
+            self.output.push_str("      (then\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 1\n");
+            self.output.push_str("        i32.sub\n");
+            self.output.push_str("        local.set $buffer_start\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 45  ;; '-'\n");
+            self.output.push_str("        i32.store8\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("    )\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Add newline\n");
+            self.output.push_str("    local.get $buffer_end\n");
+            self.output.push_str("    i32.const 10  ;; '\\n'\n");
+            self.output.push_str("    i32.store8\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Calculate length\n");
+            self.output.push_str("    local.get $buffer_end\n");
+            self.output.push_str("    local.get $buffer_start\n");
+            self.output.push_str("    i32.sub\n");
+            self.output.push_str("    i32.const 1\n");
+            self.output.push_str("    i32.add  ;; +1 for newline\n");
+            self.output.push_str("    local.set $len\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Setup iovec\n");
+            self.output.push_str("    i32.const 200\n");
+            self.output
+                .push_str("    local.get $buffer_start  ;; iov_base\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    i32.const 204\n");
+            self.output
+                .push_str("    local.get $len          ;; iov_len\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Call fd_write\n");
+            self.output.push_str("    i32.const 1   ;; stdout\n");
+            self.output.push_str("    i32.const 200 ;; iovec\n");
+            self.output.push_str("    i32.const 1   ;; iovec count\n");
+            self.output.push_str("    i32.const 300 ;; nwritten\n");
+            self.output.push_str("    call $fd_write\n");
+            self.output.push_str("    drop\n");
+            self.output.push_str("  )\n");
 
-        // Add print_int to function signatures
-        self.functions.insert(
-            "print_int".to_string(),
-            FunctionSig {
-                _params: vec![WasmType::I32],
-                result: None,
-            },
-        );
+            // Add print_int to function signatures
+            self.functions.insert(
+                "print_int".to_string(),
+                FunctionSig {
+                    _params: vec![WasmType::I32],
+                    result: None,
+                },
+            );
 
-        self.generate_std_io_functions()?;
+            self.generate_std_io_functions()?;
+        }
         self.generate_display_functions()?;
         self.generate_std_math_functions()?;
         self.generate_std_prelude_functions()?;
@@ -2648,7 +2701,7 @@ impl WasmCodeGen {
         self.output.push_str("    ;; Arena bounds check\n");
         self.output.push_str("    local.get $arena\n");
         self.output
-            .push_str(&format!("    i32.const {}\n", ARENA_SIZE_BYTES));
+            .push_str(&format!("    i32.const {}\n", self.arena_size_bytes));
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.set $arena_end\n");
         self.output.push_str("    local.get $new_current\n");
@@ -10663,6 +10716,12 @@ impl WasmCodeGen {
         value: &Expr,
         synthesize_pipe_unit: bool,
     ) -> Result<(), CodeGenError> {
+        if self.target_profile == WasmTargetProfile::WasmCore && matches!(name, "print" | "println")
+        {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "'{name}' requires the 'wasip1' target profile; 'wasm-core' does not import host I/O"
+            )));
+        }
         let source_type = self.infer_expr_source_type(value).ok_or_else(|| {
             CodeGenError::UnsupportedFeature(format!(
                 "{} requires a statically known Display argument",

@@ -31,7 +31,8 @@ The current execution boundary is:
 
 | Path | Status |
 | --- | --- |
-| Core Wasm with basic WASI Preview 1 program imports | Current |
+| Import-free `wasm-core` compute modules | Current |
+| `wasip1` with basic WASI Preview 1 program imports | Current and default |
 | Browser execution through the playground's JavaScript WASI bridge | Current |
 | General WASI arguments, filesystem, clocks, randomness, networking, and HTTP | Future |
 | WIT and WebAssembly Component Model output | Future |
@@ -46,9 +47,21 @@ interface can replace it without introducing a new language backend.
 
 ## Build Outputs
 
-The native compiler emits WebAssembly text (`.wat`). Browser tooling can convert
-that output to binary, and Warder emits both text and binary Wasm. A default
-Warder project build also includes a local cage artifact:
+The native compiler emits text or validated binary WebAssembly directly:
+
+```bash
+restrict_lang --target wasip1 --emit wat app.rl
+restrict_lang --target wasip1 --emit wasm app.rl
+restrict_lang --target wasm-core --emit wasm compute.rl
+```
+
+`wasm-core` emits no imports and rejects host output. `wasip1` supplies the
+current `fd_write`-based output surface. Arena capacity defaults to 4096 bytes;
+larger allocation-heavy workloads can select an explicit capacity such as
+`--arena-bytes 1048576`.
+
+Warder emits both text and binary Wasm. A default Warder project build also
+includes a local cage artifact:
 
 ```text
 dist/<package-name>-<package-version>.wat

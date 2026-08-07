@@ -73,11 +73,20 @@ mise exec -- cargo build --release
 
 # Compile your first program
 echo 'fun main: () -> Int32 = { 42 }' > hello.rl
-./target/release/restrict_lang hello.rl
+./target/release/restrict_lang --emit wasm hello.rl
 
 # Run the generated WebAssembly
-wasmtime hello.wat
+wasmtime hello.wasm
 ```
+
+For import-free compute modules, select the host-neutral benchmark target:
+
+```bash
+./target/release/restrict_lang --target wasm-core --emit wasm compute.rl
+```
+
+`wasm-core` rejects host I/O. The default `wasip1` profile supports the current
+`print` and `println` surface.
 
 ## ✨ Features
 

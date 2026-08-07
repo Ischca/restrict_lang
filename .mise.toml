@@ -4,7 +4,7 @@ MDBOOK_VERSION = "0.5.3"
 WASM_PACK_VERSION = "0.15.0"
 
 [tools]
-rust = "latest"
+rust = "1.94.1"
 
 [tasks.test]
 description = "Run default tests"
@@ -90,8 +90,12 @@ description = "Property-based testing"
 run = "cargo test property_tests -- --nocapture"
 
 [tasks.bench]
-description = "Benchmark compilation speed"
-run = "cargo bench"
+description = "Build, validate, execute, and record the full Restrict benchmark baseline"
+run = "bash scripts/run-benchmarks.sh full"
+
+[tasks.bench-smoke]
+description = "Run the short correctness-first benchmark subset"
+run = "bash scripts/run-benchmarks.sh smoke"
 
 [tasks.clean]
 description = "Clean generated files"

@@ -3,10 +3,12 @@ use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::module::resolve_program_imports_for_file_with_package_roots;
 use restrict_lang::{
     check_release_surface, lex, parse_program, HostAbiProfile, TypeChecker, WasmCodeGen,
+    WasmTargetProfile,
 };
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 
 #[cfg(not(target_arch = "wasm32"))]
 use restrict_lang::lsp;
@@ -22,6 +24,12 @@ Options:
   --check       Check imports, types, and the selected host ABI surface without code generation
   --host-abi <PROFILE>
                 Select host ABI profile: v0.0.1 (default) or flat-record-v1
+  --target <PROFILE>
+                Select Wasm target profile: wasip1 (default) or wasm-core
+  --emit <FORMAT>
+                Select output format: wat (default) or wasm
+  --arena-bytes <BYTES>
+                Reserve BYTES per compiler-managed arena (default: 4096)
   --module-root <ALIAS=DIR>
                 Mount a package src directory under a source import namespace; repeatable
   --ast         Show AST only (no compilation)
@@ -30,6 +38,26 @@ Options:
   --help        Show this help message
 "
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmitFormat {
+    Wat,
+    Wasm,
+}
+
+impl FromStr for EmitFormat {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "wat" => Ok(Self::Wat),
+            "wasm" => Ok(Self::Wasm),
+            _ => Err(format!(
+                "Unknown output format '{value}'; expected 'wat' or 'wasm'"
+            )),
+        }
+    }
 }
 
 #[tokio::main]
@@ -47,6 +75,9 @@ async fn main() {
     let mut lsp_mode = false;
     let mut verbose = false;
     let mut host_abi_profile = HostAbiProfile::V001Scalar;
+    let mut target_profile = WasmTargetProfile::WasiP1;
+    let mut emit_format = EmitFormat::Wat;
+    let mut arena_size_bytes = 4096u32;
     let mut package_roots = Vec::new();
     let mut source_file = String::new();
     let mut output_file = None;
@@ -72,6 +103,60 @@ async fn main() {
                     Ok(profile) => profile,
                     Err(error) => {
                         eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                };
+                i += 1;
+            }
+            "--target" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("--target requires a value; expected 'wasm-core' or 'wasip1'");
+                    std::process::exit(1);
+                };
+                if value.starts_with("--") {
+                    eprintln!("--target requires a value; expected 'wasm-core' or 'wasip1'");
+                    std::process::exit(1);
+                }
+                target_profile = match value.parse() {
+                    Ok(profile) => profile,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                };
+                i += 1;
+            }
+            "--emit" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("--emit requires a value; expected 'wat' or 'wasm'");
+                    std::process::exit(1);
+                };
+                if value.starts_with("--") {
+                    eprintln!("--emit requires a value; expected 'wat' or 'wasm'");
+                    std::process::exit(1);
+                }
+                emit_format = match value.parse() {
+                    Ok(format) => format,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                };
+                i += 1;
+            }
+            "--arena-bytes" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("--arena-bytes requires a positive integer");
+                    std::process::exit(1);
+                };
+                if value.starts_with("--") {
+                    eprintln!("--arena-bytes requires a positive integer");
+                    std::process::exit(1);
+                }
+                arena_size_bytes = match value.parse::<u32>() {
+                    Ok(bytes) => bytes,
+                    Err(_) => {
+                        eprintln!("--arena-bytes requires a positive integer");
                         std::process::exit(1);
                     }
                 };
@@ -256,7 +341,16 @@ async fn main() {
     if verbose {
         println!("\n=== WASM Code Generation ===");
     }
-    let mut codegen = WasmCodeGen::with_host_abi_profile(host_abi_profile);
+    let mut codegen = match WasmCodeGen::with_host_abi_profile(host_abi_profile)
+        .with_target_profile(target_profile)
+        .with_arena_size_bytes(arena_size_bytes)
+    {
+        Ok(codegen) => codegen,
+        Err(error) => {
+            eprintln!("Code generation configuration error: {error}");
+            std::process::exit(1);
+        }
+    };
     let wat = match codegen.generate_checked(&ast, &checked_ir) {
         Ok(wat) => {
             if verbose {
@@ -273,13 +367,34 @@ async fn main() {
     // Write output
     let output_filename = output_file.unwrap_or_else(|| {
         Path::new(filename)
-            .with_extension("wat")
+            .with_extension(match emit_format {
+                EmitFormat::Wat => "wat",
+                EmitFormat::Wasm => "wasm",
+            })
             .to_str()
             .unwrap()
             .to_string()
     });
 
-    match fs::write(&output_filename, wat) {
+    let output = match emit_format {
+        EmitFormat::Wat => wat.into_bytes(),
+        EmitFormat::Wasm => {
+            let wasm = match wat::parse_str(&wat) {
+                Ok(wasm) => wasm,
+                Err(error) => {
+                    eprintln!("WebAssembly encoding error: {error}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(error) = wasmparser::Validator::new().validate_all(&wasm) {
+                eprintln!("WebAssembly validation error: {error}");
+                std::process::exit(1);
+            }
+            wasm
+        }
+    };
+
+    match fs::write(&output_filename, output) {
         Ok(()) => {
             println!("\n✓ Successfully compiled to {}", output_filename);
         }

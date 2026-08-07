@@ -83,10 +83,12 @@ For import-free compute modules, select the host-neutral benchmark target:
 
 ```bash
 ./target/release/restrict_lang --target wasm-core --emit wasm compute.rl
+./target/release/restrict_lang --target wasm-core --emit wasm --release compute.rl
 ```
 
 `wasm-core` rejects host I/O. The default `wasip1` profile supports the current
-`print` and `println` surface.
+`print` and `println` surface. `--release` removes unreachable generated code;
+the default artifact remains unoptimized for compiler debugging.
 
 ## ✨ Features
 

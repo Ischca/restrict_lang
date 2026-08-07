@@ -37,11 +37,14 @@ source still compiles to WebAssembly and application logic remains in Wasm.
 
 ## Current Reality
 
-The current compiler emits Core WebAssembly text. Warder can package both WAT
-and binary Wasm. Program code imports the WASI Preview 1 `fd_write` and
-`proc_exit` functions, and a zero-argument `main` receives an exported `_start`
-wrapper. This is enough for the current output path and small command-style
-programs, but it is not a complete WASI application platform.
+The current compiler emits Core WebAssembly text or validated binary Wasm.
+Raw output preserves the complete lowered module. Explicit `--release` output
+applies deterministic reachability-based dead-code elimination to functions,
+function imports, named types, globals, tables, and element segments. Warder
+can package both WAT and binary Wasm. Program code imports the WASI Preview 1
+`fd_write` and `proc_exit` functions, and a zero-argument `main` receives an
+exported `_start` wrapper. This is enough for the current output path and small
+command-style programs, but it is not a complete WASI application platform.
 
 The browser playground supplies the required program imports through a small
 JavaScript WASI bridge. The bridge is necessary because browsers do not

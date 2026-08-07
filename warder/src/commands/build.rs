@@ -126,15 +126,12 @@ pub async fn build_project(
     for dependency in &snapshot_dependencies {
         cmd.arg("--module-root").arg(dependency.module_root_arg());
     }
+    if release || manifest.build.optimize {
+        cmd.arg("--release");
+    }
     cmd.current_dir(&application_snapshot.source_root)
         .arg(&application_snapshot.entry_path)
         .arg(&staged_wat_output);
-
-    if release {
-        print_warning(
-            "Release optimizations are experimental and out-of-scope for v0.0.1; building without optimizations",
-        );
-    }
 
     if component {
         print_warning(

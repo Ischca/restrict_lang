@@ -54,24 +54,24 @@ application platform.
 
 #### Release Code Generation
 
-- [ ] Connect release mode to the optimizer and document its exact pipeline
-- [ ] Eliminate unreachable functions, unused runtime helpers, imports, and
-  exports
-- [ ] Define the role of `wasm-opt` and retain both raw and optimized artifact
+- [x] Connect release mode to the optimizer and document its exact pipeline
+- [x] Eliminate unreachable functions, unused runtime helpers and imports, and
+  dead internal declarations while preserving explicit exports as roots
+- [x] Define the role of `wasm-opt` and retain both raw and optimized artifact
   measurements
-- [ ] Make identical source, compiler revision, and options produce
+- [x] Make identical source, compiler revision, and options produce
   reproducible benchmark artifacts
 
 #### Benchmark Language Surface
 
-- [ ] Stabilize release Wasm code generation for scalar arithmetic, branches,
+- [x] Stabilize release Wasm code generation for scalar arithmetic, branches,
   loops, and monomorphic function calls
-- [ ] Complete recursion for the forms used by the benchmark corpus
-- [ ] Complete closure calls and the `map`/`filter`/`fold` paths used by the
+- [x] Complete recursion for the forms used by the benchmark corpus
+- [x] Complete closure calls and the `map`/`filter`/`fold` paths used by the
   collection workloads
-- [ ] Verify record and collection workloads against interpreter-independent
+- [x] Verify record and collection workloads against interpreter-independent
   expected results
-- [ ] Freeze and document the exact supported subset before comparing it with
+- [x] Freeze and document the exact supported subset before comparing it with
   other languages
 
 #### Memory Behavior
@@ -109,7 +109,7 @@ application platform.
 
 - [x] A non-I/O `wasm-core` workload runs without JavaScript and without
   unnecessary WASI imports
-- [ ] Release builds demonstrably optimize code and remove unused runtime code
+- [x] Release builds demonstrably optimize code and remove unused runtime code
 - [x] Every language feature used by the corpus passes its semantic and Wasm
   execution checks in release mode
 - [x] A representative workload can exceed the former 4 KiB arena boundary

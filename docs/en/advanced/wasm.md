@@ -13,6 +13,7 @@ The compiler emits WebAssembly text or validated binary output directly:
 restrict_lang --target wasip1 --emit wat app.rl
 restrict_lang --target wasip1 --emit wasm app.rl
 restrict_lang --target wasm-core --emit wasm compute.rl
+restrict_lang --target wasm-core --emit wasm --release compute.rl
 ```
 
 `wasm-core` emits no imports and rejects host output. `wasip1` is the default
@@ -20,8 +21,28 @@ and supplies the current `fd_write`-based output surface. Arena capacity
 defaults to 4096 bytes; allocation-heavy workloads can select a larger
 multiple-of-four capacity with `--arena-bytes`.
 
+The default output is deliberately raw and retains the complete generated
+module for debugging. `--release` runs this deterministic pipeline:
+
+1. lower the release-validated program to WAT using Checked IR for the current
+   ABI authority;
+2. root reachability at function exports and the start entry;
+3. follow direct calls transitively, retaining table elements only when a
+   reachable indirect call needs them;
+4. remove unreachable functions and function imports, then unused named types,
+   globals, tables, and element segments; and
+5. encode and validate the selected WAT or binary Wasm output.
+
+This pass is dead-code elimination, not an instruction optimizer. It does not
+yet perform inlining, constant folding on production bodies, or invoke an
+external `wasm-opt`. If Binaryen is evaluated later, its result will be an
+additional downstream artifact; the raw and compiler-release artifacts remain
+available so size and runtime effects are attributable.
+
 When building through Warder, the default project output also includes a local
-cage artifact:
+cage artifact. Warder requests the compiler release pass when
+`build.optimize = true` in `package.rl.toml` (the default) or when
+`warder build --release` is used:
 
 ```text
 dist/<package-name>-<package-version>.wat

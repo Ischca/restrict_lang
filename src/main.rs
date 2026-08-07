@@ -3,7 +3,7 @@ use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::module::resolve_program_imports_for_file_with_package_roots;
 use restrict_lang::{
     check_release_surface, lex, parse_program, HostAbiProfile, TypeChecker, WasmCodeGen,
-    WasmTargetProfile,
+    WasmOptimizationLevel, WasmTargetProfile,
 };
 use std::env;
 use std::fs;
@@ -30,6 +30,7 @@ Options:
                 Select output format: wat (default) or wasm
   --arena-bytes <BYTES>
                 Reserve BYTES per compiler-managed arena (default: 4096)
+  --release     Remove unreachable generated functions and unused runtime declarations
   --module-root <ALIAS=DIR>
                 Mount a package src directory under a source import namespace; repeatable
   --ast         Show AST only (no compilation)
@@ -78,6 +79,7 @@ async fn main() {
     let mut target_profile = WasmTargetProfile::WasiP1;
     let mut emit_format = EmitFormat::Wat;
     let mut arena_size_bytes = 4096u32;
+    let mut optimization_level = WasmOptimizationLevel::None;
     let mut package_roots = Vec::new();
     let mut source_file = String::new();
     let mut output_file = None;
@@ -162,6 +164,7 @@ async fn main() {
                 };
                 i += 1;
             }
+            "--release" => optimization_level = WasmOptimizationLevel::Release,
             "--module-root" => {
                 let Some(value) = args.get(i + 1) else {
                     eprintln!("--module-root requires ALIAS=DIR");
@@ -343,6 +346,7 @@ async fn main() {
     }
     let mut codegen = match WasmCodeGen::with_host_abi_profile(host_abi_profile)
         .with_target_profile(target_profile)
+        .with_optimization_level(optimization_level)
         .with_arena_size_bytes(arena_size_bytes)
     {
         Ok(codegen) => codegen,
@@ -363,6 +367,19 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    if verbose {
+        if let Some(report) = codegen.optimization_report() {
+            println!(
+                "Release optimization removed {} functions, {} function imports, {} types, {} globals, {} tables, and {} element segments",
+                report.removed_functions,
+                report.removed_function_imports,
+                report.removed_types,
+                report.removed_globals,
+                report.removed_tables,
+                report.removed_elements,
+            );
+        }
+    }
 
     // Write output
     let output_filename = output_file.unwrap_or_else(|| {

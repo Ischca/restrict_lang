@@ -68,20 +68,28 @@ struct WorkloadResult {
     id: String,
     source: String,
     source_sha256: String,
-    wasm_sha256: String,
     export: String,
     input: i32,
     expected: i32,
     arena_bytes: u32,
-    compile_ns: u64,
+    raw_artifact: ArtifactResult,
+    optimized_artifact: ArtifactResult,
+    release_reproducible: bool,
     runtime_compile_ns: u64,
     cold_instantiation_ns: u64,
-    wasm_bytes: usize,
-    zstd_bytes: usize,
     warmup_iterations: usize,
     iterations: usize,
     execution: TimingSummary,
     execution_samples_ns: Vec<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactResult {
+    wasm_sha256: String,
+    compile_ns: u64,
+    wasm_bytes: usize,
+    zstd_bytes: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,7 +150,7 @@ fn main() -> Result<()> {
     }
 
     let report = BenchmarkReport {
-        schema_version: 1,
+        schema_version: 2,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         source_revision: command_stdout(
             Command::new("git")
@@ -183,8 +191,12 @@ fn main() -> Result<()> {
     println!("benchmark report: {}", args.output.display());
     for workload in &report.workloads {
         println!(
-            "{}: median={} ns, wasm={} bytes, checksum={}",
-            workload.id, workload.execution.median_ns, workload.wasm_bytes, workload.expected
+            "{}: median={} ns, raw={} bytes, release={} bytes, checksum={}",
+            workload.id,
+            workload.execution.median_ns,
+            workload.raw_artifact.wasm_bytes,
+            workload.optimized_artifact.wasm_bytes,
+            workload.expected
         );
     }
     Ok(())
@@ -243,30 +255,37 @@ fn run_workload(
     let source_path = manifest_dir.join(&workload.source);
     let source = fs::read(&source_path)
         .with_context(|| format!("failed to read benchmark source {}", source_path.display()))?;
-    let wasm_path = artifact_dir.join(format!("{}.wasm", workload.id));
+    let raw_wasm_path = artifact_dir.join(format!("{}.raw.wasm", workload.id));
+    let optimized_wasm_path = artifact_dir.join(format!("{}.release.wasm", workload.id));
+    let reproducibility_path = artifact_dir.join(format!("{}.release-repeat.wasm", workload.id));
 
-    let compile_started = Instant::now();
-    let output = Command::new(compiler)
-        .args(["--target", "wasm-core", "--emit", "wasm", "--arena-bytes"])
-        .arg(workload.arena_bytes.to_string())
-        .arg(&source_path)
-        .arg(&wasm_path)
-        .output()
-        .with_context(|| format!("failed to run compiler {}", compiler.display()))?;
-    let compile_ns = elapsed_ns(compile_started);
-    if !output.status.success() {
+    let raw_compile_ns = compile_artifact(compiler, workload, &source_path, &raw_wasm_path, false)?;
+    let optimized_compile_ns =
+        compile_artifact(compiler, workload, &source_path, &optimized_wasm_path, true)?;
+    compile_artifact(
+        compiler,
+        workload,
+        &source_path,
+        &reproducibility_path,
+        true,
+    )?;
+
+    let raw_wasm = fs::read(&raw_wasm_path)?;
+    let wasm = fs::read(&optimized_wasm_path)?;
+    let repeated_wasm = fs::read(&reproducibility_path)?;
+    fs::remove_file(&reproducibility_path)?;
+    if wasm != repeated_wasm {
         bail!(
-            "{} failed to compile:\n{}",
-            workload.id,
-            String::from_utf8_lossy(&output.stderr)
+            "{} release output is not reproducible for identical compiler options",
+            workload.id
         );
     }
-
-    let wasm = fs::read(&wasm_path)?;
-    Validator::new()
-        .validate_all(&wasm)
-        .with_context(|| format!("{} emitted invalid Wasm", workload.id))?;
-    reject_imports(&workload.id, &wasm)?;
+    for (label, artifact) in [("raw", raw_wasm.as_slice()), ("release", wasm.as_slice())] {
+        Validator::new()
+            .validate_all(artifact)
+            .with_context(|| format!("{} emitted invalid {label} Wasm", workload.id))?;
+        reject_imports(&format!("{} {label}", workload.id), artifact)?;
+    }
 
     let engine = Engine::default();
     let runtime_compile_started = Instant::now();
@@ -311,26 +330,68 @@ fn run_workload(
         verify_result(&workload.id, actual, workload.expected)?;
     }
 
-    let compressed = zstd::bulk::compress(&wasm, 19)?;
+    let raw_compressed = zstd::bulk::compress(&raw_wasm, 19)?;
+    let optimized_compressed = zstd::bulk::compress(&wasm, 19)?;
     Ok(WorkloadResult {
         id: workload.id.clone(),
         source: workload.source.clone(),
         source_sha256: sha256(&source),
-        wasm_sha256: sha256(&wasm),
         export: workload.export.clone(),
         input: workload.input,
         expected: workload.expected,
         arena_bytes: workload.arena_bytes,
-        compile_ns,
+        raw_artifact: ArtifactResult {
+            wasm_sha256: sha256(&raw_wasm),
+            compile_ns: raw_compile_ns,
+            wasm_bytes: raw_wasm.len(),
+            zstd_bytes: raw_compressed.len(),
+        },
+        optimized_artifact: ArtifactResult {
+            wasm_sha256: sha256(&wasm),
+            compile_ns: optimized_compile_ns,
+            wasm_bytes: wasm.len(),
+            zstd_bytes: optimized_compressed.len(),
+        },
+        release_reproducible: true,
         runtime_compile_ns,
         cold_instantiation_ns,
-        wasm_bytes: wasm.len(),
-        zstd_bytes: compressed.len(),
         warmup_iterations,
         iterations,
         execution: summarize(&samples),
         execution_samples_ns: samples,
     })
+}
+
+fn compile_artifact(
+    compiler: &Path,
+    workload: &Workload,
+    source_path: &Path,
+    wasm_path: &Path,
+    release: bool,
+) -> Result<u64> {
+    let mut command = Command::new(compiler);
+    command.args(["--target", "wasm-core", "--emit", "wasm"]);
+    if release {
+        command.arg("--release");
+    }
+    command
+        .args(["--arena-bytes", &workload.arena_bytes.to_string()])
+        .arg(source_path)
+        .arg(wasm_path);
+    let compile_started = Instant::now();
+    let output = command
+        .output()
+        .with_context(|| format!("failed to run compiler {}", compiler.display()))?;
+    let compile_ns = elapsed_ns(compile_started);
+    if !output.status.success() {
+        bail!(
+            "{} failed to compile in {} mode:\n{}",
+            workload.id,
+            if release { "release" } else { "raw" },
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(compile_ns)
 }
 
 fn reject_imports(id: &str, wasm: &[u8]) -> Result<()> {

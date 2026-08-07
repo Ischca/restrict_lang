@@ -40,6 +40,14 @@ and other host-I/O calls. Both profiles use the same Restrict source semantics.
 The native CLI can encode and validate binary output directly with `--emit
 wasm`; text output remains available with `--emit wat`.
 
+Compiler output is unoptimized by default so the complete lowered module stays
+available for debugging. `--release` applies the compiler's deterministic
+reachability pass after WAT lowering: host-visible exports and the start entry
+are roots, direct calls are followed transitively, and unused functions,
+function imports, named types, globals, tables, and element segments are
+removed when they cannot affect those roots. This release pass does not yet
+rewrite instructions or invoke an external `wasm-opt` binary.
+
 Compiler-managed arenas default to 4096 bytes for compatibility. A build may
 select a larger multiple-of-four capacity with `--arena-bytes`; this changes
 reserved linear-memory capacity, not source semantics or host ABI. Arena

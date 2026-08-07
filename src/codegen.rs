@@ -38,6 +38,8 @@ use crate::ir::builder::{CheckedFunctionIr, CheckedProgramIr};
 use crate::ir::{FinalType, HostAbi, ScalarRepr, ValueRepr};
 use crate::release_surface::HostAbiProfile;
 use crate::type_checker::{ArrayLength, TypedType};
+use crate::wasm_optimize::eliminate_unreachable;
+pub use crate::wasm_optimize::ReleaseOptimizationReport;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use thiserror::Error;
@@ -69,6 +71,30 @@ impl FromStr for WasmTargetProfile {
             "wasip1" => Ok(Self::WasiP1),
             _ => Err(format!(
                 "Unknown target profile '{value}'; expected 'wasm-core' or 'wasip1'"
+            )),
+        }
+    }
+}
+
+/// Optimization pipeline applied to generated Core WebAssembly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WasmOptimizationLevel {
+    /// Preserve the complete compiler-generated module for debugging.
+    #[default]
+    None,
+    /// Remove unreachable functions and the types and globals they leave unused.
+    Release,
+}
+
+impl FromStr for WasmOptimizationLevel {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "none" => Ok(Self::None),
+            "release" => Ok(Self::Release),
+            _ => Err(format!(
+                "Unknown optimization level '{value}'; expected 'none' or 'release'"
             )),
         }
     }
@@ -164,6 +190,10 @@ pub struct WasmCodeGen {
     target_profile: WasmTargetProfile,
     /// Bytes reserved for each compiler-managed arena.
     arena_size_bytes: u32,
+    /// Deterministic optimization applied after WAT lowering.
+    optimization_level: WasmOptimizationLevel,
+    /// Statistics from the most recent release optimization.
+    optimization_report: Option<ReleaseOptimizationReport>,
     /// Top-level immutable globals and their Wasm ABI types.
     global_types: HashMap<String, WasmType>,
     /// Top-level immutable globals and their source-level Restrict types.
@@ -313,6 +343,8 @@ impl WasmCodeGen {
             host_abi_profile: HostAbiProfile::V001Scalar,
             target_profile: WasmTargetProfile::WasiP1,
             arena_size_bytes: DEFAULT_ARENA_SIZE_BYTES,
+            optimization_level: WasmOptimizationLevel::None,
+            optimization_report: None,
             global_types: HashMap::new(),
             global_source_types: HashMap::new(),
             methods: HashMap::new(),
@@ -374,6 +406,17 @@ impl WasmCodeGen {
         }
         self.arena_size_bytes = bytes;
         Ok(self)
+    }
+
+    /// Select the deterministic post-lowering optimization pipeline.
+    pub fn with_optimization_level(mut self, level: WasmOptimizationLevel) -> Self {
+        self.optimization_level = level;
+        self
+    }
+
+    /// Return statistics for the most recent release optimization, if enabled.
+    pub fn optimization_report(&self) -> Option<ReleaseOptimizationReport> {
+        self.optimization_report
     }
 
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
@@ -622,6 +665,17 @@ impl WasmCodeGen {
 
         self.output.push_str(")\n");
         self.finalize_initial_memory_size()?;
+
+        self.optimization_report = None;
+        if self.optimization_level == WasmOptimizationLevel::Release {
+            let (optimized, report) = eliminate_unreachable(&self.output).map_err(|error| {
+                CodeGenError::InvalidCheckedIr(format!(
+                    "release optimization failed for generated WAT: {error}"
+                ))
+            })?;
+            self.output = optimized;
+            self.optimization_report = Some(report);
+        }
 
         Ok(self.output.clone())
     }

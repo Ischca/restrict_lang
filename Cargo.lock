@@ -2165,6 +2165,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror",
  "tokio",
  "tower-lsp",

@@ -89,14 +89,14 @@ jobs:
         run: >-
           cargo test -p restrict_lang --locked
           --test quality_gates
-          standalone_release_examples_compile_through_cli
+          test_release_example_hygiene::standalone_release_examples_compile_through_cli
           -- --ignored --exact --test-threads=1
 
       - name: Check VS Code release example entrypoints
         run: >-
           cargo test -p restrict_lang --locked
           --test quality_gates
-          vscode_release_examples_compile_through_cli
+          test_release_example_hygiene::vscode_release_examples_compile_through_cli
           -- --ignored --exact --test-threads=1
 
       - name: Check generated playground samples
@@ -106,8 +106,8 @@ jobs:
         run: node scripts/smoke-web-runtime.mjs
 
   benchmark-smoke:
-    name: Core Wasm benchmark smoke
-    runs-on: ubuntu-latest
+    name: Core Wasm benchmark baseline
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
@@ -122,10 +122,27 @@ jobs:
       - name: Build benchmark tools
         run: >-
           cargo build --locked --release
-          --bin restrict_lang --bin restrict_bench
+          --bin restrict_lang --bin restrict_bench --bin restrict_bench_compare
 
-      - name: Verify Core Wasm benchmark corpus
-        run: ./target/release/restrict_bench --smoke
+      - name: Record full Core Wasm benchmark report
+        run: >-
+          ./target/release/restrict_bench
+          --output target/benchmark-results/restrict-baseline.json
+
+      - name: Enforce deterministic benchmark baseline
+        run: >-
+          ./target/release/restrict_bench_compare
+          --baseline benchmarks/baselines/core-wasm-v0.0.1.json
+          --candidate target/benchmark-results/restrict-baseline.json
+          --policy benchmarks/regression-policy.json
+
+      - name: Upload raw benchmark evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-wasm-benchmark-${{ github.run_id }}
+          path: target/benchmark-results/
+          if-no-files-found: error
+          retention-days: 14
 
   # Keep the historical `test` check name stable for branch protection while
   # the expensive work runs in parallel above.

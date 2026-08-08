@@ -263,6 +263,22 @@ fn mise_check_task_matches_standalone_release_examples() {
 }
 
 #[test]
+fn ci_release_gate_uses_module_qualified_exact_filters() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = read_source(root, ".github/workflows/ci.yml");
+
+    for test_name in [
+        "test_release_example_hygiene::standalone_release_examples_compile_through_cli",
+        "test_release_example_hygiene::vscode_release_examples_compile_through_cli",
+    ] {
+        assert!(
+            workflow.contains(test_name),
+            ".github/workflows/ci.yml should use the module-qualified --exact filter `{test_name}`"
+        );
+    }
+}
+
+#[test]
 fn module_leaf_release_examples_are_covered_by_modular_gate() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let release_sources = RELEASE_EXAMPLES

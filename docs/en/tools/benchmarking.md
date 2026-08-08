@@ -18,10 +18,24 @@ Use the full local baseline when reviewing performance:
 mise run bench
 ```
 
+Enforce the checked-in deterministic baseline from a clean worktree:
+
+```bash
+mise run bench-gate
+```
+
 Both commands build the compiler and the native `wasmi` benchmark runner in
 release mode. Results are written to
 `target/benchmark-results/restrict-baseline.json`; generated Wasm artifacts are
 stored beside the report under `artifacts/`.
+
+`benchmarks/baselines/core-wasm-v0.0.1.json` is the reviewed baseline and
+`benchmarks/regression-policy.json` is the machine-readable policy. The gate
+requires an exact compiler/runtime/validator/compressor toolchain, workload
+sources and inputs, Wasm hashes, and memory observations. It also rejects any
+raw, release, or instrumented artifact growth. An intended compiler or corpus
+change therefore requires an explicit baseline review instead of silently
+moving the reference.
 
 ## What is measured
 
@@ -70,9 +84,11 @@ Runtime measurements use one freshly compiled and instantiated release module
 per workload, run the declared warm-up calls, and then time individual calls on
 that same instance. The median is the primary local comparison value; raw
 nanosecond samples remain in the JSON report so another summary can be
-calculated without rerunning the suite. Benchmark report schema 3 stores the
+calculated without rerunning the suite. Benchmark report schema 4 stores the
 timing artifacts under `rawArtifact` and `optimizedArtifact`, the memory probe
-under `instrumentedArtifact`, and its observations under `memory`.
+under `instrumentedArtifact`, and its observations under `memory`. It also
+records exact runner, validator, encoder, compressor, Rust, and compiler-owned
+optimizer identities.
 
 ## Target boundary
 
@@ -103,6 +119,17 @@ that exhaustion is explicit and attributable without making it a recoverable
 Restrict error.
 
 This B0 slice records attributable raw and compiler-release local measurements.
-Stable public baselines
-still require a pinned controlled runner, a documented regression threshold,
-and an external cross-language harness.
+The `Core Wasm benchmark evidence` workflow pins `ubuntu-24.04` and Rust
+1.94.1, warms the runtime and filesystem caches, records five full reports, and
+uploads every raw report and Wasm artifact on a weekly schedule, release tags,
+and manual dispatches. The report records the actual CPU model because the
+managed runner label does not guarantee identical physical hardware.
+
+Timing is deliberately `informational` in the current policy. The 15% execution
+and 25% compile/instantiation thresholds are implemented but are activated only
+after a reviewed report from one repeatable CPU/runner is promoted with
+`timingStatus: controlled`. Until then, artifact and memory regressions fail the
+gate while timing evidence is retained without making a false stability claim.
+Public cross-language comparisons still require the separate harness to pin
+every comparison compiler and run equivalent workloads on the same controlled
+host.

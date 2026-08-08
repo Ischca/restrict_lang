@@ -66,6 +66,8 @@ struct ToolMetadata {
     compiler: String,
     runner: String,
     validator: String,
+    encoder: String,
+    optimizer: String,
     compression: String,
     rustc: String,
 }
@@ -180,7 +182,7 @@ fn main() -> Result<()> {
     }
 
     let report = BenchmarkReport {
-        schema_version: 3,
+        schema_version: 4,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         source_revision: command_stdout(
             Command::new("git")
@@ -189,12 +191,12 @@ fn main() -> Result<()> {
                 .args(["rev-parse", "HEAD"]),
         )
         .unwrap_or_else(|| "unknown".to_string()),
-        source_dirty: !Command::new("git")
-            .arg("-C")
-            .arg(repo_root)
-            .args(["diff", "--quiet", "HEAD", "--"])
-            .status()
-            .is_ok_and(|status| status.success()),
+        source_dirty: command_stdout(Command::new("git").arg("-C").arg(repo_root).args([
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=normal",
+        ]))
+        .is_none_or(|status| !status.is_empty()),
         target: manifest.target,
         mode: if args.smoke { "smoke" } else { "full" }.to_string(),
         host: HostMetadata {
@@ -207,7 +209,9 @@ fn main() -> Result<()> {
                 .unwrap_or_else(|| "unknown".to_string()),
             runner: format!("restrict_bench {} (wasmi 1.1.0)", env!("CARGO_PKG_VERSION")),
             validator: "wasmparser 0.252.0".to_string(),
-            compression: "zstd level 19".to_string(),
+            encoder: "wat 1.252.0".to_string(),
+            optimizer: "restrict release reachability-dce v1 (no external wasm-opt)".to_string(),
+            compression: "zstd 0.13.3 level 19".to_string(),
             rustc: command_stdout(Command::new("rustc").arg("--version"))
                 .unwrap_or_else(|| "unknown".to_string()),
         },

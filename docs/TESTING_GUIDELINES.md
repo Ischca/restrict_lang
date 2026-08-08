@@ -136,4 +136,5 @@ underlying cost or race.
 
 Benchmark workloads are correctness-checked but remain separate from ordinary
 tests. Use `mise run bench-smoke` for benchmark infrastructure validation and
-`mise run bench` only when recording a local baseline.
+`mise run bench` when recording a local report. Use `mise run bench-gate` from
+a clean worktree to enforce the checked-in deterministic baseline.

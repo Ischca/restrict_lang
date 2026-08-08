@@ -62,9 +62,15 @@ name = "restrict_bench"
 path = "src/bin/restrict_bench.rs"
 test = false
 
+[[bin]]
+name = "restrict_bench_compare"
+path = "src/bin/restrict_bench_compare.rs"
+test = false
+
 [dev-dependencies]
 pretty_assertions = "^1.3.0"
 quickcheck = "1.0"
+tempfile = "3.8"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

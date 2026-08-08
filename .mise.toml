@@ -98,6 +98,10 @@ run = "bash scripts/run-benchmarks.sh full"
 description = "Run the short correctness-first benchmark subset"
 run = "bash scripts/run-benchmarks.sh smoke"
 
+[tasks.bench-gate]
+description = "Run the full benchmark and enforce the checked-in deterministic baseline"
+run = "bash scripts/run-benchmarks.sh gate"
+
 [tasks.clean]
 description = "Clean generated files"
 run = ["cargo clean", "rm -f test/*.wat test/*.wasm examples/*.wat examples/*.wasm"]

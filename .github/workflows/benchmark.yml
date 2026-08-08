@@ -1,0 +1,86 @@
+name: Core Wasm benchmark evidence
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-wasm-benchmark-evidence
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Pinned Ubuntu timing evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.94.1
+
+      - name: Cache Cargo build products
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-wasm-benchmark-evidence
+
+      - name: Build pinned benchmark tools
+        run: >-
+          cargo build --locked --release
+          --bin restrict_lang --bin restrict_bench --bin restrict_bench_compare
+
+      - name: Warm runtime and filesystem caches
+        run: >-
+          ./target/release/restrict_bench
+          --output target/benchmark-results/warmup.json
+
+      - name: Record five full benchmark reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/benchmark-results/evidence
+          for run in 1 2 3 4 5; do
+            report="target/benchmark-results/evidence/run-${run}.json"
+            ./target/release/restrict_bench --output "$report"
+            ./target/release/restrict_bench_compare \
+              --baseline benchmarks/baselines/core-wasm-v0.0.1.json \
+              --candidate "$report" \
+              --policy benchmarks/regression-policy.json
+          done
+
+      - name: Write timing summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Core Wasm timing evidence'
+            echo
+            echo 'Timing remains informational until a reviewed runner report is promoted to a controlled baseline.'
+            echo
+            echo '| run | workload | median ns | release bytes | peak bytes | CPU |'
+            echo '| ---: | --- | ---: | ---: | ---: | --- |'
+            for report in target/benchmark-results/evidence/run-*.json; do
+              run="$(basename "$report" .json)"
+              jq -r --arg run "$run" \
+                '.host.cpu as $cpu | .workloads[] | "| \($run) | \(.id) | \(.execution.medianNs) | \(.optimizedArtifact.wasmBytes) | \(.memory.peakBytes) | \($cpu) |"' \
+                "$report"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw reports and Wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-wasm-evidence-${{ github.ref_name }}-${{ github.run_id }}
+          path: target/benchmark-results/
+          if-no-files-found: error
+          retention-days: 90

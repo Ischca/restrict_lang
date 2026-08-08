@@ -96,7 +96,10 @@ application platform.
 
 #### Reproducibility Contract
 
-- [ ] Pin compiler, runtime, validator, optimizer, and comparison toolchains
+- [x] Pin the Restrict compiler build toolchain, runtime, validator,
+  compressor, and compiler-owned release optimizer used by this baseline
+- [ ] Pin Rust, Grain, MoonBit, and any other comparison toolchains in the
+  separate cross-language harness before publishing comparisons
 - [x] Record source revision, target profile, flags, OS, CPU, and tool versions
 - [x] Measure compile time, raw and compressed Wasm size, cold instantiation,
   warm execution, and peak memory where the runtime exposes it
@@ -117,7 +120,7 @@ application platform.
 - [x] Every benchmark rejects an incorrect result through its correctness
   oracle
 - [ ] A clean machine can reproduce the complete baseline with pinned tools
-- [ ] Baseline results and an explicit regression policy are checked in
+- [x] Baseline results and an explicit regression policy are checked in
 - [ ] Only after these checks pass may public cross-language performance claims
   be based on the suite
 

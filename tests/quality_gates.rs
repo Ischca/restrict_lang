@@ -1,3 +1,5 @@
+#[path = "cases/test_benchmark_policy.rs"]
+mod test_benchmark_policy;
 #[path = "cases/test_codegen_boundaries.rs"]
 mod test_codegen_boundaries;
 #[path = "cases/test_docs_hygiene.rs"]

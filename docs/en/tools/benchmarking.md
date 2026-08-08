@@ -24,8 +24,14 @@ Enforce the checked-in deterministic baseline from a clean worktree:
 mise run bench-gate
 ```
 
-Both commands build the compiler and the native `wasmi` benchmark runner in
-release mode. Results are written to
+Record five full reports and assess within-run timing stability:
+
+```bash
+mise run bench-evidence
+```
+
+The smoke, full, and deterministic-gate commands build the compiler and the
+native `wasmi` benchmark runner in release mode. Results are written to
 `target/benchmark-results/restrict-baseline.json`; generated Wasm artifacts are
 stored beside the report under `artifacts/`.
 
@@ -36,6 +42,13 @@ sources and inputs, Wasm hashes, and memory observations. It also rejects any
 raw, release, or instrumented artifact growth. An intended compiler or corpus
 change therefore requires an explicit baseline review instead of silently
 moving the reference.
+
+Repeated evidence is stored under `target/benchmark-results/evidence/`.
+`benchmarks/stability-policy.json` requires the reports to come from the same
+clean source revision, host, toolchain, target, mode, and workload set. The
+generated `stability-summary.json` records the median absolute deviation and
+the full relative range for execution median, optimized compiler time, runtime
+compilation, and cold instantiation.
 
 ## What is measured
 
@@ -133,3 +146,10 @@ gate while timing evidence is retained without making a false stability claim.
 Public cross-language comparisons still require the separate harness to pin
 every comparison compiler and run equivalent workloads on the same controlled
 host.
+
+The separate stability policy is also informational on the shared GitHub
+runner. Threshold failures are preserved in the summary but do not fail that
+evidence workflow. A controlled promotion requires a dedicated repeatable
+runner, non-unknown CPU identity, repeated passing evidence, and an explicit
+review that changes both stability and regression timing policies to
+`enforced`. One quiet run on shared hardware is not promotion evidence.

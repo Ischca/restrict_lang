@@ -38,6 +38,7 @@ jobs:
         run: >-
           cargo build --locked --release
           --bin restrict_lang --bin restrict_bench --bin restrict_bench_compare
+          --bin restrict_bench_stability
 
       - name: Warm runtime and filesystem caches
         run: >-
@@ -58,6 +59,13 @@ jobs:
               --policy benchmarks/regression-policy.json
           done
 
+      - name: Assess within-run timing stability
+        run: >-
+          ./target/release/restrict_bench_stability
+          --policy benchmarks/stability-policy.json
+          --output target/benchmark-results/evidence/stability-summary.json
+          target/benchmark-results/evidence/run-*.json
+
       - name: Write timing summary
         shell: bash
         run: |
@@ -67,6 +75,9 @@ jobs:
             echo
             echo 'Timing remains informational until a reviewed runner report is promoted to a controlled baseline.'
             echo
+            jq -r '"Within-run thresholds passed: **\(.thresholdsPassed)** (policy: \(.policyStatus), runner class: \(.runnerClass))"' \
+              target/benchmark-results/evidence/stability-summary.json
+            echo
             echo '| run | workload | median ns | release bytes | peak bytes | CPU |'
             echo '| ---: | --- | ---: | ---: | ---: | --- |'
             for report in target/benchmark-results/evidence/run-*.json; do
@@ -75,6 +86,11 @@ jobs:
                 '.host.cpu as $cpu | .workloads[] | "| \($run) | \(.id) | \(.execution.medianNs) | \(.optimizedArtifact.wasmBytes) | \(.memory.peakBytes) | \($cpu) |"' \
                 "$report"
             done
+            echo
+            echo '| workload | execution MAD % | compile MAD % | runtime compile MAD % | instantiation MAD % |'
+            echo '| --- | ---: | ---: | ---: | ---: |'
+            jq -r '.workloads[] | "| \(.id) | \(.executionMedian.relativeMadPercent) | \(.optimizedCompile.relativeMadPercent) | \(.runtimeCompile.relativeMadPercent) | \(.coldInstantiation.relativeMadPercent) |"' \
+              target/benchmark-results/evidence/stability-summary.json
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload raw reports and Wasm artifacts

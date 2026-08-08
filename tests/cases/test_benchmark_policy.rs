@@ -172,6 +172,80 @@ fn run_compare(candidate: Value, baseline: Value, policy: Value) -> Output {
         .expect("benchmark comparator should run")
 }
 
+fn stability_policy(status: &str) -> Value {
+    json!({
+        "schemaVersion": 1,
+        "status": status,
+        "runnerClass": "test-runner",
+        "requiredReportSchemaVersion": 4,
+        "requiredTarget": "wasm-core",
+        "requiredMode": "full",
+        "minimumReports": 5,
+        "requireCleanReports": true,
+        "requireExactSourceRevision": true,
+        "requireExactHost": true,
+        "requireExactToolchain": true,
+        "metrics": {
+            "executionMedian": {
+                "maximumRelativeMadPercent": 5.0,
+                "maximumRelativeRangePercent": 15.0
+            },
+            "optimizedCompile": {
+                "maximumRelativeMadPercent": 10.0,
+                "maximumRelativeRangePercent": 30.0
+            },
+            "runtimeCompile": {
+                "maximumRelativeMadPercent": 10.0,
+                "maximumRelativeRangePercent": 40.0
+            },
+            "coldInstantiation": {
+                "maximumRelativeMadPercent": 10.0,
+                "maximumRelativeRangePercent": 40.0
+            }
+        }
+    })
+}
+
+fn stability_report(
+    execution_median_ns: u64,
+    optimized_compile_ns: u64,
+    runtime_compile_ns: u64,
+    cold_instantiation_ns: u64,
+) -> Value {
+    let mut report = candidate_report(execution_median_ns, "release-sha");
+    report["workloads"][0]["optimizedArtifact"]["compileNs"] = json!(optimized_compile_ns);
+    report["workloads"][0]["runtimeCompileNs"] = json!(runtime_compile_ns);
+    report["workloads"][0]["coldInstantiationNs"] = json!(cold_instantiation_ns);
+    report
+}
+
+fn run_stability(reports: Vec<Value>, policy: Value) -> (Output, Option<Value>) {
+    let directory = tempdir().expect("temporary stability evidence directory should be created");
+    let policy_path = directory.path().join("policy.json");
+    let summary_path = directory.path().join("summary.json");
+    fs::write(&policy_path, serde_json::to_vec(&policy).unwrap()).unwrap();
+
+    let mut report_paths = Vec::new();
+    for (index, report) in reports.into_iter().enumerate() {
+        let path = directory.path().join(format!("report-{}.json", index + 1));
+        fs::write(&path, serde_json::to_vec(&report).unwrap()).unwrap();
+        report_paths.push(path);
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_restrict_bench_stability"))
+        .args(["--policy"])
+        .arg(policy_path)
+        .args(["--output"])
+        .arg(&summary_path)
+        .args(&report_paths)
+        .output()
+        .expect("benchmark stability assessor should run");
+    let summary = fs::read_to_string(summary_path)
+        .ok()
+        .map(|contents| serde_json::from_str(&contents).unwrap());
+    (output, summary)
+}
+
 #[test]
 fn deterministic_baseline_accepts_matching_report_with_informational_timing() {
     let output = run_compare(
@@ -232,10 +306,83 @@ fn benchmark_policy_rejects_unknown_baseline_timing_status() {
 }
 
 #[test]
+fn informational_stability_policy_records_passing_evidence_without_promotion() {
+    let reports = [98, 99, 100, 101, 102]
+        .into_iter()
+        .map(|sample| stability_report(sample, sample, sample, sample))
+        .collect();
+    let (output, summary) = run_stability(reports, stability_policy("informational"));
+    assert!(
+        output.status.success(),
+        "stable informational evidence should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary = summary.expect("stability summary should be written");
+    assert_eq!(summary["thresholdsPassed"], true);
+    assert_eq!(summary["promotionEligible"], false);
+    assert_eq!(summary["reportCount"], 5);
+}
+
+#[test]
+fn informational_stability_policy_preserves_unstable_evidence() {
+    let reports = [100, 100, 100, 100, 200]
+        .into_iter()
+        .map(|sample| stability_report(sample, 100, 100, 100))
+        .collect();
+    let (output, summary) = run_stability(reports, stability_policy("informational"));
+    assert!(
+        output.status.success(),
+        "informational instability should be recorded without failing the workflow: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary = summary.expect("stability summary should be written");
+    assert_eq!(summary["thresholdsPassed"], false);
+    assert_eq!(summary["promotionEligible"], false);
+    assert!(summary["violations"][0]
+        .as_str()
+        .unwrap()
+        .contains("execution median"));
+}
+
+#[test]
+fn enforced_stability_policy_rejects_unstable_evidence() {
+    let reports = [100, 100, 100, 100, 200]
+        .into_iter()
+        .map(|sample| stability_report(sample, 100, 100, 100))
+        .collect();
+    let (output, summary) = run_stability(reports, stability_policy("enforced"));
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("benchmark stability policy failed"),
+        "enforced instability should identify the policy failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(summary.unwrap()["promotionEligible"], false);
+}
+
+#[test]
+fn stability_policy_rejects_mixed_hosts() {
+    let mut reports = [100, 100, 100, 100, 100]
+        .into_iter()
+        .map(|sample| stability_report(sample, 100, 100, 100))
+        .collect::<Vec<_>>();
+    reports[4]["host"]["cpu"] = json!("Different CPU");
+    let (output, summary) = run_stability(reports, stability_policy("informational"));
+    assert!(!output.status.success());
+    assert!(summary.is_none());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("host differs"),
+        "mixed-host evidence should identify the mismatched host: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn checked_in_benchmark_contract_matches_manifest() {
     let manifest = read_repository_json("benchmarks/manifest.json");
     let baseline = read_repository_json("benchmarks/baselines/core-wasm-v0.0.1.json");
     let policy = read_repository_json("benchmarks/regression-policy.json");
+    let stability_policy = read_repository_json("benchmarks/stability-policy.json");
 
     assert_eq!(manifest["schemaVersion"], 1);
     assert_eq!(baseline["schemaVersion"], 1);
@@ -253,6 +400,10 @@ fn checked_in_benchmark_contract_matches_manifest() {
     assert_eq!(policy["requireExactMemory"], true);
     assert_eq!(policy["timing"]["status"], "informational");
     assert_eq!(baseline["provenance"]["timingStatus"], "informational");
+    assert_eq!(stability_policy["schemaVersion"], 1);
+    assert_eq!(stability_policy["status"], "informational");
+    assert_eq!(stability_policy["runnerClass"], "uncontrolled-evidence");
+    assert_eq!(stability_policy["minimumReports"], 5);
 }
 
 #[test]
@@ -266,6 +417,8 @@ fn benchmark_evidence_workflow_pins_the_software_environment() {
         "uses: dtolnay/rust-toolchain@1.94.1",
         "for run in 1 2 3 4 5; do",
         "./target/release/restrict_bench_compare",
+        "./target/release/restrict_bench_stability",
+        "stability-summary.json",
         "retention-days: 90",
         "Timing remains informational",
     ] {

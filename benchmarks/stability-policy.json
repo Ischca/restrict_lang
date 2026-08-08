@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "status": "informational",
+  "runnerClass": "uncontrolled-evidence",
+  "requiredReportSchemaVersion": 4,
+  "requiredTarget": "wasm-core",
+  "requiredMode": "full",
+  "minimumReports": 5,
+  "requireCleanReports": true,
+  "requireExactSourceRevision": true,
+  "requireExactHost": true,
+  "requireExactToolchain": true,
+  "metrics": {
+    "executionMedian": {
+      "maximumRelativeMadPercent": 5.0,
+      "maximumRelativeRangePercent": 15.0
+    },
+    "optimizedCompile": {
+      "maximumRelativeMadPercent": 10.0,
+      "maximumRelativeRangePercent": 30.0
+    },
+    "runtimeCompile": {
+      "maximumRelativeMadPercent": 10.0,
+      "maximumRelativeRangePercent": 40.0
+    },
+    "coldInstantiation": {
+      "maximumRelativeMadPercent": 10.0,
+      "maximumRelativeRangePercent": 40.0
+    }
+  }
+}

@@ -91,7 +91,10 @@ application platform.
   `map`/`filter`/`fold`
 - [x] Give every workload a deterministic checksum or other correctness oracle
 - [x] Run correctness and a short smoke subset in pull-request CI
-- [ ] Run stable timing measurements on a controlled nightly or release runner
+- [x] Record repeated timing reports and machine-check exact host, toolchain,
+  source revision, workload set, and within-run dispersion
+- [ ] Run stable timing measurements on a dedicated controlled nightly or
+  release runner and promote reviewed timing policies to enforced
 - [x] Store machine-readable raw results before producing charts or summaries
 
 #### Reproducibility Contract

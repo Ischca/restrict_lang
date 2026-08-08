@@ -675,8 +675,27 @@ fn command_stdout(command: &mut Command) -> Option<String> {
 
 fn detect_cpu() -> String {
     if cfg!(target_os = "macos") {
-        return command_stdout(Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]))
-            .unwrap_or_else(|| "unknown".to_string());
+        if let Some(cpu) =
+            command_stdout(Command::new("sysctl").args(["-n", "machdep.cpu.brand_string"]))
+        {
+            return cpu;
+        }
+        return command_stdout(Command::new("system_profiler").args([
+            "SPHardwareDataType",
+            "-detailLevel",
+            "mini",
+        ]))
+        .and_then(|profile| {
+            profile.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("Chip:")
+                    .or_else(|| line.trim().strip_prefix("Processor Name:"))
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+        })
+        .unwrap_or_else(|| "unknown".to_string());
     }
     if cfg!(target_os = "linux") {
         return fs::read_to_string("/proc/cpuinfo")

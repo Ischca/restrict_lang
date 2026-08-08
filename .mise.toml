@@ -102,6 +102,10 @@ run = "bash scripts/run-benchmarks.sh smoke"
 description = "Run the full benchmark and enforce the checked-in deterministic baseline"
 run = "bash scripts/run-benchmarks.sh gate"
 
+[tasks.bench-evidence]
+description = "Record repeated benchmark reports and assess within-run timing stability"
+run = "bash scripts/run-benchmark-evidence.sh"
+
 [tasks.clean]
 description = "Clean generated files"
 run = ["cargo clean", "rm -f test/*.wat test/*.wasm examples/*.wat examples/*.wasm"]

@@ -88,16 +88,16 @@ jobs:
       - name: Check standalone release example entrypoints
         run: >-
           cargo test -p restrict_lang --locked
-          --test test_release_example_hygiene
+          --test quality_gates
           standalone_release_examples_compile_through_cli
-          -- --ignored --exact
+          -- --ignored --exact --test-threads=1
 
       - name: Check VS Code release example entrypoints
         run: >-
           cargo test -p restrict_lang --locked
-          --test test_release_example_hygiene
+          --test quality_gates
           vscode_release_examples_compile_through_cli
-          -- --ignored --exact
+          -- --ignored --exact --test-threads=1
 
       - name: Check generated playground samples
         run: bash scripts/sync_samples.sh --check

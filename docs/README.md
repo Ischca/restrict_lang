@@ -31,6 +31,7 @@ stay under `docs/` outside `docs/public/`.
 Examples:
 
 ```text
+docs/TESTING_GUIDELINES.md
 docs/TYPE_INFERENCE_DESIGN.md
 docs/STDLIB_ARCHITECTURE.md
 docs/TEMPORAL_*.md
@@ -85,13 +86,16 @@ When editing internal docs:
   future
 - do not assume an internal design document is user-facing release behavior
 
+Repository test layout, isolation rules, and command selection are documented
+in [`TESTING_GUIDELINES.md`](./TESTING_GUIDELINES.md).
+
 ## Validation
 
 Run focused docs checks after changing public docs:
 
 ```bash
-mise exec -- cargo test --test test_docs_hygiene
-mise exec -- cargo test --test test_web_hygiene
+mise exec -- cargo test --test quality_gates test_docs_hygiene::
+mise exec -- cargo test --test quality_gates test_web_hygiene::
 ```
 
 Run `mdbook build docs` before assembling Pages.

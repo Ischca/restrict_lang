@@ -83,8 +83,8 @@ and create a follow-up item rather than blocking implementation.
 Run:
 
 ```bash
-mise exec -- cargo test --test test_docs_hygiene
-mise exec -- cargo test --test test_web_hygiene
+mise exec -- cargo test --test quality_gates test_docs_hygiene::
+mise exec -- cargo test --test quality_gates test_web_hygiene::
 mdbook build docs
 ```
 

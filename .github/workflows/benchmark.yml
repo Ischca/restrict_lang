@@ -40,31 +40,12 @@ jobs:
           --bin restrict_lang --bin restrict_bench --bin restrict_bench_compare
           --bin restrict_bench_stability
 
-      - name: Warm runtime and filesystem caches
+      - name: Record and assess five full benchmark reports
         run: >-
-          ./target/release/restrict_bench
-          --output target/benchmark-results/warmup.json
-
-      - name: Record five full benchmark reports
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p target/benchmark-results/evidence
-          for run in 1 2 3 4 5; do
-            report="target/benchmark-results/evidence/run-${run}.json"
-            ./target/release/restrict_bench --output "$report"
-            ./target/release/restrict_bench_compare \
-              --baseline benchmarks/baselines/core-wasm-v0.0.1.json \
-              --candidate "$report" \
-              --policy benchmarks/regression-policy.json
-          done
-
-      - name: Assess within-run timing stability
-        run: >-
-          ./target/release/restrict_bench_stability
-          --policy benchmarks/stability-policy.json
-          --output target/benchmark-results/evidence/stability-summary.json
-          target/benchmark-results/evidence/run-*.json
+          bash scripts/record-benchmark-evidence.sh
+          target/benchmark-results/evidence
+          5
+          benchmarks/stability-policy.json
 
       - name: Write timing summary
         shell: bash
@@ -98,5 +79,52 @@ jobs:
         with:
           name: core-wasm-evidence-${{ github.ref_name }}-${{ github.run_id }}
           path: target/benchmark-results/
+          if-no-files-found: error
+          retention-days: 90
+
+  dedicated-candidate:
+    name: Dedicated runner qualification evidence
+    if: vars.RESTRICT_CONTROLLED_BENCHMARK_ENABLED == 'true'
+    runs-on: [self-hosted, restrict-benchmark]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.94.1
+
+      - name: Cache Cargo build products
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: dedicated-core-wasm-benchmark-candidate
+
+      - name: Build pinned benchmark tools
+        run: >-
+          cargo build --locked --release
+          --bin restrict_lang --bin restrict_bench --bin restrict_bench_compare
+          --bin restrict_bench_stability
+
+      - name: Record dedicated-runner qualification evidence
+        run: >-
+          bash scripts/record-benchmark-evidence.sh
+          target/benchmark-results/dedicated-candidate
+          5
+          benchmarks/stability-policy.dedicated-candidate.json
+
+      - name: Write qualification summary
+        run: |
+          jq -r '
+            "## Dedicated runner qualification evidence\n\n" +
+            "CPU: \(.host.cpu)\n\n" +
+            "Within-run thresholds passed: **\(.thresholdsPassed)**\n\n" +
+            "Policy status: \(.policyStatus); promotion eligible: \(.promotionEligible)"
+          ' target/benchmark-results/dedicated-candidate/stability-summary.json \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dedicated-runner qualification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated-core-wasm-candidate-${{ github.ref_name }}-${{ github.run_id }}
+          path: target/benchmark-results/dedicated-candidate/
           if-no-files-found: error
           retention-days: 90

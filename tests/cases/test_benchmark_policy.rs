@@ -383,6 +383,8 @@ fn checked_in_benchmark_contract_matches_manifest() {
     let baseline = read_repository_json("benchmarks/baselines/core-wasm-v0.0.1.json");
     let policy = read_repository_json("benchmarks/regression-policy.json");
     let stability_policy = read_repository_json("benchmarks/stability-policy.json");
+    let dedicated_candidate_policy =
+        read_repository_json("benchmarks/stability-policy.dedicated-candidate.json");
 
     assert_eq!(manifest["schemaVersion"], 1);
     assert_eq!(baseline["schemaVersion"], 1);
@@ -404,6 +406,17 @@ fn checked_in_benchmark_contract_matches_manifest() {
     assert_eq!(stability_policy["status"], "informational");
     assert_eq!(stability_policy["runnerClass"], "uncontrolled-evidence");
     assert_eq!(stability_policy["minimumReports"], 5);
+    assert_eq!(dedicated_candidate_policy["status"], "informational");
+    assert_eq!(
+        dedicated_candidate_policy["runnerClass"],
+        "dedicated-candidate"
+    );
+    let mut normalized_candidate_policy = dedicated_candidate_policy;
+    normalized_candidate_policy["runnerClass"] = stability_policy["runnerClass"].clone();
+    assert_eq!(
+        normalized_candidate_policy, stability_policy,
+        "shared and dedicated-candidate stability policies should differ only by runner class"
+    );
 }
 
 #[test]
@@ -415,16 +428,43 @@ fn benchmark_evidence_workflow_pins_the_software_environment() {
     for required in [
         "runs-on: ubuntu-24.04",
         "uses: dtolnay/rust-toolchain@1.94.1",
-        "for run in 1 2 3 4 5; do",
-        "./target/release/restrict_bench_compare",
-        "./target/release/restrict_bench_stability",
+        "bash scripts/record-benchmark-evidence.sh",
         "stability-summary.json",
+        "if: vars.RESTRICT_CONTROLLED_BENCHMARK_ENABLED == 'true'",
+        "runs-on: [self-hosted, restrict-benchmark]",
+        "benchmarks/stability-policy.dedicated-candidate.json",
         "retention-days: 90",
         "Timing remains informational",
     ] {
         assert!(
             workflow.contains(required),
             "benchmark evidence workflow should contain `{required}`"
+        );
+    }
+    assert!(
+        !workflow.contains("pull_request:"),
+        "benchmark evidence workflow must not run pull-request code on a self-hosted runner"
+    );
+}
+
+#[test]
+fn benchmark_evidence_scripts_share_one_recording_path() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let local_script = fs::read_to_string(root.join("scripts/run-benchmark-evidence.sh"))
+        .expect("local benchmark evidence script should be readable");
+    let recording_script = fs::read_to_string(root.join("scripts/record-benchmark-evidence.sh"))
+        .expect("shared benchmark recording script should be readable");
+
+    assert!(local_script.contains("bash scripts/record-benchmark-evidence.sh"));
+    for required in [
+        "./target/release/restrict_bench --output",
+        "./target/release/restrict_bench_compare",
+        "./target/release/restrict_bench_stability",
+        "benchmarks/regression-policy.json",
+    ] {
+        assert!(
+            recording_script.contains(required),
+            "shared benchmark recording script should contain `{required}`"
         );
     }
 }

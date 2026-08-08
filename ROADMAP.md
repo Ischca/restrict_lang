@@ -95,6 +95,8 @@ application platform.
   source revision, workload set, and within-run dispersion
 - [x] Define a reviewed controlled-runner qualification, promotion, and
   invalidation protocol without discarding observed outliers
+- [x] Prepare a variable-gated, non-PR self-hosted qualification job with a
+  dedicated runner label and separate candidate policy
 - [ ] Run stable timing measurements on a dedicated controlled nightly or
   release runner and promote reviewed timing policies to enforced
 - [x] Store machine-readable raw results before producing charts or summaries

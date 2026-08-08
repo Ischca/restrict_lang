@@ -159,8 +159,10 @@ review that changes both stability and regression timing policies to
 A runner may be promoted only through this reviewable sequence:
 
 1. Reserve one dedicated machine or VM class with a stable CPU model, OS image,
-   power policy, and runner label. Shared GitHub-hosted hardware is evidence
-   collection only.
+   and power policy. Register it as a repository runner with the custom
+   `restrict-benchmark` label, then set the repository variable
+   `RESTRICT_CONTROLLED_BENCHMARK_ENABLED` to `true`. Shared GitHub-hosted
+   hardware remains evidence collection only.
 2. At one clean compiler revision, collect at least three independent evidence
    sets of five full reports each. Run the sets in separate scheduling windows
    so one temporarily quiet period cannot qualify the runner.
@@ -178,3 +180,11 @@ A runner may be promoted only through this reviewable sequence:
 
 Artifact hashes, sizes, checksums, and memory observations remain enforced
 regardless of timing promotion state.
+
+The conditional `Dedicated runner qualification evidence` job uses the
+informational `stability-policy.dedicated-candidate.json` until promotion. It
+is deliberately absent from `pull_request` events: do not broaden its triggers
+while this public repository can receive untrusted fork code. Schedule, release
+tag, and explicit manual dispatch are the allowed qualification entry points.
+If the repository variable is absent or not `true`, the job is skipped and no
+self-hosted runner is required.

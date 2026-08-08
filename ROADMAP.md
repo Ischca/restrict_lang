@@ -141,7 +141,7 @@ self-hosted benchmark runner is required at this stage. Timing is measured on
 demand locally and remains informational; deterministic correctness, artifact,
 size, and memory checks remain enforceable in CI.
 
-#### Post-B0 Cross-Language Comparison Gate
+### Post-B0: Cross-Language Comparison Gate
 
 - [ ] Create a separate cross-language harness so Rust, Grain, MoonBit,
   Restrict, and any later comparison targets can pin their toolchains, sources,

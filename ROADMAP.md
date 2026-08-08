@@ -119,7 +119,9 @@ application platform.
   without an accidental trap
 - [x] Every benchmark rejects an incorrect result through its correctness
   oracle
-- [ ] A clean machine can reproduce the complete baseline with pinned tools
+- [x] A clean machine can reproduce the complete baseline with pinned tools;
+  the required GitHub `ubuntu-24.04` benchmark job builds, records, compares,
+  and uploads the full baseline from a fresh checkout
 - [x] Baseline results and an explicit regression policy are checked in
 - [ ] Only after these checks pass may public cross-language performance claims
   be based on the suite

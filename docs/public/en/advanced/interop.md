@@ -4,6 +4,17 @@ Restrict interoperability is currently WebAssembly-centered. v0.0.1 keeps the
 host boundary intentionally small so generated modules are predictable while
 the generic and composite ABI design remains open.
 
+## Host Profiles, Not Language Backends
+
+Restrict source always compiles to WebAssembly. WASI, browser, cloud/edge, and
+container environments provide different host imports and packaging around the
+same backend. JavaScript emitted for a browser or Worker entry point is an
+adapter; Restrict does not need a JavaScript code-generation backend.
+
+Keep platform operations behind explicit imports and capabilities. A future
+WIT or browser host interface should be able to replace today's adapter without
+changing ordinary Restrict calls or the internal arena representation.
+
 ## Calling Restrict From A Host
 
 Expose host-callable functions with scalar monomorphic `pub fun` or
@@ -51,6 +62,11 @@ The web UI can compile a single source string and display WAT, tokens, AST, and
 diagnostics. It is an interop example for the compiler itself, not a promise
 that every Restrict program has a JavaScript ABI for composite values.
 
+The same distinction applies to other hosts. A Cloudflare Workers adapter may
+translate request and response values to the platform runtime, while a native
+WASI host may expose standard component interfaces. Neither path changes the
+Restrict language backend.
+
 ## Imports
 
 Source imports are for Restrict modules:
@@ -77,7 +93,7 @@ fun is_over_limit: (reading: Reading) -> Boolean = {
 }
 
 export fun exported_over_limit: (value: Int32, limit: Int32) -> Boolean = {
-    val reading = Reading { value: value, limit: limit }
+    val reading = Reading { value: value, limit: limit };
     reading |> is_over_limit
 }
 ```

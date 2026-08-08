@@ -62,7 +62,7 @@ fun square: (value: Int32) -> Int32 = {
 
 fun main: () -> Int32 = {
     val stepped = 5 |> increment
-    val doubled = stepped |> double
+    val doubled = stepped |> double;
     doubled |> square
 }
 ```
@@ -92,6 +92,9 @@ fun main: () -> Int32 = {
     (5, double) apply_twice
 }
 ```
+
+For collection callbacks, scoped verb clauses, `map`, `filter`, and `fold`, see
+[Higher-Order Functions and Collection Transforms](../advanced/higher-order.md).
 
 ## Generic Functions
 
@@ -129,7 +132,7 @@ fun factorial: (value: Int32) -> Int32 = {
     value <= 1 then {
         1
     } else {
-        val next = value - 1
+        val next = value - 1;
         value * (next |> factorial)
     }
 }
@@ -227,6 +230,7 @@ fun map_option: <T, U>(value: Option<T>, f: T -> U) -> Option<U> = {
 
 ## See Also
 
+- [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md) - Collection callbacks and scoped verb clauses
 - [Type Inference](type-inference.md) - How function types are inferred
 - [Types](types.md) - Function type syntax and generic containers
 - [Syntax](syntax.md) - Current syntax reference

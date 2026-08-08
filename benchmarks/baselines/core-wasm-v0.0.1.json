@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "reportSchemaVersion": 4,
+  "target": "wasm-core",
+  "mode": "full",
+  "toolchain": {
+    "compiler": "restrict_lang 0.0.1",
+    "runner": "restrict_bench 0.0.1 (wasmi 1.1.0)",
+    "validator": "wasmparser 0.252.0",
+    "encoder": "wat 1.252.0",
+    "optimizer": "restrict release reachability-dce v1 (no external wasm-opt)",
+    "compression": "zstd 0.13.3 level 19",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)"
+  },
+  "provenance": {
+    "sourceRevision": "19b12f63fd625635d0192b392b25224a501a4497",
+    "generatedAtUnixSeconds": 1786162470,
+    "timingHost": {
+      "os": "macos",
+      "architecture": "aarch64",
+      "cpu": "unknown"
+    },
+    "timingStatus": "informational"
+  },
+  "workloads": [
+    {
+      "id": "scalar-loop",
+      "source": "corpus/scalar_loop.rl",
+      "sourceSha256": "4df12556b16d94ae221771ea060e4c6fdbf1cab75c736a5238ce15345b7d4705",
+      "export": "benchmark",
+      "input": 20000,
+      "expected": 599990000,
+      "arenaBytes": 65536,
+      "rawArtifact": {
+        "wasmSha256": "134c3d8dc570cb7c1f2139fa12b59b0f980dd334f2b69edbf24dae41672c5940",
+        "wasmBytes": 25319,
+        "zstdBytes": 4897
+      },
+      "optimizedArtifact": {
+        "wasmSha256": "8304180795fca0753d2e47df9615f128b0e9db1fa549ec70c9b94d2fad208cfc",
+        "wasmBytes": 1397,
+        "zstdBytes": 750
+      },
+      "instrumentedArtifact": {
+        "wasmSha256": "8fe0ab1449a473dca0c7e5a4a28c86cad1fb233d1bdb62dbbc7ceb7ab9274a6e",
+        "wasmBytes": 1734,
+        "zstdBytes": 848
+      },
+      "releaseReproducible": true,
+      "memory": {
+        "peakBytes": 0,
+        "allocationCount": 0,
+        "resetCount": 1,
+        "liveBytesAfterCall": 0,
+        "verifiedIterations": 2,
+        "exhaustion": null
+      },
+      "warmupIterations": 10,
+      "iterations": 100,
+      "timingReference": {
+        "optimizedCompileNs": 9039958,
+        "runtimeCompileNs": 302042,
+        "coldInstantiationNs": 6583,
+        "medianNs": 82750
+      }
+    },
+    {
+      "id": "recursive-fibonacci",
+      "source": "corpus/recursive_fibonacci.rl",
+      "sourceSha256": "dd8b718236e3e0747e64ec050cf486cfdde4a3bab6e769d5f1b0890dd0366448",
+      "export": "benchmark",
+      "input": 25,
+      "expected": 75025,
+      "arenaBytes": 65536,
+      "rawArtifact": {
+        "wasmSha256": "3f18ab6281f0c18103168972b433eaadbf88e5e397b4e32f519e68572a4e2f98",
+        "wasmBytes": 26083,
+        "zstdBytes": 5033
+      },
+      "optimizedArtifact": {
+        "wasmSha256": "fdd75a7a9a6e6be9148cadb2d4bbdfa94901fd1b29aa4e0740e1d449ab80d646",
+        "wasmBytes": 2158,
+        "zstdBytes": 866
+      },
+      "instrumentedArtifact": {
+        "wasmSha256": "974ab08e10cc4ecc4c0b129ac79c113bbd5bb1da47d5ecf209ec7dae55a1de22",
+        "wasmBytes": 2495,
+        "zstdBytes": 968
+      },
+      "releaseReproducible": true,
+      "memory": {
+        "peakBytes": 0,
+        "allocationCount": 0,
+        "resetCount": 1,
+        "liveBytesAfterCall": 0,
+        "verifiedIterations": 2,
+        "exhaustion": null
+      },
+      "warmupIterations": 5,
+      "iterations": 30,
+      "timingReference": {
+        "optimizedCompileNs": 11052375,
+        "runtimeCompileNs": 36750,
+        "coldInstantiationNs": 7334,
+        "medianNs": 3678917
+      }
+    },
+    {
+      "id": "record-loop",
+      "source": "corpus/record_loop.rl",
+      "sourceSha256": "a564fe248bc5267f04f5f10b8f7e3ee53cb72844aa73dd1dfbafd731737436e4",
+      "export": "benchmark",
+      "input": 10000,
+      "expected": 1599850000,
+      "arenaBytes": 1048576,
+      "rawArtifact": {
+        "wasmSha256": "d122dbc5c9ca8b5603b80e0c29c12ac863e0ec73724720e0841040f82ba8c9ed",
+        "wasmBytes": 26171,
+        "zstdBytes": 5080
+      },
+      "optimizedArtifact": {
+        "wasmSha256": "ffe6e609d467315a44d26dbf57a9121d38e43403c594f7e268397f4a726e867b",
+        "wasmBytes": 2450,
+        "zstdBytes": 1059
+      },
+      "instrumentedArtifact": {
+        "wasmSha256": "a0ddf6a385fb01991e6d95a46bda0ee6e20752db854857c358ce073acdc0ab88",
+        "wasmBytes": 2816,
+        "zstdBytes": 1171
+      },
+      "releaseReproducible": true,
+      "memory": {
+        "peakBytes": 80000,
+        "allocationCount": 10000,
+        "resetCount": 1,
+        "liveBytesAfterCall": 0,
+        "verifiedIterations": 2,
+        "exhaustion": null
+      },
+      "warmupIterations": 10,
+      "iterations": 100,
+      "timingReference": {
+        "optimizedCompileNs": 10968084,
+        "runtimeCompileNs": 38292,
+        "coldInstantiationNs": 77583,
+        "medianNs": 485667
+      }
+    },
+    {
+      "id": "collection-pipeline",
+      "source": "corpus/collection_pipeline.rl",
+      "sourceSha256": "bf9640e304e0aae0a983db69de37a798e8b5d5ebf4a1fab2c002755bef0e111d",
+      "export": "benchmark",
+      "input": 200,
+      "expected": 54400,
+      "arenaBytes": 1048576,
+      "rawArtifact": {
+        "wasmSha256": "5f033bbb833bab2379d0555d4ab6c735ae436010e86caef40a7a9808a9138bf3",
+        "wasmBytes": 28380,
+        "zstdBytes": 5537
+      },
+      "optimizedArtifact": {
+        "wasmSha256": "29c5ab65eb3c9250f39adcf2a56b5f25446cce0e1fb94eefb1beba44ae76d446",
+        "wasmBytes": 4701,
+        "zstdBytes": 1500
+      },
+      "instrumentedArtifact": {
+        "wasmSha256": "917a561d40ad78bec0d3aa13b246d5854d3ba3cef8533534c9782f9715aa6c46",
+        "wasmBytes": 5067,
+        "zstdBytes": 1616
+      },
+      "releaseReproducible": true,
+      "memory": {
+        "peakBytes": 84000,
+        "allocationCount": 1200,
+        "resetCount": 1,
+        "liveBytesAfterCall": 0,
+        "verifiedIterations": 2,
+        "exhaustion": {
+          "arenaBytes": 64,
+          "errorCode": 1,
+          "requestedBytes": 136,
+          "trapped": true
+        }
+      },
+      "warmupIterations": 5,
+      "iterations": 30,
+      "timingReference": {
+        "optimizedCompileNs": 11222583,
+        "runtimeCompileNs": 61458,
+        "coldInstantiationNs": 27250,
+        "medianNs": 499792
+      }
+    }
+  ]
+}

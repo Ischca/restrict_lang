@@ -9,6 +9,9 @@
    - Use `val` for variable declarations (NOT `let`)
    - Use OSV (Object-Subject-Verb) word order
    - Field assignments use `:` (NOT `=`)
+   - Newlines are whitespace; non-callable values naturally start a new
+     expression, while `;` ends an expression before a callable-shaped value
+     that would otherwise extend the same OSV chain
    - No semicolons after top-level declarations
 3. **ALWAYS follow the type system rules**:
    - Affine types (use at most once)
@@ -67,6 +70,21 @@ mise exec -- cargo build
 mise exec -- cargo test
 mise exec -- cargo run --bin restrict_lang <file.rl>
 ```
+
+## WebAssembly Direction
+
+- WebAssembly is Restrict's sole code-generation target.
+- WASI, browser, cloud/edge, and container support are host profiles or
+  generated adapters, not JavaScript or native language backends.
+- Keep platform APIs behind explicit imports and capabilities. Do not add DOM,
+  Cloudflare, Docker, or runtime-specific behavior to core language semantics.
+- Current browser JavaScript is host glue around Wasm. Do not infer that a
+  JavaScript backend exists or is required.
+- Treat WIT, the Component Model, composite host ABI, broad WASI support, and
+  direct browser DOM access as future work unless the release surface says
+  otherwise.
+- Review `/docs/WASM_EXECUTION_STRATEGY.md` before changing code generation,
+  ABI lowering, host imports, runtime integration, or deployment packaging.
 
 ## When Uncertain
 

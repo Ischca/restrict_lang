@@ -72,7 +72,7 @@ jobs:
           test -f site/dist/sitemap.xml
           test -f site/dist/docs/index.html
           test -f site/dist/blog/index.html
-          test -f site/dist/blog/shipping-v001-preview.html
+          test -f site/dist/blog/introducing-restrict-v001.html
           test -f site/dist/compiler/index.html
           test -f site/dist/compiler/app.js
           test -f site/dist/compiler/examples.js

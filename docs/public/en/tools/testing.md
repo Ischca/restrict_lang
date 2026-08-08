@@ -14,8 +14,8 @@ mise run test-fast
 Useful focused commands:
 
 ```bash
-mise exec -- cargo test --test test_docs_hygiene
-mise exec -- cargo test --test test_wat_validation
+mise exec -- cargo test --test quality_gates test_docs_hygiene::
+mise exec -- cargo test --test integration_07 test_wat_validation::
 mise run check
 mise run preflight
 mise run preflight-pages
@@ -69,7 +69,7 @@ fun test_math_smoke: () -> Boolean = {
 }
 
 fun test_pipeline_smoke: () -> Int32 = {
-    val value = 41
+    val value = 41;
     value + 1
 }
 ```

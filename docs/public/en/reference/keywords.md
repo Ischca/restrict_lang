@@ -1,8 +1,8 @@
 # Keywords Reference
 
 Restrict reserves a compact set of words for current syntax and future design
-space. Some words were reserved but not implemented in v0.0.1; this page also
-records current post-v0.0.1 additions explicitly.
+space. This page separates the implemented v0.0.1 surface from words that
+remain reserved for future work.
 
 ## Current Declaration Keywords
 
@@ -87,8 +87,8 @@ Mutable bindings place `mut` before `val`:
 
 ```restrict
 fun next_counter: () -> Int32 = {
-    mut val counter = 0
-    counter = counter + 1
+    mut val counter = 0;
+    counter = counter + 1;
     counter
 }
 ```

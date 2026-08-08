@@ -76,6 +76,8 @@ pub mod type_constraints;
 /// Typed IR, internal ABI layout, and optimization-stage foundations
 pub mod ir;
 
+mod wasm_optimize;
+
 /// Code generation module for producing WebAssembly output
 pub mod codegen;
 
@@ -110,7 +112,9 @@ pub mod web;
 
 // Re-exports for convenience
 pub use ast::*;
-pub use codegen::{CodeGenError, WasmCodeGen};
+pub use codegen::{
+    CodeGenError, ReleaseOptimizationReport, WasmCodeGen, WasmOptimizationLevel, WasmTargetProfile,
+};
 pub use lexer::*;
 pub use parser::*;
 pub use release_surface::{

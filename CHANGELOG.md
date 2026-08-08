@@ -5,79 +5,47 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
+- No changes yet.
 
-- Add the first source-level form slice: non-generic method-only `form`
-  contracts, concrete non-generic record `takes` declarations, and
-  `<T of A + B>` bounds with static monomorphized dispatch.
-- Add compiler-provided `Display` adoptions for `String`, scalar values, and
-  `()`. Make `print` and `println` Display-polymorphic while retaining
-  `print_int` and `print_float` as compatibility helpers.
-- Add closed, non-generic, non-recursive user-defined enums. Variants carry
-  zero or one payload; constructors use qualified `Type::Variant` names in OSV
-  order, patterns use the same qualified names, and matches are exhaustive,
-  including when a custom enum is a `Result` error.
-- Add end-to-end Warder builds and test checks for direct local path
-  dependencies. Manifest dependency keys bind compiler package namespaces,
-  package roots map to `src/lib.rl`, and submodules map below `src/`.
-- Record each local dependency's manifest version and deterministic source
-  SHA-256 in `restrict-lock.toml`.
-- Compile application and dependency sources from immutable staging snapshots,
-  serialize concurrent builds per project, and publish WAT, WASM, Cage, and
-  lock updates as one recoverable artifact transaction.
-- Diagnose missing, malformed, and source-stale direct-local lock files with
-  `warder doctor`.
-- Add the experimental, opt-in `--host-abi flat-record-v1` core-WebAssembly
-  adapter for concrete non-temporal records with 1 to 16 direct scalar fields.
-  Record parameters flatten in source field order and record results use
-  multi-value returns, while generated wrappers keep internal pointers and
-  layout identifiers private.
+## [0.0.1] - 2026-08-06
 
-### Compatibility
-
-- Keep associated form types, generic or conditional `takes`, default methods,
-  enum adoptions, selective adoption imports, and dynamic dispatch outside the
-  initial source-level form slice.
-- Keep `pub enum` source-module-only. User enums have no host-visible
-  WebAssembly ABI; generic and recursive enums and `?` propagation remain
-  outside the current slice.
-- Keep registry, Git, foreign-WASM, and transitive package graphs outside the
-  direct-local v0.0.1 slice. Warder rejects them before writing placeholder
-  lock entries; source-level import aliases and re-exports remain unsupported.
-- Keep the published v0.0.1 host ABI scalar-only by default. Strings, nested
-  records, collections, sum types, generics, temporal values, composite
-  globals, WIT, and Component Model output remain outside `flat-record-v1`.
-
-### Fixed
-
-- Keep one canonical declaration identity across split, direct, transitive,
-  and diamond source imports; use collision-proof internal names and emit each
-  dependency module once.
-- Reject duplicate exports, duplicate normalized virtual modules, ambiguous
-  explicit search roots, and complete import cycles without poisoning the
-  resolver cache after a failed attempt.
-- Reject overlapping application, package, and build roots; symlink escapes;
-  non-portable artifact names; and non-deterministic dependency manifest order.
-
-## [0.0.1] - 2026-08-04
-
-### Added
+### Language
 
 - OSV-only calls through `value |> function`, `(args) function`, and `() function`
+- Typed `context` declarations and composable `with Context { bindings } { body }` lexical scopes
 - Affine binding checks with `val` and `mut val`
-- Bidirectional type inference for the supported generic, lambda, and container surface
-- Pattern matching for built-in `Option`, `Result`, `List`, and record values
+- Bidirectional type inference for generics, lambdas, branches, records, and containers
+- Records, prototype-style `clone` and `freeze`, and record destructuring
+- Closed user-defined enums with qualified OSV construction and exhaustive matching
+- Qualified `Option::Some`, `Option::None`, `Result::Ok`, and `Result::Err` value construction
+- Pattern matching for user enums, `Option`, `Result`, `List`, and record values
+- Method-only `form` contracts, concrete record `takes`, and `<T of A + B>` bounds with static monomorphized dispatch
+- Compiler-provided and explicit record `Display` adoptions for polymorphic `display`, `print`, and `println`
 - Source modules with dotted imports and scalar WebAssembly exports
-- WebAssembly text generation, arena allocation, and executable runtime examples
-- Browser compiler with compile, tokenize, and parse inspection views
-- Language Server Protocol support and the Warder project tool
+
+### Compiler and runtime
+
+- WebAssembly text and binary generation with arena-backed internal values
+- Checked IR facts for inferred expression types, function signatures, layouts, and host ABI lowering
+- Executable runtime coverage for compiler examples and browser samples
+- An experimental opt-in `flat-record-v1` host adapter for concrete scalar-field records
+
+### Tools and distribution
+
+- Browser compilation and execution with token, AST, Wasm, output, and diagnostic views
+- Language Server Protocol support over stdio
+- Warder project creation, checking, building, running, testing, and diagnostics
+- Deterministic direct local dependencies with source hashes, immutable staging snapshots, and recoverable artifact publication
+- Cross-platform compiler and Warder archives with SHA-256 checksums
 
 ### Release boundaries
 
-- Host-visible exports are limited to concrete scalar parameters, results, and literal constants
-- User-defined ADTs, source-level `form`/`takes`, temporal affine types, and direct composite host ABI are reserved for later design work
-- Warder registry publishing performs local preflight validation only and uploads nothing
-- Homebrew and VS Code Marketplace distribution are not part of this preview release
+- The default host ABI is limited to concrete scalar parameters, results, and literal constants
+- User enums and forms are source-level and statically lowered; they do not expose dynamic host objects
+- Temporal affine types, WIT and Component Model output, dynamic form dispatch, generic or recursive enums, and postfix `?` remain future work
+- Registry, Git, foreign-Wasm, and transitive package dependency graphs remain outside the direct-local package slice
+- Warder registry publishing performs local validation only and uploads nothing
+- Homebrew and VS Code Marketplace distribution are not part of v0.0.1
 
 [Unreleased]: https://github.com/Ischca/restrict_lang/compare/v0.0.1...HEAD
 [0.0.1]: https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1

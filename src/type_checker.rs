@@ -801,6 +801,9 @@ pub struct TypeChecker {
     // Record shapes are registered before source `takes` declarations. Bound
     // use validation therefore starts only once all adoptions are known.
     form_bound_validation_ready: bool,
+    // At most one implicit `it` focus may be active. Nested scoped clauses
+    // must name at least one binder explicitly so affine uses stay legible.
+    implicit_focus_depth: usize,
 }
 
 impl Default for TypeChecker {
@@ -862,6 +865,7 @@ impl TypeChecker {
             finalizing_deferred_alias_group_ids: HashSet::new(),
             form_environment: FormEnvironment::new(),
             form_bound_validation_ready: false,
+            implicit_focus_depth: 0,
         };
 
         // Register built-in functions and traits
@@ -8070,6 +8074,29 @@ impl TypeChecker {
         expected: &TypedType,
         substitution: &mut ConstraintSubstitution,
     ) -> Result<TypedType, TypeError> {
+        if lambda.implicit_focus && self.implicit_focus_depth > 0 {
+            return Err(TypeError::UnsupportedFeature(
+                "nested implicit focus scopes are ambiguous; name at least one scope binder with `{ |value| ... }`"
+                    .to_string(),
+            ));
+        }
+
+        if lambda.implicit_focus {
+            self.implicit_focus_depth += 1;
+        }
+        let result = self.check_generic_lambda_arg_inner(lambda, expected, substitution);
+        if lambda.implicit_focus {
+            self.implicit_focus_depth -= 1;
+        }
+        result
+    }
+
+    fn check_generic_lambda_arg_inner(
+        &mut self,
+        lambda: &LambdaExpr,
+        expected: &TypedType,
+        substitution: &mut ConstraintSubstitution,
+    ) -> Result<TypedType, TypeError> {
         let expected = substitution.apply(expected)?;
         let expected = if matches!(expected, TypedType::InferVar(_)) {
             let shaped = self.fresh_lambda_function_type(lambda.params.len());
@@ -8088,6 +8115,12 @@ impl TypeChecker {
             }
         };
 
+        if lambda.implicit_focus && params.len() != 1 {
+            return Err(TypeError::UnsupportedFeature(format!(
+                "implicit focus scopes require a unary function parameter, but this callable expects {} binders; name them with `{{ |left, right| ... }}`",
+                params.len()
+            )));
+        }
         if params.len() != lambda.params.len() {
             return Err(TypeError::ArityMismatch {
                 expected: params.len(),
@@ -11415,6 +11448,28 @@ impl TypeChecker {
         lambda: &LambdaExpr,
         expected: Option<&TypedType>,
     ) -> Result<TypedType, TypeError> {
+        if lambda.implicit_focus && self.implicit_focus_depth > 0 {
+            return Err(TypeError::UnsupportedFeature(
+                "nested implicit focus scopes are ambiguous; name at least one scope binder with `{ |value| ... }`"
+                    .to_string(),
+            ));
+        }
+
+        if lambda.implicit_focus {
+            self.implicit_focus_depth += 1;
+        }
+        let result = self.check_lambda_expr_inner(lambda, expected);
+        if lambda.implicit_focus {
+            self.implicit_focus_depth -= 1;
+        }
+        result
+    }
+
+    fn check_lambda_expr_inner(
+        &mut self,
+        lambda: &LambdaExpr,
+        expected: Option<&TypedType>,
+    ) -> Result<TypedType, TypeError> {
         // Collect free variables before creating lambda scope
         let bound_vars = HashSet::new();
         let free_vars = self.collect_free_variables(&lambda.body, &bound_vars);
@@ -11448,6 +11503,13 @@ impl TypeChecker {
         }) = shaped_expected.as_ref()
         {
             // Use expected parameter types if available
+            if lambda.implicit_focus && params.len() != 1 {
+                self.pop_scope();
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "implicit focus scopes require a unary function parameter, but this callable expects {} binders; name them with `{{ |left, right| ... }}`",
+                    params.len()
+                )));
+            }
             if params.len() != lambda.params.len() {
                 self.pop_scope();
                 return Err(TypeError::ArityMismatch {
@@ -12248,7 +12310,7 @@ fun main: (item: Box<Int64>) -> Box<Int64> = {
         let input = "context DB { host: String, port: Int32 }
 
 val result = with DB {
-    val x = 42
+    val x = 42;
     x
 }";
         match parse_program(input) {
@@ -12287,7 +12349,7 @@ val result = with DB {
             context DB { host: String }
 
             val result = with DB {
-                val x = 42
+                val x = 42;
                 x
             }
         "#;
@@ -12298,7 +12360,7 @@ val result = with DB {
             context Cache { size: Int32 }
 
             val result = with Cache {
-                val y = 100
+                val y = 100;
                 y
             }
         "#;

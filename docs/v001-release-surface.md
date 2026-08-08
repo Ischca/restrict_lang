@@ -9,10 +9,14 @@ the release intentionally presents as stable, explicitly rejected, or reserved.
 | Surface | v0.0.1 status |
 | --- | --- |
 | OSV-only calls | Supported. Calls use `value |> function`, `(arg1, arg2) function`, or `() function`; traditional `function(args)` calls are outside the surface. |
+| Typed context scopes | `context Name` declares typed fields, and `with Context { bindings } { body }` makes them available for one lexical body. Nested context scopes compose. Function-level context annotations and temporal lifetime scopes remain future work. |
 | `val` / `mut val` bindings | Supported. Immutable bindings use `val`; mutable bindings use `mut val`. |
 | Built-in generic values | Supported for `List<T>`, `Option<T>`, `Result<T, E>`, and concrete `Range<Int32>`. |
 | Fixed-length arrays | Supported as `Array<T, N>`. Any internal wildcard length used by built-in array operations is compiler machinery, not a source-level `Array<T, 0>` release contract. |
-| Internal `Container` forms only for `List` / `Option` | Supported as compiler-internal inference machinery for built-in list and option flows. There is no source-level declaration syntax for user forms. |
+| Built-in container behavior | `map`, `filter`, and `fold` use compiler-supported behavior for the current built-in containers. The internal `Container` associated-type machinery is not source-visible. |
+| Closed user-defined enums | Supported for non-generic, non-recursive enums whose variants have zero or one payload. Constructors use qualified `Type::Variant` names in OSV order, patterns are qualified, and matches are exhaustive. `pub enum` crosses source-module boundaries only and creates no host-visible enum ABI. |
+| Source-level forms / Method-only forms | `form Name` declares fully typed method signatures. Concrete record `takes` declarations each target one concrete, non-generic record. Generic `of` bounds use `<T of Form>` or `<T of First + Second>`. Dispatch is static and monomorphized to direct method calls. |
+| Standard `Display` | `display`, `print`, and `println` accept `<T of Display>`. `String`, `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `Unit` have compiler-provided adoptions; records adopt Display explicitly. stderr remains String-only and `print_int` / `print_float` remain compatibility helpers. |
 | Source imports without aliases/re-exports | Supported for dotted module imports, named imports, wildcard imports, and whole-module imports. |
 | Source-level record exports no host ABI | Supported as source module metadata. Exported records can be imported by Restrict source modules, but do not create direct host-visible WebAssembly exports. |
 | Scalar monomorphic `pub fun` / `export fun` host ABI | Supported for concrete, non-generic public function exports whose parameters and result are scalar host ABI values: `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()`. Other public function exports stay covered by the rejected generic/composite host ABI row. |
@@ -26,22 +30,15 @@ the release intentionally presents as stable, explicitly rejected, or reserved.
 | Traditional calls | Rejected with diagnostic "traditional calls like `add(1, 2)` are not valid Restrict; use OSV syntax such as `(1, 2) add` or `value |> add`" because OSV-only calls are the public call surface. |
 | Import aliases and string imports | Rejected with `string import paths and import aliases are unsupported in v0.0.1; use dotted source imports such as import module.{item}`. |
 | Re-exports | Rejected with `re-exports are unsupported in v0.0.1; import declarations must stay at the source module boundary`. |
-| User enum declarations in v0.0.1 | Historically rejected with `enum declarations are unsupported in v0.0.1; user-defined enum declarations are not implemented`. The current post-v0.0.1 slice is recorded below. |
 | Exported generic/composite host ABI as design gap | Rejected by v0.0.1 release-surface validation before `--check` success or code generation when a public export would require a generic or composite host ABI that v0.0.1 has not designed. |
 | Exported composite top-level global ABI as design gap | Rejected by v0.0.1 release-surface validation before `--check` success or code generation when an exported top-level binding would require a composite host ABI. |
 | Computed or mutable exported globals | Rejected by v0.0.1 release-surface validation. Exported top-level bindings must be immutable scalar constants in v0.0.1, and exported top-level bindings must be scalar literal constants in v0.0.1 rather than computed expressions. |
 
-## Experimental/Post-v0.0.1
+## Experimental/Future
 
 | Surface | Reason |
 | --- | --- |
 | TAT outside default gate | Temporal Affine Types are planned/experimental and remain outside the v0.0.1 default release gate. |
-| Source-level `form` / `takes` in the v0.0.1 tag | Historically reserved. v0.0.1 only exposed the compiler-internal `Container` behavior for `List` and `Option`; the current post-v0.0.1 slice is recorded below. |
-| Closed user-defined enums | Added after v0.0.1. The current compiler accepts non-generic, non-recursive enums whose variants have zero or one payload. Constructors use qualified `Type::Variant` names in OSV order, patterns use the same qualified names, and matches are exhaustive. `pub enum` crosses source-module boundaries only and creates no host-visible enum ABI. |
-| Method-only forms | Added after v0.0.1. `form Name` declares fully typed method signatures; forms are non-generic and have no associated types or default method bodies. |
-| Concrete record `takes` | Added after v0.0.1. A concrete, non-generic record can adopt a form by supplying every method body. `takes` declarations cannot be public, generic, conditional, or target an enum. |
-| Generic `of` bounds | Added after v0.0.1. `<T of Form>` and `<T of First + Second>` require adoptions at each concrete call. Dispatch is static and monomorphized to direct method calls. |
-| Standard `Display` | Added after v0.0.1. `display`, `print`, and `println` accept `<T of Display>`; `String`, `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `Unit` have compiler-provided adoptions. Records adopt Display explicitly. stderr remains String-only and `print_int` / `print_float` remain compatibility helpers. |
 | Generic/recursive enums and `?` | Remain future work. Custom closed enums can be used as `Result<T, CustomError>` errors, but ergonomic `?` propagation is not implemented. |
 | Advanced form features | Associated types, generic forms, default methods, generic or conditional adoptions, enum adoptions, and dynamic dispatch remain future work. |
 | Generic export ABI | Host-visible WebAssembly ABI rules for exported generic and composite values are still design work, not a supported release contract. |

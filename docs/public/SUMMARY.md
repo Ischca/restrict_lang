@@ -17,6 +17,7 @@
 - [Type Inference](./en/guide/type-inference.md)
 - [Ownership & Affine Types](./en/guide/ownership.md)
 - [Functions](./en/guide/functions.md)
+- [Higher-Order Functions and Collection Transforms](./en/advanced/higher-order.md)
 - [Forms and Static Polymorphism](./en/guide/forms.md)
 - [Records](./en/guide/records.md)
 - [Pattern Matching](./en/guide/patterns.md)
@@ -33,6 +34,7 @@
 
 - [Online Compiler](./en/tools/online-compiler.md)
 - [Testing](./en/tools/testing.md)
+- [Benchmarking](./en/tools/benchmarking.md)
 - [LSP](./en/tools/lsp.md)
 
 # Advanced Topics
@@ -54,7 +56,10 @@
 - [インストール](./ja/getting-started/installation.md)
 - [Hello, World!](./ja/getting-started/hello-world.md)
 - [構文リファレンス](./ja/guide/syntax.md)
+- [OSV語順](./ja/guide/osv-order.md)
 - [型システム](./ja/guide/types.md)
+- [関数](./ja/guide/functions.md)
+- [高階関数とコレクション変換](./ja/advanced/higher-order.md)
 - [Form と静的ポリモーフィズム](./ja/guide/forms.md)
 - [Warderパッケージマネージャー](./ja/guide/warder.md)
 - [標準ライブラリ](./ja/reference/stdlib.md)

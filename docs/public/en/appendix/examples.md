@@ -1,8 +1,7 @@
 # Examples
 
-These examples are small, self-contained programs. Most fit the historical
-v0.0.1 release surface; the enum example is labeled as a current post-v0.0.1
-addition. They avoid host stdin, filesystem access, networking, Temporal Affine
+These examples are small, self-contained v0.0.1 programs. They avoid host
+stdin, filesystem access, networking, Temporal Affine
 Types, and composite host exports.
 
 ## Scalar Pipeline
@@ -37,12 +36,12 @@ record ReleaseCheck {
 }
 
 fun passed_tests: (check: ReleaseCheck) -> Int32 = {
-    val ReleaseCheck { tests, failures } = check
+    val ReleaseCheck { tests, failures } = check;
     tests - failures
 }
 
 export fun exported_passed_tests: () -> Int32 = {
-    val check = ReleaseCheck { tests: 42, failures: 2 }
+    val check = ReleaseCheck { tests: 42, failures: 2 };
     check |> passed_tests
 }
 ```
@@ -90,9 +89,9 @@ fun main: () -> Int32 = {
 
 ## Custom Enum Error In Result
 
-This example requires the current post-v0.0.1 compiler. It uses a closed,
-non-generic, non-recursive enum, qualified OSV construction, and exhaustive
-matching. Running it prints `-2`.
+This example uses the closed enum slice included in v0.0.1: a non-generic,
+non-recursive declaration, qualified OSV construction, and exhaustive matching.
+Running it prints `-2`.
 
 ```restrict
 enum CustomError {

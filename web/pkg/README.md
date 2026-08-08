@@ -10,7 +10,7 @@
   [![WASM](https://img.shields.io/badge/target-WebAssembly-orange.svg)](https://webassembly.org/)
   [![Documentation](https://img.shields.io/badge/docs-mdBook-green.svg)](https://ischca.github.io/restrict_lang/docs/)
 
-  [Website](https://ischca.github.io/restrict_lang/) · [Playground](https://ischca.github.io/restrict_lang/compiler/) · [Release surface](docs/en/reference/release-surface.md)
+  [Website](https://ischca.github.io/restrict_lang/) · [Playground](https://ischca.github.io/restrict_lang/compiler/) · [Release surface](docs/public/en/reference/release-surface.md)
 </div>
 
 ---
@@ -21,9 +21,45 @@
 
 A statically-typed functional programming language that compiles to WebAssembly, featuring an affine type system, pattern matching, lambda expressions with closures, and arena-based memory management.
 
+## WebAssembly-First Execution Model
+
+WebAssembly is Restrict's sole code-generation target. Native WASI runtimes,
+browsers, cloud/edge platforms, and container runtimes are hosts for the same
+Wasm backend rather than separate JavaScript or native language backends.
+
+```text
+Restrict source
+    ↓
+Core WebAssembly
+    ↓
+host profile or generated adapter
+    ├── native WASI runtime
+    ├── Component Model host
+    ├── browser host
+    └── cloud or edge host
+```
+
+The current compiler uses WASI Preview 1 imports for basic program output. The
+browser playground implements those imports with a small JavaScript bridge;
+Restrict source still compiles only to Wasm. The long-term direction is to add
+capability-oriented WASI APIs, stable composite-value lowering, WIT and
+Component Model output, and generated Web or cloud adapters without adding a
+JavaScript backend.
+
+Native WASI runtimes can provide a JavaScript-free application environment.
+Browsers do not currently expose the DOM directly to Wasm, so Web applications
+still need a host adapter. The compiler keeps that adapter separate so a future
+standard browser host interface can replace it without changing the language
+backend. Docker and containerd are treated as ways to run or package WASI
+artifacts, not as Restrict targets or ABIs.
+
+See [WebAssembly Integration](docs/public/en/advanced/wasm.md) for the public
+boundary and [WebAssembly Execution Strategy](docs/WASM_EXECUTION_STRATEGY.md)
+for the accepted architecture direction.
+
 ## 🚀 Quick Start
 
-The current browser preview runs without an installation at the
+The browser playground runs without an installation at the
 [Restrict playground](https://ischca.github.io/restrict_lang/compiler/).
 
 ### From Source
@@ -49,6 +85,7 @@ wasmtime hello.wat
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
 - **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for closed user enums, Option, Result, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
+- **🧭 Scoped Verb Clauses**: Higher-order verbs open typed focus scopes such as `values map { it + 1 }`
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support for the current concrete ABI surface
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition (traditional function calls not supported)
 - **🧩 Forms**: Explicit `form` / `takes` contracts with static, monomorphized dispatch
@@ -58,16 +95,15 @@ wasmtime hello.wat
 
 ## Release Design Boundaries
 
-The v0.0.1 tag intentionally kept several language-shaping decisions out of
-its support promise. The current post-v0.0.1 compiler adds a deliberately
-small user-defined enum slice while retaining the ABI boundaries below.
+The v0.0.1 release includes a deliberately small user-defined enum and static
+form surface while retaining the ABI boundaries below.
 
 - Closed, non-generic, non-recursive user-defined `enum` declarations are
   supported. Variants have zero or one payload, constructors use qualified
   `Type::Variant` names in OSV order, patterns use the same qualified names,
   and matches must be exhaustive. `pub enum` is source-module metadata only:
   user enums have no host WebAssembly ABI.
-- The current post-v0.0.1 compiler supports non-generic, method-only `form`
+- The v0.0.1 compiler supports non-generic, method-only `form`
   contracts, concrete record `takes` declarations, and `<T of A + B>` generic
   bounds. Dispatch is static and monomorphized. Associated types, generic or
   conditional adoptions, defaults, enum adoptions, and dynamic dispatch remain
@@ -94,7 +130,7 @@ small user-defined enum slice while retaining the ABI boundaries below.
 ```restrict
 // hello.rl
 fun main: () -> () = {
-    "Hello, Restrict Language!" |> println
+    "Hello, Restrict Language!" println
 }
 ```
 
@@ -108,8 +144,8 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 
 fun main: () -> Int32 = {
     val result = (10, 20) add
-    "Result: " |> println
-    result |> println
+    "Result: " println;
+    result println;
     result
 }
 ```
@@ -126,8 +162,8 @@ val message = "hello"
 val next = message
 
 // Mutable bindings can be reassigned
-mut val counter = 0
-counter = counter + 1
+mut val counter = 0;
+counter = counter + 1;
 counter = counter + 1
 ```
 
@@ -146,6 +182,7 @@ fun say_hello: () -> String = { "hello" }
 // OSV function calls (ONLY supported syntax)
 val result = (5, 10) add      // Multiple arguments: (args) function
 val doubled = 21 |> double    // Single argument: value |> function
+val direct = 21 double        // Single argument: value function
 val greeting = () say_hello   // No arguments: () function
 
 // Pattern: Arguments come BEFORE the function name
@@ -159,6 +196,37 @@ val process_data = data
     |> save_to_database
 ```
 
+Line breaks are whitespace, so a direct OSV call may span lines. A literal or
+other value that cannot be a verb naturally starts a new expression:
+
+```restrict
+"first" println
+"second" println
+```
+
+Use `;` when the next callable-shaped expression must not extend the current
+OSV chain. This most often appears when a named intermediate is declared and
+then used by the block's final expression:
+
+```restrict
+val message = "ready";
+message println
+```
+
+That semicolon is intentional when `val` stages a named intermediate before a
+separate identifier-started expression. If the name is only needed inside a
+higher-order transformation, open a scoped verb clause and name its lambda
+input instead:
+
+```restrict
+values map { |value|
+    value + 1
+}
+```
+
+This keeps the transformation semicolon-free without making line breaks carry
+statement semantics.
+
 ### Lambda Expressions and Closures
 
 ```restrict
@@ -170,6 +238,28 @@ fun main: () -> Int32 = {
     (|x| x * 2, 21) apply_int
 }
 ```
+
+### Scoped Verb Clauses
+
+A higher-order verb can open its final function parameter as a lexical scope.
+The complete clause becomes the object of the next verb, preserving
+left-to-right clause-level OSV flow.
+
+```restrict
+fun main: () -> Int32 = {
+    val values = [1, 2, 3]
+    val shifted = values map {
+        it + 1
+    }
+    (shifted, 0) fold { |total, value|
+        total + value
+    }
+}
+```
+
+An unheaded unary scope receives the contextual `it` binding. Use an explicit
+lambda-style header such as `{ |value| ... }` when naming the focus or handling
+multiple parameters.
 
 ### Pattern Matching
 
@@ -299,13 +389,15 @@ Badge takes Labelled {
 }
 
 fun read_label: <T of Labelled>(value: T) -> String = {
-    value |> label
+    value label
 }
 ```
 
 The compiler provides `Display` for `String`, all scalar types, and `()`. User
 records opt in explicitly. `print` and `println` accept any value that takes
-`Display`; `print_int` and `print_float` remain available for compatibility.
+`Display` and are called directly in OSV position; they are not first-class
+function values in this initial slice. `print_int` and `print_float` remain
+available for compatibility.
 
 ```restrict
 record Notice {
@@ -319,9 +411,9 @@ Notice takes Display {
 }
 
 fun main: () -> () = {
-    42 |> print
-    " · " |> print
-    Notice { text: "records too" } |> println
+    42 print
+    " · " print
+    Notice { text: "records too" } println
 }
 ```
 
@@ -335,7 +427,7 @@ methods, enum adoptions, and dynamic dispatch are not in this initial slice.
 // Arena context with scoped temporary heap allocation
 fun process_batch: () -> Int32 = {
     with Arena { } {
-        val big_list = [1, 2, 3, 4, 5]
+        val big_list = [1, 2, 3, 4, 5];
         big_list |> list_count
     }
 }
@@ -350,9 +442,9 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 ## 📚 Documentation
 
-- **[Quick Start](docs/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
-- **[Language Guide](docs/en/guide/README.md)** - Current release-facing syntax and design rules
-- **[Release Surface](docs/en/reference/release-surface.md)** - Historical v0.0.1 boundaries and current post-v0.0.1 additions
+- **[Quick Start](docs/public/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
+- **[Language Guide](docs/public/en/guide/README.md)** - Current release-facing syntax and design rules
+- **[Release Surface](docs/public/en/reference/release-surface.md)** - Current v0.0.1 language and host ABI boundaries
 - **[Examples](examples/)** - Sample programs and use cases
 
 ## 🏗️ Implementation Status
@@ -396,8 +488,11 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [ ] String interpolation
 - [ ] Async/await support
 - [ ] Ergonomic error propagation syntax
+- [ ] Capability-oriented WASI standard library
+- [ ] WIT and WebAssembly Component Model output
+- [ ] Generated Web and cloud host adapters
 - [ ] SIMD operations
-- [ ] WebGPU backend
+- [ ] WebGPU host integration
 
 ### ⚠️ Current Boundaries
 
@@ -434,7 +529,9 @@ Type Checker → Typed AST
     ↓
 Code Generator → WebAssembly (.wat)
     ↓
-WebAssembly Runtime (wasmtime, browser, etc.)
+Host Profile / Generated Adapter
+    ↓
+WebAssembly Runtime (WASI, Component host, browser, edge, etc.)
 ```
 
 ### Type System
@@ -446,8 +543,11 @@ WebAssembly Runtime (wasmtime, browser, etc.)
 
 ### WebAssembly Backend
 
-- Compiles to WebAssembly Text Format (WAT)
-- Supports WASI for I/O operations
+- WebAssembly is the sole language backend
+- The native compiler emits WAT; Warder also packages binary Wasm
+- Current program output uses WASI Preview 1 for basic I/O operations
+- Browser and cloud integration belongs in generated host adapters
+- WIT, the Component Model, and composite host ABI are planned
 - Function tables for lambda/closure calls
 - Linear memory management with arenas
 

@@ -34,15 +34,8 @@ run_step "Check Rust formatting" cargo fmt --all -- --check
 run_step "Lint workspace" cargo clippy --workspace --locked -- -D warnings
 run_step "Run high-signal regression gates" \
   cargo test -p restrict_lang --locked --quiet \
-    --test test_codegen_boundaries \
-    --test test_docs_hygiene \
-    --test test_method_resolution \
-    --test test_release_example_hygiene \
-    --test test_release_surface_matrix \
-    --test test_release_surface_validator \
-    --test test_std_source_hygiene \
-    --test test_wasm_records_runtime \
-    --test test_web_hygiene
+    --test quality_gates \
+    -- --test-threads=1
 
 if [[ "$mode" == "quick" ]]; then
   echo
@@ -50,17 +43,18 @@ if [[ "$mode" == "quick" ]]; then
   exit 0
 fi
 
-run_step "Run complete workspace test suite" cargo test --workspace --locked --quiet
+run_step "Run complete workspace test suite" \
+  cargo test --workspace --locked --quiet -- --test-threads=1
 run_step "Compile standalone release examples through the CLI" \
   cargo test -p restrict_lang --locked \
-    --test test_release_example_hygiene \
-    standalone_release_examples_compile_through_cli \
-    -- --ignored --exact
+    --test quality_gates \
+    test_release_example_hygiene::standalone_release_examples_compile_through_cli \
+    -- --ignored --exact --test-threads=1
 run_step "Compile VS Code release examples through the CLI" \
   cargo test -p restrict_lang --locked \
-    --test test_release_example_hygiene \
-    vscode_release_examples_compile_through_cli \
-    -- --ignored --exact
+    --test quality_gates \
+    test_release_example_hygiene::vscode_release_examples_compile_through_cli \
+    -- --ignored --exact --test-threads=1
 
 if [[ "$mode" == "pages" ]]; then
   run_step "Check mdBook" mdbook --version

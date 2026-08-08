@@ -1,6 +1,6 @@
 # Restrict Language Development Roadmap
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-08-08
 **Status**: Active Development
 **Target**: v1.0 Release
 
@@ -16,6 +16,253 @@
 2. **Affine Types** - Variables can be used at most once, preventing accidental duplication
 3. **Zero-cost Abstractions** - Compile-time safety with no runtime overhead
 4. **WebAssembly Target** - Efficient, deterministic execution without GC
+
+---
+
+## WebAssembly Execution Strategy
+
+**Decision date**: 2026-08-07
+
+WebAssembly remains Restrict's sole code-generation target. WASI, browsers,
+cloud/edge platforms, and container runtimes are host profiles, adapters, or
+packaging around the same Wasm backend. Restrict will not add a JavaScript
+backend merely because a current host requires JavaScript glue.
+
+### Current Baseline
+
+- [x] Generate Core WebAssembly text
+- [x] Package binary Wasm through Warder
+- [x] Export `_start` for zero-argument `main`
+- [x] Import WASI Preview 1 `fd_write` and `proc_exit` for basic program I/O
+- [x] Run generated programs in the browser through a small WASI bridge
+- [x] Keep the stable v0.0.1 host ABI scalar-only
+
+### Milestone B0: Core Wasm Benchmark Ready
+
+**Goal**: Make Restrict measurable and reproducible before publishing a
+Rust, Grain, or MoonBit comparison. This milestone covers host-neutral Core
+Wasm workloads; it does not claim that Restrict is already a complete
+application platform.
+
+#### Target and Artifact Boundary
+
+- [x] Separate documented `wasm-core` and `wasip1` target profiles
+- [x] Omit WASI imports from `wasm-core` artifacts when the program does not
+  use host I/O
+- [x] Make direct `.wasm` output and validation a first-class compiler flow
+- [x] Pin and test the reference runtime and Wasm validation tool versions
+
+#### Release Code Generation
+
+- [x] Connect release mode to the optimizer and document its exact pipeline
+- [x] Eliminate unreachable functions, unused runtime helpers and imports, and
+  dead internal declarations while preserving explicit exports as roots
+- [x] Define the role of `wasm-opt` and retain both raw and optimized artifact
+  measurements
+- [x] Make identical source, compiler revision, and options produce
+  reproducible benchmark artifacts
+
+#### Benchmark Language Surface
+
+- [x] Stabilize release Wasm code generation for scalar arithmetic, branches,
+  loops, and monomorphic function calls
+- [x] Complete recursion for the forms used by the benchmark corpus
+- [x] Complete closure calls and the `map`/`filter`/`fold` paths used by the
+  collection workloads
+- [x] Verify record and collection workloads against interpreter-independent
+  expected results
+- [x] Freeze and document the exact supported subset before comparing it with
+  other languages
+
+#### Memory Behavior
+
+- [x] Replace or explicitly configure the current fixed 4 KiB arena limit
+- [x] Detect arena exhaustion and report it rather than relying on an
+  accidental Wasm trap
+- [x] Support memory growth or a configurable larger arena for benchmark
+  workloads
+- [x] Reset the arena reliably between iterations and expose enough data to
+  measure peak memory
+
+#### In-Repository Regression Benchmarks
+
+- [x] Add a `benchmarks/` suite for compiler time, runtime, and artifact size
+- [x] Cover scalar loops, function calls and recursion, records, and
+  `map`/`filter`/`fold`
+- [x] Give every workload a deterministic checksum or other correctness oracle
+- [x] Run correctness and a short smoke subset in pull-request CI
+- [x] Record repeated timing reports and machine-check exact host, toolchain,
+  source revision, workload set, and within-run dispersion
+- [x] Keep timing informational and collect repeated evidence locally on demand
+- [x] Adopt a same-session local comparison protocol: run every implementation
+  on one machine in one time window, interleave their measurement order, and
+  retain all observed samples
+- [x] Keep hosted CI focused on correctness, reproducible artifacts, artifact
+  size, and memory instead of treating shared-runner timing as a baseline
+- [x] Store machine-readable raw results before producing charts or summaries
+
+#### Reproducibility Contract
+
+- [x] Pin the Restrict compiler build toolchain, runtime, validator,
+  compressor, and compiler-owned release optimizer used by this baseline
+- [x] Record source revision, target profile, flags, OS, CPU, and tool versions
+- [x] Measure compile time, raw and compressed Wasm size, cold instantiation,
+  warm execution, and peak memory where the runtime exposes it
+- [x] Specify warm-up, iteration count, process isolation, and statistical
+  summary rules
+- [x] Provide one documented command that builds, validates, runs, verifies,
+  and records all Restrict baselines on a clean machine
+
+#### Exit Criteria
+
+- [x] A non-I/O `wasm-core` workload runs without JavaScript and without
+  unnecessary WASI imports
+- [x] Release builds demonstrably optimize code and remove unused runtime code
+- [x] Every language feature used by the corpus passes its semantic and Wasm
+  execution checks in release mode
+- [x] A representative workload can exceed the former 4 KiB arena boundary
+  without an accidental trap
+- [x] Every benchmark rejects an incorrect result through its correctness
+  oracle
+- [x] A clean machine can reproduce the complete baseline with pinned tools;
+  the required GitHub `ubuntu-24.04` benchmark job builds, records, compares,
+  and uploads the full baseline from a fresh checkout
+- [x] Baseline results and an explicit regression policy are checked in
+- [x] One documented local command records repeated raw timing evidence without
+  turning machine-dependent timings into a persistent regression gate
+
+WIT, the Component Model, a composite-value host ABI, filesystem or HTTP APIs,
+async support, DOM access, threads, SIMD, and a JavaScript backend are not
+required for this Core Wasm milestone. They must be evaluated separately when
+benchmarking application or platform integration.
+
+The Restrict regression suite belongs in this repository. No dedicated or
+self-hosted benchmark runner is required at this stage. Timing is measured on
+demand locally and remains informational; deterministic correctness, artifact,
+size, and memory checks remain enforceable in CI.
+
+### Post-B0: Cross-Language Comparison Gate
+
+- [ ] Create a separate cross-language harness so Rust, Grain, MoonBit,
+  Restrict, and any later comparison targets can pin their toolchains, sources,
+  runtimes, and raw results without coupling them to the compiler release cycle
+- [ ] Execute every comparison on the same local machine in the same session,
+  use equivalent workloads and correctness oracles, and interleave execution
+  order to reduce time- and temperature-dependent bias
+- [ ] Report host and toolchain metadata, every raw sample, summary statistics,
+  and unfavorable results; do not combine or compare absolute timing values
+  collected on different machines or in different sessions
+- [ ] Only after these checks pass may public cross-language performance claims
+  be based on the suite
+
+### Milestone B1: Polyglot Web Project Ready
+
+**Goal**: Make a Restrict package a first-class part of a conventional JS/TS
+web workspace after B0. Existing frontend frameworks own HTML, CSS, DOM, and
+iframe presentation; Restrict owns the application domain logic compiled to
+Wasm. Browser JavaScript remains host glue and is not a Restrict source
+backend.
+
+#### Project and Build Integration
+
+- [ ] Keep `package.rl.toml`, `src/`, and `tests/` usable as a Restrict
+  subproject inside a larger repository
+- [ ] Let automation invoke Warder against an explicit project directory
+  without changing the caller's working directory
+- [ ] Emit stable, machine-readable artifact paths and build metadata
+- [ ] Make `warder build --release` produce a browser-loadable Wasm artifact
+  suitable for bundler pipelines
+- [ ] Document a reference workspace combining Warder with a JS package manager
+  and task runner
+- [ ] Keep npm packages and frontend-framework dependency resolution outside
+  Warder
+
+#### Browser ABI and Bindings
+
+- [ ] Define the first browser-host ABI for `String`, byte arrays, and a
+  structured success/error envelope
+- [ ] Generate typed JS/TS bindings for supported imports and exports
+- [ ] Emit an import/export, memory, target, and compiler-version manifest
+- [ ] Define stable initialization, call, error, and disposal lifecycle hooks
+- [ ] Provide a framework-neutral Worker bootstrap and browser host adapter
+- [ ] Preserve explicit capability imports rather than exposing ambient DOM or
+  network access
+
+#### Development Experience
+
+- [ ] Preserve Restrict source locations in diagnostics returned through the
+  generated bindings
+- [ ] Provide a watch or incremental-build contract that a bundler plugin can
+  consume
+- [ ] Publish one reference integration for a mainstream JS/TS bundler without
+  coupling the compiler to that bundler
+- [ ] Run Restrict tests and frontend integration tests from one documented root
+  command
+
+#### Exit Criteria
+
+- [ ] A fresh JS/TS workspace can contain and build a Warder project with one
+  documented root command
+- [ ] The frontend can call non-trivial Restrict logic through generated typed
+  bindings and receive structured errors
+- [ ] The same Restrict artifact can be loaded in a Worker independently of the
+  selected UI framework
+- [ ] Replacing the JS/TS framework does not require compiler or language
+  changes
+- [ ] Node, DOM, and framework semantics remain outside Restrict core language
+  semantics
+
+### Milestone B2: Embeddable Restrict Sandbox Showcase
+
+**Goal**: Build a separate `restrict-sandbox` repository as a language showcase
+after B0 and B1. It is intentionally a polyglot product: a JS/TS frontend owns
+the editor and browser UI, while Restrict owns substantial session, policy,
+capability, and result-processing logic.
+
+- [ ] Build the GUI with an existing JS/TS framework, HTML, and CSS
+- [ ] Ship an iframe embed SDK with a versioned `postMessage` protocol
+- [ ] Run both compilation and generated user programs away from the UI thread
+  in disposable Workers
+- [ ] Enforce source, compile-time, execution-time, memory, and output limits
+- [ ] Validate generated Wasm imports, exports, memory limits, and target profile
+  before instantiation
+- [ ] Keep the default capability surface limited to console output and exit;
+  add stdin, deterministic clock/randomness, or virtual files explicitly
+- [ ] Use the Rust-compiled Restrict compiler Wasm as a dependency while keeping
+  the sandbox's product logic primarily in its Restrict subproject
+- [ ] Support read-only examples, editable snippets, shareable state, Stop and
+  Reset actions, structured diagnostics, and downloadable Wasm
+- [ ] Document the trust model, CSP, hosting requirements, compiler version,
+  supported browsers, and data-retention behavior
+
+The showcase measures "Restrict-main" by ownership of domain behavior, not by
+eliminating every line of JavaScript. The fixed JS/TS host may load Wasm, manage
+DOM and Workers, and render the UI; user-program semantics and selected sandbox
+policies should remain implemented and tested in Restrict.
+
+### Later Application Milestones
+
+1. **Native WASI application baseline**
+   - [ ] Document reproducible CLI execution without JavaScript
+2. **Capability-oriented WASI library**
+   - [ ] Arguments, environment, stdin/stdout/stderr, and exit
+   - [ ] Filesystem, clocks, and randomness
+   - [ ] Networking and HTTP after resource and async semantics are defined
+3. **Stable component boundary**
+   - [ ] Extend the browser ABI to lists, records, `Option`, `Result`, and
+     resources
+   - [ ] Generate WIT and WebAssembly Component Model adapters
+4. **Generated platform adapters**
+   - [ ] Browser entry and Web API adapter without a JavaScript source backend
+   - [ ] Cloud/edge adapters, including a Cloudflare Workers entry adapter
+   - [ ] OCI packaging for WASI runtimes without a Docker-specific ABI
+5. **Future browser integration**
+   - [ ] Adopt direct browser host interfaces when portable standards and
+     implementations exist
+   - [ ] Keep DOM and Web APIs out of core language semantics
+
+See `docs/WASM_EXECUTION_STRATEGY.md` for the decision record and platform
+assumptions.
 
 ---
 
@@ -405,7 +652,7 @@ After:  Affine type violation: variable 'p' has already been used.
 - [ ] Effect system
 - [ ] Advanced generics
 - [ ] SIMD operations
-- [ ] WebGPU backend
+- [ ] WebGPU host integration
 
 ---
 
@@ -636,4 +883,4 @@ This roadmap will be reviewed and updated:
 
 **End of Roadmap**
 
-*This is a living document. Last updated: 2025-01-11*
+*This is a living document. Last updated: 2026-08-07*

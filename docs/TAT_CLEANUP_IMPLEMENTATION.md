@@ -259,4 +259,4 @@ The implementation includes comprehensive tests covering:
 - Empty temporal scopes
 - Arena management and restoration
 
-See `tests/test_tat_cleanup_comprehensive.rs` for detailed test cases.
+See `tests/cases/test_tat_cleanup_comprehensive.rs` for detailed test cases.

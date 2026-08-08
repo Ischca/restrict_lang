@@ -12,7 +12,7 @@ does not duplicate heap ownership.
 
 ```restrict
 fun main: () -> Int32 = {
-    val score: Int32 = 40
+    val score: Int32 = 40;
     score + score
 }
 ```
@@ -26,7 +26,7 @@ fun consume_message: (message: String) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val message = "ready"
+    val message = "ready";
     message |> consume_message
 }
 ```
@@ -40,8 +40,8 @@ Use `mut val` when a local binding needs repeated assignment or repeated use.
 
 ```restrict
 fun main: () -> Int32 = {
-    mut val counter = 0
-    counter = counter + 1
+    mut val counter = 0;
+    counter = counter + 1;
     counter = counter + 2
     counter
 }
@@ -66,7 +66,7 @@ fun payload_code: (payload: Payload) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val payload = Payload { code: 7, label: "release" }
+    val payload = Payload { code: 7, label: "release" };
     payload |> payload_code
 }
 ```
@@ -95,7 +95,7 @@ fun read_severity: (ticket: Ticket) -> Int32 = {
 
 fun main: () -> Int32 = {
     val ticket = Ticket { severity: 5, owner: "ops" }
-    val lowered = ticket |> lower_severity
+    val lowered = ticket |> lower_severity;
     lowered |> read_severity
 }
 ```
@@ -152,7 +152,7 @@ fun use_token: (token: Token) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val token = Token { id: 99 }
+    val token = Token { id: 99 };
     token |> use_token
 }
 ```
@@ -188,7 +188,7 @@ fun close: (open: OpenConnection) -> ClosedConnection = {
 fun main: () -> ClosedConnection = {
     val closed = ClosedConnection { id: 1 }
     val opened = closed |> connect
-    val sent = (opened, 5) send
+    val sent = (opened, 5) send;
     sent |> close
 }
 ```

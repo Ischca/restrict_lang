@@ -104,13 +104,15 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish GitHub pre-release
+    name: Publish GitHub release
     if: github.event_name == 'push'
     needs: [validate, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+
       - uses: actions/download-artifact@v5
         with:
           pattern: restrict-lang-*
@@ -121,12 +123,18 @@ jobs:
         working-directory: dist
         run: sha256sum restrict-lang-* > SHA256SUMS
 
-      - name: Create pre-release after every artifact succeeds
+      - name: Create release after every artifact succeeds
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* \
-            --generate-notes \
-            --prerelease \
-            --title "Restrict Language ${{ github.ref_name }}"
+          notes_file="docs/releases/${{ github.ref_name }}.md"
+          if [ -f "$notes_file" ]; then
+            gh release create "${{ github.ref_name }}" dist/* \
+              --notes-file "$notes_file" \
+              --title "Restrict Language ${{ github.ref_name }}"
+          else
+            gh release create "${{ github.ref_name }}" dist/* \
+              --generate-notes \
+              --title "Restrict Language ${{ github.ref_name }}"
+          fi

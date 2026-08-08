@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "requireCleanCandidate": true,
+  "requireExactToolchain": true,
+  "requireExactSourcesAndInputs": true,
+  "requireExactArtifactHashes": true,
+  "maximumWasmGrowthBytes": 0,
+  "maximumCompressedGrowthBytes": 0,
+  "requireExactMemory": true,
+  "timing": {
+    "status": "informational",
+    "requireExactHost": true,
+    "minimumIterations": 30,
+    "maximumMedianRegressionPercent": 15.0,
+    "maximumOptimizedCompileRegressionPercent": 25.0,
+    "maximumRuntimeCompileRegressionPercent": 25.0,
+    "maximumColdInstantiationRegressionPercent": 25.0
+  }
+}

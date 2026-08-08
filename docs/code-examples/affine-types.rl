@@ -9,7 +9,7 @@ fun consume_message: (message: String) -> () = {
 }
 
 fun affine_example: () -> () = {
-    val message = "This can only be used once"
+    val message = "This can only be used once";
 
     message |> consume_message
 
@@ -26,7 +26,7 @@ fun lower_severity: (ticket: Ticket) -> Ticket = {
 
 fun clone_example: () -> Int32 = {
     val ticket = Ticket { severity: 5, owner: "ops" }
-    val lowered = ticket |> lower_severity
+    val lowered = ticket |> lower_severity;
 
     lowered.severity
 }

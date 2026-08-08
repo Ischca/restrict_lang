@@ -12,6 +12,81 @@ This document is the **single authoritative specification** for Restrict Languag
 - **No Side Effects**: Expression statements must be pure
 - **Arena Memory**: Deterministic memory management without garbage collection
 
+## Compilation and Host Model
+
+Restrict has one code-generation family: WebAssembly. JavaScript, native
+machine code, individual cloud platforms, and container runtimes are not
+separate Restrict language backends. A host profile may select imports,
+exports, ABI adapters, and packaging without changing Restrict source semantics.
+
+Core language behavior must remain independent of JavaScript objects, DOM APIs,
+specific cloud bindings, Docker, and individual WebAssembly runtimes. External
+operations are provided by explicit host imports or capabilities. This keeps a
+Restrict program portable between native WASI runtimes, component hosts,
+browsers, and edge environments when those hosts provide compatible
+interfaces.
+
+The current v0.0.1 program output is a Core WebAssembly module. It imports the
+WASI Preview 1 `fd_write` and `proc_exit` operations for basic program I/O, and
+a zero-argument `main` receives the `_start` wrapper specified below. The
+browser playground supplies equivalent behavior through a JavaScript bridge.
+That generated or handwritten bridge is host glue, not a JavaScript code-
+generation backend.
+
+The compiler exposes two artifact target profiles. `wasip1` is the default and
+retains the v0.0.1 program-I/O imports. `wasm-core` emits an import-free Core
+WebAssembly module for host-neutral workloads and rejects `print`, `println`,
+and other host-I/O calls. Both profiles use the same Restrict source semantics.
+The native CLI can encode and validate binary output directly with `--emit
+wasm`; text output remains available with `--emit wat`.
+
+Compiler output is unoptimized by default so the complete lowered module stays
+available for debugging. `--release` applies the compiler's deterministic
+reachability pass after WAT lowering: host-visible exports and the start entry
+are roots, direct calls are followed transitively, and unused functions,
+function imports, named types, globals, tables, and element segments are
+removed when they cannot affect those roots. This release pass does not yet
+rewrite instructions or invoke an external `wasm-opt` binary.
+
+Compiler-managed arenas default to 4096 bytes for compatibility. A build may
+select a larger multiple-of-four capacity with `--arena-bytes`; this changes
+reserved linear-memory capacity, not source semantics or host ABI. Arena
+exhaustion deliberately traps and must not be treated as a recoverable
+source-level error. Before trapping, generated modules expose a compiler-owned
+diagnostic through the `__restrict_arena_error_code`,
+`__restrict_arena_error_requested_bytes`, and
+`__restrict_arena_capacity_bytes` `i32` globals. Error code `0` means no arena
+error, `1` means exhaustion, and `2` means allocation was attempted without an
+active arena. Initializing a new arena clears the error code and requested-byte
+value. A host may inspect these values after a trap to classify the failure,
+but must not resume the trapped call.
+
+`--instrument-memory` additionally exports compiler-owned peak-live-byte,
+current-live-byte, allocation-count, and reset-count globals plus
+`__restrict_memory_metrics_reset`. This instrumentation is for benchmarks and
+diagnostic hosts; it changes generated bookkeeping and therefore must not be
+used as the timed artifact in a performance comparison. Peak and live byte
+counts exclude the arena header. The current counters describe the B0
+single-host-entry arena path and do not claim aggregate accounting for nested
+arenas.
+
+The following remain future host-integration work and do not expand the current
+v0.0.1 release surface:
+
+- broader WASI bindings for arguments, environment, filesystem, clocks,
+  randomness, networking, HTTP, and asynchronous streams;
+- stable lifting and lowering for `String`, `List`, `Array`, records, `Option`,
+  `Result`, user enums, resources, and other composite host values;
+- WIT generation and WebAssembly Component Model packaging;
+- generated Web and cloud entry adapters; and
+- direct browser host or DOM interfaces if and when portable standards expose
+  them to WebAssembly.
+
+Docker, containerd, and similar systems may execute or package a WASI artifact,
+but do not define a Restrict ABI. Likewise, a browser or cloud host may require
+JavaScript glue today without requiring Restrict to compile source code to
+JavaScript.
+
 ## 1. Lexical Elements
 
 ### 1.1 Keywords (Reserved)
@@ -26,15 +101,13 @@ Some reserved words are for planned or experimental features. A word being
 reserved does not imply that every related syntax form is part of the current
 v0.0.1 implementation.
 
-The v0.0.1 release did not expose source-level `form` / `takes` / `of` syntax.
-The current post-v0.0.1 compiler exposes the deliberately small, method-only
-form slice specified below. Generic forms, associated types, default methods,
-generic or conditional adoptions, enum adoptions, and dynamic dispatch remain
-future work.
+The v0.0.1 release exposes the deliberately small, method-only `form` /
+`takes` / `of` slice specified below. Generic forms, associated types, default
+methods, generic or conditional adoptions, enum adoptions, and dynamic dispatch
+remain future work.
 
-The v0.0.1 release included only compiler-provided `Option<T>` and
-`Result<T, E>` sum types. The current post-v0.0.1 compiler additionally
-supports the closed, non-generic user-defined `enum` slice specified below.
+The v0.0.1 release includes compiler-provided `Option<T>` and `Result<T, E>`
+sum types plus the closed, non-generic user-defined `enum` slice specified below.
 Generic enums, recursive enums, and variants with more than one direct payload
 remain future work.
 Host-visible WebAssembly exports that would require an exported
@@ -80,6 +153,52 @@ designed.
 ### 1.5 Comments
 - **Single-line**: `// comment`
 - **Multi-line**: `/* comment */` (no nesting)
+
+### 1.6 Whitespace and Expression Boundaries
+
+Spaces, tabs, comments, and line breaks are ordinary whitespace. A line break
+does not terminate an expression. The parser reads the maximal expression
+allowed by the grammar, including a direct OSV call split across lines:
+
+```rust
+val answer = 41
+    increment
+// Equivalent to: val answer = 41 increment
+```
+
+A direct OSV chain continues only while the following expression can serve as
+a verb (a function value). A literal, record, or collection value cannot be a
+verb, so it naturally begins a new expression even without a semicolon:
+
+```rust
+"first" println
+"second" println
+```
+
+A semicolon explicitly terminates the current statement when the following
+source could instead be interpreted as another verb in the same OSV chain:
+
+```rust
+val message = "ready";
+message println
+```
+
+Reserved declaration keywords, delimiters, operators, and values that cannot
+act as verbs still establish the boundaries required by their grammar, so
+semicolons are not required after every declaration or unambiguous expression.
+A block's final expression is not followed by a semicolon. Top-level
+declarations are never separated by semicolons.
+
+An explicit semicolon is appropriate when a local `val` deliberately stages a
+named value before an identifier-started expression. When the name exists only
+inside a higher-order transformation, a scoped verb clause can keep the same
+flow semicolon-free by naming the callback input instead:
+
+```rust
+values map { |value|
+    value + 1
+}
+```
 
 ## 2. Variable Declarations
 
@@ -191,7 +310,7 @@ Int32 -> String         // Function type
 (Int32, String) -> Boolean // Multi-parameter function
 ```
 
-### 4.5 User-Defined Enum Types (Post-v0.0.1)
+### 4.5 User-Defined Enum Types
 
 ```rust
 pub enum ParseError {
@@ -242,6 +361,7 @@ x               // Variable reference
 ```rust
 // ✅ CORRECT: OSV syntax (Object-Subject-Verb)
 value |> function           // Single argument via pipe
+value function              // Single argument via direct OSV
 (arg1, arg2) function       // Multiple arguments via tuple
 () function                 // No arguments via unit
 
@@ -252,8 +372,14 @@ object.method(args)         // ERROR: Traditional syntax forbidden
 ```
 
 **CRITICAL RULE**: Restrict Language **exclusively** uses OSV syntax.
-Arguments always come BEFORE the function name. Traditional parenthetical
-function calls `function(args)` will cause compilation errors.
+Ordinary value arguments always come BEFORE the function name. Traditional
+parenthetical function calls `function(args)` will cause compilation errors.
+The scoped verb clause in Section 5.9 is a separate OSV form: its trailing
+block is a scope opened by the verb, not an ordinary value argument.
+Whitespace, including line breaks, does not end a direct call. A following
+value that cannot be a verb begins a new expression naturally. Use `;` when a
+following callable-shaped expression must begin a new statement instead of
+extending the OSV call, as specified in Section 1.6.
 
 **OSV Pattern Examples:**
 ```rust
@@ -342,7 +468,78 @@ Point { x: 0, y: 0 }
 |x: Int32| x + 1    // With type annotations
 ```
 
-### 5.9 User-Defined Enum Construction
+### 5.9 Scoped Verb Clauses
+
+A function whose final remaining parameter is a function may open that
+function's body as a trailing scope. The ordinary value arguments remain
+before the verb:
+
+```rust
+val shifted = values map {
+    it + 1
+}
+
+val total = (values, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+This is a **scoped verb clause**, not a general trailing-argument rule. In the
+first example, `values` is the ordinary object of `map`; `map` then opens a
+scope focused on each element. The complete clause produces a value that can
+become the object of the next clause:
+
+```rust
+values map {
+    it + 1
+} filter {
+    it > 2
+} |> list_count
+```
+
+Scoped verb clauses associate left-to-right. The example above applies
+`filter` to the complete result of the `map` clause, then pipes the complete
+filtered result to `list_count`.
+
+The compiler elaborates scoped clauses through ordinary lambdas:
+
+```rust
+values map { it + 1 }
+// elaborates as:
+(values, |it| { it + 1 }) map
+
+values map { |value| value + 1 }
+// elaborates as:
+(values, |value| { value + 1 }) map
+```
+
+Rules:
+
+- An unheaded scope introduces the contextual focus binding `it` and therefore
+  supplies exactly one lambda parameter.
+- `it` is a contextual binding, not a globally reserved name. It exists only
+  inside the implicit focus scope that introduces it.
+- Explicit binders reuse the lambda parameter syntax at the start of the
+  scope: `{ |value| ... }` or `{ |left, right| ... }`.
+- A zero-parameter scope uses an explicit empty lambda header: `{ || ... }`.
+- The clause supplies only the callable's final remaining parameter, and that
+  parameter must have a function type. All earlier parameters use ordinary
+  OSV object or tuple syntax.
+- Nested implicit focus scopes are rejected because two active `it` bindings
+  make affine use and capture intent unclear. Name at least one scope binder.
+- Scope statements, the final result expression, captures, affine consumption,
+  temporal escape checks, and type inference follow the ordinary block and
+  lambda rules. The syntax does not grant captures additional uses.
+- A scoped clause may execute its body zero, one, or many times according to
+  the receiving function's contract. The braces express a lexical scope, not
+  a guarantee of immediate or single execution.
+
+This form extends clause-level OSV rather than weakening it: a value precedes
+the scope-opening verb, and the resulting complete clause precedes its next
+verb. It follows the same value-then-verb-then-scope shape as `value match {
+... }` and `condition then { ... }`.
+
+### 5.10 User-Defined Enum Construction
 
 Enum constructors are qualified direct OSV call targets:
 
@@ -361,7 +558,7 @@ or pipe. Traditional call order remains invalid:
 ParseError::Message("invalid input") // ERROR: traditional call syntax
 ```
 
-### 5.10 Built-in Option and Result Construction
+### 5.11 Built-in Option and Result Construction
 
 `Option` and `Result` use the same qualified OSV constructor form as
 user-defined enums. The pipe is optional, and a single direct object does not
@@ -494,6 +691,10 @@ counter = counter + 1   // Only for mutable variables
 x + y                   // Must be pure (no side effects)
 ```
 
+Expression statements that could be parsed as one whitespace-adjacent OSV
+expression must be separated with `;`. A newline alone is not a statement
+terminator.
+
 ## 8. Record Types
 
 ### 8.1 Basic Records
@@ -558,7 +759,7 @@ Rules:
   They are a scoped, type-directed function namespace that preserves Restrict's
   value-flow-first OSV model.
 
-### 8.4 Forms, Adoptions, and Form Bounds (Post-v0.0.1)
+### 8.4 Forms, Adoptions, and Form Bounds
 
 A `form` is an explicit, compile-time behavioral contract. The initial source
 surface is intentionally method-only: forms are non-generic, every method has
@@ -770,7 +971,7 @@ pub val release_bias: Int32 = 3
 ```
 
 For the v0.0.1 implementation, exported records are source-level module
-metadata. Post-v0.0.1 exported enums have the same source-module-only meaning.
+metadata. Exported enums have the same source-module-only meaning.
 Records, enums, and forms can be imported and used by other Restrict source modules,
 but they do not emit direct host-visible WebAssembly exports. Importing an enum
 imports its type namespace; callers continue to spell constructors and patterns
@@ -841,8 +1042,9 @@ then returns normally, allowing the outer wrapper to restore its entry state.
 
 ## 13. Operator Precedence (Highest to Lowest)
 
-1. Field access, qualified variant names, and grouped direct OSV calls:
-   `.field`, `.clone`, `Type::Variant`, `freeze`, `(value) f`, `() f`
+1. Field access, qualified variant names, grouped direct OSV calls, and scoped
+   verb clauses: `.field`, `.clone`, `Type::Variant`, `freeze`, `(value) f`,
+   `() f`, `values map { ... }`
 2. Unary: `!`, `-`
 3. Multiplicative: `*`, `/`, `%`
 4. Additive: `+`, `-`
@@ -858,6 +1060,8 @@ Single-argument calls may use pipe form (`value |> f`) or direct OSV form
 right) max`), and compound objects should be grouped when precedence would
 otherwise change their meaning (`(1 + 2) double`). Pipe starts from a complete
 expression, so `1 + 2 |> double` is parsed as `(1 + 2) |> double`.
+Likewise, a scoped verb clause is complete before a following pipe:
+`values map { it + 1 } |> list_count` pipes the mapped collection.
 
 ## 14. Standard Library Types
 
@@ -1069,7 +1273,21 @@ fun main: () -> Float64 = {
 }
 ```
 
-### 16.6 Temporal Resource Management
+### 16.7 Scoped Collection Flow
+
+```rust
+fun main: () -> Int32 = {
+    val values = [1, 2, 3]
+    val shifted = values map {
+        it + 1
+    }
+    (shifted, 0) fold { |total, value|
+        total + value
+    }
+}
+```
+
+### 16.8 Temporal Resource Management
 ```rust
 fun processFile: (path: String) -> Result<String, Error> = {
     temporal ~file {
@@ -1152,6 +1370,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-08-07
 **Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

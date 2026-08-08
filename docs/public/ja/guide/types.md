@@ -1,6 +1,6 @@
 # 型システム
 
-Restrict Languageの型は、仕様で現在サポートされる構文に合わせて説明します。基本は静的型付け、アフィン型、OSV呼び出し、明示的なレコード型です。v0.0.1公開後に追加された閉じたユーザー定義enumは、履歴上のv0.0.1範囲と区別して示します。
+Restrict Languageのv0.0.1で公開する型は、仕様で現在サポートされる構文に合わせて説明します。基本は静的型付け、アフィン型、OSV呼び出し、明示的なレコード型です。
 
 ## 基本型
 
@@ -34,7 +34,7 @@ fun consume_title: (title: String) -> String = {
 }
 
 fun main: () -> String = {
-    val title = "Restrict"
+    val title = "Restrict";
     title |> consume_title
 }
 ```
@@ -47,8 +47,8 @@ fun main: () -> String = {
 
 ```restrict
 fun main: () -> Int32 = {
-    mut val counter = 0
-    counter = counter + 1
+    mut val counter = 0;
+    counter = counter + 1;
     counter
 }
 ```
@@ -59,7 +59,7 @@ fun main: () -> Int32 = {
 
 ```restrict
 fun total_first_two: () -> Int32 = {
-    val scores: List<Int32> = [10, 20, 30]
+    val scores: List<Int32> = [10, 20, 30];
     scores match {
         [first, second] => { first + second }
         [first | rest] => { first }
@@ -97,7 +97,7 @@ fun result_or_zero: (result: Result<Int32, String>) -> Int32 = {
 }
 ```
 
-## ユーザー定義enum（post-v0.0.1）
+## ユーザー定義enum
 
 現在のcompilerでは、閉じたタグ付き和としてユーザー定義enumを宣言できます。宣言は非ジェネリックかつ非再帰で、各バリアントのpayloadは0個または1個です。
 
@@ -143,7 +143,7 @@ fun user_name: (user: User) -> String = {
 }
 
 fun main: () -> String = {
-    val user = User { name: "Alice", age: 30, active: true }
+    val user = User { name: "Alice", age: 30, active: true };
     user |> user_name
 }
 ```
@@ -181,7 +181,7 @@ fun main: () -> Int32 = {
 ```restrict
 fun main: () -> Int32 = {
     val answer = 42
-    val numbers: List<Int32> = []
+    val numbers: List<Int32> = [];
     numbers match {
         [] => { answer }
         [first | rest] => { first }
@@ -189,7 +189,7 @@ fun main: () -> Int32 = {
 }
 ```
 
-## Form と静的ポリモーフィズム（post-v0.0.1）
+## Form と静的ポリモーフィズム
 
 現在のcompilerでは、method-only `form`、具体的な非ジェネリックrecordの
 `takes`、`<T of Form>`境界を利用できます。呼び出しは静的に選択され、具体型
@@ -230,7 +230,7 @@ fun read_label: <T of Labelled>(value: T) -> String = {
 - 旧来のRust風コレクションAPIやパス構文
 - 文字列インポート、インポート別名、パッケージ単位の標準ライブラリ集約
 
-ユーザー定義enumそのものはv0.0.1公開時点では範囲外でしたが、現在のpost-v0.0.1 compilerでは前節の閉じた範囲を利用できます。
+ユーザー定義enumはv0.0.1の公開範囲です。前節で説明した閉じた範囲を利用できます。
 
 ## まとめ
 

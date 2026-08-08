@@ -4,7 +4,7 @@ Forms are Restrict's explicit behavioral contracts. They let a generic
 function require named behavior while preserving OSV calls, affine ownership,
 and direct WebAssembly calls.
 
-The current post-v0.0.1 slice is intentionally small:
+The v0.0.1 slice is intentionally small:
 
 - a form is non-generic and contains required method signatures only;
 - every method is fully typed and starts with `self: Self`;

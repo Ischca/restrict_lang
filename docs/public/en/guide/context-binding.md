@@ -22,7 +22,7 @@ context Config {
 }
 
 fun main: () -> Int32 = {
-    val source = 41
+    val source = 41;
     with Config { limit: source } {
         limit + 1
     }
@@ -59,7 +59,7 @@ it normally has no field bindings:
 ```restrict
 fun main: () -> Int32 = {
     with Arena { } {
-        val values = [1, 2, 3]
+        val values = [1, 2, 3];
         values |> list_count
     }
 }

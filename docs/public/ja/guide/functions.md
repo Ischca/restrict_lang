@@ -83,6 +83,9 @@ fun main: () -> Int32 = {
 }
 ```
 
+コレクションのコールバック、スコープ動詞節、`map`、`filter`、`fold`は
+[高階関数とコレクション変換](../advanced/higher-order.md)でまとめて説明します。
+
 ## ジェネリック関数
 
 ```restrict
@@ -121,19 +124,19 @@ fun add_int: (total: Int32, value: Int32) -> Int32 = {
 
 fun main: (urgent: Boolean, bonus: Option<Int32>) -> Int32 = {
     val adjust = urgent then {
-        val boost = 2
+        val boost = 2;
         |score| score + boost
     } else {
-        val factor = 2
+        val factor = 2;
         |score| score * factor
     }
     val normalize = bonus match {
         Some(value) => {
-            val doubled = value * 2
+            val doubled = value * 2;
             |score| score + doubled
         }
         None => {
-            val doubled = 0
+            val doubled = 0;
             |score| score + doubled
         }
     }
@@ -193,7 +196,7 @@ fun transform: (value: Int32, f: Int32 -> Int32) -> Int32 = {
 
 ## 現在の境界
 
-現在のpost-v0.0.1 compilerでは、method-only `form`、具体recordの`takes`、
+v0.0.1 compilerでは、method-only `form`、具体recordの`takes`、
 `<T of Form>`境界を利用できます。詳細は[Form と静的ポリモーフィズム](forms.md)を参照してください。
 
 次の機能は将来の設計対象です。
@@ -214,5 +217,6 @@ fun transform: (value: Int32, f: Int32 -> Int32) -> Int32 = {
 
 ## 関連項目
 
-- [型推論](type-inference.md) - 関数型の推論方法
+- [高階関数とコレクション変換](../advanced/higher-order.md) - コレクションのコールバックとスコープ動詞節
+- [型システム](types.md) - 関数型とジェネリック型
 - [構文リファレンス](syntax.md) - v0.0.1 の基本構文

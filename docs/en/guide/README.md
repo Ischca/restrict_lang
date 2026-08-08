@@ -1,14 +1,16 @@
 # Language Guide Overview
 
 Welcome to the Restrict Language guide. These pages describe the current
-release-facing syntax, including the closed enum slice added after v0.0.1, and
-mark historical v0.0.1 boundaries where they matter.
+v0.0.1 release-facing syntax, including its closed enum slice, and mark future
+boundaries where they matter.
 
 ## What You'll Learn
 
 - **[OSV Word Order](./osv-order.md)** - Calls put arguments before functions
 - **[Syntax Reference](./syntax.md)** - Current declarations, expressions, and literals
 - **[Type System](./types.md)** - Built-ins, closed user enums, generics, and affine ownership
+- **[Functions](./functions.md)** - Function declarations, values, and OSV calls
+- **[Higher-Order Functions and Collection Transforms](../advanced/higher-order.md)** - `map`, `filter`, `fold`, and scoped callbacks
 - **[Ownership](./ownership.md)** - Memory management without GC
 - **[Pattern Matching](./patterns.md)** - Exhaustive `match` expressions
 - **[Warder Package Manager](./warder.md)** - Managing dependencies

@@ -93,6 +93,33 @@ counter = counter + 1
 
 不変束縛は `val`、複数回の使用や再代入が必要な束縛は `mut val` を使います。
 
+## 式の境界
+
+改行は空白として扱われるため、直接 OSV 式は次の行へ継続できます。一方、
+動詞になれない値が続く場合は、セミコロンなしでも新しい式が始まります。
+
+```restrict
+"first" println
+"second" println
+```
+
+ローカル束縛の直後に識別子から始まる式を置き、それを束縛値の動詞として
+解釈させたくない場合は `;` で境界を明示します。
+
+```restrict
+val message = "ready";
+message println
+```
+
+高階変換の内側だけで名前が必要なら、スコープ動詞節のラムダ引数を使うと、
+流れをセミコロンなしで表せます。
+
+```restrict
+values map { |value|
+    value + 1
+}
+```
+
 ## 基本式
 
 ```restrict
@@ -225,6 +252,28 @@ val transformer: Int32 -> Int32 = |x: Int32| x * 2
 val reducer: (Int32, Int32) -> Int32 = |left: Int32, right: Int32| left + right
 ```
 
+## スコープ動詞節
+
+最後に残った仮引数が関数型である動詞は、その関数をスコープとして
+開けます。
+
+```restrict
+val shifted = values map {
+    it + 1
+}
+
+val total = (shifted, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+ヘッダーのない形式は文脈的な`it`束縛を1つ導入します。明示スコープの
+ヘッダーはラムダのバインダーを再利用します。完成したスコープ節は、
+後続の節やパイプより先に評価されます。
+
+コールバック形式、コレクション動作、型推論、アフィンなキャプチャは
+[高階関数とコレクション変換](../advanced/higher-order.md)を参照してください。
+
 ## 型
 
 ### 基本型
@@ -314,7 +363,7 @@ val strict = base.clone { timeout: 3 }
 
 ## 演算子の優先順位
 
-1. フィールドアクセス: `.field`、`.clone`、`freeze`
+1. フィールドアクセス、修飾名、グループ化されたOSV呼び出し、スコープ動詞節: `.field`、`.clone`、`Type::Variant`、`freeze`、`(value) f`、`() f`、`values map { ... }`
 2. 単項演算子: `!`、`-`
 3. 乗除余: `*`、`/`、`%`
 4. 加減: `+`、`-`

@@ -1,14 +1,16 @@
 # Language Guide Overview
 
 Welcome to the Restrict Language guide. These pages describe the current
-release-facing syntax, including the closed enum and static form slices added
-after v0.0.1, and mark historical v0.0.1 boundaries where they matter.
+v0.0.1 release-facing syntax, including its closed enum and static form slices,
+and mark future boundaries where they matter.
 
 ## What You'll Learn
 
 - **[OSV Word Order](./osv-order.md)** - Calls put arguments before functions
 - **[Syntax Reference](./syntax.md)** - Current declarations, expressions, and literals
 - **[Type System](./types.md)** - Built-ins, closed user enums, generics, and affine ownership
+- **[Functions](./functions.md)** - Function declarations, values, and OSV calls
+- **[Higher-Order Functions and Collection Transforms](../advanced/higher-order.md)** - `map`, `filter`, `fold`, and scoped callbacks
 - **[Forms and Static Polymorphism](./forms.md)** - Method-only forms, concrete adoptions, and `of` bounds
 - **[Ownership](./ownership.md)** - Memory management without GC
 - **[Pattern Matching](./patterns.md)** - Exhaustive `match` expressions
@@ -34,7 +36,7 @@ fun summarize_release: (signal: ReleaseSignal) -> String = {
 }
 
 fun main: () -> String = {
-    val signal = ReleaseSignal { score: 92, passing: true }
+    val signal = ReleaseSignal { score: 92, passing: true };
     signal |> summarize_release
 }
 ```

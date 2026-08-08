@@ -1,11 +1,11 @@
 # Syntax Reference
 
-This page summarizes the current syntax surface while identifying features
-added after v0.0.1. The authoritative source is `LANGUAGE_SPECIFICATION.md`;
-this guide keeps examples practical and release oriented.
+This page summarizes the v0.0.1 syntax surface. The authoritative source is
+`LANGUAGE_SPECIFICATION.md`; this guide keeps examples practical and release
+oriented while identifying features that remain outside the release.
 
 Temporal Affine Types are experimental and outside the default v0.0.1 gate.
-The current post-v0.0.1 compiler supports the closed user enum slice described
+The v0.0.1 compiler supports the closed user enum slice described
 below.
 
 ## Comments
@@ -70,6 +70,33 @@ record Point {
 fun sum_point: (point: Point) -> Int32 = {
     val Point { x, y } = point
     x + y
+}
+```
+
+## Expression Boundaries
+
+Line breaks are whitespace, so a direct OSV expression may continue on the
+next line. Values that cannot act as verbs naturally begin a new expression:
+
+```restrict
+"first" println
+"second" println
+```
+
+Use `;` when a local binding is followed by an identifier-started expression
+that must not become another verb in the binding value:
+
+```restrict
+val message = "ready";
+message println
+```
+
+For a name used only inside a higher-order transformation, a scoped verb clause
+usually keeps the flow clearer and semicolon-free:
+
+```restrict
+values map { |value|
+    value + 1
 }
 ```
 
@@ -157,6 +184,28 @@ fun main: () -> Int32 = {
 }
 ```
 
+## Scoped Verb Clauses
+
+A callable whose final remaining parameter is a function can open that
+function as a scope:
+
+```restrict
+val shifted = values map {
+    it + 1
+}
+
+val total = (shifted, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+The unheaded form introduces one contextual `it` binding. Explicit scope
+headers reuse lambda binders. A complete scoped clause is evaluated before a
+following clause or pipe.
+
+See [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md)
+for callback forms, collection behavior, inference, and affine captures.
+
 ## Expressions
 
 Supported operators include arithmetic, comparison, equality, and boolean
@@ -221,7 +270,7 @@ fun frozen_reading: (reading: Reading) -> Reading = {
 
 ## User-Defined Enums
 
-The current post-v0.0.1 slice supports closed, non-generic, non-recursive
+The v0.0.1 slice supports closed, non-generic, non-recursive
 enums. Each variant has either no payload or one payload:
 
 ```restrict
@@ -310,7 +359,8 @@ to the source file take precedence over the process working directory fallback.
 
 The practical precedence order is:
 
-1. Qualified variant names such as `ParseError::Message`, then field access and clone/freeze postfix forms
+1. Qualified variant names such as `ParseError::Message`, field access,
+   clone/freeze postfix forms, grouped OSV calls, and scoped verb clauses
 2. Unary `-` and `!`
 3. `*`, `/`, `%`
 4. `+`, `-`

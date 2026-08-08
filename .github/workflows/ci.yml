@@ -88,16 +88,16 @@ jobs:
       - name: Check standalone release example entrypoints
         run: >-
           cargo test -p restrict_lang --locked
-          --test test_release_example_hygiene
-          standalone_release_examples_compile_through_cli
-          -- --ignored --exact
+          --test quality_gates
+          test_release_example_hygiene::standalone_release_examples_compile_through_cli
+          -- --ignored --exact --test-threads=1
 
       - name: Check VS Code release example entrypoints
         run: >-
           cargo test -p restrict_lang --locked
-          --test test_release_example_hygiene
-          vscode_release_examples_compile_through_cli
-          -- --ignored --exact
+          --test quality_gates
+          test_release_example_hygiene::vscode_release_examples_compile_through_cli
+          -- --ignored --exact --test-threads=1
 
       - name: Check generated playground samples
         run: bash scripts/sync_samples.sh --check
@@ -105,12 +105,51 @@ jobs:
       - name: Smoke test checked-in web runtime
         run: node scripts/smoke-web-runtime.mjs
 
+  benchmark-smoke:
+    name: Core Wasm benchmark baseline
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.94.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-benchmark-smoke
+
+      - name: Build benchmark tools
+        run: >-
+          cargo build --locked --release
+          --bin restrict_lang --bin restrict_bench --bin restrict_bench_compare
+
+      - name: Record full Core Wasm benchmark report
+        run: >-
+          ./target/release/restrict_bench
+          --output target/benchmark-results/restrict-baseline.json
+
+      - name: Enforce deterministic benchmark baseline
+        run: >-
+          ./target/release/restrict_bench_compare
+          --baseline benchmarks/baselines/core-wasm-v0.0.1.json
+          --candidate target/benchmark-results/restrict-baseline.json
+          --policy benchmarks/regression-policy.json
+
+      - name: Upload raw benchmark evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-wasm-benchmark-${{ github.run_id }}
+          path: target/benchmark-results/
+          if-no-files-found: error
+          retention-days: 14
+
   # Keep the historical `test` check name stable for branch protection while
   # the expensive work runs in parallel above.
   test:
     name: test
     if: always()
-    needs: [quality, test-shards, release-gates]
+    needs: [quality, test-shards, release-gates, benchmark-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Require every CI partition
@@ -118,10 +157,12 @@ jobs:
           QUALITY_RESULT: ${{ needs.quality.result }}
           TEST_SHARDS_RESULT: ${{ needs.test-shards.result }}
           RELEASE_GATES_RESULT: ${{ needs.release-gates.result }}
+          BENCHMARK_SMOKE_RESULT: ${{ needs.benchmark-smoke.result }}
         run: |
           test "$QUALITY_RESULT" = success
           test "$TEST_SHARDS_RESULT" = success
           test "$RELEASE_GATES_RESULT" = success
+          test "$BENCHMARK_SMOKE_RESULT" = success
 
   build-release:
     name: Release build smoke

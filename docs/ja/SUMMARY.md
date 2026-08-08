@@ -15,6 +15,7 @@
 - [変数と可変性](./guide/variables.md)
 - [型システム](./guide/types.md)
 - [関数](./guide/functions.md)
+- [高階関数とコレクション変換](./advanced/higher-order.md)
 - [パターンマッチング](./guide/patterns.md)
 - [アフィン型](./guide/affine-types.md)
 - [レコードとプロトタイプ](./guide/records.md)

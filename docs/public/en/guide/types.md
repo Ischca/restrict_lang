@@ -1,8 +1,8 @@
 # Type System
 
 Restrict combines static typing, affine ownership, local type inference, and
-WASM-friendly data layouts. This page distinguishes the v0.0.1 type surface
-from current post-v0.0.1 additions. TAT is experimental and excluded from the
+WASM-friendly data layouts. This page distinguishes the supported v0.0.1 type
+surface from future design space. TAT is experimental and excluded from the
 default release gate.
 
 ## Built-In Types
@@ -41,7 +41,7 @@ fun consume: (message: String) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val message = "hello"
+    val message = "hello";
     message |> consume
 }
 ```
@@ -50,7 +50,7 @@ Copyable primitives can be used repeatedly:
 
 ```restrict
 fun main: () -> Int32 = {
-    val score = 40
+    val score = 40;
     score + score
 }
 ```
@@ -59,8 +59,8 @@ Mutable bindings are declared with `mut val`:
 
 ```restrict
 fun main: () -> Int32 = {
-    mut val counter = 0
-    counter = counter + 1
+    mut val counter = 0;
+    counter = counter + 1;
     counter
 }
 ```
@@ -144,7 +144,7 @@ Empty collection literals need context:
 
 ```restrict
 fun main: () -> List<Int32> = {
-    val values: List<Int32> = []
+    val values: List<Int32> = [];
     values
 }
 ```
@@ -200,7 +200,7 @@ Record values are affine. Use destructuring when multiple fields are needed:
 
 ```restrict
 fun delta: (reading: Reading) -> Float64 = {
-    val Reading { celsius, threshold } = reading
+    val Reading { celsius, threshold } = reading;
     celsius - threshold
 }
 ```
@@ -237,7 +237,7 @@ host-visible Wasm exports.
 
 ## Forms And Static Polymorphism
 
-The current post-v0.0.1 compiler supports non-generic, method-only forms.
+The v0.0.1 compiler supports non-generic, method-only forms.
 Generic functions can require one or more forms with `of`; the compiler checks
 each concrete call and monomorphizes it to a direct adoption method call.
 
@@ -319,7 +319,7 @@ fun choose_option: (flag: Boolean) -> Option<Int32> = {
 
 ## User-Defined Enums
 
-The current post-v0.0.1 compiler supports closed, non-generic, non-recursive
+The v0.0.1 compiler supports closed, non-generic, non-recursive
 user enums. Each variant has zero or one payload and is named through its enum
 namespace:
 

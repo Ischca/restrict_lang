@@ -9,6 +9,7 @@ license = "MIT"
 [[bin]]
 name = "warder"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

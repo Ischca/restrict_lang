@@ -93,6 +93,8 @@ application platform.
 - [x] Run correctness and a short smoke subset in pull-request CI
 - [x] Record repeated timing reports and machine-check exact host, toolchain,
   source revision, workload set, and within-run dispersion
+- [x] Define a reviewed controlled-runner qualification, promotion, and
+  invalidation protocol without discarding observed outliers
 - [ ] Run stable timing measurements on a dedicated controlled nightly or
   release runner and promote reviewed timing policies to enforced
 - [x] Store machine-readable raw results before producing charts or summaries

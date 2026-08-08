@@ -153,3 +153,28 @@ evidence workflow. A controlled promotion requires a dedicated repeatable
 runner, non-unknown CPU identity, repeated passing evidence, and an explicit
 review that changes both stability and regression timing policies to
 `enforced`. One quiet run on shared hardware is not promotion evidence.
+
+## Controlled timing promotion
+
+A runner may be promoted only through this reviewable sequence:
+
+1. Reserve one dedicated machine or VM class with a stable CPU model, OS image,
+   power policy, and runner label. Shared GitHub-hosted hardware is evidence
+   collection only.
+2. At one clean compiler revision, collect at least three independent evidence
+   sets of five full reports each. Run the sets in separate scheduling windows
+   so one temporarily quiet period cannot qualify the runner.
+3. Require every deterministic gate and every within-set stability threshold
+   to pass. Do not delete or replace outliers after observing them.
+4. Use the median of all 15 or more accepted samples for each workload's four
+   timing references. Preserve every raw report and stability summary with the
+   promotion pull request.
+5. Change the baseline `timingHost` and `timingStatus` to the reviewed runner
+   and `controlled`, set the stability policy runner class to that dedicated
+   class, and change both stability and regression timing statuses to
+   `enforced` in the same pull request.
+6. Demote timing to `informational` and requalify after changing the CPU, OS
+   image, Rust/compiler/runtime toolchain, power policy, or runner isolation.
+
+Artifact hashes, sizes, checksums, and memory observations remain enforced
+regardless of timing promotion state.

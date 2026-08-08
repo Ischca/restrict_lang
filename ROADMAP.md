@@ -93,20 +93,18 @@ application platform.
 - [x] Run correctness and a short smoke subset in pull-request CI
 - [x] Record repeated timing reports and machine-check exact host, toolchain,
   source revision, workload set, and within-run dispersion
-- [x] Define a reviewed controlled-runner qualification, promotion, and
-  invalidation protocol without discarding observed outliers
-- [x] Prepare a variable-gated, non-PR self-hosted qualification job with a
-  dedicated runner label and separate candidate policy
-- [ ] Run stable timing measurements on a dedicated controlled nightly or
-  release runner and promote reviewed timing policies to enforced
+- [x] Keep timing informational and collect repeated evidence locally on demand
+- [x] Adopt a same-session local comparison protocol: run every implementation
+  on one machine in one time window, interleave their measurement order, and
+  retain all observed samples
+- [x] Keep hosted CI focused on correctness, reproducible artifacts, artifact
+  size, and memory instead of treating shared-runner timing as a baseline
 - [x] Store machine-readable raw results before producing charts or summaries
 
 #### Reproducibility Contract
 
 - [x] Pin the Restrict compiler build toolchain, runtime, validator,
   compressor, and compiler-owned release optimizer used by this baseline
-- [ ] Pin Rust, Grain, MoonBit, and any other comparison toolchains in the
-  separate cross-language harness before publishing comparisons
 - [x] Record source revision, target profile, flags, OS, CPU, and tool versions
 - [x] Measure compile time, raw and compressed Wasm size, cold instantiation,
   warm execution, and peak memory where the runtime exposes it
@@ -130,18 +128,32 @@ application platform.
   the required GitHub `ubuntu-24.04` benchmark job builds, records, compares,
   and uploads the full baseline from a fresh checkout
 - [x] Baseline results and an explicit regression policy are checked in
-- [ ] Only after these checks pass may public cross-language performance claims
-  be based on the suite
+- [x] One documented local command records repeated raw timing evidence without
+  turning machine-dependent timings into a persistent regression gate
 
 WIT, the Component Model, a composite-value host ABI, filesystem or HTTP APIs,
 async support, DOM access, threads, SIMD, and a JavaScript backend are not
 required for this Core Wasm milestone. They must be evaluated separately when
 benchmarking application or platform integration.
 
-The Restrict regression suite belongs in this repository. The later
-cross-language harness should live in a separate repository so that Rust,
-Grain, MoonBit, and Restrict toolchains, sources, and raw results can be
-versioned without coupling them to the compiler release cycle.
+The Restrict regression suite belongs in this repository. No dedicated or
+self-hosted benchmark runner is required at this stage. Timing is measured on
+demand locally and remains informational; deterministic correctness, artifact,
+size, and memory checks remain enforceable in CI.
+
+#### Post-B0 Cross-Language Comparison Gate
+
+- [ ] Create a separate cross-language harness so Rust, Grain, MoonBit,
+  Restrict, and any later comparison targets can pin their toolchains, sources,
+  runtimes, and raw results without coupling them to the compiler release cycle
+- [ ] Execute every comparison on the same local machine in the same session,
+  use equivalent workloads and correctness oracles, and interleave execution
+  order to reduce time- and temperature-dependent bias
+- [ ] Report host and toolchain metadata, every raw sample, summary statistics,
+  and unfavorable results; do not combine or compare absolute timing values
+  collected on different machines or in different sessions
+- [ ] Only after these checks pass may public cross-language performance claims
+  be based on the suite
 
 ### Milestone B1: Polyglot Web Project Ready
 

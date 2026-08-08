@@ -176,7 +176,11 @@ The regression benchmarks belong in the Restrict repository because they guard
 compiler changes. A public cross-language harness should be created separately
 after this milestone and must pin each toolchain, implement equivalent workload
 semantics, retain every source and raw result, and report unfavorable results as
-well as favorable ones.
+well as favorable ones. Timing comparisons are run locally on one machine in a
+single session, with implementations interleaved to reduce changing host-load
+and temperature bias. Absolute timings from different machines or sessions are
+not combined. A dedicated or self-hosted benchmark runner is not required for
+the current milestone.
 
 WIT, the Component Model, composite host values, the full WASI API, async host
 operations, browser DOM access, threads, and SIMD are not prerequisites for

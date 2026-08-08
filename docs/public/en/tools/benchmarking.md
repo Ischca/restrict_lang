@@ -131,60 +131,37 @@ non-zero requested allocation size, and the configured capacity. This verifies
 that exhaustion is explicit and attributable without making it a recoverable
 Restrict error.
 
-This B0 slice records attributable raw and compiler-release local measurements.
-The `Core Wasm benchmark evidence` workflow pins `ubuntu-24.04` and Rust
-1.94.1, warms the runtime and filesystem caches, records five full reports, and
-uploads every raw report and Wasm artifact on a weekly schedule, release tags,
-and manual dispatches. The report records the actual CPU model because the
-managed runner label does not guarantee identical physical hardware.
+This B0 slice records attributable raw and compiler-release measurements.
+GitHub CI enforces deterministic correctness, reproducible Wasm, artifact size,
+and memory observations. It does not establish a timing baseline. Timing is
+recorded locally on demand with `mise run bench-evidence` and remains
+`informational`; observed threshold failures stay in the summary instead of
+failing an unrelated compiler change.
 
-Timing is deliberately `informational` in the current policy. The 15% execution
-and 25% compile/instantiation thresholds are implemented but are activated only
-after a reviewed report from one repeatable CPU/runner is promoted with
-`timingStatus: controlled`. Until then, artifact and memory regressions fail the
-gate while timing evidence is retained without making a false stability claim.
-Public cross-language comparisons still require the separate harness to pin
-every comparison compiler and run equivalent workloads on the same controlled
-host.
+## Local timing and cross-language comparisons
 
-The separate stability policy is also informational on the shared GitHub
-runner. Threshold failures are preserved in the summary but do not fail that
-evidence workflow. A controlled promotion requires a dedicated repeatable
-runner, non-unknown CPU identity, repeated passing evidence, and an explicit
-review that changes both stability and regression timing policies to
-`enforced`. One quiet run on shared hardware is not promotion evidence.
+Restrict does not require a dedicated or self-hosted benchmark runner at this
+stage. A timing report describes only the local session that produced it. Do
+not compare its absolute nanosecond values with a report from another machine,
+another day, or a materially different host state.
 
-## Controlled timing promotion
+When comparing Restrict with another language, use one same-session local run:
 
-A runner may be promoted only through this reviewable sequence:
+1. Pin every compiler, runtime, validator, optimizer, and compression tool.
+2. Use equivalent workload semantics, inputs, exported interfaces, optimization
+   modes, and correctness oracles.
+3. Build and measure every implementation on the same machine during one time
+   window. Record OS, CPU, architecture, source revisions, flags, and tool
+   versions.
+4. Warm every implementation before sampling. Interleave the language order by
+   workload, using a fixed rotation such as `Restrict, Rust, Grain, MoonBit`
+   followed by its reverse, instead of finishing every Restrict run first.
+5. Keep every raw sample, including unfavorable results and outliers. Use the
+   within-session median as the primary comparison and report dispersion.
+6. If any implementation, workload, toolchain, or optimization flag changes,
+   rerun all comparison targets in a new shared session.
 
-1. Reserve one dedicated machine or VM class with a stable CPU model, OS image,
-   and power policy. Register it as a repository runner with the custom
-   `restrict-benchmark` label, then set the repository variable
-   `RESTRICT_CONTROLLED_BENCHMARK_ENABLED` to `true`. Shared GitHub-hosted
-   hardware remains evidence collection only.
-2. At one clean compiler revision, collect at least three independent evidence
-   sets of five full reports each. Run the sets in separate scheduling windows
-   so one temporarily quiet period cannot qualify the runner.
-3. Require every deterministic gate and every within-set stability threshold
-   to pass. Do not delete or replace outliers after observing them.
-4. Use the median of all 15 or more accepted samples for each workload's four
-   timing references. Preserve every raw report and stability summary with the
-   promotion pull request.
-5. Change the baseline `timingHost` and `timingStatus` to the reviewed runner
-   and `controlled`, set the stability policy runner class to that dedicated
-   class, and change both stability and regression timing statuses to
-   `enforced` in the same pull request.
-6. Demote timing to `informational` and requalify after changing the CPU, OS
-   image, Rust/compiler/runtime toolchain, power policy, or runner isolation.
-
-Artifact hashes, sizes, checksums, and memory observations remain enforced
-regardless of timing promotion state.
-
-The conditional `Dedicated runner qualification evidence` job uses the
-informational `stability-policy.dedicated-candidate.json` until promotion. It
-is deliberately absent from `pull_request` events: do not broaden its triggers
-while this public repository can receive untrusted fork code. Schedule, release
-tag, and explicit manual dispatch are the allowed qualification entry points.
-If the repository variable is absent or not `true`, the job is skipped and no
-self-hosted runner is required.
+The separate cross-language harness must encode this protocol and pin its own
+toolchains before any public performance claim is made. Artifact hashes, sizes,
+checksums, and memory observations in this repository remain enforced even
+though local timing does not become a persistent regression gate.

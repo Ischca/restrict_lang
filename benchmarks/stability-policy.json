@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "status": "informational",
-  "runnerClass": "uncontrolled-evidence",
+  "runnerClass": "local-session",
   "requiredReportSchemaVersion": 4,
   "requiredTarget": "wasm-core",
   "requiredMode": "full",

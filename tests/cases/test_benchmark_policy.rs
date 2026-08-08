@@ -383,8 +383,6 @@ fn checked_in_benchmark_contract_matches_manifest() {
     let baseline = read_repository_json("benchmarks/baselines/core-wasm-v0.0.1.json");
     let policy = read_repository_json("benchmarks/regression-policy.json");
     let stability_policy = read_repository_json("benchmarks/stability-policy.json");
-    let dedicated_candidate_policy =
-        read_repository_json("benchmarks/stability-policy.dedicated-candidate.json");
 
     assert_eq!(manifest["schemaVersion"], 1);
     assert_eq!(baseline["schemaVersion"], 1);
@@ -404,47 +402,32 @@ fn checked_in_benchmark_contract_matches_manifest() {
     assert_eq!(baseline["provenance"]["timingStatus"], "informational");
     assert_eq!(stability_policy["schemaVersion"], 1);
     assert_eq!(stability_policy["status"], "informational");
-    assert_eq!(stability_policy["runnerClass"], "uncontrolled-evidence");
+    assert_eq!(stability_policy["runnerClass"], "local-session");
     assert_eq!(stability_policy["minimumReports"], 5);
-    assert_eq!(dedicated_candidate_policy["status"], "informational");
-    assert_eq!(
-        dedicated_candidate_policy["runnerClass"],
-        "dedicated-candidate"
-    );
-    let mut normalized_candidate_policy = dedicated_candidate_policy;
-    normalized_candidate_policy["runnerClass"] = stability_policy["runnerClass"].clone();
-    assert_eq!(
-        normalized_candidate_policy, stability_policy,
-        "shared and dedicated-candidate stability policies should differ only by runner class"
-    );
 }
 
 #[test]
-fn benchmark_evidence_workflow_pins_the_software_environment() {
+fn benchmark_timing_policy_is_local_only() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workflow = fs::read_to_string(root.join(".github/workflows/benchmark.yml"))
-        .expect("controlled benchmark workflow should be readable");
+    assert!(
+        !root.join(".github/workflows/benchmark.yml").exists(),
+        "timing evidence should not depend on a hosted or self-hosted workflow"
+    );
+    let guide = fs::read_to_string(root.join("docs/en/tools/benchmarking.md"))
+        .expect("benchmarking guide should be readable");
 
     for required in [
-        "runs-on: ubuntu-24.04",
-        "uses: dtolnay/rust-toolchain@1.94.1",
-        "bash scripts/record-benchmark-evidence.sh",
-        "stability-summary.json",
-        "if: vars.RESTRICT_CONTROLLED_BENCHMARK_ENABLED == 'true'",
-        "runs-on: [self-hosted, restrict-benchmark]",
-        "benchmarks/stability-policy.dedicated-candidate.json",
-        "retention-days: 90",
-        "Timing remains informational",
+        "same-session local run",
+        "Interleave the language order",
+        "Keep every raw sample",
+        "rerun all comparison targets",
+        "does not become a persistent regression gate",
     ] {
         assert!(
-            workflow.contains(required),
-            "benchmark evidence workflow should contain `{required}`"
+            guide.contains(required),
+            "benchmarking guide should contain `{required}`"
         );
     }
-    assert!(
-        !workflow.contains("pull_request:"),
-        "benchmark evidence workflow must not run pull-request code on a self-hosted runner"
-    );
 }
 
 #[test]

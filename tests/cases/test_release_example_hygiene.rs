@@ -227,11 +227,11 @@ fn mise_check_task_matches_standalone_release_examples() {
     let task_body = mise_check_task_body(&mise);
     let task_examples = mise_check_examples(task_body);
     assert!(
-        task_body.contains("cargo test --test quality_gates standalone_release_examples_compile_through_cli -- --ignored --exact --test-threads=1"),
+        task_body.contains("cargo test --test quality_gates test_release_example_hygiene::standalone_release_examples_compile_through_cli -- --ignored --exact --test-threads=1"),
         ".mise.toml tasks.check should delegate to the ignored release example CLI gate"
     );
     assert!(
-        task_body.contains("cargo test --test quality_gates vscode_release_examples_compile_through_cli -- --ignored --exact --test-threads=1"),
+        task_body.contains("cargo test --test quality_gates test_release_example_hygiene::vscode_release_examples_compile_through_cli -- --ignored --exact --test-threads=1"),
         ".mise.toml tasks.check should include the ignored VS Code release example CLI gate"
     );
 

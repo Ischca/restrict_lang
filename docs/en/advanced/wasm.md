@@ -138,6 +138,28 @@ start wrapper initializes the default arena before calling `main` and resets it
 after the call. That gives examples a deterministic lifetime for program-local
 allocations without a WebAssembly GC dependency.
 
+Arena exhaustion remains a deliberate, non-recoverable Wasm trap. Before the
+trap, the module records a machine-readable cause in these compiler-owned
+exports:
+
+| Export | Meaning |
+| --- | --- |
+| `__restrict_arena_error_code` | `0` for none, `1` for exhaustion, `2` for allocation without an active arena |
+| `__restrict_arena_error_requested_bytes` | size of the allocation that failed |
+| `__restrict_arena_capacity_bytes` | capacity selected by `--arena-bytes` |
+
+A host may inspect the globals after a trap to classify the failure. It must
+not treat them as a source-level `Result` or resume the trapped call.
+
+For benchmark diagnostics, `--instrument-memory` emits a separate instrumented
+module with `__restrict_arena_peak_bytes`, `__restrict_arena_live_bytes`,
+`__restrict_arena_allocation_count`, `__restrict_arena_reset_count`, and the
+`__restrict_memory_metrics_reset` function. Peak and live counts exclude the
+arena header. The option adds bookkeeping, so performance measurements should
+time the ordinary `--release` artifact and use the instrumented artifact only
+for memory observations. These counters currently cover the B0 single-entry
+arena path, not aggregate nested-arena usage.
+
 For v0.0.1, treat the memory layout as compiler-owned implementation detail.
 Host code should not reach into record, string, list, `Option`, or `Result`
 representations directly. Use scalar wrapper functions while the composite host

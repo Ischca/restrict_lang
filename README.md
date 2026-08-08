@@ -84,11 +84,16 @@ For import-free compute modules, select the host-neutral benchmark target:
 ```bash
 ./target/release/restrict_lang --target wasm-core --emit wasm compute.rl
 ./target/release/restrict_lang --target wasm-core --emit wasm --release compute.rl
+./target/release/restrict_lang --target wasm-core --emit wasm --release \
+  --instrument-memory compute.rl
 ```
 
 `wasm-core` rejects host I/O. The default `wasip1` profile supports the current
 `print` and `println` surface. `--release` removes unreachable generated code;
 the default artifact remains unoptimized for compiler debugging.
+`--instrument-memory` exports arena peak, allocation, live-byte, and reset
+metrics for diagnostics; benchmark timing should continue to use the ordinary
+release artifact.
 
 ## ✨ Features
 
@@ -581,10 +586,8 @@ mise run preflight
 mise run preflight-pages
 
 # Run specific test suites
-mise exec -- cargo test lambda        # Lambda expression tests
-mise exec -- cargo test pattern       # Pattern matching tests
-mise exec -- cargo test type_check    # Type checker tests
-mise exec -- cargo test codegen       # Code generation tests
+mise exec -- cargo test --lib parser::tests::
+mise exec -- cargo test --test integration_07 test_wasm_target_profiles:: -- --test-threads=1
 ```
 
 ## 🤝 Contributing
@@ -609,7 +612,7 @@ cd restrict_lang
 mise exec -- cargo build
 
 # Run tests
-mise exec -- cargo test
+mise run test
 
 # Install WebAssembly runtime for testing
 curl https://wasmtime.dev/install.sh -sSf | bash

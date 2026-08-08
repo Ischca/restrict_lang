@@ -102,6 +102,11 @@ mise exec -- cargo test --test integration_03 test_generics:: -- --test-threads=
 mise exec -- cargo test --test quality_gates test_docs_hygiene:: -- --test-threads=1
 ```
 
+When adding `--exact`, include the module-qualified test name, for example
+`test_release_example_hygiene::standalone_release_examples_compile_through_cli`.
+Cargo exits successfully when a filter matches zero tests, so `running 0 tests`
+is an invalid focused-test result rather than evidence that the check passed.
+
 Do not add `-j 1` to avoid test races. Cargo's `-j` option controls build jobs,
 not libtest execution. Use `-- --test-threads=1` at the test-harness boundary.
 

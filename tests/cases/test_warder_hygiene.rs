@@ -90,12 +90,17 @@ fn warder_test_uses_current_cli_check_mode() {
 }
 
 #[test]
-fn warder_build_unimplemented_modes_are_release_scoped() {
+fn warder_build_release_and_unimplemented_modes_are_scoped() {
     let source = read_workspace_file("warder/src/commands/build.rs");
+
+    assert!(
+        source.contains("if release || manifest.build.optimize")
+            && source.contains("cmd.arg(\"--release\")"),
+        "Warder release builds should request the compiler release pass"
+    );
 
     for anchor in [
         "Watch mode",
-        "Release optimizations",
         "WASM Component output",
         "Deterministic build mode",
         "Signature verification",

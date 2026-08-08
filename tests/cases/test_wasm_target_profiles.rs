@@ -1,18 +1,34 @@
 use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::{
     check_release_surface, parse_program, HostAbiProfile, TypeChecker, WasmCodeGen,
-    WasmTargetProfile,
+    WasmOptimizationLevel, WasmTargetProfile,
 };
 use std::fs;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wasmi::{Engine, Linker, Module, Store};
+use wasmi::{Engine, Instance, Linker, Module, Store, Val};
 use wasmparser::{Parser, Payload, Validator};
 
 fn compile_wat(
     source: &str,
     target: WasmTargetProfile,
     arena_bytes: u32,
+) -> anyhow::Result<String> {
+    compile_wat_with_options(
+        source,
+        target,
+        arena_bytes,
+        WasmOptimizationLevel::None,
+        false,
+    )
+}
+
+fn compile_wat_with_options(
+    source: &str,
+    target: WasmTargetProfile,
+    arena_bytes: u32,
+    optimization: WasmOptimizationLevel,
+    instrument_memory: bool,
 ) -> anyhow::Result<String> {
     let (remaining, program) =
         parse_program(source).map_err(|error| anyhow::anyhow!("{error:?}"))?;
@@ -24,8 +40,20 @@ fn compile_wat(
     let checked_ir = build_checked_ir(&program, &type_checker)?;
     let mut codegen = WasmCodeGen::with_host_abi_profile(HostAbiProfile::V001Scalar)
         .with_target_profile(target)
+        .with_optimization_level(optimization)
+        .with_memory_instrumentation(instrument_memory)
         .with_arena_size_bytes(arena_bytes)?;
     Ok(codegen.generate_checked(&program, &checked_ir)?)
+}
+
+fn exported_i32_global(instance: &Instance, store: &Store<()>, name: &str) -> anyhow::Result<i32> {
+    let global = instance
+        .get_global(store, name)
+        .ok_or_else(|| anyhow::anyhow!("missing exported global '{name}'"))?;
+    match global.get(store) {
+        Val::I32(value) => Ok(value),
+        other => anyhow::bail!("exported global '{name}' is not i32: {other:?}"),
+    }
 }
 
 fn import_names(wasm: &[u8]) -> anyhow::Result<Vec<(String, String)>> {
@@ -107,6 +135,109 @@ pub fun benchmark: (value: Int32) -> Int32 = {
 
     let wasm = wat::parse_str(&wat)?;
     Validator::new().validate_all(&wasm)?;
+    Ok(())
+}
+
+#[test]
+fn arena_exhaustion_records_a_machine_readable_diagnostic() -> anyhow::Result<()> {
+    let source = r#"
+record Pair {
+    left: Int32
+    right: Int32
+}
+
+pub fun benchmark: (value: Int32) -> Int32 = {
+    val pair = Pair { left: value, right: value + 1 };
+    pair.left
+}
+"#;
+    let wat = compile_wat_with_options(
+        source,
+        WasmTargetProfile::WasmCore,
+        8,
+        WasmOptimizationLevel::Release,
+        false,
+    )?;
+    let wasm = wat::parse_str(&wat)?;
+    Validator::new().validate_all(&wasm)?;
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm)?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module)?;
+    let benchmark = instance.get_typed_func::<i32, i32>(&store, "benchmark")?;
+    benchmark
+        .call(&mut store, 42)
+        .expect_err("an eight-byte arena has no payload capacity");
+
+    assert_eq!(
+        exported_i32_global(&instance, &store, "__restrict_arena_error_code")?,
+        1
+    );
+    assert!(exported_i32_global(&instance, &store, "__restrict_arena_error_requested_bytes")? > 0);
+    assert_eq!(
+        exported_i32_global(&instance, &store, "__restrict_arena_capacity_bytes")?,
+        8
+    );
+    Ok(())
+}
+
+#[test]
+fn memory_instrumentation_reports_peak_and_confirms_entry_reset() -> anyhow::Result<()> {
+    let source = r#"
+record Pair {
+    left: Int32
+    right: Int32
+}
+
+pub fun benchmark: (value: Int32) -> Int32 = {
+    val pair = Pair { left: value, right: value + 1 };
+    pair.left
+}
+"#;
+    let wat = compile_wat_with_options(
+        source,
+        WasmTargetProfile::WasmCore,
+        4096,
+        WasmOptimizationLevel::Release,
+        true,
+    )?;
+    let wasm = wat::parse_str(&wat)?;
+    Validator::new().validate_all(&wasm)?;
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm)?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module)?;
+    let reset = instance.get_typed_func::<(), ()>(&store, "__restrict_memory_metrics_reset")?;
+    let benchmark = instance.get_typed_func::<i32, i32>(&store, "benchmark")?;
+    reset.call(&mut store, ())?;
+    assert_eq!(benchmark.call(&mut store, 42)?, 42);
+
+    assert!(exported_i32_global(&instance, &store, "__restrict_arena_peak_bytes")? > 0);
+    assert_eq!(
+        exported_i32_global(&instance, &store, "__restrict_arena_live_bytes")?,
+        0
+    );
+    assert_eq!(
+        exported_i32_global(&instance, &store, "__restrict_arena_reset_count")?,
+        1
+    );
+    assert!(exported_i32_global(&instance, &store, "__restrict_arena_allocation_count")? > 0);
+    assert_eq!(
+        exported_i32_global(&instance, &store, "__restrict_arena_error_code")?,
+        0
+    );
+
+    reset.call(&mut store, ())?;
+    assert_eq!(
+        exported_i32_global(&instance, &store, "__restrict_arena_peak_bytes")?,
+        0
+    );
+    assert_eq!(
+        exported_i32_global(&instance, &store, "__restrict_arena_reset_count")?,
+        0
+    );
     Ok(())
 }
 

@@ -156,6 +156,16 @@ This milestone requires:
 8. Pinned toolchains and one documented command that reproduces the Restrict
    baseline on a clean machine.
 
+The current B0 memory slice makes item 5 observable without contaminating the
+timed artifact. Every generated module records a machine-readable arena error
+code, requested allocation size, and configured capacity before a deliberate
+allocation trap. The benchmark runner compiles a separate
+`--instrument-memory` artifact, verifies two identical host iterations each
+finish with one arena reset and zero live bytes, and records peak live bytes and
+allocation count. The ordinary `--release` artifact remains the runtime timing
+subject. Nested-arena aggregate accounting remains outside the frozen B0
+workload subset.
+
 The completion gate is behavioral: a non-I/O Core Wasm workload must run
 without JavaScript or unnecessary WASI imports; release output must
 demonstrably exclude unused runtime code; workloads must not accidentally trap

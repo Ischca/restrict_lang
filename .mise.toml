@@ -82,8 +82,8 @@ cargo run --bin restrict_lang -- --ast "$FILE"
 [tasks.check]
 description = "Check slow release example entrypoints"
 run = [
-  "cargo test --test quality_gates standalone_release_examples_compile_through_cli -- --ignored --exact --test-threads=1",
-  "cargo test --test quality_gates vscode_release_examples_compile_through_cli -- --ignored --exact --test-threads=1",
+  "cargo test --test quality_gates test_release_example_hygiene::standalone_release_examples_compile_through_cli -- --ignored --exact --test-threads=1",
+  "cargo test --test quality_gates test_release_example_hygiene::vscode_release_examples_compile_through_cli -- --ignored --exact --test-threads=1",
 ]
 
 [tasks.prop-test]

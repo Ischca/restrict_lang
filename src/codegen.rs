@@ -47,6 +47,8 @@ use thiserror::Error;
 const RECORD_TMP_MIN_COUNT: usize = 8;
 const DEFAULT_ARENA_SIZE_BYTES: u32 = 0x1000;
 const ARENA_HEADER_BYTES: u32 = 8;
+const ARENA_ERROR_EXHAUSTED: i32 = 1;
+const ARENA_ERROR_NO_ACTIVE_ARENA: i32 = 2;
 const WITH_ARENA_TMP_COUNT: usize = 8;
 const FLAT_RECORD_V1_MAX_SLOTS: usize = 16;
 const WASM_PAGE_SIZE_BYTES: u64 = 65_536;
@@ -194,6 +196,8 @@ pub struct WasmCodeGen {
     optimization_level: WasmOptimizationLevel,
     /// Statistics from the most recent release optimization.
     optimization_report: Option<ReleaseOptimizationReport>,
+    /// Emit compiler-owned arena metrics for benchmark and diagnostic hosts.
+    instrument_memory: bool,
     /// Top-level immutable globals and their Wasm ABI types.
     global_types: HashMap<String, WasmType>,
     /// Top-level immutable globals and their source-level Restrict types.
@@ -345,6 +349,7 @@ impl WasmCodeGen {
             arena_size_bytes: DEFAULT_ARENA_SIZE_BYTES,
             optimization_level: WasmOptimizationLevel::None,
             optimization_report: None,
+            instrument_memory: false,
             global_types: HashMap::new(),
             global_source_types: HashMap::new(),
             methods: HashMap::new(),
@@ -417,6 +422,15 @@ impl WasmCodeGen {
     /// Return statistics for the most recent release optimization, if enabled.
     pub fn optimization_report(&self) -> Option<ReleaseOptimizationReport> {
         self.optimization_report
+    }
+
+    /// Export compiler-owned arena high-water and reset metrics.
+    ///
+    /// This is intentionally separate from the normal benchmark artifact so
+    /// metric bookkeeping does not affect execution timing.
+    pub fn with_memory_instrumentation(mut self, enabled: bool) -> Self {
+        self.instrument_memory = enabled;
+        self
     }
 
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
@@ -2692,10 +2706,41 @@ impl WasmCodeGen {
         self.output
             .push_str("  (global $current_arena (mut i32) (i32.const 0))\n\n");
 
+        // Stable trap diagnostics are always available to a host. An
+        // allocation failure still traps because source-level recovery is not
+        // part of the current language surface, but it no longer traps without
+        // a machine-readable cause.
+        self.output
+            .push_str("  (global $arena_error_code (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_error_requested_bytes (mut i32) (i32.const 0))\n");
+        self.output.push_str(&format!(
+            "  (global $arena_capacity_bytes i32 (i32.const {}))\n",
+            self.arena_size_bytes
+        ));
+        self.output
+            .push_str("  (export \"__restrict_arena_error_code\" (global $arena_error_code))\n");
+        self.output.push_str(
+            "  (export \"__restrict_arena_error_requested_bytes\" (global $arena_error_requested_bytes))\n",
+        );
+        self.output.push_str(
+            "  (export \"__restrict_arena_capacity_bytes\" (global $arena_capacity_bytes))\n",
+        );
+
+        if self.instrument_memory {
+            self.generate_arena_metric_declarations();
+        }
+        self.output.push('\n');
+
         // Arena init function
         self.output
             .push_str("  (func $arena_init (param $start i32) (result i32)\n");
         self.output.push_str("    ;; Initialize arena header\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    global.set $arena_error_code\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output
+            .push_str("    global.set $arena_error_requested_bytes\n");
         self.output
             .push_str("    ;; Store start address at offset 0\n");
         self.output.push_str("    local.get $start\n");
@@ -2759,12 +2804,23 @@ impl WasmCodeGen {
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.set $arena_end\n");
         self.output.push_str("    local.get $new_current\n");
+        self.output.push_str("    local.get $current\n");
+        self.output.push_str("    i32.lt_u\n");
+        self.output.push_str("    local.get $new_current\n");
         self.output.push_str("    local.get $arena_end\n");
         self.output.push_str("    i32.gt_u\n");
+        self.output.push_str("    i32.or\n");
         self.output.push_str("    (if\n");
         self.output.push_str("      (then\n");
         self.output
-            .push_str("        ;; Arena allocation overflow - trap\n");
+            .push_str("        ;; Report arena exhaustion before the deliberate trap\n");
+        self.output.push_str("        local.get $size\n");
+        self.output
+            .push_str("        global.set $arena_error_requested_bytes\n");
+        self.output
+            .push_str(&format!("        i32.const {ARENA_ERROR_EXHAUSTED}\n"));
+        self.output
+            .push_str("        global.set $arena_error_code\n");
         self.output.push_str("        unreachable\n");
         self.output.push_str("      )\n");
         self.output.push_str("    )\n");
@@ -2775,6 +2831,9 @@ impl WasmCodeGen {
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.get $new_current\n");
         self.output.push_str("    i32.store\n");
+        if self.instrument_memory {
+            self.generate_arena_allocation_metrics();
+        }
         self.output.push_str("    \n");
         self.output.push_str("    ;; Return allocated address\n");
         self.output.push_str("    local.get $current\n");
@@ -2801,6 +2860,14 @@ impl WasmCodeGen {
         self.output.push_str("    i32.const 8\n");
         self.output.push_str("    i32.add\n");
         self.output.push_str("    i32.store\n");
+        if self.instrument_memory {
+            self.output.push_str("    i32.const 0\n");
+            self.output.push_str("    global.set $arena_live_bytes\n");
+            self.output.push_str("    global.get $arena_reset_count\n");
+            self.output.push_str("    i32.const 1\n");
+            self.output.push_str("    i32.add\n");
+            self.output.push_str("    global.set $arena_reset_count\n");
+        }
         self.output.push_str("  )\n");
 
         self.functions.insert(
@@ -2820,6 +2887,14 @@ impl WasmCodeGen {
         self.output.push_str("    i32.eqz\n");
         self.output.push_str("    (if\n");
         self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $size\n");
+        self.output
+            .push_str("        global.set $arena_error_requested_bytes\n");
+        self.output.push_str(&format!(
+            "        i32.const {ARENA_ERROR_NO_ACTIVE_ARENA}\n"
+        ));
+        self.output
+            .push_str("        global.set $arena_error_code\n");
         self.output.push_str("        unreachable\n");
         self.output.push_str("      )\n");
         self.output.push_str("    )\n");
@@ -2840,6 +2915,75 @@ impl WasmCodeGen {
         self.generate_string_eq_function();
 
         Ok(())
+    }
+
+    fn generate_arena_metric_declarations(&mut self) {
+        self.output
+            .push_str("  (global $arena_peak_bytes (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_live_bytes (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_reset_count (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_allocation_count (mut i32) (i32.const 0))\n");
+        for (export_name, global_name) in [
+            ("__restrict_arena_peak_bytes", "arena_peak_bytes"),
+            ("__restrict_arena_live_bytes", "arena_live_bytes"),
+            ("__restrict_arena_reset_count", "arena_reset_count"),
+            (
+                "__restrict_arena_allocation_count",
+                "arena_allocation_count",
+            ),
+        ] {
+            self.output.push_str(&format!(
+                "  (export \"{export_name}\" (global ${global_name}))\n"
+            ));
+        }
+        self.output
+            .push_str("  (func $__restrict_memory_metrics_reset\n");
+        for global_name in [
+            "arena_error_code",
+            "arena_error_requested_bytes",
+            "arena_peak_bytes",
+            "arena_live_bytes",
+            "arena_reset_count",
+            "arena_allocation_count",
+        ] {
+            self.output.push_str("    i32.const 0\n");
+            self.output
+                .push_str(&format!("    global.set ${global_name}\n"));
+        }
+        self.output.push_str("  )\n");
+        self.output.push_str(
+            "  (export \"__restrict_memory_metrics_reset\" (func $__restrict_memory_metrics_reset))\n",
+        );
+    }
+
+    fn generate_arena_allocation_metrics(&mut self) {
+        self.output.push_str("    local.get $new_current\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.sub\n");
+        self.output
+            .push_str(&format!("    i32.const {ARENA_HEADER_BYTES}\n"));
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    global.set $arena_live_bytes\n");
+        self.output.push_str("    global.get $arena_live_bytes\n");
+        self.output.push_str("    global.get $arena_peak_bytes\n");
+        self.output.push_str("    i32.gt_u\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output
+            .push_str("        global.get $arena_live_bytes\n");
+        self.output
+            .push_str("        global.set $arena_peak_bytes\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output
+            .push_str("    global.get $arena_allocation_count\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.add\n");
+        self.output
+            .push_str("    global.set $arena_allocation_count\n");
     }
 
     fn generate_string_concat_function(&mut self) {

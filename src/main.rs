@@ -31,6 +31,8 @@ Options:
   --arena-bytes <BYTES>
                 Reserve BYTES per compiler-managed arena (default: 4096)
   --release     Remove unreachable generated functions and unused runtime declarations
+  --instrument-memory
+                Export arena peak, live-byte, allocation, and reset metrics
   --module-root <ALIAS=DIR>
                 Mount a package src directory under a source import namespace; repeatable
   --ast         Show AST only (no compilation)
@@ -80,6 +82,7 @@ async fn main() {
     let mut emit_format = EmitFormat::Wat;
     let mut arena_size_bytes = 4096u32;
     let mut optimization_level = WasmOptimizationLevel::None;
+    let mut instrument_memory = false;
     let mut package_roots = Vec::new();
     let mut source_file = String::new();
     let mut output_file = None;
@@ -165,6 +168,7 @@ async fn main() {
                 i += 1;
             }
             "--release" => optimization_level = WasmOptimizationLevel::Release,
+            "--instrument-memory" => instrument_memory = true,
             "--module-root" => {
                 let Some(value) = args.get(i + 1) else {
                     eprintln!("--module-root requires ALIAS=DIR");
@@ -347,6 +351,7 @@ async fn main() {
     let mut codegen = match WasmCodeGen::with_host_abi_profile(host_abi_profile)
         .with_target_profile(target_profile)
         .with_optimization_level(optimization_level)
+        .with_memory_instrumentation(instrument_memory)
         .with_arena_size_bytes(arena_size_bytes)
     {
         Ok(codegen) => codegen,

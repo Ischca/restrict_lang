@@ -40,7 +40,10 @@
       "expected": 54400,
       "arenaBytes": 1048576,
       "warmupIterations": 5,
-      "iterations": 30
+      "iterations": 30,
+      "memoryProbe": {
+        "exhaustionArenaBytes": 64
+      }
     }
   ]
 }

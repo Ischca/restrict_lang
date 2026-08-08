@@ -2178,8 +2178,10 @@ fun main: () -> Int32 = {
         wat
     );
     assert!(
-        wat.contains(";; Arena allocation overflow - trap"),
-        "arena allocator should trap on overflow:\n{}",
+        wat.contains(";; Report arena exhaustion before the deliberate trap")
+            && wat.contains("global.set $arena_error_requested_bytes")
+            && wat.contains("global.set $arena_error_code"),
+        "arena allocator should report exhaustion before trapping:\n{}",
         wat
     );
     assert_valid_wat("arena_allocator_bounds_checked", source);

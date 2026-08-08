@@ -1,6 +1,6 @@
 # Restrict Language Development Roadmap
 
-**Last Updated**: 2026-08-07
+**Last Updated**: 2026-08-08
 **Status**: Active Development
 **Target**: v1.0 Release
 
@@ -77,11 +77,11 @@ application platform.
 #### Memory Behavior
 
 - [x] Replace or explicitly configure the current fixed 4 KiB arena limit
-- [ ] Detect arena exhaustion and report it rather than relying on an
+- [x] Detect arena exhaustion and report it rather than relying on an
   accidental Wasm trap
 - [x] Support memory growth or a configurable larger arena for benchmark
   workloads
-- [ ] Reset the arena reliably between iterations and expose enough data to
+- [x] Reset the arena reliably between iterations and expose enough data to
   measure peak memory
 
 #### In-Repository Regression Benchmarks
@@ -98,7 +98,7 @@ application platform.
 
 - [ ] Pin compiler, runtime, validator, optimizer, and comparison toolchains
 - [x] Record source revision, target profile, flags, OS, CPU, and tool versions
-- [ ] Measure compile time, raw and compressed Wasm size, cold instantiation,
+- [x] Measure compile time, raw and compressed Wasm size, cold instantiation,
   warm execution, and peak memory where the runtime exposes it
 - [x] Specify warm-up, iteration count, process isolation, and statistical
   summary rules

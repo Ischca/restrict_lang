@@ -32,6 +32,8 @@ Every workload records:
 - Wasm runtime compilation and cold instantiation time;
 - raw and Zstandard-compressed sizes for both artifacts;
 - warm execution samples plus minimum, median, mean, and maximum; and
+- peak live arena bytes, allocation count, completed reset count, and live
+  bytes after a host call from a separate instrumented artifact; and
 - source and Wasm SHA-256 digests, tool versions, host OS and architecture,
   source revision, and dirty-worktree state.
 
@@ -68,8 +70,9 @@ Runtime measurements use one freshly compiled and instantiated release module
 per workload, run the declared warm-up calls, and then time individual calls on
 that same instance. The median is the primary local comparison value; raw
 nanosecond samples remain in the JSON report so another summary can be
-calculated without rerunning the suite. Benchmark report schema 2 stores the
-two artifacts under `rawArtifact` and `optimizedArtifact`.
+calculated without rerunning the suite. Benchmark report schema 3 stores the
+timing artifacts under `rawArtifact` and `optimizedArtifact`, the memory probe
+under `instrumentedArtifact`, and its observations under `memory`.
 
 ## Target boundary
 
@@ -81,12 +84,23 @@ The suite compiles with:
 
 The optimized artifact adds `--release`. The raw artifact remains the control
 measurement, while the release artifact is the executable used for runtime
-timing. External `wasm-opt` output is not part of the current baseline.
+timing. A third artifact adds both `--release` and `--instrument-memory`. The
+runner resets its counters and executes two identical verified calls, requiring
+the same peak/allocation result, exactly one completed arena reset, and zero
+live bytes after each call. Because this bookkeeping changes generated code,
+the instrumented artifact is never used for runtime timing. External
+`wasm-opt` output is not part of the current baseline.
 
 `wasm-core` artifacts must have no imports. Host output such as `print` or
 `println` requires `--target wasip1` and is rejected in the benchmark target.
 The benchmark manifest also selects an explicit arena capacity per workload so
 collection tests are not limited by the former fixed 4 KiB capacity.
+
+Selected allocation-heavy workloads also declare a deliberately undersized
+arena probe. That call must trap after recording arena error code `1`, a
+non-zero requested allocation size, and the configured capacity. This verifies
+that exhaustion is explicit and attributable without making it a recoverable
+Restrict error.
 
 This B0 slice records attributable raw and compiler-release local measurements.
 Stable public baselines

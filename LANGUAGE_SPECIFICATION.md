@@ -51,13 +51,28 @@ rewrite instructions or invoke an external `wasm-opt` binary.
 Compiler-managed arenas default to 4096 bytes for compatibility. A build may
 select a larger multiple-of-four capacity with `--arena-bytes`; this changes
 reserved linear-memory capacity, not source semantics or host ABI. Arena
-exhaustion still traps in this initial slice and must not be treated as a
-recoverable source-level error.
+exhaustion deliberately traps and must not be treated as a recoverable
+source-level error. Before trapping, generated modules expose a compiler-owned
+diagnostic through the `__restrict_arena_error_code`,
+`__restrict_arena_error_requested_bytes`, and
+`__restrict_arena_capacity_bytes` `i32` globals. Error code `0` means no arena
+error, `1` means exhaustion, and `2` means allocation was attempted without an
+active arena. Initializing a new arena clears the error code and requested-byte
+value. A host may inspect these values after a trap to classify the failure,
+but must not resume the trapped call.
+
+`--instrument-memory` additionally exports compiler-owned peak-live-byte,
+current-live-byte, allocation-count, and reset-count globals plus
+`__restrict_memory_metrics_reset`. This instrumentation is for benchmarks and
+diagnostic hosts; it changes generated bookkeeping and therefore must not be
+used as the timed artifact in a performance comparison. Peak and live byte
+counts exclude the arena header. The current counters describe the B0
+single-host-entry arena path and do not claim aggregate accounting for nested
+arenas.
 
 The following remain future host-integration work and do not expand the current
 v0.0.1 release surface:
 
-- a host-neutral Core Wasm profile without the current program imports;
 - broader WASI bindings for arguments, environment, filesystem, clocks,
   randomness, networking, HTTP, and asynchronous streams;
 - stable lifting and lowering for `String`, `List`, `Array`, records, `Option`,

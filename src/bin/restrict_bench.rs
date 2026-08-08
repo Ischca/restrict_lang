@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use wasmi::{Engine, Linker, Module, Store};
+use wasmi::{Engine, Instance, Linker, Module, Store, Val};
 use wasmparser::{Parser, Payload, Validator};
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +28,14 @@ struct Workload {
     arena_bytes: u32,
     warmup_iterations: usize,
     iterations: usize,
+    #[serde(default)]
+    memory_probe: Option<MemoryProbeConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryProbeConfig {
+    exhaustion_arena_bytes: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,7 +82,9 @@ struct WorkloadResult {
     arena_bytes: u32,
     raw_artifact: ArtifactResult,
     optimized_artifact: ArtifactResult,
+    instrumented_artifact: ArtifactResult,
     release_reproducible: bool,
+    memory: MemoryMetrics,
     runtime_compile_ns: u64,
     cold_instantiation_ns: u64,
     warmup_iterations: usize,
@@ -90,6 +100,26 @@ struct ArtifactResult {
     compile_ns: u64,
     wasm_bytes: usize,
     zstd_bytes: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryMetrics {
+    peak_bytes: u32,
+    allocation_count: u32,
+    reset_count: u32,
+    live_bytes_after_call: u32,
+    verified_iterations: u32,
+    exhaustion: Option<ExhaustionResult>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExhaustionResult {
+    arena_bytes: u32,
+    error_code: u32,
+    requested_bytes: u32,
+    trapped: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,7 +180,7 @@ fn main() -> Result<()> {
     }
 
     let report = BenchmarkReport {
-        schema_version: 2,
+        schema_version: 3,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         source_revision: command_stdout(
             Command::new("git")
@@ -191,11 +221,12 @@ fn main() -> Result<()> {
     println!("benchmark report: {}", args.output.display());
     for workload in &report.workloads {
         println!(
-            "{}: median={} ns, raw={} bytes, release={} bytes, checksum={}",
+            "{}: median={} ns, raw={} bytes, release={} bytes, peak={} bytes, checksum={}",
             workload.id,
             workload.execution.median_ns,
             workload.raw_artifact.wasm_bytes,
             workload.optimized_artifact.wasm_bytes,
+            workload.memory.peak_bytes,
             workload.expected
         );
     }
@@ -259,15 +290,32 @@ fn run_workload(
     let optimized_wasm_path = artifact_dir.join(format!("{}.release.wasm", workload.id));
     let reproducibility_path = artifact_dir.join(format!("{}.release-repeat.wasm", workload.id));
 
-    let raw_compile_ns = compile_artifact(compiler, workload, &source_path, &raw_wasm_path, false)?;
-    let optimized_compile_ns =
-        compile_artifact(compiler, workload, &source_path, &optimized_wasm_path, true)?;
+    let raw_compile_ns = compile_artifact(
+        compiler,
+        workload,
+        &source_path,
+        &raw_wasm_path,
+        workload.arena_bytes,
+        false,
+        false,
+    )?;
+    let optimized_compile_ns = compile_artifact(
+        compiler,
+        workload,
+        &source_path,
+        &optimized_wasm_path,
+        workload.arena_bytes,
+        true,
+        false,
+    )?;
     compile_artifact(
         compiler,
         workload,
         &source_path,
         &reproducibility_path,
+        workload.arena_bytes,
         true,
+        false,
     )?;
 
     let raw_wasm = fs::read(&raw_wasm_path)?;
@@ -330,6 +378,8 @@ fn run_workload(
         verify_result(&workload.id, actual, workload.expected)?;
     }
 
+    let (instrumented_artifact, memory) =
+        measure_memory(compiler, workload, &source_path, artifact_dir)?;
     let raw_compressed = zstd::bulk::compress(&raw_wasm, 19)?;
     let optimized_compressed = zstd::bulk::compress(&wasm, 19)?;
     Ok(WorkloadResult {
@@ -352,7 +402,9 @@ fn run_workload(
             wasm_bytes: wasm.len(),
             zstd_bytes: optimized_compressed.len(),
         },
+        instrumented_artifact,
         release_reproducible: true,
+        memory,
         runtime_compile_ns,
         cold_instantiation_ns,
         warmup_iterations,
@@ -367,15 +419,20 @@ fn compile_artifact(
     workload: &Workload,
     source_path: &Path,
     wasm_path: &Path,
+    arena_bytes: u32,
     release: bool,
+    instrument_memory: bool,
 ) -> Result<u64> {
     let mut command = Command::new(compiler);
     command.args(["--target", "wasm-core", "--emit", "wasm"]);
     if release {
         command.arg("--release");
     }
+    if instrument_memory {
+        command.arg("--instrument-memory");
+    }
     command
-        .args(["--arena-bytes", &workload.arena_bytes.to_string()])
+        .args(["--arena-bytes", &arena_bytes.to_string()])
         .arg(source_path)
         .arg(wasm_path);
     let compile_started = Instant::now();
@@ -392,6 +449,174 @@ fn compile_artifact(
         );
     }
     Ok(compile_ns)
+}
+
+fn measure_memory(
+    compiler: &Path,
+    workload: &Workload,
+    source_path: &Path,
+    artifact_dir: &Path,
+) -> Result<(ArtifactResult, MemoryMetrics)> {
+    let wasm_path = artifact_dir.join(format!("{}.memory.wasm", workload.id));
+    let compile_ns = compile_artifact(
+        compiler,
+        workload,
+        source_path,
+        &wasm_path,
+        workload.arena_bytes,
+        true,
+        true,
+    )?;
+    let wasm = fs::read(&wasm_path)?;
+    Validator::new()
+        .validate_all(&wasm)
+        .with_context(|| format!("{} emitted invalid memory-instrumented Wasm", workload.id))?;
+    reject_imports(&format!("{} memory", workload.id), &wasm)?;
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm[..])?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module)?;
+    let reset = instance
+        .get_typed_func::<(), ()>(&store, "__restrict_memory_metrics_reset")
+        .with_context(|| format!("{} is missing the memory metrics reset export", workload.id))?;
+    let function = instance
+        .get_typed_func::<i32, i32>(&store, &workload.export)
+        .with_context(|| format!("{} is missing its benchmark export", workload.id))?;
+
+    let mut observed = None;
+    for _ in 0..2 {
+        reset.call(&mut store, ())?;
+        let actual = function.call(&mut store, workload.input)?;
+        verify_result(&workload.id, actual, workload.expected)?;
+        let current = (
+            exported_u32_global(&instance, &store, "__restrict_arena_peak_bytes")?,
+            exported_u32_global(&instance, &store, "__restrict_arena_allocation_count")?,
+            exported_u32_global(&instance, &store, "__restrict_arena_reset_count")?,
+            exported_u32_global(&instance, &store, "__restrict_arena_live_bytes")?,
+        );
+        if current.2 != 1 || current.3 != 0 {
+            bail!(
+                "{} did not reset its arena after one host iteration: reset_count={}, live_bytes={}",
+                workload.id,
+                current.2,
+                current.3
+            );
+        }
+        if exported_u32_global(&instance, &store, "__restrict_arena_error_code")? != 0 {
+            bail!(
+                "{} reported an arena error during its memory probe",
+                workload.id
+            );
+        }
+        if let Some(previous) = observed {
+            if previous != current {
+                bail!(
+                    "{} memory metrics changed across identical reset iterations: {:?} then {:?}",
+                    workload.id,
+                    previous,
+                    current
+                );
+            }
+        }
+        observed = Some(current);
+    }
+    let (peak_bytes, allocation_count, reset_count, live_bytes_after_call) =
+        observed.context("memory probe did not execute")?;
+    if (allocation_count == 0) != (peak_bytes == 0) {
+        bail!(
+            "{} reported inconsistent allocation and peak-byte metrics",
+            workload.id
+        );
+    }
+
+    let exhaustion = workload
+        .memory_probe
+        .as_ref()
+        .map(|config| run_exhaustion_probe(compiler, workload, source_path, artifact_dir, config))
+        .transpose()?;
+    let compressed = zstd::bulk::compress(&wasm, 19)?;
+    Ok((
+        ArtifactResult {
+            wasm_sha256: sha256(&wasm),
+            compile_ns,
+            wasm_bytes: wasm.len(),
+            zstd_bytes: compressed.len(),
+        },
+        MemoryMetrics {
+            peak_bytes,
+            allocation_count,
+            reset_count,
+            live_bytes_after_call,
+            verified_iterations: 2,
+            exhaustion,
+        },
+    ))
+}
+
+fn run_exhaustion_probe(
+    compiler: &Path,
+    workload: &Workload,
+    source_path: &Path,
+    artifact_dir: &Path,
+    config: &MemoryProbeConfig,
+) -> Result<ExhaustionResult> {
+    let wasm_path = artifact_dir.join(format!("{}.exhaustion.wasm", workload.id));
+    compile_artifact(
+        compiler,
+        workload,
+        source_path,
+        &wasm_path,
+        config.exhaustion_arena_bytes,
+        true,
+        false,
+    )?;
+    let wasm = fs::read(&wasm_path)?;
+    Validator::new()
+        .validate_all(&wasm)
+        .with_context(|| format!("{} emitted invalid exhaustion-probe Wasm", workload.id))?;
+    reject_imports(&format!("{} exhaustion", workload.id), &wasm)?;
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, &wasm[..])?;
+    let mut store = Store::new(&engine, ());
+    let instance = Linker::new(&engine).instantiate_and_start(&mut store, &module)?;
+    let function = instance.get_typed_func::<i32, i32>(&store, &workload.export)?;
+    if let Ok(actual) = function.call(&mut store, workload.input) {
+        bail!(
+            "{} exhaustion probe returned {actual} instead of trapping",
+            workload.id
+        );
+    }
+    let error_code = exported_u32_global(&instance, &store, "__restrict_arena_error_code")?;
+    let requested_bytes =
+        exported_u32_global(&instance, &store, "__restrict_arena_error_requested_bytes")?;
+    let capacity = exported_u32_global(&instance, &store, "__restrict_arena_capacity_bytes")?;
+    if error_code != 1 || requested_bytes == 0 || capacity != config.exhaustion_arena_bytes {
+        bail!(
+            "{} exhaustion diagnostics were invalid: code={}, requested={}, capacity={}",
+            workload.id,
+            error_code,
+            requested_bytes,
+            capacity
+        );
+    }
+    Ok(ExhaustionResult {
+        arena_bytes: capacity,
+        error_code,
+        requested_bytes,
+        trapped: true,
+    })
+}
+
+fn exported_u32_global(instance: &Instance, store: &Store<()>, name: &str) -> Result<u32> {
+    let global = instance
+        .get_global(store, name)
+        .with_context(|| format!("missing exported global '{name}'"))?;
+    match global.get(store) {
+        Val::I32(value) => Ok(value as u32),
+        other => bail!("exported global '{name}' is not i32: {other:?}"),
+    }
 }
 
 fn reject_imports(id: &str, wasm: &[u8]) -> Result<()> {

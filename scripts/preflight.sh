@@ -48,12 +48,12 @@ run_step "Run complete workspace test suite" \
 run_step "Compile standalone release examples through the CLI" \
   cargo test -p restrict_lang --locked \
     --test quality_gates \
-    standalone_release_examples_compile_through_cli \
+    test_release_example_hygiene::standalone_release_examples_compile_through_cli \
     -- --ignored --exact --test-threads=1
 run_step "Compile VS Code release examples through the CLI" \
   cargo test -p restrict_lang --locked \
     --test quality_gates \
-    vscode_release_examples_compile_through_cli \
+    test_release_example_hygiene::vscode_release_examples_compile_through_cli \
     -- --ignored --exact --test-threads=1
 
 if [[ "$mode" == "pages" ]]; then

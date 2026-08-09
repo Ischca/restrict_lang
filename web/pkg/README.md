@@ -39,12 +39,13 @@ host profile or generated adapter
     └── cloud or edge host
 ```
 
-The current compiler uses WASI Preview 1 imports for basic program output. The
+The ordinary compiler uses WASI Preview 1 imports for basic program output. The
 browser playground implements those imports with a small JavaScript bridge;
-Restrict source still compiles only to Wasm. The long-term direction is to add
-capability-oriented WASI APIs, stable composite-value lowering, WIT and
-Component Model output, and generated Web or cloud adapters without adding a
-JavaScript backend.
+Restrict source still compiles only to Wasm. The v0.1.0-rc.1 candidate also
+implements the explicit B1 synchronous Component path, including rich values,
+generated and consumed WIT, Canonical ABI adapters, validated Components,
+compatibility diffing, and Rust interoperability. Full WASI 0.2 and Web/cloud
+adapters remain independently scoped host-profile work.
 
 Native WASI runtimes can provide a JavaScript-free application environment.
 Browsers do not currently expose the DOM directly to Wasm, so Web applications
@@ -56,6 +57,47 @@ artifacts, not as Restrict targets or ABIs.
 See [WebAssembly Integration](docs/public/en/advanced/wasm.md) for the public
 boundary and [WebAssembly Execution Strategy](docs/WASM_EXECUTION_STRATEGY.md)
 for the accepted architecture direction.
+
+### Versioned Interoperability Boundary
+
+- **Stable Core compatibility boundary (v0.0.1)** remains the scalar-only Core
+  Wasm host ABI. The opt-in `flat-record-v1` profile is experimental and does
+  not generate WIT.
+- **Current v0.1.0-rc.1 release candidate** is the explicit synchronous
+  Component boundary for `String`, `List`, `Array`, records, `Option`, `Result`,
+  user enums/variants, scalar-signature affine resources, value-capturing
+  once-callable resources, and explicitly named concrete generic function
+  instances. Warder transactionally emits normalized WIT, validated Component
+  Wasm, and semantic/content metadata. Stable v0.1.0 has not been published.
+- **Target v0.2.0 / B2** adds async functions, `await`, structured `spawn`,
+  futures, streams, cancellation, backpressure, generic async Component
+  capability adapters, and cleanup across suspension. Complete network/HTTP
+  profiles are follow-on host integration.
+
+The ordinary artifact path is still `.rl -> WAT -> Core Wasm`. With an explicit
+schema-v1 or schema-v2 `[component]` selection in the repository-root
+`warder.toml`, the compiler instead lowers checked `ComponentInterfaceIr`
+through normalized WIT, stable metadata, and Canonical ABI adapters. `warder
+build --component` publishes the validated
+`.component.wasm`, `.component.wit`, and `.component.toml` set transactionally.
+`wrap --wit` remains unverified caller-supplied text attached to a Core module
+cage and is not Component generation.
+
+Interface authority follows API ownership. WASI, standard worlds, and other
+externally owned contracts are WIT-first whether Restrict consumes/imports or
+implements/exports them. Explicit Restrict-owned component exports are checked
+through `ComponentInterfaceIr` and generate normalized WIT; ordinary `pub`
+declarations do not become host exports by accident. Rich external-WIT guest
+imports and scalar external implementation/export conformance are implemented;
+rich external implementations and external-WIT resources fail closed.
+Normalized WIT and stable ABI metadata are the compatibility contract, but WIT output alone
+is not the gate: Canonical ABI adaptation, Rust bindings,
+validation, composition, and runtime execution also pass. Repository E2E covers both
+Rust-produced Component -> Restrict consumer and
+Restrict-produced Component -> Rust consumer. MoonBit remains a design
+precedent and optional external comparison. The complete accepted scope and
+release gate are in
+[v0.1 Synchronous Component ABI Scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md).
 
 ## 🚀 Quick Start
 
@@ -73,11 +115,27 @@ mise exec -- cargo build --release
 
 # Compile your first program
 echo 'fun main: () -> Int32 = { 42 }' > hello.rl
-./target/release/restrict_lang hello.rl
+./target/release/restrict_lang --emit wasm hello.rl
 
 # Run the generated WebAssembly
-wasmtime hello.wat
+wasmtime hello.wasm
 ```
+
+For import-free compute modules, select the host-neutral benchmark target:
+
+```bash
+./target/release/restrict_lang --target wasm-core --emit wasm compute.rl
+./target/release/restrict_lang --target wasm-core --emit wasm --release compute.rl
+./target/release/restrict_lang --target wasm-core --emit wasm --release \
+  --instrument-memory compute.rl
+```
+
+`wasm-core` rejects host I/O. The default `wasip1` profile supports the current
+`print` and `println` surface. `--release` removes unreachable generated code;
+the default artifact remains unoptimized for compiler debugging.
+`--instrument-memory` exports arena peak, allocation, live-byte, and reset
+metrics for diagnostics; benchmark timing should continue to use the ordinary
+release artifact.
 
 ## ✨ Features
 
@@ -109,11 +167,13 @@ form surface while retaining the ABI boundaries below.
   conditional adoptions, defaults, enum adoptions, and dynamic dispatch remain
   future work. The current `Container` behavior used by `map` and `filter`
   remains compiler-internal.
-- Exported generic functions do not yet have a stable WebAssembly ABI and are
+- Ordinary Core exports of generic functions still have no stable ABI and are
   rejected by v0.0.1 release-surface validation before `--check` success or
-  code generation. Exported records are source-level module metadata only; they
-  do not create host-visible Wasm exports until a concrete record ABI is
-  designed.
+  code generation. The explicit B1 Component path may publish a generic
+  function only through a concrete instance explicitly selected in the root
+  `warder.toml`. Exported
+  records remain source-level metadata unless explicitly lowered as a
+  Component value or resource.
 - Exported top-level constants are host-visible only when their literal value
   has a scalar ABI: `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()`.
   Composite global exports are rejected until that ABI is designed.
@@ -445,6 +505,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - **[Quick Start](docs/public/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
 - **[Language Guide](docs/public/en/guide/README.md)** - Current release-facing syntax and design rules
 - **[Release Surface](docs/public/en/reference/release-surface.md)** - Current v0.0.1 language and host ABI boundaries
+- **[v0.1 Component ABI Scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md)** - Implemented B1 boundary, intentional limits, and v0.2 async split
 - **[Examples](examples/)** - Sample programs and use cases
 
 ## 🏗️ Implementation Status
@@ -469,10 +530,18 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [x] Method-only forms, concrete record adoptions, `of` bounds, and static form dispatch
 - [x] Display-polymorphic `print` and `println`
 - [x] Source import resolution through the CLI
-- [x] Direct local Warder dependencies with manifest-bound namespaces and deterministic lock hashes
+- [x] Direct local Warder source packages selected from the root
+  `warder.toml`, with no leaf manifests
 - [x] Affine checking across complex expressions, OSV calls, field access, and branching
 - [x] Conditional expressions with chained/nested runtime coverage
 - [x] Recursive functions with direct and mutual runtime coverage
+- [x] Explicit B1 Component path with checked CIR, normalized WIT, Canonical
+  ABI adapters, validation, compatibility diffing, and Warder publication
+- [x] Component values for String/List/Array/Record/Option/Result/enum/variant
+- [x] Schema-v2 resources, value-only capture once-callables, and explicit
+  generic function instances
+- [x] Rust-produced Component -> Restrict consumer and Restrict-produced
+  Component -> Rust consumer E2E through WIT only
 
 ### 🚧 In Progress
 
@@ -480,16 +549,16 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [ ] Generic, recursive, and host-ABI user enum support beyond the current closed enum slice
 - [ ] Registry, Git, foreign-WASM, and transitive Warder dependency resolution
 - [ ] Source-level import aliases, re-exports, and std aggregators
-- [ ] Direct WebAssembly ABI for exported generic functions and host-visible record values
+- [ ] Core-Wasm ABI for exported generic functions and host-visible record values
+- [ ] Rich external-WIT implementation/export, external-WIT resources, rich
+  resource signatures, `many` callables, and generic nominal Component types
 - [ ] Associated types, generic/conditional form adoptions, and default form methods
 
 ### 📋 Planned Features
 
 - [ ] String interpolation
-- [ ] Async/await support
+- [ ] v0.2.0 async/await/spawn, future/stream, cancellation, and backpressure
 - [ ] Ergonomic error propagation syntax
-- [ ] Capability-oriented WASI standard library
-- [ ] WIT and WebAssembly Component Model output
 - [ ] Generated Web and cloud host adapters
 - [ ] SIMD operations
 - [ ] WebGPU host integration
@@ -498,9 +567,13 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - Pattern guards and tuple patterns are future/design gaps; v0.0.1 covers
   Option, Result, List, Record, nested, and spread record patterns
-- Source-file imports and manifest-bound namespaces for direct local Warder
-  dependencies are implemented. Source `import ... as`, re-exports, std
-  aggregators, and non-local or transitive package graphs remain future work
+- Source-file imports and root-configuration-bound namespaces for direct local
+  Warder source packages are implemented. A managed repository has one
+  `warder.toml` and one generated `warder.lock`; local packages need only
+  `src/lib.rl`. Commit `warder.lock` when it is generated; do not hand-edit it.
+  Source `import ... as`, re-exports, std aggregators,
+  non-local/transitive resolution, and a multi-publish workspace graph remain
+  future work
 - String interpolation is not part of the v0.0.1 syntax; use concatenation today
 - Closed user-defined enums are supported after v0.0.1, including use as the
   error type in `Result<T, CustomError>`. Generic and recursive user enums,
@@ -509,9 +582,9 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
   concrete non-generic record adoptions only. `takes` is not independently
   public, and associated types, generic/conditional adoptions, defaults,
   dynamic dispatch, and enum adoptions remain future work
-- Exported generic functions require a concrete WebAssembly ABI design before
-  codegen support; exported records are source-level only and emit no direct
-  host-visible Wasm export
+- Ordinary Core exports of generic functions remain unsupported; explicit B1
+  Component exports require finite concrete function instances. Generic
+  nominal Component types and direct Core record exports remain unsupported
 - TAT examples and tests are experimental and run outside the default test gate
 - Some older examples are design sketches and may use syntax that is not in the v0.0.1 gate
 - Mutable variables use `mut val`
@@ -547,7 +620,8 @@ WebAssembly Runtime (WASI, Component host, browser, edge, etc.)
 - The native compiler emits WAT; Warder also packages binary Wasm
 - Current program output uses WASI Preview 1 for basic I/O operations
 - Browser and cloud integration belongs in generated host adapters
-- WIT, the Component Model, and composite host ABI are planned
+- The explicit B1 path emits WIT, validated Components, and rich Canonical ABI
+  adapters; the default Core path remains separate
 - Function tables for lambda/closure calls
 - Linear memory management with arenas
 
@@ -570,10 +644,8 @@ mise run preflight
 mise run preflight-pages
 
 # Run specific test suites
-mise exec -- cargo test lambda        # Lambda expression tests
-mise exec -- cargo test pattern       # Pattern matching tests
-mise exec -- cargo test type_check    # Type checker tests
-mise exec -- cargo test codegen       # Code generation tests
+mise exec -- cargo test --lib parser::tests::
+mise exec -- cargo test --test integration_07 test_wasm_target_profiles:: -- --test-threads=1
 ```
 
 ## 🤝 Contributing
@@ -598,7 +670,7 @@ cd restrict_lang
 mise exec -- cargo build
 
 # Run tests
-mise exec -- cargo test
+mise run test
 
 # Install WebAssembly runtime for testing
 curl https://wasmtime.dev/install.sh -sSf | bash

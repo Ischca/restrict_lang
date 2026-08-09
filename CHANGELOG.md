@@ -33,6 +33,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Release candidate boundaries
 
+- Restore the browser compiler's `wasm32-unknown-unknown` build and check that
+  target in pull-request CI before documentation deployment.
 - Add a reviewed v0.1.0-rc.1 deterministic Core Wasm benchmark baseline while
   retaining the v0.0.1 baseline as historical evidence.
 - Keep the ordinary scalar Core Wasm compatibility profile from v0.0.1 and

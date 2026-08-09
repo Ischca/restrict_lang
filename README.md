@@ -41,11 +41,11 @@ host profile or generated adapter
 
 The ordinary compiler uses WASI Preview 1 imports for basic program output. The
 browser playground implements those imports with a small JavaScript bridge;
-Restrict source still compiles only to Wasm. This branch also implements the
-explicit B1 synchronous Component path, including rich values, generated and
-consumed WIT, Canonical ABI adapters, validated Components, compatibility
-diffing, and Rust interoperability. Full WASI 0.2 and Web/cloud adapters remain
-independently scoped host-profile work.
+Restrict source still compiles only to Wasm. The v0.1.0-rc.1 candidate also
+implements the explicit B1 synchronous Component path, including rich values,
+generated and consumed WIT, Canonical ABI adapters, validated Components,
+compatibility diffing, and Rust interoperability. Full WASI 0.2 and Web/cloud
+adapters remain independently scoped host-profile work.
 
 Native WASI runtimes can provide a JavaScript-free application environment.
 Browsers do not currently expose the DOM directly to Wasm, so Web applications
@@ -60,15 +60,15 @@ for the accepted architecture direction.
 
 ### Versioned Interoperability Boundary
 
-- **Current v0.0.1** remains the scalar-only Core Wasm host ABI. The opt-in
-  `flat-record-v1` profile is experimental and does not generate WIT.
-- **B1 / v0.1.0 implementation on this branch** is the explicit synchronous
+- **Stable Core compatibility boundary (v0.0.1)** remains the scalar-only Core
+  Wasm host ABI. The opt-in `flat-record-v1` profile is experimental and does
+  not generate WIT.
+- **Current v0.1.0-rc.1 release candidate** is the explicit synchronous
   Component boundary for `String`, `List`, `Array`, records, `Option`, `Result`,
   user enums/variants, scalar-signature affine resources, value-capturing
   once-callable resources, and explicitly named concrete generic function
   instances. Warder transactionally emits normalized WIT, validated Component
-  Wasm, and semantic/content metadata. The repository package version is still
-  `0.0.1`, so this is not a published v0.1 release claim.
+  Wasm, and semantic/content metadata. Stable v0.1.0 has not been published.
 - **Target v0.2.0 / B2** adds async functions, `await`, structured `spawn`,
   futures, streams, cancellation, backpressure, generic async Component
   capability adapters, and cleanup across suspension. Complete network/HTTP

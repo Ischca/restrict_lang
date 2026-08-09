@@ -10,6 +10,8 @@ mod test_generics;
 mod test_method_resolution;
 #[path = "cases/test_release_example_hygiene.rs"]
 mod test_release_example_hygiene;
+#[path = "cases/test_release_hygiene.rs"]
+mod test_release_hygiene;
 #[path = "cases/test_release_surface_matrix.rs"]
 mod test_release_surface_matrix;
 #[path = "cases/test_release_surface_validator.rs"]

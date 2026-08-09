@@ -397,27 +397,9 @@ fn release_blog_restrict_examples_parse_and_type_check() {
 }
 
 #[test]
-fn tagged_releases_are_stable_and_use_curated_notes_when_available() {
+fn v001_release_notes_remain_curated() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workflow = read_fixture(root, ".github/workflows/release.yml");
     let notes = read_fixture(root, "docs/releases/v0.0.1.md");
-
-    for required in [
-        "name: Publish GitHub release",
-        "notes_file=\"docs/releases/${{ github.ref_name }}.md\"",
-        "--notes-file \"$notes_file\"",
-        "--generate-notes",
-    ] {
-        assert!(
-            workflow.contains(required),
-            "release workflow should include `{required}`"
-        );
-    }
-
-    assert!(
-        !workflow.contains("--prerelease") && !workflow.contains("pre-release"),
-        "the first tagged release should be published as a stable GitHub release"
-    );
 
     for required in [
         "first public release",

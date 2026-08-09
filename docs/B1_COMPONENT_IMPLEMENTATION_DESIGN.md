@@ -1,7 +1,7 @@
 # B1 Component Implementation Design
 
-**Status**: B1 synchronous implementation complete on
-`reset-v001-release`; repository package version remains `0.0.1`
+**Status**: B1 synchronous implementation complete; `0.1.0-rc.1` release
+candidate
 **Target**: B1 / v0.1.0 synchronous Component ABI
 **Decision date**: 2026-08-09
 **Normative scope**:
@@ -491,7 +491,8 @@ matrix. It remains an optional external precedent or comparison target.
   artifact publication, and breaking/non-breaking compatibility diffing.
 - Optional follow-on: typed JS/TS bindings and a framework-neutral Worker
   loader. They are not repository B1 completion gates.
-- Release management remains separate: the package version is still `0.0.1`.
+- Release management remains separate: `0.1.0-rc.1` is a candidate, not stable
+  v0.1.0.
 
 ## Diagnostics Contract
 
@@ -561,8 +562,8 @@ requires:
 - an independent Rust consumer build and runtime call;
 - repeated clean-build determinism checks;
 - regression tests proving unselected public declarations stay absent; and
-- docs guardrails that keep ordinary Core output, the explicit B1 path, and a
-  future published v0.1 release distinct.
+- docs guardrails that keep ordinary Core output, the explicit B1 path, and the
+  stable v0.1.0 release distinct.
 
 Follow-on slices extend the same pipeline and do not create parallel ABI paths
 for composite values, resources, callables, or generic instances.

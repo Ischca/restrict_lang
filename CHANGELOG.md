@@ -7,6 +7,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - No changes yet.
 
+## [0.1.0-rc.1] - 2026-08-09
+
+### Component interoperability
+
+- Add the explicit synchronous WebAssembly Component path from checked
+  `ComponentInterfaceIr` through normalized WIT, Canonical ABI adapters,
+  validated packaging, compatibility diffing, composition, and runtime
+  execution.
+- Support recursive `String`, `List`, fixed-length-validated `Array`, records,
+  `Option`, `Result`, and user enum/variant values at the Component boundary.
+- Add affine resources with `own`, call-scoped `borrow`, and exactly-once drop;
+  value-capturing once-callable resources; and explicitly selected concrete
+  generic function instances.
+- Verify independent Rust-produced Component to Restrict consumer and
+  Restrict-produced Component to Rust consumer calls through WIT and the
+  Canonical ABI without sharing allocator or internal layout.
+
+### Warder project model
+
+- Use one authored repository-root `warder.toml` and one generated
+  repository-root `warder.lock`, with no package or dependency leaf manifests.
+- Build schema-v1 and schema-v2 Component selections transactionally into
+  `.component.wasm`, `.component.wit`, and `.component.toml` artifact sets.
+
+### Release candidate boundaries
+
+- Keep the ordinary scalar Core Wasm compatibility profile from v0.0.1 and
+  require explicit `[component]` selection for rich Component exports.
+- Keep async functions, futures, streams, cancellation, backpressure, and
+  cleanup across suspension in the v0.2.0 scope.
+- Continue to fail closed for rich external-WIT implementation exports,
+  external-WIT resources, rich resource signatures, `many` callables, and
+  generic nominal boundary types.
+
 ## [0.0.1] - 2026-08-06
 
 ### Language
@@ -47,5 +81,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Warder registry publishing performs local validation only and uploads nothing
 - Homebrew and VS Code Marketplace distribution are not part of v0.0.1
 
-[Unreleased]: https://github.com/Ischca/restrict_lang/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/Ischca/restrict_lang/compare/v0.1.0-rc.1...HEAD
+[0.1.0-rc.1]: https://github.com/Ischca/restrict_lang/compare/v0.0.1...v0.1.0-rc.1
 [0.0.1]: https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1

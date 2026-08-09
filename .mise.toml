@@ -373,11 +373,11 @@ cargo run --bin restrict_lang -- --check "$tmpdir/main.rl"
 # Docker tasks
 [tasks.docker-build]
 description = "Build Docker image"
-run = "docker build -t restrict_lang:0.0.1 ."
+run = "docker build -t restrict_lang:0.1.0-rc.1 ."
 
 [tasks.docker-test]
 description = "Run tests in Docker"
-run = "docker run --rm restrict_lang:0.0.1 cargo test"
+run = "docker run --rm restrict_lang:0.1.0-rc.1 cargo test"
 
 [tasks.dev]
 description = "Run development workflow"

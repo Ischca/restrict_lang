@@ -41,8 +41,8 @@ normalized WIT and stable ABI metadata, Canonical ABI adapters, and a validated
 WebAssembly Component. Warder publishes the resulting `.component.wasm`,
 `.component.wit`, and `.component.toml` files as one transactional artifact
 set. This explicit path does not change the default Core Wasm ABI, and the
-repository's current `0.0.1` package version is not by itself a v0.1 release
-claim.
+repository is versioned `0.1.0-rc.1` for its first release candidate; stable
+v0.1.0 has not been published.
 
 External standards and third-party contracts use the complementary WIT-first
 path. Rich synchronous guest imports are implemented and exercised by the
@@ -112,9 +112,9 @@ arenas.
 
 The version boundary is:
 
-- **v0.1.0 / B1**: the synchronous Component Model implementation present on
-  this branch: scalar and rich values (`String`, `List`, `Array`, records,
-  `Option`, `Result`, and user enums/variants), synchronous resources,
+- **v0.1.0 / B1**: the synchronous Component Model implementation present in
+  the v0.1.0-rc.1 candidate: scalar and rich values (`String`, `List`, `Array`,
+  records, `Option`, `Result`, and user enums/variants), synchronous resources,
   value-capturing once-callable resources, and explicitly selected concrete
   generic function instances; generated and consumed WIT; Canonical ABI
   lift/lower adapters; validated packaging, compatibility diffing,

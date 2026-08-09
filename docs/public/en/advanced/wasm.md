@@ -36,7 +36,7 @@ The current execution boundary is:
 | Browser execution through the playground's JavaScript WASI bridge | Current |
 | Full WASI 0.2 command-interface coverage | Separate host-profile milestone; not a v0.1.0 ABI blocker |
 | Complete WASI networking and HTTP profiles | Follow-on host integration after the v0.2.0 async adapter gate |
-| Explicit B1 WIT and WebAssembly Component output | Implemented on this branch; package version remains 0.0.1 |
+| Explicit B1 WIT and WebAssembly Component output | v0.1.0-rc.1 release candidate |
 | Generated browser and cloud platform adapters | Future |
 | Direct portable DOM access from Wasm | Not currently standardized |
 
@@ -195,16 +195,15 @@ The exported function is scalar even though the implementation uses a record.
 
 ## Versioned Interoperability Direction
 
-The ordinary v0.0.1 compatibility boundary remains scalar-only. On this
-branch, the explicit B1 / v0.1.0 path implements a synchronous Component ABI
+The ordinary v0.0.1 compatibility boundary remains scalar-only. The
+v0.1.0-rc.1 candidate implements a synchronous Component ABI
 for `String`, `List`, `Array`, records, `Option`, `Result`, user enums/variants,
 scalar-signature resources, value-capturing once-callables, and explicit
 concrete generic function instances. It generates or consumes WIT, performs
 Canonical ABI lift/lower, validates and composes Components, classifies
 compatibility, and executes through Rust bindings in a pinned runtime.
 
-The repository package version remains `0.0.1`; this is not a published v0.1
-release claim.
+This is a release candidate; stable v0.1.0 has not been published.
 
 - v0.2.0 adds the asynchronous boundary: async Component functions,
   `future`/`stream`, cancellation, and cleanup across suspension.

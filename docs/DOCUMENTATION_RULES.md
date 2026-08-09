@@ -56,10 +56,11 @@ implemented features from reserved or experimental design space:
   work; do not describe the implemented explicit Component ABI as a Core ABI
 
 Public interoperability sections may describe the B1 synchronous Component
-implementation while stating that the repository package version remains
-`0.0.1` and the ordinary Core ABI remains scalar-only. They must remain aligned
-with `docs/V010_SYNCHRONOUS_COMPONENT_ABI.md`, keep v0.2 async separate, avoid
-links outside the public book, and not publish unsupported syntax examples.
+implementation while stating that `0.1.0-rc.1` is a release candidate, stable
+v0.1.0 is not yet published, and the ordinary Core ABI remains scalar-only.
+They must remain aligned with `docs/V010_SYNCHRONOUS_COMPONENT_ABI.md`, keep
+v0.2 async separate, avoid links outside the public book, and not publish
+unsupported syntax examples.
 
 Every B1 summary must preserve these guardrails:
 

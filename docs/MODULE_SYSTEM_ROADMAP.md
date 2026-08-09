@@ -182,10 +182,12 @@ fun main: () -> Int = { 5 double }  // → 10
 
 **Status**: Basic structure implemented, some features incomplete
 
-### 5.1 package.rl.toml設計 ✅
-- [x] パッケージメタデータ形式 (package.rl.toml)
-- [x] 依存関係記述
-- [x] バージョン指定
+### 5.1 ルート warder.toml 設計 ✅
+- [x] 人が編集するWarder設定をリポジトリルートの`warder.toml`へ統合
+- [x] 公開可能なルートパッケージのidentity、version、build設定
+- [x] 直接ローカルソースパッケージをルート`[dependencies]`から一元選択
+- [x] package/member leaf manifestおよび別workspace設定を使用しない
+- [ ] 同じroot fileを拡張する複数公開パッケージworkspace graph
 
 ### 5.2 プロジェクト管理 ✅
 - [x] `warder new <name>` - 新規プロジェクト作成
@@ -196,7 +198,9 @@ fun main: () -> Int = { 5 double }  // → 10
 - [x] `warder build` - 基本ビルド
 - [x] `warder run` - wasmtime/wasmer で実行
 - [ ] `warder build --watch` - ファイル監視 (未実装)
-- [ ] `warder build --component` - WASM Component (部分実装)
+- [x] `warder build --component` - schema-v1/v2の明示的な`[component]`
+  selectionを検証し、WIT、Canonical ABI adapter、検証済みComponent、
+  metadataをtransactionalに公開
 
 ### 5.4 テスト ⚠️ PARTIAL
 - [x] `warder test` - テストファイル検出
@@ -205,16 +209,25 @@ fun main: () -> Int = { 5 double }  // → 10
 
 ### 5.5 依存関係管理 ⚠️ PARTIAL
 - [x] `warder add <alias> --path <dir>` - 直接ローカル依存関係を追加
-- [x] マニフェスト別名をコンパイラのパッケージ名前空間へバインド
+- [x] root設定の別名をコンパイラのパッケージ名前空間へバインド
+- [x] 直接ローカル依存先は`src/lib.rl`だけを要求し、leaf manifestを要求しない
 - [x] `src/lib.rl`と`src/<module>.rl`のパッケージ解決
 - [x] 依存パッケージ内の修飾なしインポートをパッケージ内で解決
-- [x] restrict-lock.tomlへ依存先バージョンと決定的ソースSHA-256を記録
+- [x] リポジトリルートに生成`warder.lock`を1つだけ配置
+- [x] 決定的なローカルソースgraphをlockへ重複記録しない
+- [x] 非決定的な外部resolverが未対応のlocal-only buildではlock entryを空に保つ
 - [x] アプリケーションと依存ソースを不変スナップショットからビルド
 - [x] 並行ビルドを直列化し、成果物とロックを復旧可能な一括更新で公開
 - [x] `warder doctor`で欠落・破損・ソース変更済みロックを検出
 - [x] 未対応依存関係をロック生成前に明示的に拒否
 - [ ] レジストリ、Git、外部WASM依存関係の解決
 - [ ] 推移的依存関係グラフの解決
+
+現行実装が公開可能なパッケージはルートの1つです。複数公開パッケージの
+workspace graphは将来同じ`warder.toml`へ追加し、ディレクトリ配置から公開
+identityやABIを推論しません。また現行Component ABIはsource-publicと
+`[component]` selectionの二重gateです。`pub`と`export`を分離する
+source-first surfaceは将来のeditionであり、現在実装済みとは扱いません。
 
 ### 5.6 Cage フォーマット ✅
 - [x] `warder wrap` - WASMをCageにパッケージ

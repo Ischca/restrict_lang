@@ -149,7 +149,7 @@ cd my-project
 # プロジェクト構造
 tree .
 # .
-# ├── package.rl.toml
+# ├── warder.toml
 # ├── src/
 # │   └── main.rl
 # ├── tests/
@@ -183,7 +183,7 @@ warder add local_utils --path ../local-utils
 warder remove local_utils
 ```
 
-依存先には`package.rl.toml`と`src/lib.rl`が必要です。`local_utils`はRestrictソースの名前空間でもあり、依存先ルートが公開する`score`は次のように読み込みます：
+依存先に必要なのは`src/lib.rl`だけです。leaf manifestやleaf lockは持ちません。`local_utils`はRestrictソースの名前空間でもあり、依存先ルートが公開する`score`は次のように読み込みます：
 
 ```restrict
 import local_utils.{score}
@@ -191,7 +191,9 @@ import local_utils.{score}
 
 `import local_utils.numbers.{double}`は依存先の`src/numbers.rl`を読み込みます。別名には予約語ではないRestrict識別子を使います。ハイフンは暗黙に変換されず、`std`は予約済みです。
 
-`warder build`は依存先マニフェストのバージョンと決定的なソースSHA-256を`restrict-lock.toml`へ記録し、`warder test`も同じ依存ルートを使います。現在はレジストリ、Git、外部WASM、推移的依存関係を明示的にエラーにします。
+`warder build`はリポジトリルートに`warder.lock`を生成します。直接ローカルソースパッケージは決定的に再構築できるためlock entryにしません。現在はレジストリ、Git、外部WASM、推移的依存関係を明示的にエラーにするため、ローカルのみのlockに解決済みパッケージentryはありません。`warder test`も同じ依存ルートを使います。
+
+現行実装が公開可能なパッケージはルートの1つです。将来の複数公開パッケージworkspaceも同じルート`warder.toml`を拡張し、member manifestは追加しません。公開identityはディレクトリ配置から導出しません。
 
 ビルド時はアプリケーションと依存先の不変スナップショットを使用します。同じプロジェクトの並行ビルドは直列化され、WAT、WASM、Cage、ロックファイルはビルド全体が成功した後に一括で置き換えられます。
 

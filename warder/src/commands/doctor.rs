@@ -2,7 +2,7 @@ use super::{
     find_project_root, load_manifest, print_error, print_info, print_success, print_warning,
 };
 use crate::dependencies::resolve_local_dependencies;
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, WARDER_LOCK_FILENAME};
 use crate::vault::Vault;
 use anyhow::Result;
 use colored::*;
@@ -19,8 +19,8 @@ pub async fn doctor_check() -> Result<()> {
     // Check project structure
     let root = match find_project_root() {
         Ok(root) => root,
-        Err(_) => {
-            print_error("Not in a Restrict Language project (no package.rl.toml found)");
+        Err(error) => {
+            print_error(&format!("{error:#}"));
             return Ok(());
         }
     };
@@ -100,7 +100,7 @@ pub async fn doctor_check() -> Result<()> {
 }
 
 fn check_dependency_lock(root: &Path, manifest: &Manifest, issues: &mut Vec<String>) {
-    let vault_path = root.join("restrict-lock.toml");
+    let vault_path = root.join(WARDER_LOCK_FILENAME);
     let mut lock_is_missing = false;
 
     let loaded_vault = match std::fs::symlink_metadata(&vault_path) {
@@ -159,7 +159,7 @@ fn check_dependency_lock(root: &Path, manifest: &Manifest, issues: &mut Vec<Stri
 
     match (loaded_vault, planned_vault) {
         (Some(loaded), Some(planned)) if loaded != planned => issues.push(format!(
-            "Dependency lock is stale: {} does not match the current direct local dependencies; run 'warder build' to refresh it",
+            "Dependency lock is stale: {} does not match the current external dependency resolution; run 'warder build' to refresh it",
             vault_path.display()
         )),
         (None, Some(planned)) if lock_is_missing && !planned.packages.is_empty() => {
@@ -242,10 +242,6 @@ mod tests {
 
     fn write_local_dependency(root: &Path) {
         fs::create_dir_all(root.join("src")).unwrap();
-        let mut manifest = Manifest::new("local-utils");
-        manifest.package.version = "1.2.3".to_string();
-        manifest.package.entry = "src/lib.rl".to_string();
-        manifest.save(&root.join("package.rl.toml")).unwrap();
         fs::write(
             root.join("src/lib.rl"),
             "pub fun score: () -> Int32 = { 7 }\n",
@@ -264,24 +260,20 @@ mod tests {
     }
 
     #[test]
-    fn dependency_lock_check_reports_missing_lock() {
+    fn dependency_lock_check_allows_missing_lock_for_live_local_sources() {
         let (_temp, app, manifest) = local_fixture();
         let mut issues = Vec::new();
 
         check_dependency_lock(&app, &manifest, &mut issues);
 
-        assert_eq!(issues.len(), 1, "{issues:?}");
-        assert!(
-            issues[0].contains("Dependency lock is missing"),
-            "{issues:?}"
-        );
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     #[test]
-    fn dependency_lock_check_accepts_current_lock_and_reports_stale_source() {
+    fn dependency_lock_check_does_not_treat_live_local_source_edits_as_stale_lock() {
         let (temp, app, manifest) = local_fixture();
         let (_, vault) = resolve_local_dependencies(&app, &manifest).unwrap();
-        vault.save(&app.join("restrict-lock.toml")).unwrap();
+        vault.save(&app.join(WARDER_LOCK_FILENAME)).unwrap();
         let mut issues = Vec::new();
 
         check_dependency_lock(&app, &manifest, &mut issues);
@@ -294,16 +286,32 @@ mod tests {
         .unwrap();
         check_dependency_lock(&app, &manifest, &mut issues);
 
-        assert_eq!(issues.len(), 1, "{issues:?}");
-        assert!(issues[0].contains("Dependency lock is stale"), "{issues:?}");
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     #[test]
     fn dependency_lock_check_reports_malformed_lock_without_stale_duplicate() {
         let (_temp, app, manifest) = local_fixture();
-        let (_, mut vault) = resolve_local_dependencies(&app, &manifest).unwrap();
-        vault.packages.get_mut("local_utils").unwrap().sha256 = "A".repeat(64);
-        vault.save(&app.join("restrict-lock.toml")).unwrap();
+        fs::write(
+            app.join(WARDER_LOCK_FILENAME),
+            format!(
+                r#"version = 1
+
+[packages.bad]
+version = "1.2.3"
+abi_hash = ""
+sha256 = "{}"
+
+[packages.bad.source]
+type = "Registry"
+url = "https://registry.example.test"
+
+[packages.bad.dependencies]
+"#,
+                "A".repeat(64)
+            ),
+        )
+        .unwrap();
         let mut issues = Vec::new();
 
         check_dependency_lock(&app, &manifest, &mut issues);

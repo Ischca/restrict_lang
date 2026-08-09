@@ -2,6 +2,7 @@
 
 **Status**: Accepted direction
 **Decision date**: 2026-08-07
+**Release-scope amendment**: 2026-08-09
 **Scope**: Compiler targets, host integration, and application deployment
 
 This document records product and architecture direction. It does not widen the
@@ -41,19 +42,52 @@ The current compiler emits Core WebAssembly text or validated binary Wasm.
 Raw output preserves the complete lowered module. Explicit `--release` output
 applies deterministic reachability-based dead-code elimination to functions,
 function imports, named types, globals, tables, and element segments. Warder
-can package both WAT and binary Wasm. Program code imports the WASI Preview 1
-`fd_write` and `proc_exit` functions, and a zero-argument `main` receives an
-exported `_start` wrapper. This is enough for the current output path and small
-command-style programs, but it is not a complete WASI application platform.
+can package WAT and binary Core Wasm artifacts in a cage; that is not Component
+Model packaging. Program code imports the WASI Preview 1 `fd_write` and
+`proc_exit` functions, and a zero-argument `main` receives an exported `_start`
+wrapper. This is enough for the current output path and small command-style
+programs, but it is not a complete WASI application platform.
 
 The browser playground supplies the required program imports through a small
 JavaScript WASI bridge. The bridge is necessary because browsers do not
 currently expose WASI or the DOM directly to Core Wasm modules.
 
-The stable v0.0.1 host ABI remains scalar-only. `String`, `List`, `Array`,
-records, `Option`, `Result`, and user-defined enums do not yet have a stable
-general host ABI. The experimental `flat-record-v1` profile does not generate
-WIT and is not part of the v0.0.1 compatibility boundary.
+The stable default v0.0.1 host ABI remains scalar-only, and the experimental
+`flat-record-v1` profile remains outside that compatibility boundary. The
+ordinary path is still `.rl -> WAT -> Core Wasm`.
+
+This branch additionally implements the explicit B1 Component path. Schema-v1
+and schema-v2 selections in the repository-root `warder.toml` become checked
+`ComponentInterfaceIr`, normalized WIT and stable ABI metadata, Canonical ABI
+adapters, and validated Component bytes.
+Warder `build --component` transactionally publishes
+`<name>-<version>.component.wasm`, `.component.wit`, and `.component.toml`.
+The rich external-WIT guest-import path is exercised by an independent Rust
+producer, and scalar external implementation/export conformance is checked.
+Rich external implementation/export and external-WIT resources still fail
+closed. `warder wrap --wit` remains unverified WIT attachment to a Core module
+cage and is not Component generation.
+
+## Accepted Version Boundary
+
+The next two product releases have an explicit interoperability split:
+
+- **v0.1.0 / B1** is the synchronous Component Model implementation completed
+  on this branch. It covers `String`, `List`, `Array`, records, `Option`,
+  `Result`, user enums/variants, synchronous resources with scalar-signature
+  factories and methods, value-capturing once-callable resources, and explicit
+  concrete generic function instances. It generates and consumes WIT, emits
+  Canonical ABI adapters and validated components, classifies compatibility,
+  composes independently built components, and executes them through generated
+  Rust bindings in a pinned runtime.
+- **v0.2.0** adds language and Component Model async: async functions,
+  `await`, structured `spawn`, futures, streams, cancellation, backpressure,
+  and deterministic cleanup across suspension.
+
+The repository package version remains `0.0.1`; implementation completion on
+this branch is not a claim that v0.1 has already been published. The complete
+B1 contract and intentional limits are recorded in
+`V010_SYNCHRONOUS_COMPONENT_ABI.md`.
 
 ## Target Host Profiles
 
@@ -75,9 +109,11 @@ randomness. Availability of an API must remain capability-based.
 
 ### WASI Component
 
-The forward-looking interoperability path. WIT and the Component Model should
-describe strings, lists, records, variants, results, resources, streams, and
-other host-visible values without exposing Restrict's arena layout.
+The v0.1.0 interoperability path. WIT and the Component Model describe
+strings, byte lists, general lists, fixed-length-validated arrays, records,
+options, results, enums/variants, resources, callable handles, and concrete
+generic specializations without exposing Restrict's arena layout. Streams,
+futures, and async functions enter this profile in v0.2.0.
 
 ### Web and Edge Adapters
 
@@ -129,6 +165,17 @@ Current platform references:
    exception.
 6. Each host profile requires conformance tests that compile the same Restrict
    semantics and vary only the host imports, exports, adapters, and packaging.
+7. Interface authority follows API ownership, not import/export direction. A
+   Restrict-owned API is selected by an explicit component export, normalized
+   through `ComponentInterfaceIr` (Component Interface IR), and emitted as
+   WIT; ordinary source-level `pub` is not an implicit Component ABI.
+8. WASI, standard worlds, and third-party APIs are external-WIT-first whether
+   Restrict consumes/imports them or implements/exports them. The same external
+   WIT generates bindings or implementation obligations and is used to verify
+   conformance.
+9. The normalized WIT plus stable ABI-profile metadata is the final
+   compatibility authority for both ownership paths. Generated adapters,
+   bindings, packages, and runtime wiring are derived artifacts.
 
 ## Milestone: Core Wasm Benchmark Ready
 
@@ -187,29 +234,93 @@ operations, browser DOM access, threads, and SIMD are not prerequisites for
 Core Wasm compute benchmarks. They become required when a comparison claims to
 measure application interoperability or a specific platform workload.
 
-## Polyglot Web Project Boundary
+## v0.1.0 Synchronous Component Project Boundary
 
-After the benchmark-ready milestone, Restrict should support being a first-class
-package inside a conventional JS/TS web workspace. This does not require
-Restrict to parse HTML or CSS, manage npm dependencies, implement a frontend
-framework, or add a JavaScript code-generation backend.
+After the benchmark-ready milestone, B1 establishes Restrict as a synchronous
+Component producer and consumer. The repository interoperability gate is
+Rust-only: it deliberately does not require JavaScript/TypeScript bindings, a
+Worker loader, HTML, CSS, npm, or a frontend framework. Those are later host-
+adapter deliverables and do not expand the language backend.
 
-Warder owns deterministic Restrict compilation, tests, direct Wasm artifacts,
-and artifact metadata. The web toolchain owns HTML, CSS, bundling, DOM rendering,
-iframe construction, and framework dependencies. A generated binding and thin
-host adapter connect the two layers.
+The v0.1.0 boundary is a complete synchronous Component contract rather than a
+temporary browser-only ABI:
 
-The first browser integration needs a deliberately narrow contract:
+- recursive lifting and lowering for `String`, `List`, `Array`,
+  records, `Option`, `Result`, and user enums/variants;
+- WIT resources with affine `own`, call-scoped `borrow`, exactly-once drop,
+  scalar-signature factories and methods, and trap-safe cleanup;
+- value-only capture closures exposed as signature-specific once-callable
+  resources, never raw function-table indexes; resource/callable-bearing
+  captures and `many` multiplicity fail closed;
+- generic functions exposed only as explicitly named concrete
+  monomorphizations, because open type parameters are not a WIT boundary;
+- generated and validated WIT, Component Wasm, stable interface and content
+  metadata, compatibility diffing, and Rust bindings; and
+- synchronous WIT capability imports exercised in a pinned Component host,
+  while full WASI 0.2 command-interface coverage remains a separate host
+  profile rather than a v0.1.0 ABI release blocker.
 
-- lifting and lowering for `String`, byte arrays, and a structured
-  success/error envelope;
-- typed JS/TS imports and exports plus target, memory, capability, and compiler
-  metadata;
-- initialization, call, error, and disposal lifecycle hooks;
-- a Worker-compatible loader independent of the selected UI framework; and
-- source-mapped diagnostics suitable for editors and build tools.
+WIT generation alone does not complete this boundary. Component packaging and
+validation, Canonical ABI lifting/lowering, language bindings,
+component composition, resource lifecycle, compatibility diffing, and runtime
+execution are one interoperability stack.
 
-This boundary enables a separate embeddable sandbox showcase. Its GUI may use
+Component Interface IR sits after type checking and monomorphization and before
+Core Wasm adapters. It is the single recursive type graph used to generate WIT,
+Canonical ABI lift/lower code, host bindings, metadata, compatibility hashes,
+and diagnostics. Internal arena layouts remain independently evolvable.
+
+The implemented Restrict-owned selection surface is rooted in the repository's
+single `warder.toml`. Schema v1 uses a complete
+`component.package = "namespace:name@semver"`, a selected `world`,
+`abi = "canonical-v1-sync"`, and explicit interface/source/external-name
+entries. A declaration must be source-public under the existing `pub` /
+`export` surface and separately selected by `[component]`. Neither source
+modifier alone creates a Component ABI, and their current Core behavior does
+not change. Warder implements structural validation and translation to a
+compiler-neutral selection, and the compiler enforces the double gate. Schema
+v2 adds resources, once-callables, and explicit generic function instances.
+Both schemas reach Component IR, adapters, validation, Warder publication, and
+Rust runtime E2E. Schema v2 stays root-module-only; durable cross-module
+declaration identity remains follow-on work. Detailed diagnostics, hash
+separation, and limitations are recorded in the
+[B1 Component Implementation Design](B1_COMPONENT_IMPLEMENTATION_DESIGN.md).
+
+Warder uses one authored `warder.toml` and one generated `warder.lock` at the
+repository root. The current project model contains one publishable root
+package and direct local source packages selected from `[dependencies]`.
+Those local packages need only `src/lib.rl`; they have no leaf configuration
+or lock, and their deterministic source graph is not duplicated into
+`warder.lock`. The currently unsupported registry, Git, foreign-Wasm, and
+transitive resolvers fail closed, so a local-only lock has no resolved package
+entries. A future multi-publish workspace graph must extend this same root file
+without making directory placement a public identity or introducing leaf
+manifests.
+
+A future edition may give `export` Component-publication intent distinct from
+package-visible `pub` and infer ordinary concrete Component exports from typed
+source. That source-first surface is not implemented by B1: the explicit
+source-public plus `[component]` double gate remains the current contract.
+
+WASI, standard worlds, third-party components, and other externally owned APIs
+supply WIT first. This is true both when Restrict consumes their imports and
+when Restrict implements and exports their contracts. For explicitly selected
+Restrict-owned exports, the compiler generates WIT from Component Interface IR.
+The current implementation covers rich guest imports and scalar external
+implementation/export conformance. Rich external implementations and
+external-WIT resources fail closed pending a later adapter slice.
+MoonBit and other WIT-first toolchains remain design references only. They are
+not repository dependencies or interoperability gates. Restrict keeps the
+hybrid ownership rule to avoid duplicating an interface the compiler owns,
+losing affine/capture facts, or weakening source diagnostics.
+
+WIT alone cannot express Restrict open generics, first-class closures, affine
+capture multiplicity, or a stable `Array<T, N>` length constraint. Explicit
+concrete instantiation, callable resources, ownership/drop adapters, and list
+length validation are therefore normative v0.1.0 adapter rules.
+
+After the v0.2.0 async boundary, this enables a separate embeddable sandbox
+showcase. Its GUI may use
 an established JS/TS framework, HTML, CSS, and iframe APIs. Restrict should own
 substantial session, execution-policy, capability, and result-processing logic,
 while the fixed host adapter owns DOM and Worker mechanics. The Rust-compiled
@@ -221,21 +332,31 @@ separate trust and resource boundaries.
 1. Complete the Core Wasm Benchmark Ready milestone: target separation, direct
    artifacts, a stable benchmark language subset, release optimization, defined
    memory behavior, and reproducible in-repository regression measurements.
-2. Establish a separate, auditable Rust, Grain, MoonBit, and Restrict comparison
-   harness only after the milestone gate passes.
-3. Complete Polyglot Web Project Ready: Warder subproject integration, stable
-   artifacts, narrow browser ABI, typed JS/TS bindings, and a
-   framework-neutral Worker loader.
-4. Build the embeddable Restrict sandbox as a separate polyglot showcase
+2. Optionally establish a separate, auditable Rust, Grain, MoonBit, and Restrict
+   comparison harness after the milestone gate passes. This is a non-blocking
+   parallel track, not a prerequisite for B1 or v0.1.0.
+3. The B1 / v0.1.0 implementation on this branch completes one synchronous
+   interoperability gate: Component Interface IR, recursive rich-value
+   lifting/lowering, resources, once-callable closures, concrete generic
+   function instances, WIT generation and rich import consumption, validated
+   Component packaging, compatibility diffing, and a pinned native Component
+   conformance host. The Rust-only repository gate includes independently
+   compiled
+   Rust-produced Component -> Restrict consumer and independently compiled
+   Restrict-produced Component -> Rust consumer calls. They connect only
+   through the versioned WIT world and Canonical ABI, without a shared allocator
+   or internal layout. MoonBit remains a design precedent and optional external
+   comparison, not a required repository E2E toolchain. JS/TS bindings and a
+   Worker loader remain optional host-adapter work rather than B1 exit gates.
+4. Complete B2 / v0.2.0: async/await/spawn, state-machine lowering,
+   future/stream adapters, cancellation, backpressure, async resource cleanup,
+   and generic async WIT capability adapters. Complete network/HTTP host
+   profiles remain independently scoped follow-on work.
+5. Build the embeddable Restrict sandbox as a separate polyglot showcase
    repository with Restrict-owned domain logic and a JS/TS GUI host.
-5. Make native WASI command execution reproducible and add a
-   capability-oriented WASI standard library.
-6. Extend stable lifting and lowering from the browser subset to lists, records,
-   `Option`, and `Result`.
-7. Generate WIT and Component Model adapters for the supported ABI surface.
-8. Generate thin Web and cloud adapters without introducing a JavaScript
+6. Generate thin Web and cloud adapters without introducing a JavaScript
    source backend.
-9. Adopt direct browser host interfaces when they become standardized and
+7. Adopt direct browser host interfaces when they become standardized and
    sufficiently portable.
 
 ## Non-Goals
@@ -244,7 +365,13 @@ separate trust and resource boundaries.
   JavaScript host APIs.
 - Bundling npm dependency resolution or a particular frontend framework into
   the compiler or Warder.
+- Package/member leaf manifests or a second workspace configuration file;
+  future workspace support extends the repository-root `warder.toml`.
 - A Docker-specific target or ABI.
 - DOM operations as intrinsic language syntax.
-- Claims that current Restrict programs already have full WASI, Component
-  Model, browser DOM, or rich composite-host interoperability.
+- Equating ordinary Core output with the explicit B1 Component path, or
+  claiming full WASI 0.2, browser DOM, or unrestricted composite-host support.
+- Treating WIT text output or WIT attachment to a Core module cage as complete
+  Component Model interoperability.
+- Async functions, futures, streams, cancellation, or async resource cleanup in
+  v0.1.0; those form the v0.2.0 boundary.

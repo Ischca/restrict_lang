@@ -1,0 +1,10 @@
+package test:generic-consumer@0.1.0;
+
+interface api {
+  identity-int: func(value: s32) -> s32;
+  identity-string: func(value: string) -> string;
+}
+
+world generic-consumer {
+  export api;
+}

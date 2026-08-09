@@ -115,6 +115,7 @@ postfix_suffix      = field_access | clone_suffix | await_suffix ;
 field_access        = "." identifier ;
 clone_suffix        = "." "clone" [ record_literal ] [ "freeze" ] ;
 await_suffix        = "await" ;
+                      (* reserved/planned for v0.2.0; not current v0.0.1 syntax *)
 
 (* Primary Expressions *)
 primary_expr        = literal

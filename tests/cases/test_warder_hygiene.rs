@@ -48,6 +48,39 @@ fn warder_init_template_uses_current_v001_syntax() {
 }
 
 #[test]
+fn warder_uses_one_root_manifest_and_the_generated_lock_name() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let new_source = read_workspace_file("warder/src/commands/new.rs");
+    let init_source = read_workspace_file("warder/src/commands/init.rs");
+
+    for (command, source) in [("new", new_source), ("init", init_source)] {
+        assert!(
+            source.contains("warder.toml"),
+            "`warder {command}` should create the repository-root warder.toml"
+        );
+        assert!(
+            !source.contains("restrict-lock.toml"),
+            "`warder {command}` must not emit or ignore the retired lock filename"
+        );
+    }
+
+    assert!(
+        root.join("warder/test-warder/my-app/warder.toml").is_file(),
+        "the checked-in Warder fixture should have one root warder.toml"
+    );
+    for legacy_or_leaf in [
+        "warder/test-warder/my-app/package.rl.toml",
+        "warder/test-warder/my-app/test-warder-local/my-project/package.rl.toml",
+        "warder/test-warder/my-app/test-warder-local/my-project/warder.toml",
+    ] {
+        assert!(
+            !root.join(legacy_or_leaf).exists(),
+            "Warder fixtures must not carry legacy or leaf manifest {legacy_or_leaf}"
+        );
+    }
+}
+
+#[test]
 fn checked_in_warder_fixture_sources_use_current_v001_syntax() {
     let fixture_paths = [
         "warder/test-warder/my-app/src/main.rl",
@@ -90,7 +123,7 @@ fn warder_test_uses_current_cli_check_mode() {
 }
 
 #[test]
-fn warder_build_release_and_unimplemented_modes_are_scoped() {
+fn warder_build_release_component_and_experimental_modes_are_scoped() {
     let source = read_workspace_file("warder/src/commands/build.rs");
 
     assert!(
@@ -101,12 +134,31 @@ fn warder_build_release_and_unimplemented_modes_are_scoped() {
 
     for anchor in [
         "Watch mode",
-        "WASM Component output",
         "Deterministic build mode",
         "Signature verification",
     ] {
         assert_release_readiness_message(&source, anchor);
     }
+
+    for marker in [
+        "compile_component(",
+        "compile_component_contract(",
+        ".component.wasm",
+        ".component.wit",
+        ".component.toml",
+        "validate_staged_component_artifacts(",
+        "commit_staged_files(",
+    ] {
+        assert!(
+            source.contains(marker),
+            "Warder Component builds should retain production publication marker `{marker}`"
+        );
+    }
+    assert!(
+        !source.contains("WASM Component output is experimental")
+            && !source.contains("WASM Component output is not available"),
+        "implemented Warder Component output must not regress to an experimental placeholder"
+    );
 }
 
 #[test]

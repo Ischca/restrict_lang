@@ -1,5 +1,5 @@
-use super::{print_info, print_success};
-use crate::manifest::Manifest;
+use super::{find_enclosing_project_root, print_info, print_success};
+use crate::manifest::{Manifest, WARDER_MANIFEST_FILENAME};
 use anyhow::{bail, Result};
 use std::fs;
 use std::path::Path;
@@ -8,6 +8,15 @@ pub fn new_project(name: &str) -> Result<()> {
     // Validate project name
     if !is_valid_project_name(name) {
         bail!("Invalid project name '{}'. Must start with a letter and contain only letters, numbers, hyphens, and underscores.", name);
+    }
+
+    let current_dir = std::env::current_dir()?;
+    if let Some(existing_root) = find_enclosing_project_root(&current_dir)? {
+        bail!(
+            "Cannot create a nested Warder project inside {}. Add package configuration to the root {} instead",
+            existing_root.display(),
+            WARDER_MANIFEST_FILENAME
+        );
     }
 
     let project_path = Path::new(name);
@@ -21,9 +30,9 @@ pub fn new_project(name: &str) -> Result<()> {
     fs::create_dir_all(project_path.join("src"))?;
     fs::create_dir_all(project_path.join("tests"))?;
 
-    // Create manifest
+    // Create the repository-root warder.toml.
     let manifest = Manifest::new(name);
-    manifest.save(&project_path.join("package.rl.toml"))?;
+    manifest.save(&project_path.join(WARDER_MANIFEST_FILENAME))?;
 
     // Create main.rl
     let main_content = r#"// Welcome to Restrict Language!
@@ -47,7 +56,6 @@ fun test_example: () -> Boolean = {
     let gitignore_content = r#"# Restrict Language
 /dist/
 /.restrict-cache/
-restrict-lock.toml
 .warder-build.lock
 .warder-build-transaction.toml
 

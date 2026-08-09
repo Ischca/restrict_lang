@@ -33,6 +33,46 @@ browser playground supplies equivalent behavior through a JavaScript bridge.
 That generated or handwritten bridge is host glue, not a JavaScript code-
 generation backend.
 
+The ordinary v0.0.1 compiler pipeline remains `.rl -> WAT -> Core Wasm`. This
+branch also implements an explicit B1 Component path. A schema-v1 or schema-v2
+selection from the repository-root `warder.toml` is checked and monomorphized
+into `ComponentInterfaceIr`,
+normalized WIT and stable ABI metadata, Canonical ABI adapters, and a validated
+WebAssembly Component. Warder publishes the resulting `.component.wasm`,
+`.component.wit`, and `.component.toml` files as one transactional artifact
+set. This explicit path does not change the default Core Wasm ABI, and the
+repository's current `0.0.1` package version is not by itself a v0.1 release
+claim.
+
+External standards and third-party contracts use the complementary WIT-first
+path. Rich synchronous guest imports are implemented and exercised by the
+Rust-produced Component -> Restrict consumer gate. Restrict implementation of
+an externally owned interface is currently implemented for the scalar slice;
+rich-value implementation/export and external-WIT resources fail closed with
+typed diagnostics. Warder `wrap --wit` remains a different operation: it
+stores caller-supplied WIT text in a Core module cage and does not generate or
+validate a Component.
+
+A Warder-managed repository has one authored configuration file,
+`warder.toml`, at its root. The current implementation describes one
+publishable root package plus any direct local source packages selected by the
+root `[dependencies]` table. Those local packages need `src/lib.rl`; they do
+not carry leaf manifests or leaf lock files. Warder generates one
+repository-root `warder.lock` for dependency resolutions that cannot be
+reconstructed deterministically from the repository sources. Registry, Git,
+foreign-Wasm, and transitive dependency resolution currently fail closed, so a
+local-only build has no resolved package entries in that lock.
+`warder.lock` is generated rather than hand-authored and is committed when it
+exists.
+
+The generated `dist/*.component.toml` files are Component artifact metadata,
+not additional Warder configuration. Likewise, Cage-internal `manifest.toml`
+and temporary Warder build/recovery state are not project manifests. A future
+multi-publish workspace graph will extend the same root `warder.toml`; it must
+not introduce member or package leaf manifests. Directory placement may help
+Warder discover local sources, but public package identity and Component ABI
+identity remain explicit, path-independent contract data.
+
 The compiler exposes two artifact target profiles. `wasip1` is the default and
 retains the v0.0.1 program-I/O imports. `wasm-core` emits an import-free Core
 WebAssembly module for host-neutral workloads and rejects `print`, `println`,
@@ -70,17 +110,24 @@ counts exclude the arena header. The current counters describe the B0
 single-host-entry arena path and do not claim aggregate accounting for nested
 arenas.
 
-The following remain future host-integration work and do not expand the current
-v0.0.1 release surface:
+The version boundary is:
 
-- broader WASI bindings for arguments, environment, filesystem, clocks,
-  randomness, networking, HTTP, and asynchronous streams;
-- stable lifting and lowering for `String`, `List`, `Array`, records, `Option`,
-  `Result`, user enums, resources, and other composite host values;
-- WIT generation and WebAssembly Component Model packaging;
-- generated Web and cloud entry adapters; and
-- direct browser host or DOM interfaces if and when portable standards expose
-  them to WebAssembly.
+- **v0.1.0 / B1**: the synchronous Component Model implementation present on
+  this branch: scalar and rich values (`String`, `List`, `Array`, records,
+  `Option`, `Result`, and user enums/variants), synchronous resources,
+  value-capturing once-callable resources, and explicitly selected concrete
+  generic function instances; generated and consumed WIT; Canonical ABI
+  lift/lower adapters; validated packaging, compatibility diffing,
+  composition, Rust bindings, and pinned-runtime execution;
+- **v0.2.0**: async functions, `await`, structured `spawn`, futures, streams,
+  cancellation, backpressure, generic async capability adapters, and
+  deterministic resource cleanup across suspension; and
+- later generated Web/cloud adapters and direct browser host or DOM interfaces
+  if and when portable standards expose them to WebAssembly.
+
+The normative implemented contract and its intentional limits are recorded in
+`docs/V010_SYNCHRONOUS_COMPONENT_ABI.md`. B1 implementation completion on this
+branch is distinct from publishing a versioned v0.1 release.
 
 Docker, containerd, and similar systems may execute or package a WASI artifact,
 but do not define a Restrict ABI. Likewise, a browser or cloud host may require
@@ -113,7 +160,7 @@ remain future work.
 Host-visible WebAssembly exports that would require an exported
 generic/composite host ABI, including exported generic functions or direct
 exported record values, remain outside default v0.0.1 until that ABI is
-designed.
+implemented and passes the v0.1.0 Component ABI gate.
 
 ### 1.2 Operators
 ```
@@ -923,7 +970,7 @@ supports dotted module paths with named imports, wildcard imports, or whole
 module imports. String paths, source-level import aliases, re-exports, and
 package-level standard-library aggregators are reserved for a later
 module-design pass. A build tool may bind the first dotted path segment to a
-package source root; that manifest/compiler binding is not an `import ... as`
+package source root; that root-configuration/compiler binding is not an `import ... as`
 source alias.
 
 Within one compilation, a source declaration has one canonical identity: its
@@ -955,11 +1002,14 @@ and must be pairwise disjoint: equal, ancestor, and descendant roots are
 rejected. This keeps one physical source file from acquiring both an
 application identity and a package-qualified identity.
 
-Warder v0.0.1 uses this binding for direct local path dependencies. A local
-dependency needs `package.rl.toml` and `src/lib.rl`; its dependency-table key is
-the source namespace. Registry, Git, foreign-Wasm, and transitive package
-graphs remain outside this buildable slice and must fail explicitly rather
-than producing unresolved lock entries.
+Warder uses this binding for direct local path dependencies selected centrally
+from the repository-root `warder.toml`. A local source package needs only
+`src/lib.rl`; its `[dependencies]` key is the source namespace. It does not
+have a leaf manifest or leaf lock. The current implementation has one
+publishable root package plus these direct local source packages. Registry,
+Git, foreign-Wasm, transitive dependency resolution, and a multi-publish
+workspace graph remain outside this buildable slice and must fail explicitly
+rather than producing unresolved `warder.lock` entries.
 
 ### 12.2 Exports
 ```rust
@@ -1039,6 +1089,226 @@ normal arena restoration. The host must treat that module instance as invalid
 for subsequent `flat-record-v1` calls and instantiate a fresh module. A nested
 same-export call that traps may be caught by the host only when the outer call
 then returns normally, allowing the outer wrapper to restore its entry state.
+
+### 12.4 B1 v0.1.0 Synchronous Component ABI
+
+This section specifies the explicit B1 Component path implemented on this
+branch. It does not change the ordinary v0.0.1 Core Wasm output: the default
+ABI remains the scalar profile and `flat-record-v1` remains experimental.
+B1 implementation completion is not a claim that a v0.1 package has already
+been released.
+
+The public Component interface is not the compiler's arena representation.
+Interface authority follows API ownership, not import/export direction:
+
+- for a Restrict-owned API, an explicitly selected component export is type
+  checked and monomorphized into `ComponentInterfaceIr` (Component Interface
+  IR), from which the compiler generates normalized WIT and Canonical ABI
+  adapters. Ordinary source-level `pub` continues to mean module visibility
+  and is not an implicit component export;
+- for WASI, standard worlds, third-party APIs, and other externally owned
+  contracts, external WIT is authoritative whether Restrict consumes/imports
+  the API or implements/exports it. The toolchain generates typed Restrict
+  bindings or implementation obligations and verifies the resulting component
+  against that WIT; and
+- normalized WIT plus stable ABI-profile metadata is the final compatibility
+  authority for both ownership paths.
+
+The implemented Restrict-owned selection surface is versioned `[component]`
+metadata in the repository-root `warder.toml`, not a new language keyword. A
+declaration enters the Component ABI only when both conditions hold:
+
+1. it is source-public under the existing `pub` / `export` declaration
+   surface; and
+2. a schema-versioned `[component]` entry selects it explicitly.
+
+Neither `pub` nor `export` alone publishes a Component ABI, and this explicit
+selection rule does not change their current Core Wasm or source-module
+behavior. Schema v1 uses this manifest shape:
+
+```toml
+[component]
+schema = 1
+package = "acme:checkout@0.1.0"
+world = "checkout"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "quote"
+name = "quote"
+```
+
+`package` is the complete WIT package identity in
+`namespace:name@semver` form. In schema v1 its name and version must equal
+`[package].name` and `[package].version`; `abi` must be
+`canonical-v1-sync`. `world`, `interface`, and `name` are validated WIT
+identifiers. For schema v1, `source` names one source-public
+function in the package root module. An absent selection exports nothing to a
+Component; an unknown schema, ABI profile, or field, a private or missing
+declaration, duplicate selection, or external-name collision is an error.
+Cross-module selectors are not accepted until module resolution preserves a
+stable canonical declaration identity independent of its internal mangled
+name.
+
+Warder parses and validates the root configuration, resolves the selection
+through the compiler library, and transactionally publishes normalized WIT,
+validated Component bytes, and metadata. A future language edition may
+distinguish `pub` package visibility from `export` Component publication and
+derive ordinary concrete exports from typed source. That source-first surface
+is not implemented: today the explicit source-public plus `[component]`
+double gate remains required. Any future source sugar must lower to the same
+checked selection model and cannot become a second interface authority. The
+detailed invariants are specified in the
+[B1 Component Implementation Design](docs/B1_COMPONENT_IMPLEMENTATION_DESIGN.md).
+
+Restrict-owned APIs do not require a second handwritten WIT declaration. That
+would duplicate Restrict types, invite drift, and discard affine ownership and
+capture facts plus source-span diagnostics before interface checking. External
+standards and third-party contracts remain WIT-first because Restrict does not
+own those interfaces.
+
+WIT file emission alone does not describe the implemented B1 stack. The
+synchronous
+interoperability stack includes normalized WIT, Component Model packaging,
+Canonical ABI lift/lower and cleanup, Rust language bindings, component composition,
+compatibility diffing, and execution in pinned Component runtimes. The
+repository proves both Rust interoperability directions through
+the versioned WIT world; WIT-only output is not reported as Component support.
+
+The v0.1.0 synchronous type mapping is:
+
+- `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `()` map to the
+  corresponding WIT scalar or empty result;
+- `String` maps to WIT `string` with validated UTF-8 conversion;
+- `List<T>` maps recursively to `list<T>`;
+- `Array<T, N>` maps to `list<T>` plus stable exact-length metadata and a
+  generated length check at every boundary;
+- records map recursively to WIT `record` in source declaration order;
+- `Option<T>` and `Result<T, E>` map recursively to WIT `option` and `result`;
+- payload-free user enums map to WIT `enum`, while payload-carrying user enums
+  map to WIT `variant` by source case identity rather than internal tag layout;
+- explicitly declared synchronous host resources map to WIT `resource`, where
+  `own` transfers affine ownership, `borrow` is call-scoped, and destruction
+  occurs exactly once;
+- each exported closure/function-value signature maps to a generated once-
+  callable resource, which owns value-only captured state and exposes a
+  synchronous call operation; raw table indexes and arena pointers never cross
+  the boundary. Captures containing another resource or callable fail closed;
+  and
+- a generic function can cross the boundary only through a finite, explicit
+  set of concrete monomorphized instances with deterministic external names.
+  WIT never contains an unresolved Restrict type parameter. Generic nominal
+  boundary types are not part of this B1 implementation.
+
+Manifest schema v2 implements the declaration contract for synchronous
+resources, once-callable resources, and concrete generic function instances.
+Warder parses and normalizes it into a manifest-neutral compiler model that is
+connected to Component Interface IR, code generation, adapters, validation,
+runtime execution, and transactional artifact publication. Schema v1 remains
+valid and continues to reject every v2-only field.
+
+```toml
+[component]
+schema = 2
+package = "acme:checkout@0.1.0"
+world = "checkout"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "identity"
+name = "identity-string"
+type-args = { T = "String" }
+
+[[component.resources]]
+interface = "api"
+source = "FileHandle"
+name = "file-handle"
+destructor = "close_file"
+destructor-visibility = "private"
+methods = [
+  { source = "read_file", name = "read", receiver = "borrow" },
+  { source = "finish_file", name = "finish", receiver = "own" },
+]
+
+[[component.callables]]
+interface = "api"
+name = "transform"
+params = [{ name = "value", type = "List<String>" }]
+result = "Result<String, TransformError>"
+multiplicity = "once"
+```
+
+Every entry is explicit. A resource `source` must resolve to one named public
+root record. Its destructor identity is explicit even when the implementation
+is private; `destructor-visibility` records whether source resolution must find
+a `private` or `public` declaration. Each method records an external name,
+source identity, and receiver fact: `own` consumes the affine handle, while
+`borrow` is valid only for the dynamic extent of one synchronous call. These
+facts are stable contract input; they do not infer a resource from record shape
+or method spelling. The destructor source cannot also be listed as an ordinary
+resource method.
+
+A callable declares a concrete parameter/result signature and capture-call
+multiplicity. The field is mandatory and accepts the vocabulary `once` and
+`many`, but the initial synchronous v0.1 contract accepts only `once`; `many`
+is rejected with a typed unsupported-multiplicity diagnostic until its affine
+capture semantics and adapters are implemented.
+
+`type-args` maps declared source type-parameter names to closed Restrict type
+expressions. The accepted expression grammar covers `()`, scalar types,
+root-nominal types with concrete arguments, `List`, `Array<T, N>`, `Option`,
+`Result`, and concrete function types. Temporal types, `Self`, wildcards,
+malformed arities, symbolic array lengths, and trailing input are rejected
+during manifest normalization. Nominal names are still resolved and bounds are
+still checked by the compiler; parsing a name does not prove that the type
+exists. Map and manifest order are non-semantic, and the specialization pass
+restores declaration order before computing its stable identity.
+
+Schema v2 remains root-only until durable `CanonicalDeclId` resolution lands.
+Types not listed above, including `Range<Int32>`, do not acquire an ABI by
+implication. A source byte type and direct `list<u8>` mapping are separate
+follow-on design work; `Char` is not a byte substitute.
+
+WIT alone cannot represent Restrict open generics, first-class closures,
+affine capture multiplicity, or a stable `Array<T, N>` length constraint.
+Explicit concrete instantiation, callable resources, ownership metadata and
+drop adapters, and `list<T>` length validation are therefore normative v0.1.0
+adapter rules rather than optional implementation conventions.
+
+Lifted arguments cannot expose host-retained pointers into a Restrict arena.
+Composite results must be copied or transferred to Canonical ABI-owned storage
+before invocation-arena reset. Generated post-return and drop paths must cover
+normal return, source `Result::Err`, host error, allocation failure, and trap.
+After an uncaught component trap the instance is terminal. Synchronous callback
+re-entry must preserve the outer arena and all resource/callable ownership.
+
+The B1 conformance gate covers rich external-WIT consumer bindings, scalar
+external implementation/export conformance, Canonical ABI lift/lower and
+post-return or drop cleanup, component packaging/validation/composition/runtime
+execution, resource-lifecycle negative tests, and breaking/non-breaking
+compatibility diffs over normalized WIT plus stable ABI metadata. Rich-value
+external implementation/export and external-WIT resources currently fail
+closed and remain follow-on work. Repository release gates use two
+independently compiled end-to-end paths:
+
+- Rust-produced Component -> Restrict consumer; and
+- Restrict-produced Component -> Rust consumer.
+
+These paths may share only the versioned WIT package/world; they must not share
+an allocator, linear memory, arena layout, runtime representation, or a bridge
+that bypasses the Canonical ABI. MoonBit remains an external design precedent
+and optional comparison target, not a required repository E2E toolchain.
+
+v0.1.0 retains the current Core Wasm and WASI Preview 1 outputs. It consumes
+synchronous WIT capability imports and runs its conformance world in a pinned
+Component host, adapting the current basic output/exit behavior where needed.
+Full WASI 0.2 command-interface coverage is a separate host-profile milestone,
+not part of this ABI gate. Async functions, `future`, `stream`, cancellation,
+backpressure, and ownership across suspension are excluded from v0.1.0 and
+form the v0.2.0 boundary. Complete network/HTTP profiles are follow-on host
+integration rather than implied core-language semantics.
 
 ## 13. Operator Precedence (Highest to Lowest)
 
@@ -1361,7 +1631,11 @@ Err("missing")
 
 ## COMPLIANCE
 
-This specification defines Restrict Language v1.0. All implementations, documentation, tutorials, and examples MUST conform to this specification.
+This specification defines Restrict Language specification v1.0. Its document
+version is independent of compiler product releases such as v0.0.1, v0.1.0,
+and v0.2.0. All implementations, documentation, tutorials, and examples MUST
+conform to the implemented sections of this specification and must not present
+planned sections as current behavior.
 
 **Parser Implementation**: The official parser in `src/parser.rs` is the
 authority for the current implementation. Sections marked future, planned, or
@@ -1370,6 +1644,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2026-08-07
+**Last Updated**: 2026-08-09
 **Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

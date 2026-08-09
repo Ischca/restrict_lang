@@ -30,7 +30,7 @@ pub async fn add_dependency(
         // Local path dependency
         if dep_spec.contains('@') {
             bail!(
-                "Local path dependencies use the version from their package.rl.toml; pass an alias without @version"
+                "Local path dependencies are live source inputs and do not accept @version; pass an alias without @version"
             );
         }
         let name = extract_name_from_spec(dep_spec)?;

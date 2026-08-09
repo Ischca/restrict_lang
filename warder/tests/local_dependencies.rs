@@ -7,9 +7,9 @@ fn write_app(root: &Path, dependencies: &str) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::create_dir_all(root.join("tests")).unwrap();
     fs::write(
-        root.join("package.rl.toml"),
+        root.join("warder.toml"),
         format!(
-            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"src/main.rl\"\nedition = \"2025\"\n\n[dependencies]\n{dependencies}\n\n[build]\ntarget = \"wasm32\"\noptimize = true\noutput = \"dist/\"\n"
+            "manifest-version = 1\n\n[package]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"src/main.rl\"\nedition = \"2025\"\n\n[dependencies]\n{dependencies}\n\n[build]\ntarget = \"wasm32\"\noptimize = true\noutput = \"dist/\"\n"
         ),
     )
     .unwrap();
@@ -28,15 +28,149 @@ fn write_app(root: &Path, dependencies: &str) {
     fs::write(root.join("tests/dependency_test.rl"), test_source).unwrap();
 }
 
-fn write_dependency(root: &Path, version: &str, score: i32) {
+fn write_component_app(root: &Path) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
-        root.join("package.rl.toml"),
-        format!(
-            "[package]\nname = \"local-utils\"\nversion = \"{version}\"\nentry = \"src/main.rl\"\nedition = \"2025\"\n\n[dependencies]\n"
-        ),
+        root.join("warder.toml"),
+        r#"manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+entry = "src/main.rl"
+edition = "2025"
+
+[dependencies]
+
+[build]
+target = "wasm32"
+optimize = true
+output = "dist/"
+
+[component]
+schema = 1
+package = "example:app@0.1.0"
+world = "app"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "increment"
+name = "increment"
+"#,
     )
     .unwrap();
+    fs::write(
+        root.join("src/main.rl"),
+        "pub fun increment: (value: Int32) -> Int32 = { value + 1 }\n",
+    )
+    .unwrap();
+}
+
+fn write_component_app_v2(root: &Path) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("warder.toml"),
+        r#"manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+entry = "src/main.rl"
+edition = "2025"
+
+[dependencies]
+
+[build]
+target = "wasm32"
+optimize = true
+output = "dist/"
+
+[component]
+schema = 2
+package = "example:app@0.1.0"
+world = "app"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "identity"
+name = "identity-string"
+type-args = { T = "String" }
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main.rl"),
+        "pub fun identity: <T>(value: T) -> T = { value }\n",
+    )
+    .unwrap();
+}
+
+fn write_component_resource_app_v2(root: &Path) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("warder.toml"),
+        r#"manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+entry = "src/main.rl"
+edition = "2025"
+
+[dependencies]
+
+[build]
+target = "wasm32"
+optimize = true
+output = "dist/"
+
+[component]
+schema = 2
+package = "example:app@0.1.0"
+world = "app"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "make_counter"
+name = "make-counter"
+
+[[component.exports]]
+interface = "api"
+source = "make_transform"
+name = "make-transform"
+
+[[component.resources]]
+interface = "api"
+source = "Counter"
+name = "counter"
+destructor = "close_counter"
+destructor-visibility = "private"
+methods = [
+  { source = "read_counter", name = "read", receiver = "borrow" },
+  { source = "finish_counter", name = "finish", receiver = "own" },
+]
+
+[[component.callables]]
+interface = "api"
+name = "transform"
+params = [{ name = "value", type = "Int32" }]
+result = "Int32"
+multiplicity = "once"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/main.rl"),
+        include_str!("../../tests/fixtures/component_resource_consumer/source/main.rl"),
+    )
+    .unwrap();
+}
+
+fn write_dependency(root: &Path, _version: &str, score: i32) {
+    fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
         root.join("src/lib.rl"),
         format!("pub fun score: () -> Int32 = {{ {score} }}\n"),
@@ -160,12 +294,388 @@ fn run_warder_from(
 }
 
 #[test]
-fn build_and_test_mount_direct_local_dependency_and_write_real_lock_metadata() {
+fn component_build_requires_an_explicit_selection_without_creating_dist() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_app(&app, "");
+    let missing_compiler = temp.path().join("compiler-must-not-run");
+    let captured_args = temp.path().join("compiler-args.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &missing_compiler)
+        .env("WARDER_CAPTURE_ARGS", &captured_args)
+        .args(["build", "--component"])
+        .output()
+        .expect("warder should run");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("requires an explicit [component] selection"),
+        "{stderr}"
+    );
+    assert!(!captured_args.exists(), "the compiler must not be invoked");
+    assert!(
+        !app.join("dist").exists(),
+        "no build artifacts may be created"
+    );
+}
+
+#[test]
+fn component_watch_fails_instead_of_reporting_success_without_an_artifact() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_component_app(&app);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .args(["build", "--component", "--watch"])
+        .output()
+        .expect("warder should run");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("does not support --watch"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!app.join("dist").exists());
+}
+
+#[test]
+fn component_build_publishes_a_valid_deterministic_transactional_set() {
+    use sha2::{Digest, Sha256};
+
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_component_app(&app);
+    let missing_compiler = temp.path().join("component-build-must-use-library");
+
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_warder"))
+            .current_dir(&app)
+            .env("RESTRICT_LANG_BIN", &missing_compiler)
+            .args(["build", "--component"])
+            .output()
+            .expect("warder should run")
+    };
+    let first = run();
+    assert!(
+        first.status.success(),
+        "component build should succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&first.stdout).contains("Built Component"),
+        "{}",
+        String::from_utf8_lossy(&first.stdout)
+    );
+
+    let component_path = app.join("dist/app-0.1.0.component.wasm");
+    let wit_path = app.join("dist/app-0.1.0.component.wit");
+    let metadata_path = app.join("dist/app-0.1.0.component.toml");
+    let lock_path = app.join("warder.lock");
+    for path in [&component_path, &wit_path, &metadata_path, &lock_path] {
+        assert!(
+            path.is_file(),
+            "missing published artifact {}",
+            path.display()
+        );
+    }
+    for extension in ["wat", "wasm", "rgc"] {
+        assert!(
+            !app.join(format!("dist/app-0.1.0.{extension}")).exists(),
+            "Component mode must not publish the Core {extension} artifact"
+        );
+    }
+
+    let component = fs::read(&component_path).unwrap();
+    assert!(wasmparser::Parser::is_component(&component));
+    wasmparser::Validator::new_with_features(
+        wasmparser::WasmFeatures::default() | wasmparser::WasmFeatures::COMPONENT_MODEL,
+    )
+    .validate_all(&component)
+    .unwrap();
+    let wit = fs::read_to_string(&wit_path).unwrap();
+    let mut resolve = wit_parser::Resolve::default();
+    let package = resolve.push_str("published.wit", &wit).unwrap();
+    resolve.select_world(&[package], Some("app")).unwrap();
+
+    let metadata: toml::Value =
+        toml::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+    assert_eq!(metadata["schema"].as_integer(), Some(1));
+    assert_eq!(
+        metadata["format"].as_str(),
+        Some("warder.component-artifact.v1")
+    );
+    assert_eq!(metadata["package"].as_str(), Some("example:app@0.1.0"));
+    assert_eq!(metadata["world"].as_str(), Some("app"));
+    assert_eq!(metadata["abi"].as_str(), Some("canonical-v1-sync"));
+    assert_eq!(
+        metadata["component_sha256"].as_str(),
+        Some(hex::encode(Sha256::digest(&component)).as_str())
+    );
+    assert_eq!(
+        metadata["wit_sha256"].as_str(),
+        Some(hex::encode(Sha256::digest(wit.as_bytes())).as_str())
+    );
+    assert_eq!(metadata["interface_sha256"].as_str().unwrap().len(), 64);
+
+    let tracked = [&component_path, &wit_path, &metadata_path, &lock_path];
+    let first_bytes = tracked
+        .iter()
+        .map(|path| fs::read(path).unwrap())
+        .collect::<Vec<_>>();
+    let second = run();
+    assert!(
+        second.status.success(),
+        "repeated component build should succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    for (path, expected) in tracked.iter().zip(first_bytes) {
+        assert_eq!(
+            fs::read(path).unwrap(),
+            expected,
+            "{} changed",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn schema_v2_component_build_publishes_a_valid_generic_artifact_set() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_component_app_v2(&app);
+    let missing_compiler = temp.path().join("component-build-must-use-library");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &missing_compiler)
+        .args(["build", "--component"])
+        .output()
+        .expect("warder should run");
+
+    assert!(
+        output.status.success(),
+        "schema-v2 Component build should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Built Component"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let component_path = app.join("dist/app-0.1.0.component.wasm");
+    let wit_path = app.join("dist/app-0.1.0.component.wit");
+    let metadata_path = app.join("dist/app-0.1.0.component.toml");
+    for path in [&component_path, &wit_path, &metadata_path] {
+        assert!(
+            path.is_file(),
+            "missing published artifact {}",
+            path.display()
+        );
+    }
+
+    let component = fs::read(&component_path).unwrap();
+    assert!(wasmparser::Parser::is_component(&component));
+    wasmparser::Validator::new_with_features(
+        wasmparser::WasmFeatures::default() | wasmparser::WasmFeatures::COMPONENT_MODEL,
+    )
+    .validate_all(&component)
+    .unwrap();
+    let wit = fs::read_to_string(&wit_path).unwrap();
+    assert!(
+        wit.contains("identity-string: func(value: string) -> string;"),
+        "{wit}"
+    );
+
+    let metadata: toml::Value =
+        toml::from_str(&fs::read_to_string(&metadata_path).unwrap()).unwrap();
+    assert_eq!(metadata["package"].as_str(), Some("example:app@0.1.0"));
+    assert_eq!(metadata["world"].as_str(), Some("app"));
+    assert_eq!(metadata["abi"].as_str(), Some("canonical-v1-sync"));
+}
+
+#[test]
+fn schema_v2_component_build_publishes_resource_and_callable_contracts() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_component_resource_app_v2(&app);
+    let missing_compiler = temp.path().join("component-build-must-use-library");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &missing_compiler)
+        .args(["build", "--component"])
+        .output()
+        .expect("warder should run");
+
+    assert!(
+        output.status.success(),
+        "schema-v2 resource Component build should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let component_path = app.join("dist/app-0.1.0.component.wasm");
+    let wit_path = app.join("dist/app-0.1.0.component.wit");
+    let metadata_path = app.join("dist/app-0.1.0.component.toml");
+    for path in [&component_path, &wit_path, &metadata_path] {
+        assert!(
+            path.is_file(),
+            "missing published resource artifact {}",
+            path.display()
+        );
+    }
+
+    let component = fs::read(&component_path).unwrap();
+    wasmparser::Validator::new_with_features(
+        wasmparser::WasmFeatures::default() | wasmparser::WasmFeatures::COMPONENT_MODEL,
+    )
+    .validate_all(&component)
+    .unwrap();
+    let wit = fs::read_to_string(&wit_path).unwrap();
+    assert!(wit.contains("resource counter"), "{wit}");
+    assert!(wit.contains("resource transform"), "{wit}");
+    assert!(
+        wit.contains("make-counter: func(value: s32) -> own<counter>;"),
+        "{wit}"
+    );
+    assert!(
+        wit.contains("make-transform: func(offset: s32) -> own<transform>;"),
+        "{wit}"
+    );
+}
+
+#[test]
+fn failed_component_rebuild_preserves_the_previous_artifact_set_and_lock() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_component_app(&app);
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_warder"))
+            .current_dir(&app)
+            .args(["build", "--component"])
+            .output()
+            .expect("warder should run")
+    };
+    assert!(run().status.success());
+
+    let tracked = [
+        app.join("dist/app-0.1.0.component.wasm"),
+        app.join("dist/app-0.1.0.component.wit"),
+        app.join("dist/app-0.1.0.component.toml"),
+        app.join("warder.lock"),
+    ];
+    let previous = tracked
+        .iter()
+        .map(|path| fs::read(path).unwrap())
+        .collect::<Vec<_>>();
+    fs::write(
+        app.join("src/main.rl"),
+        "pub fun increment: (value: Int32) -> Int32 = { true }\n",
+    )
+    .unwrap();
+
+    let failed = run();
+    assert!(!failed.status.success());
+    assert!(
+        String::from_utf8_lossy(&failed.stderr).contains("type checking failed"),
+        "{}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    for (path, expected) in tracked.iter().zip(previous) {
+        assert_eq!(
+            fs::read(path).unwrap(),
+            expected,
+            "{} changed after failed Component compilation",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn component_build_resolves_a_direct_dependency_from_the_snapshot_roots() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    let dependency = temp.path().join("local-utils");
+    write_component_app(&app);
+    write_dependency(&dependency, "1.2.3", 1);
+    let manifest_path = app.join("warder.toml");
+    let manifest = fs::read_to_string(&manifest_path).unwrap().replace(
+        "[dependencies]\n",
+        "[dependencies]\nlocal_utils = { path = \"../local-utils\" }\n",
+    );
+    fs::write(&manifest_path, manifest).unwrap();
+    fs::write(
+        app.join("src/main.rl"),
+        "import local_utils.{score}\n\npub fun increment: (value: Int32) -> Int32 = { value + (() score) }\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .args(["build", "--component"])
+        .output()
+        .expect("warder should run");
+
+    assert!(
+        output.status.success(),
+        "Component dependency build should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(app.join("dist/app-0.1.0.component.wasm").is_file());
+    let lock = fs::read_to_string(app.join("warder.lock")).unwrap();
+    assert!(lock.contains("version = 1"), "{lock}");
+    assert!(
+        !lock.contains("local_utils"),
+        "local source packages are not persisted in warder.lock: {lock}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn component_build_refuses_to_replace_a_symlink_destination() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_component_app(&app);
+    fs::create_dir_all(app.join("dist")).unwrap();
+    let outside = temp.path().join("outside-component.wasm");
+    fs::write(&outside, "keep").unwrap();
+    symlink(&outside, app.join("dist/app-0.1.0.component.wasm")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .args(["build", "--component"])
+        .output()
+        .expect("warder should run");
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Refusing to replace non-regular"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(outside).unwrap(), "keep");
+    assert!(!app.join("dist/app-0.1.0.component.wit").exists());
+    assert!(!app.join("dist/app-0.1.0.component.toml").exists());
+    assert!(!app.join("warder.lock").exists());
+}
+
+#[test]
+fn build_and_test_mount_leafless_local_dependency_and_write_external_only_lock() {
     let temp = TempDir::new().unwrap();
     let app = temp.path().join("app");
     let dependency = temp.path().join("local-utils");
     write_app(&app, "local_utils = { path = \"../local-utils\" }");
     write_dependency(&dependency, "1.2.3", 42);
+    assert!(
+        !dependency.join("warder.toml").exists() && !dependency.join("package.rl.toml").exists(),
+        "a local source package must not need a leaf manifest"
+    );
     let (compiler, captured_args) = fake_compiler(&temp);
 
     let build = run_warder(&app, &compiler, &captured_args, "build");
@@ -181,17 +691,11 @@ fn build_and_test_mount_direct_local_dependency_and_write_real_lock_metadata() {
         );
     }
 
-    let lock = fs::read_to_string(app.join("restrict-lock.toml")).unwrap();
-    assert!(lock.contains("[packages.local_utils]"), "{lock}");
-    assert!(lock.contains("version = \"1.2.3\""), "{lock}");
-    let sha = lock
-        .lines()
-        .find_map(|line| line.strip_prefix("sha256 = \"")?.strip_suffix('"'))
-        .expect("local lock should contain a source hash");
-    assert_eq!(sha.len(), 64);
+    let lock = fs::read_to_string(app.join("warder.lock")).unwrap();
+    assert!(lock.contains("version = 1"), "{lock}");
     assert!(
-        lock.contains("abi_hash = \"\""),
-        "v1 source-only locks retain an empty ABI hash for older Warder readers: {lock}"
+        !lock.contains("local_utils") && !lock.contains("sha256"),
+        "local source identity belongs to the build snapshot, not warder.lock: {lock}"
     );
 
     let build_args = fs::read_to_string(&captured_args).unwrap();
@@ -233,7 +737,38 @@ fn build_and_test_mount_direct_local_dependency_and_write_real_lock_metadata() {
 }
 
 #[test]
-fn rebuild_refreshes_version_and_source_hash_then_prunes_removed_dependency() {
+fn build_rejects_manifest_or_lock_files_at_a_local_source_package_root() {
+    for filename in [
+        "warder.toml",
+        "package.rl.toml",
+        "warder.lock",
+        "restrict-lock.toml",
+    ] {
+        let temp = TempDir::new().unwrap();
+        let app = temp.path().join("app");
+        let dependency = temp.path().join("local-utils");
+        write_app(&app, "local_utils = { path = \"../local-utils\" }");
+        write_dependency(&dependency, "1.2.3", 42);
+        fs::write(dependency.join(filename), "forbidden leaf metadata\n").unwrap();
+        let (compiler, captured_args) = fake_compiler(&temp);
+
+        let output = run_warder(&app, &compiler, &captured_args, "build");
+
+        assert!(!output.status.success(), "{filename} must be rejected");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("source-only package"), "{stderr}");
+        assert!(stderr.contains(filename), "{stderr}");
+        assert!(
+            !captured_args.exists(),
+            "compiler must not run for {filename}"
+        );
+        assert!(!app.join("dist").exists());
+        assert!(!app.join("warder.lock").exists());
+    }
+}
+
+#[test]
+fn local_source_changes_do_not_churn_the_external_resolution_lock() {
     let temp = TempDir::new().unwrap();
     let app = temp.path().join("app");
     let dependency = temp.path().join("local-utils");
@@ -244,25 +779,24 @@ fn rebuild_refreshes_version_and_source_hash_then_prunes_removed_dependency() {
     assert!(run_warder(&app, &compiler, &captured_args, "build")
         .status
         .success());
-    let first_lock = fs::read_to_string(app.join("restrict-lock.toml")).unwrap();
+    let first_lock = fs::read_to_string(app.join("warder.lock")).unwrap();
 
     write_dependency(&dependency, "1.3.0", 42);
     assert!(run_warder(&app, &compiler, &captured_args, "build")
         .status
         .success());
-    let second_lock = fs::read_to_string(app.join("restrict-lock.toml")).unwrap();
-    assert!(second_lock.contains("version = \"1.3.0\""), "{second_lock}");
-    assert_ne!(
+    let second_lock = fs::read_to_string(app.join("warder.lock")).unwrap();
+    assert_eq!(
         first_lock, second_lock,
-        "source changes must refresh the lock"
+        "deterministic local source changes must not rewrite dependency resolution"
     );
 
     write_app(&app, "");
     assert!(run_warder(&app, &compiler, &captured_args, "build")
         .status
         .success());
-    let pruned_lock = fs::read_to_string(app.join("restrict-lock.toml")).unwrap();
-    assert!(!pruned_lock.contains("local_utils"), "{pruned_lock}");
+    let pruned_lock = fs::read_to_string(app.join("warder.lock")).unwrap();
+    assert_eq!(second_lock, pruned_lock);
 }
 
 #[test]
@@ -271,7 +805,7 @@ fn unsupported_dependency_does_not_mutate_lock_or_create_build_directory() {
     let app = temp.path().join("app");
     write_app(&app, "registry_pkg = \"1.0.0\"");
     let sentinel = "version = 1\n# keep-existing-lock\n";
-    fs::write(app.join("restrict-lock.toml"), sentinel).unwrap();
+    fs::write(app.join("warder.lock"), sentinel).unwrap();
     let (compiler, captured_args) = fake_compiler(&temp);
 
     let output = run_warder(&app, &compiler, &captured_args, "build");
@@ -283,7 +817,7 @@ fn unsupported_dependency_does_not_mutate_lock_or_create_build_directory() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        fs::read_to_string(app.join("restrict-lock.toml")).unwrap(),
+        fs::read_to_string(app.join("warder.lock")).unwrap(),
         sentinel
     );
     assert!(!app.join("dist").exists());
@@ -300,7 +834,7 @@ fn add_rejects_an_overlapping_dependency_without_mutating_the_manifest() {
     let dependency = app.join("src/vendor");
     write_app(&app, "");
     write_dependency(&dependency, "1.2.3", 42);
-    let manifest_path = app.join("package.rl.toml");
+    let manifest_path = app.join("warder.toml");
     let previous_manifest = fs::read(&manifest_path).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_warder"))
@@ -325,7 +859,7 @@ fn build_rejects_manifest_paths_and_output_names_that_escape_the_project() {
 
     let output_escape_app = temp.path().join("output-escape-app");
     write_app(&output_escape_app, "");
-    let manifest_path = output_escape_app.join("package.rl.toml");
+    let manifest_path = output_escape_app.join("warder.toml");
     let manifest = fs::read_to_string(&manifest_path)
         .unwrap()
         .replace("output = \"dist/\"", "output = \"../escape\"");
@@ -337,7 +871,7 @@ fn build_rejects_manifest_paths_and_output_names_that_escape_the_project() {
 
     let name_escape_app = temp.path().join("name-escape-app");
     write_app(&name_escape_app, "");
-    let manifest_path = name_escape_app.join("package.rl.toml");
+    let manifest_path = name_escape_app.join("warder.toml");
     let manifest = fs::read_to_string(&manifest_path)
         .unwrap()
         .replace("name = \"app\"", "name = \"../escape\"");
@@ -365,7 +899,7 @@ fn build_rejects_manifest_paths_and_output_names_that_escape_the_project() {
     for (index, invalid_name) in ["foo:bar", "foo*bar", "foo\\\\bar"].iter().enumerate() {
         let invalid_name_app = temp.path().join(format!("invalid-name-{index}"));
         write_app(&invalid_name_app, "");
-        let manifest_path = invalid_name_app.join("package.rl.toml");
+        let manifest_path = invalid_name_app.join("warder.toml");
         let manifest = fs::read_to_string(&manifest_path)
             .unwrap()
             .replace("name = \"app\"", &format!("name = \"{invalid_name}\""));
@@ -396,7 +930,7 @@ fn compiler_failure_preserves_the_previous_lock_and_artifact_set() {
         .success());
 
     let tracked_paths = [
-        app.join("restrict-lock.toml"),
+        app.join("warder.lock"),
         app.join("dist/app-0.1.0.wat"),
         app.join("dist/app-0.1.0.wasm"),
         app.join("dist/app-0.1.0.rgc"),
@@ -432,7 +966,7 @@ fn application_mutation_during_compile_rejects_the_staged_artifact_set() {
         .success());
 
     let tracked_paths = [
-        app.join("restrict-lock.toml"),
+        app.join("warder.lock"),
         app.join("dist/app-0.1.0.wat"),
         app.join("dist/app-0.1.0.wasm"),
         app.join("dist/app-0.1.0.rgc"),

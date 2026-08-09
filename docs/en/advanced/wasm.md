@@ -1,9 +1,9 @@
 # WebAssembly Integration
 
 Restrict lowers source programs to WebAssembly without depending on a garbage
-collector. The current v0.0.1 integration is deliberately small: it is strong
-enough for executable examples, scalar host exports, and the browser compiler,
-while leaving generic and composite host ABI decisions for later design work.
+collector. The ordinary v0.0.1 path provides executable programs and scalar
+Core exports. The explicit B1 path additionally provides synchronous rich
+Components without changing that default ABI.
 
 ## Build Outputs
 
@@ -41,7 +41,7 @@ available so size and runtime effects are attributable.
 
 When building through Warder, the default project output also includes a local
 cage artifact. Warder requests the compiler release pass when
-`build.optimize = true` in `package.rl.toml` (the default) or when
+`build.optimize = true` in the repository-root `warder.toml` (the default) or when
 `warder build --release` is used:
 
 ```text
@@ -49,6 +49,25 @@ dist/<package-name>-<package-version>.wat
 dist/<package-name>-<package-version>.wasm
 dist/<package-name>-<package-version>.rgc
 ```
+
+With an explicit `[component]` selection:
+
+```bash
+warder build --component
+```
+
+publishes a transactional Component set:
+
+```text
+dist/<package-name>-<package-version>.component.wasm
+dist/<package-name>-<package-version>.component.wit
+dist/<package-name>-<package-version>.component.toml
+```
+
+The emitted `.component.toml` is artifact metadata, not another project
+configuration file. The current Component path still requires a source-public
+declaration plus explicit `[component]` selection in `warder.toml`; a future
+`pub`/`export` source-first distinction is not implemented.
 
 For the repository itself, the browser compiler is packaged with `wasm-pack`:
 
@@ -131,6 +150,44 @@ export fun exported_total: () -> Int32 = {
 
 The exported function is scalar even though the implementation uses a record.
 
+## Versioned Interoperability Direction
+
+The ordinary v0.0.1 compatibility boundary remains scalar-only. On this
+branch, the explicit B1 / v0.1.0 path implements a synchronous Component ABI
+for `String`, `List`, `Array`, records, `Option`, `Result`, user enums/variants,
+scalar-signature resources, value-capturing once-callables, and explicit
+concrete generic function instances. It generates or consumes WIT, performs
+Canonical ABI lift/lower, validates and composes Components, classifies
+compatibility, and executes through Rust bindings in a pinned runtime.
+
+The repository package version remains `0.0.1`; this is not a published v0.1
+release claim.
+
+- v0.2.0 adds the asynchronous boundary: async Component functions,
+  `future`/`stream`, cancellation, and cleanup across suspension.
+
+Neither version boundary makes Restrict's arena representation public. See the
+[v0.1.0 Synchronous Component ABI scope](../../V010_SYNCHRONOUS_COMPONENT_ABI.md)
+for the implemented contract and intentional limits.
+
+The ordinary artifact path remains `.rl -> WAT -> Core Wasm`. With an explicit
+schema-v1/schema-v2 selection, `warder build --component` transactionally
+publishes validated `.component.wasm`, normalized `.component.wit`, and
+`.component.toml` metadata. `wrap --wit` only attaches unverified
+caller-supplied WIT to a Core module cage and is not Component generation.
+
+Interface authority follows API ownership. WASI, standard worlds, and
+third-party contracts are external-WIT-first whether Restrict consumes/imports
+or implements/exports them. Rich guest imports and scalar external
+implementation/export are implemented; rich external implementations and
+external-WIT resources fail closed. Explicit Restrict-owned Component exports
+are checked through `ComponentInterfaceIr` and generate normalized WIT; ordinary
+`pub` declarations are not implicit host exports. WIT output alone is not
+completion. The repository E2E gate covers
+Rust-produced Component -> Restrict consumer and
+Restrict-produced Component -> Rust consumer through WIT only. MoonBit remains
+a reference and optional external comparison, not a repository gate.
+
 ## Memory Model
 
 Restrict uses arena-oriented lowering for heap-backed values. The generated
@@ -160,10 +217,9 @@ time the ordinary `--release` artifact and use the instrumented artifact only
 for memory observations. These counters currently cover the B0 single-entry
 arena path, not aggregate nested-arena usage.
 
-For v0.0.1, treat the memory layout as compiler-owned implementation detail.
-Host code should not reach into record, string, list, `Option`, or `Result`
-representations directly. Use scalar wrapper functions while the composite host
-ABI is still being designed.
+Treat the memory layout as compiler-owned implementation detail. Core hosts
+must not reach into record, string, list, `Option`, or `Result`
+representations. Use scalar Core wrappers or the explicit Component path.
 
 ## Browser Compiler
 
@@ -192,7 +248,8 @@ These are intentional v0.0.1 boundaries, not accidental omissions:
 - forms and concrete record adoptions are source-module features and do not add
   a composite host ABI
 - Temporal Affine Types are outside the default release gate
-- WebAssembly Component Model and WIT integration are future interop work
+- WebAssembly Component Model and WIT are available only through the explicit
+  B1 path; they do not widen ordinary v0.0.1 Core exports
 
 See the [v0.0.1 Release Surface](../reference/release-surface.md) for the
 normative release-facing table.

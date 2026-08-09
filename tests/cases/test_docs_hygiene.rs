@@ -371,9 +371,15 @@ fn readme_places_generic_export_boundary_at_release_surface_validation() {
     );
     assert!(
         readme.contains(
-            "rejected by v0.0.1 release-surface validation before `--check` success or\n  code generation"
+            "Ordinary Core exports of generic functions still have no stable ABI and are\n  rejected by v0.0.1 release-surface validation before `--check` success or\n  code generation"
         ),
-        "README.md should say exported generic/composite ABI gaps are rejected by release-surface validation before codegen"
+        "README.md should keep the ordinary Core generic export rejection before codegen"
+    );
+    assert!(
+        readme.contains(
+            "explicit B1 Component path may publish a generic\n  function only through a concrete instance explicitly selected in the root\n  `warder.toml`"
+        ),
+        "README.md should distinguish explicit concrete Component instances from Core generic exports"
     );
 }
 
@@ -382,6 +388,47 @@ fn warder_public_docs_do_not_advertise_unsupported_v001_surface() {
     for path in WARDER_PUBLIC_DOCS {
         let markdown = read_fixture(path);
         assert_no_unsupported_warder_public_doc_claims(path, &markdown);
+        for retired in ["package.rl.toml", "restrict-lock.toml"] {
+            assert!(
+                !markdown.contains(retired),
+                "{path} should use root warder.toml and generated warder.lock, not `{retired}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn warder_guides_publish_the_component_set_and_separate_wit_attachment() {
+    for path in [
+        "docs/en/guide/warder.md",
+        "docs/public/en/guide/warder.md",
+        "docs/ja/guide/warder.md",
+        "docs/public/ja/guide/warder.md",
+    ] {
+        let markdown = read_fixture(path);
+        for required in [
+            "warder build --component",
+            ".component.wasm",
+            ".component.wit",
+            ".component.toml",
+            "warder wrap",
+            "--wit",
+        ] {
+            assert!(
+                markdown.contains(required),
+                "{path} should preserve Component publication marker `{required}`"
+            );
+        }
+        for stale in [
+            "build --component` fails closed",
+            "WIT generation, parsing, type checking, and componentization are not yet performed",
+            "`--component`はschema-v1の選択を検証した後にfail closed",
+        ] {
+            assert!(
+                !markdown.contains(stale),
+                "{path} should not retain stale pre-B1 Warder status `{stale}`"
+            );
+        }
     }
 }
 
@@ -836,6 +883,158 @@ fn public_mdbook_source_is_separate_from_internal_design_docs() {
         "docs/public should not contain internal design/status documents:\n{}",
         forbidden.join("\n")
     );
+}
+
+#[test]
+fn v010_component_scope_matches_implemented_b1_and_v02_boundary() {
+    let scope = read_fixture("docs/V010_SYNCHRONOUS_COMPONENT_ABI.md");
+
+    for required in [
+        "B1 implementation complete",
+        "not yet a\npublished v0.1 release",
+        "ordinary v0.0.1\ncompatibility boundary remains the default scalar Core host ABI",
+        "v0.1.0",
+        "v0.2.0",
+        "synchronous",
+        "async",
+        "`String`",
+        "`List<T>`",
+        "`Array<T, N>`",
+        "Record",
+        "`Option<T>`",
+        "`Result<T, E>`",
+        "user-defined enums",
+        "WIT `resource`",
+        "Closure or function value",
+        "Generic function",
+        ".rl -> WAT -> Core Wasm",
+        "`warder build --component` publishes",
+        "`warder wrap --wit` is deliberately different",
+        "Generating a `.wit` file is not completion",
+        "Restrict-owned API",
+        "Externally owned API",
+        "consumes/imports",
+        "implements/exports",
+        "`ComponentInterfaceIr`",
+        "normalized WIT",
+        "Canonical ABI",
+        "Independent Rust bindings",
+        "Component composition",
+        "compatibility diff classifies both breaking and\n  non-breaking changes",
+        "External implementation/export conformance is currently scalar; rich\n  implementation/export and external-WIT resources fail closed",
+        "Rust-produced Component -> Restrict consumer",
+        "Restrict-produced Component -> Rust consumer",
+        "must not share an allocator",
+        "MoonBit remains a design precedent and optional external comparison target",
+        "not silently added to the v0.1.0 ABI release gate",
+        "JS/TS bindings and a Worker loader\nare optional later host adapters",
+    ] {
+        assert!(
+            scope.contains(required),
+            "v0.1.0 Component ABI scope should contain `{required}`"
+        );
+    }
+
+    for forbidden in [
+        "MoonBit-produced Component -> Restrict consumer",
+        "Restrict-produced Component -> MoonBit consumer",
+        "Warder `--component` is currently a placeholder",
+        "internal root-only scalar `ComponentInterfaceIr`",
+        "accepted generic and composite v0.1.0 target remains unimplemented",
+    ] {
+        assert!(
+            !scope.contains(forbidden),
+            "MoonBit should remain a precedent, not a required repository E2E gate: `{forbidden}`"
+        );
+    }
+
+    for path in [
+        "LANGUAGE_SPECIFICATION.md",
+        "README.md",
+        "ROADMAP.md",
+        "docs/WASM_EXECUTION_STRATEGY.md",
+    ] {
+        let doc = read_fixture(path);
+        assert!(
+            doc.contains("v0.1.0") && doc.contains("v0.2.0"),
+            "{path} should preserve the v0.1.0 synchronous / v0.2.0 async boundary"
+        );
+    }
+
+    for path in [
+        "LANGUAGE_SPECIFICATION.md",
+        "ROADMAP.md",
+        "docs/WASM_EXECUTION_STRATEGY.md",
+    ] {
+        let doc = read_fixture(path);
+        for required in [
+            ".rl -> WAT -> Core Wasm",
+            "Core module cage",
+            "`ComponentInterfaceIr`",
+            "normalized WIT",
+            "Canonical ABI",
+            "implements/exports",
+            "component composition",
+            "Rust-produced Component -> Restrict consumer",
+            "Restrict-produced Component -> Rust consumer",
+            ".component.wasm",
+        ] {
+            assert!(
+                doc.contains(required),
+                "{path} should preserve v0.1.0 Component interoperability marker `{required}`"
+            );
+        }
+        for forbidden in [
+            "MoonBit-produced Component -> Restrict consumer",
+            "Restrict-produced Component -> MoonBit consumer",
+            "build --component` fails closed",
+            "internal scalar componentizer proof",
+            "accepted producer slice incomplete",
+        ] {
+            assert!(
+                !doc.contains(forbidden),
+                "{path} should keep MoonBit outside the required repository E2E gate: `{forbidden}`"
+            );
+        }
+    }
+
+    for path in [
+        "README.md",
+        "docs/en/advanced/interop.md",
+        "docs/en/advanced/wasm.md",
+        "docs/public/en/advanced/interop.md",
+        "docs/public/en/advanced/wasm.md",
+    ] {
+        let doc = read_fixture(path);
+        for required in [
+            ".rl -> WAT -> Core Wasm",
+            "implements/exports",
+            "`ComponentInterfaceIr`",
+            "WIT output alone",
+            "Rust-produced Component -> Restrict consumer",
+            "Restrict-produced Component -> Rust consumer",
+            "MoonBit remains",
+            ".component.wasm",
+            "external-WIT resources fail closed",
+        ] {
+            assert!(
+                doc.contains(required),
+                "{path} should preserve owner-based v0.1.0 planning marker `{required}`"
+            );
+        }
+        for forbidden in [
+            "MoonBit-produced Component -> Restrict consumer",
+            "Restrict-produced Component -> MoonBit consumer",
+            "accepted generic and composite v0.1.0 target remains unimplemented",
+            "build --component` fails closed",
+            "currently produces a WebAssembly Component",
+        ] {
+            assert!(
+                !doc.contains(forbidden),
+                "{path} should not make MoonBit a required repository E2E gate: `{forbidden}`"
+            );
+        }
+    }
 }
 
 #[test]

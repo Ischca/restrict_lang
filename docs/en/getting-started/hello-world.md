@@ -15,7 +15,7 @@ Warder creates a project like this:
 
 ```text
 hello-world/
-├── package.rl.toml
+├── warder.toml
 ├── src/
 │   └── main.rl
 ├── tests/

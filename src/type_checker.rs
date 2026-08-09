@@ -45,7 +45,7 @@ use crate::type_constraints::{
     Constraint, ConstraintKind, ConstraintOrigin, FormEnvironment,
     Substitution as ConstraintSubstitution, TypeVarGenerator, TypeVarId,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 /// Type checking errors.
@@ -740,6 +740,147 @@ pub struct CheckedFunctionSignature {
     pub temporal_constraints: Vec<TemporalConstraint>,
 }
 
+/// Finalized, explicitly requested instantiation of one generic function.
+///
+/// This is a compiler-owned semantic result. It contains no source inference
+/// variables and keeps concrete arguments in declaration order so downstream
+/// Component ABI work never has to infer an instance from incidental calls.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckedExplicitFunctionSpecialization {
+    pub source_function: String,
+    pub type_arguments: Vec<(String, TypedType)>,
+    pub params: Vec<(String, TypedType)>,
+    pub return_type: TypedType,
+}
+
+/// Typed failures produced while validating an explicit generic instance.
+#[derive(Debug, PartialEq)]
+pub enum ExplicitFunctionSpecializationError {
+    FunctionNotFound(String),
+    FunctionIsNotGeneric(String),
+    TemporalParametersUnsupported {
+        function: String,
+        parameters: Vec<String>,
+    },
+    MissingTypeArguments {
+        function: String,
+        parameters: Vec<String>,
+    },
+    ExtraTypeArguments {
+        function: String,
+        parameters: Vec<String>,
+    },
+    OpenTypeArgument {
+        function: String,
+        parameter: String,
+        ty: String,
+    },
+    TemporalTypeArgument {
+        function: String,
+        parameter: String,
+        ty: String,
+    },
+    BoundNotSatisfied {
+        function: String,
+        parameter: String,
+        bound: String,
+        reason: String,
+    },
+    SignatureResolutionFailed {
+        function: String,
+        reason: String,
+    },
+    UnfinalizedSignature {
+        function: String,
+        position: String,
+        ty: String,
+    },
+}
+
+impl fmt::Display for ExplicitFunctionSpecializationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FunctionNotFound(function) => {
+                write!(f, "generic function '{function}' was not found")
+            }
+            Self::FunctionIsNotGeneric(function) => {
+                write!(f, "function '{function}' is not generic")
+            }
+            Self::TemporalParametersUnsupported {
+                function,
+                parameters,
+            } => {
+                let detail = if parameters.is_empty() {
+                    "temporal constraints".to_string()
+                } else {
+                    format!("temporal parameter(s) {}", parameters.join(", "))
+                };
+                write!(
+                    f,
+                    "generic function '{function}' has {detail}, which cannot be explicitly specialized for the synchronous Component ABI"
+                )
+            }
+            Self::MissingTypeArguments {
+                function,
+                parameters,
+            } => write!(
+                f,
+                "generic function '{}' is missing explicit type argument(s) for {}",
+                function,
+                parameters.join(", ")
+            ),
+            Self::ExtraTypeArguments {
+                function,
+                parameters,
+            } => write!(
+                f,
+                "generic function '{}' received unknown explicit type argument(s) {}",
+                function,
+                parameters.join(", ")
+            ),
+            Self::OpenTypeArgument {
+                function,
+                parameter,
+                ty,
+            } => write!(
+                f,
+                "generic function '{function}' type argument '{parameter}' remains open: {ty}"
+            ),
+            Self::TemporalTypeArgument {
+                function,
+                parameter,
+                ty,
+            } => write!(
+                f,
+                "generic function '{function}' type argument '{parameter}' is temporal: {ty}"
+            ),
+            Self::BoundNotSatisfied {
+                function,
+                parameter,
+                bound,
+                reason,
+            } => write!(
+                f,
+                "generic function '{function}' type argument '{parameter}' does not satisfy {bound}: {reason}"
+            ),
+            Self::SignatureResolutionFailed { function, reason } => write!(
+                f,
+                "generic function '{function}' explicit specialization signature could not be resolved: {reason}"
+            ),
+            Self::UnfinalizedSignature {
+                function,
+                position,
+                ty,
+            } => write!(
+                f,
+                "generic function '{function}' explicit specialization has an unfinalized {position} type: {ty}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ExplicitFunctionSpecializationError {}
+
 struct VariantPayloadExpectedContext<'a> {
     field_template: &'a TypedType,
     expected: Option<&'a TypedType>,
@@ -891,6 +1032,337 @@ impl TypeChecker {
                 type_params: function.type_params.clone(),
                 temporal_constraints: function.temporal_constraints.clone(),
             })
+    }
+
+    /// Validate one explicit concrete instantiation of a checked generic
+    /// function without mutating inference or affine-use state.
+    ///
+    /// Bindings are keyed by declared source parameter name. The returned
+    /// vector is always ordered by the declaration, independently of map
+    /// iteration order. This is intentionally separate from call-site generic
+    /// inference: Component publication must request a finite instance rather
+    /// than discover one from a body that happens to call the function.
+    pub fn checked_explicit_function_specialization(
+        &self,
+        function: &str,
+        bindings: &BTreeMap<String, TypedType>,
+    ) -> Result<CheckedExplicitFunctionSpecialization, ExplicitFunctionSpecializationError> {
+        let definition = self.functions.get(function).ok_or_else(|| {
+            ExplicitFunctionSpecializationError::FunctionNotFound(function.to_string())
+        })?;
+        if definition.type_params.is_empty() {
+            return Err(ExplicitFunctionSpecializationError::FunctionIsNotGeneric(
+                function.to_string(),
+            ));
+        }
+
+        let temporal_parameters = definition
+            .type_params
+            .iter()
+            .filter(|parameter| parameter.is_temporal)
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
+        if !temporal_parameters.is_empty() || !definition.temporal_constraints.is_empty() {
+            return Err(
+                ExplicitFunctionSpecializationError::TemporalParametersUnsupported {
+                    function: function.to_string(),
+                    parameters: temporal_parameters,
+                },
+            );
+        }
+
+        let declared_names = definition
+            .type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
+        let declared_set = declared_names.iter().cloned().collect::<HashSet<_>>();
+        let mut missing = declared_names
+            .iter()
+            .filter(|name| !bindings.contains_key(*name))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            // Declaration order is already deterministic, but keep this
+            // explicit if the collection strategy changes later.
+            missing.sort_by_key(|name| {
+                declared_names
+                    .iter()
+                    .position(|declared| declared == name)
+                    .unwrap_or(usize::MAX)
+            });
+            return Err(ExplicitFunctionSpecializationError::MissingTypeArguments {
+                function: function.to_string(),
+                parameters: missing,
+            });
+        }
+        let extra = bindings
+            .keys()
+            .filter(|name| !declared_set.contains(*name))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !extra.is_empty() {
+            return Err(ExplicitFunctionSpecializationError::ExtraTypeArguments {
+                function: function.to_string(),
+                parameters: extra,
+            });
+        }
+
+        let mut ordered_arguments = Vec::with_capacity(definition.type_params.len());
+        let mut substitution = HashMap::with_capacity(definition.type_params.len());
+        for parameter in &definition.type_params {
+            let concrete = bindings
+                .get(&parameter.name)
+                .expect("missing explicit bindings were rejected above");
+            if Self::explicit_specialization_type_contains_temporal(concrete) {
+                return Err(ExplicitFunctionSpecializationError::TemporalTypeArgument {
+                    function: function.to_string(),
+                    parameter: parameter.name.clone(),
+                    ty: format_typed_type(concrete),
+                });
+            }
+            if !Self::explicit_specialization_type_is_closed(concrete) {
+                return Err(ExplicitFunctionSpecializationError::OpenTypeArgument {
+                    function: function.to_string(),
+                    parameter: parameter.name.clone(),
+                    ty: format_typed_type(concrete),
+                });
+            }
+
+            self.validate_record_type_form_bounds(concrete)
+                .map_err(
+                    |error| ExplicitFunctionSpecializationError::BoundNotSatisfied {
+                        function: function.to_string(),
+                        parameter: parameter.name.clone(),
+                        bound: "nested nominal type bounds".to_string(),
+                        reason: error.to_string(),
+                    },
+                )?;
+            for bound in &parameter.bounds {
+                if !self.type_implements_trait(concrete, &bound.trait_name) {
+                    return Err(ExplicitFunctionSpecializationError::BoundNotSatisfied {
+                        function: function.to_string(),
+                        parameter: parameter.name.clone(),
+                        bound: format!("trait '{}'", bound.trait_name),
+                        reason: format!(
+                            "type {} has no matching implementation",
+                            format_typed_type(concrete)
+                        ),
+                    });
+                }
+            }
+            if let Some(required_parent) = &parameter.derivation_bound {
+                self.check_derivation_bound(concrete, required_parent)
+                    .map_err(
+                        |error| ExplicitFunctionSpecializationError::BoundNotSatisfied {
+                            function: function.to_string(),
+                            parameter: parameter.name.clone(),
+                            bound: format!("derivation from '{required_parent}'"),
+                            reason: error.to_string(),
+                        },
+                    )?;
+            }
+            for form_name in self.form_bound_names(parameter) {
+                let constraint = Constraint::HasForm {
+                    ty: concrete.clone(),
+                    form_name: form_name.clone(),
+                    origin: Self::constraint_origin(ConstraintKind::FormBound {
+                        type_param: parameter.name.clone(),
+                    }),
+                };
+                self.solve_constraints_with_current_forms(
+                    &[constraint],
+                    &ConstraintSubstitution::new(),
+                )
+                .map_err(|error| {
+                    ExplicitFunctionSpecializationError::BoundNotSatisfied {
+                        function: function.to_string(),
+                        parameter: parameter.name.clone(),
+                        bound: format!("form '{form_name}'"),
+                        reason: error.to_string(),
+                    }
+                })?;
+            }
+
+            ordered_arguments.push((parameter.name.clone(), concrete.clone()));
+            substitution.insert(parameter.name.clone(), concrete.clone());
+        }
+
+        let substituted_params = definition
+            .params
+            .iter()
+            .map(|(name, ty)| (name.clone(), substitute_type_params(ty, &substitution)))
+            .collect::<Vec<_>>();
+        let substituted_return = substitute_type_params(&definition.return_type, &substitution);
+
+        // Associated type projections require fresh inference variables while
+        // they are reduced. Resolve them on a clone so this public API remains
+        // observably read-only for the checked program and affine-use state.
+        let mut resolver = self.clone();
+        let mut signature_constraints = Vec::new();
+        let lowered_params = substituted_params
+            .into_iter()
+            .map(|(name, ty)| {
+                let lowered = resolver.lower_associated_type_projections(
+                    ty,
+                    &mut signature_constraints,
+                    Self::constraint_origin(ConstraintKind::AssocTypeProjection {
+                        assoc_name: format!("{function}.{name}"),
+                    }),
+                );
+                (name, lowered)
+            })
+            .collect::<Vec<_>>();
+        let lowered_return = resolver.lower_associated_type_projections(
+            substituted_return,
+            &mut signature_constraints,
+            Self::constraint_origin(ConstraintKind::ReturnAnnotation {
+                var_name: function.to_string(),
+            }),
+        );
+        let signature_substitution = resolver
+            .solve_constraints_with_current_forms(
+                &signature_constraints,
+                &ConstraintSubstitution::new(),
+            )
+            .map_err(
+                |error| ExplicitFunctionSpecializationError::SignatureResolutionFailed {
+                    function: function.to_string(),
+                    reason: error.to_string(),
+                },
+            )?;
+        let params = lowered_params
+            .into_iter()
+            .map(|(name, ty)| {
+                let specialized = signature_substitution.apply(&ty).map_err(|error| {
+                    ExplicitFunctionSpecializationError::SignatureResolutionFailed {
+                        function: function.to_string(),
+                        reason: error.to_string(),
+                    }
+                })?;
+                Self::validate_finalized_explicit_specialization_type(
+                    function,
+                    format!("parameter '{name}'"),
+                    &specialized,
+                )?;
+                Ok((name, specialized))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let return_type = signature_substitution
+            .apply(&lowered_return)
+            .map_err(
+                |error| ExplicitFunctionSpecializationError::SignatureResolutionFailed {
+                    function: function.to_string(),
+                    reason: error.to_string(),
+                },
+            )?;
+        Self::validate_finalized_explicit_specialization_type(
+            function,
+            "return".to_string(),
+            &return_type,
+        )?;
+
+        Ok(CheckedExplicitFunctionSpecialization {
+            source_function: function.to_string(),
+            type_arguments: ordered_arguments,
+            params,
+            return_type,
+        })
+    }
+
+    fn validate_finalized_explicit_specialization_type(
+        function: &str,
+        position: String,
+        ty: &TypedType,
+    ) -> Result<(), ExplicitFunctionSpecializationError> {
+        if Self::explicit_specialization_type_is_closed(ty)
+            && !Self::explicit_specialization_type_contains_temporal(ty)
+        {
+            return Ok(());
+        }
+        Err(ExplicitFunctionSpecializationError::UnfinalizedSignature {
+            function: function.to_string(),
+            position,
+            ty: format_typed_type(ty),
+        })
+    }
+
+    fn explicit_specialization_type_is_closed(ty: &TypedType) -> bool {
+        match ty {
+            TypedType::TypeParam(_) | TypedType::InferVar(_) | TypedType::Projection { .. } => {
+                false
+            }
+            TypedType::Array(inner, ArrayLength::Known(_))
+            | TypedType::Option(inner)
+            | TypedType::List(inner) => Self::explicit_specialization_type_is_closed(inner),
+            TypedType::Array(_, ArrayLength::AnyInternal) => false,
+            TypedType::Result(ok, err) => {
+                Self::explicit_specialization_type_is_closed(ok)
+                    && Self::explicit_specialization_type_is_closed(err)
+            }
+            TypedType::Record { type_args, .. } => type_args
+                .iter()
+                .all(Self::explicit_specialization_type_is_closed),
+            TypedType::Function {
+                params,
+                return_type,
+            } => {
+                params
+                    .iter()
+                    .all(Self::explicit_specialization_type_is_closed)
+                    && Self::explicit_specialization_type_is_closed(return_type)
+            }
+            TypedType::Temporal { .. } => false,
+            TypedType::Int32
+            | TypedType::Int64
+            | TypedType::Float64
+            | TypedType::Boolean
+            | TypedType::String
+            | TypedType::Char
+            | TypedType::Unit
+            | TypedType::Enum { .. } => true,
+        }
+    }
+
+    fn explicit_specialization_type_contains_temporal(ty: &TypedType) -> bool {
+        match ty {
+            TypedType::Temporal { .. } => true,
+            TypedType::Option(inner) | TypedType::List(inner) | TypedType::Array(inner, _) => {
+                Self::explicit_specialization_type_contains_temporal(inner)
+            }
+            TypedType::Result(ok, err) => {
+                Self::explicit_specialization_type_contains_temporal(ok)
+                    || Self::explicit_specialization_type_contains_temporal(err)
+            }
+            TypedType::Record { type_args, .. } => type_args
+                .iter()
+                .any(Self::explicit_specialization_type_contains_temporal),
+            TypedType::Function {
+                params,
+                return_type,
+            } => {
+                params
+                    .iter()
+                    .any(Self::explicit_specialization_type_contains_temporal)
+                    || Self::explicit_specialization_type_contains_temporal(return_type)
+            }
+            TypedType::Projection { base, args, .. } => {
+                Self::explicit_specialization_type_contains_temporal(base)
+                    || args
+                        .iter()
+                        .any(Self::explicit_specialization_type_contains_temporal)
+            }
+            TypedType::Int32
+            | TypedType::Int64
+            | TypedType::Float64
+            | TypedType::Boolean
+            | TypedType::String
+            | TypedType::Char
+            | TypedType::Unit
+            | TypedType::Enum { .. }
+            | TypedType::TypeParam(_)
+            | TypedType::InferVar(_) => false,
+        }
     }
 
     pub fn checked_record_fields_for_type(

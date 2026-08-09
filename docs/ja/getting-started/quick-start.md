@@ -149,7 +149,7 @@ cd my-project
 # プロジェクト構造
 tree .
 # .
-# ├── package.rl.toml
+# ├── warder.toml
 # ├── src/
 # │   └── main.rl
 # ├── tests/
@@ -178,12 +178,13 @@ warder test
 ### 依存関係を追加
 
 ```bash
-# 依存関係を追加
-warder add some-package
-
-# ローカル依存関係を追加
-warder add local-package --path ./path/to/local/package
+# 直接ローカル依存関係を追加
+warder add local_package --path ./path/to/local/package
 ```
+
+依存先に必要なのは`src/lib.rl`だけで、leaf manifestやleaf lockは持ちません。`warder build`は外部の非決定的な解決だけを固定するroot `warder.lock`を生成します。現在はレジストリ、Git、外部WASM、推移的依存関係の解決がfail closedするため、ローカルのみのlockに解決済みパッケージentryはありません。
+
+現行実装が公開可能なパッケージはルートの1つです。将来の複数公開パッケージworkspaceも同じroot `warder.toml`を拡張し、公開identityをディレクトリ配置から導出しません。
 
 ## 次のステップ
 

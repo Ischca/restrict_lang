@@ -1,20 +1,30 @@
 use crate::manifest::{Dependency, Manifest};
-use crate::vault::{LockSource, PackageLock, Vault};
+use crate::vault::Vault;
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 
-const LOCAL_SOURCE_HASH_VERSION: &[u8] = b"warder.local-source.v1";
+const LOCAL_SOURCE_HASH_VERSION: &[u8] = b"warder.local-source.v2";
+const FORBIDDEN_LOCAL_PACKAGE_METADATA: [&str; 4] = [
+    "warder.toml",
+    "package.rl.toml",
+    "warder.lock",
+    "restrict-lock.toml",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedLocalDependency {
     pub(crate) alias: String,
     pub(crate) package_root: PathBuf,
     pub(crate) source_dir: PathBuf,
+    /// Ephemeral content identity used to verify immutable build snapshots.
+    /// Local sources are deterministic workspace inputs and are not persisted
+    /// in the dependency lock.
+    pub(crate) source_hash: String,
 }
 
 impl ResolvedLocalDependency {
@@ -53,7 +63,7 @@ pub(crate) fn resolve_local_dependencies(
     aliases.sort_by(|left, right| left.0.cmp(right.0));
 
     let mut resolved = Vec::with_capacity(aliases.len());
-    let mut vault = Vault::new();
+    let vault = Vault::new();
     let mut source_roots = HashMap::<PathBuf, String>::new();
 
     for (alias, dependency) in aliases {
@@ -103,51 +113,7 @@ pub(crate) fn resolve_local_dependencies(
                 alias
             );
         }
-
-        let dependency_manifest_path = dependency_root.join("package.rl.toml");
-        let dependency_manifest_metadata = fs::symlink_metadata(&dependency_manifest_path)
-            .with_context(|| {
-                format!(
-                    "Local dependency '{}' is missing package.rl.toml at {}",
-                    alias,
-                    dependency_manifest_path.display()
-                )
-            })?;
-        if dependency_manifest_metadata.file_type().is_symlink() {
-            bail!(
-                "Local dependency '{}' package.rl.toml must not be a symlink: {}",
-                alias,
-                dependency_manifest_path.display()
-            );
-        }
-        if !dependency_manifest_metadata.is_file() {
-            bail!(
-                "Local dependency '{}' is missing package.rl.toml at {}",
-                alias,
-                dependency_manifest_path.display()
-            );
-        }
-        let dependency_manifest = Manifest::load(&dependency_manifest_path)
-            .with_context(|| format!("Failed to load local dependency '{}' manifest", alias))?;
-        semver::Version::parse(&dependency_manifest.package.version).with_context(|| {
-            format!(
-                "Local dependency '{}' has invalid package version '{}'",
-                alias, dependency_manifest.package.version
-            )
-        })?;
-        if !dependency_manifest.dependencies.is_empty() {
-            let mut transitive = dependency_manifest
-                .dependencies
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>();
-            transitive.sort();
-            bail!(
-                "Local dependency '{}' declares transitive dependencies ({}); transitive package graphs are outside the current direct-local v0.0.1 slice",
-                alias,
-                transitive.join(", ")
-            );
-        }
+        reject_local_package_metadata(alias, &dependency_root)?;
 
         let declared_source_dir = dependency_root.join("src");
         let source_metadata = fs::symlink_metadata(&declared_source_dir).with_context(|| {
@@ -217,21 +183,12 @@ pub(crate) fn resolve_local_dependencies(
         }
         source_roots.insert(source_dir.clone(), alias.clone());
 
-        let source_hash = hash_local_package(&dependency_root, &source_dir)?;
-        vault.add_package(
-            alias.clone(),
-            PackageLock {
-                version: dependency_manifest.package.version,
-                source: LockSource::Path { path: path.clone() },
-                abi_hash: String::new(),
-                sha256: source_hash,
-                dependencies: BTreeMap::new(),
-            },
-        );
+        let source_hash = hash_local_source(&source_dir)?;
         resolved.push(ResolvedLocalDependency {
             alias: alias.clone(),
             package_root: dependency_root,
             source_dir,
+            source_hash,
         });
     }
 
@@ -360,7 +317,6 @@ fn prospective_project_directory(root: &Path, relative: &Path, label: &str) -> R
 
 pub(crate) fn snapshot_local_dependencies(
     dependencies: &[ResolvedLocalDependency],
-    vault: &Vault,
     snapshot_root: &Path,
 ) -> Result<Vec<ResolvedLocalDependency>> {
     let canonical_snapshot_root = prospective_canonical_snapshot_root(snapshot_root)?;
@@ -393,11 +349,6 @@ pub(crate) fn snapshot_local_dependencies(
                 dependency.alias
             )
         })?;
-        copy_regular_file(
-            &dependency.package_root.join("package.rl.toml"),
-            &package_snapshot.join("package.rl.toml"),
-        )?;
-
         for entry in WalkDir::new(&dependency.source_dir).follow_links(false) {
             let entry = entry.with_context(|| {
                 format!("Failed to snapshot local dependency '{}'", dependency.alias)
@@ -431,17 +382,8 @@ pub(crate) fn snapshot_local_dependencies(
             }
         }
 
-        let snapshot_hash = hash_local_package(&package_snapshot, &source_snapshot)?;
-        let expected_hash = &vault
-            .get_package(&dependency.alias)
-            .with_context(|| {
-                format!(
-                    "Resolved dependency '{}' is missing from the lock plan",
-                    dependency.alias
-                )
-            })?
-            .sha256;
-        if &snapshot_hash != expected_hash {
+        let snapshot_hash = hash_local_source(&source_snapshot)?;
+        if snapshot_hash != dependency.source_hash {
             bail!(
                 "Local dependency '{}' changed while creating an immutable build snapshot",
                 dependency.alias
@@ -452,10 +394,34 @@ pub(crate) fn snapshot_local_dependencies(
             alias: dependency.alias.clone(),
             package_root: package_snapshot,
             source_dir: source_snapshot,
+            source_hash: snapshot_hash,
         });
     }
 
     Ok(snapshots)
+}
+
+fn reject_local_package_metadata(alias: &str, dependency_root: &Path) -> Result<()> {
+    for filename in FORBIDDEN_LOCAL_PACKAGE_METADATA {
+        let path = dependency_root.join(filename);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => bail!(
+                "Local dependency '{}' must be a source-only package without leaf manifests or locks; remove {}",
+                alias,
+                path.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to inspect forbidden local dependency metadata {}",
+                        path.display()
+                    )
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn prospective_canonical_snapshot_root(snapshot_root: &Path) -> Result<PathBuf> {
@@ -525,7 +491,7 @@ fn validate_compiler_module_root_path(alias: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn hash_local_package(package_root: &Path, source_dir: &Path) -> Result<String> {
+fn hash_local_source(source_dir: &Path) -> Result<String> {
     let mut source_files = Vec::new();
     let mut seen_canonical_files = HashSet::new();
     let canonical_source_dir = fs::canonicalize(source_dir).with_context(|| {
@@ -568,15 +534,13 @@ fn hash_local_package(package_root: &Path, source_dir: &Path) -> Result<String> 
                 path.display()
             );
         }
-        let relative = package_relative_hash_path(package_root, path)?;
+        let relative = source_relative_hash_path(source_dir, path)?;
         source_files.push((relative, path.to_path_buf()));
     }
     source_files.sort_by(|left, right| left.0.cmp(&right.0));
 
     let mut hasher = Sha256::new();
     hash_frame(&mut hasher, LOCAL_SOURCE_HASH_VERSION);
-    let manifest_path = package_root.join("package.rl.toml");
-    hash_file(&mut hasher, package_root, &manifest_path)?;
     for (relative, source_file) in source_files {
         hash_file_at_relative_path(&mut hasher, &relative, &source_file)?;
     }
@@ -584,17 +548,12 @@ fn hash_local_package(package_root: &Path, source_dir: &Path) -> Result<String> 
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn hash_file(hasher: &mut Sha256, package_root: &Path, path: &Path) -> Result<()> {
-    let relative = package_relative_hash_path(package_root, path)?;
-    hash_file_at_relative_path(hasher, &relative, path)
-}
-
-fn package_relative_hash_path(package_root: &Path, path: &Path) -> Result<String> {
-    let relative = path.strip_prefix(package_root).with_context(|| {
+fn source_relative_hash_path(source_dir: &Path, path: &Path) -> Result<String> {
+    let relative = path.strip_prefix(source_dir).with_context(|| {
         format!(
             "Local dependency file {} is outside {}",
             path.display(),
-            package_root.display()
+            source_dir.display()
         )
     })?;
     let mut normalized = Vec::new();
@@ -638,15 +597,8 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn write_package(root: &Path, name: &str, version: &str, source: &str) {
+    fn write_package(root: &Path, source: &str) {
         fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(
-            root.join("package.rl.toml"),
-            format!(
-                "[package]\nname = \"{name}\"\nversion = \"{version}\"\nentry = \"src/main.rl\"\nedition = \"2025\"\n\n[dependencies]\n"
-            ),
-        )
-        .unwrap();
         fs::write(root.join("src/lib.rl"), source).unwrap();
     }
 
@@ -662,28 +614,21 @@ mod tests {
     }
 
     #[test]
-    fn local_dependency_uses_manifest_version_and_source_hash() {
+    fn local_dependency_requires_only_library_source_and_keeps_hash_ephemeral() {
         let temp = TempDir::new().unwrap();
         let app = temp.path().join("app");
         let dependency = temp.path().join("local-utils");
         fs::create_dir_all(&app).unwrap();
-        write_package(
-            &dependency,
-            "local-utils",
-            "1.2.3",
-            "pub fun score: () -> Int32 = { 7 }\n",
-        );
+        write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
 
         let (resolved, vault) =
             resolve_local_dependencies(&app, &root_manifest("../local-utils")).unwrap();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].alias, "local_utils");
-        let package = vault.get_package("local_utils").unwrap();
-        assert_eq!(package.version, "1.2.3");
-        assert_eq!(package.abi_hash, "");
-        assert_eq!(package.sha256.len(), 64);
-        assert!(package.dependencies.is_empty());
+        assert_eq!(resolved[0].source_hash.len(), 64);
+        assert!(vault.packages.is_empty());
+        assert!(!dependency.join("package.rl.toml").exists());
     }
 
     #[test]
@@ -692,40 +637,29 @@ mod tests {
         let app = temp.path().join("app");
         let dependency = temp.path().join("local-utils");
         fs::create_dir_all(&app).unwrap();
-        write_package(
-            &dependency,
-            "local-utils",
-            "1.2.3",
-            "pub fun score: () -> Int32 = { 7 }\n",
-        );
+        write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
         let manifest = root_manifest("../local-utils");
 
-        let (_, first) = resolve_local_dependencies(&app, &manifest).unwrap();
+        let (first, _) = resolve_local_dependencies(&app, &manifest).unwrap();
         fs::write(
             dependency.join("src/lib.rl"),
             "pub fun score: () -> Int32 = { 8 }\n",
         )
         .unwrap();
-        let (_, second) = resolve_local_dependencies(&app, &manifest).unwrap();
+        let (second, _) = resolve_local_dependencies(&app, &manifest).unwrap();
 
-        assert_ne!(
-            first.get_package("local_utils").unwrap().sha256,
-            second.get_package("local_utils").unwrap().sha256
-        );
+        assert_ne!(first[0].source_hash, second[0].source_hash);
     }
 
     #[test]
     fn dependency_hash_paths_use_portable_separators() {
-        let relative = package_relative_hash_path(
-            Path::new("package"),
-            &Path::new("package")
-                .join("src")
-                .join("nested")
-                .join("detail.rl"),
+        let relative = source_relative_hash_path(
+            Path::new("source"),
+            &Path::new("source").join("nested").join("detail.rl"),
         )
         .unwrap();
 
-        assert_eq!(relative, "src/nested/detail.rl");
+        assert_eq!(relative, "nested/detail.rl");
     }
 
     #[cfg(unix)]
@@ -733,12 +667,11 @@ mod tests {
     fn non_utf8_dependency_hash_paths_are_rejected() {
         use std::os::unix::ffi::OsStringExt;
 
-        let package_root = Path::new("package");
-        let source = package_root
-            .join("src")
+        let source_root = Path::new("source");
+        let source = source_root
             .join(OsString::from_vec(vec![b'n', 0xff]))
             .join("detail.rl");
-        let error = package_relative_hash_path(package_root, &source)
+        let error = source_relative_hash_path(source_root, &source)
             .unwrap_err()
             .to_string();
 
@@ -765,46 +698,64 @@ mod tests {
     }
 
     #[test]
-    fn transitive_dependency_is_rejected() {
-        let temp = TempDir::new().unwrap();
-        let app = temp.path().join("app");
-        let dependency = temp.path().join("local-utils");
-        fs::create_dir_all(&app).unwrap();
-        write_package(
-            &dependency,
-            "local-utils",
-            "1.2.3",
-            "pub fun score: () -> Int32 = { 7 }\n",
-        );
-        fs::write(
-            dependency.join("package.rl.toml"),
-            "[package]\nname = \"local-utils\"\nversion = \"1.2.3\"\nentry = \"src/main.rl\"\nedition = \"2025\"\n\n[dependencies]\nnested = { path = \"../nested\" }\n",
-        )
-        .unwrap();
+    fn local_dependency_manifest_and_lock_entries_are_rejected() {
+        for (index, filename) in FORBIDDEN_LOCAL_PACKAGE_METADATA.iter().enumerate() {
+            for kind in ["file", "directory"] {
+                let temp = TempDir::new().unwrap();
+                let app = temp.path().join("app");
+                let dependency = temp.path().join(format!("local-utils-{index}-{kind}"));
+                fs::create_dir_all(&app).unwrap();
+                write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
+                let forbidden = dependency.join(filename);
+                if kind == "file" {
+                    fs::write(&forbidden, "forbidden leaf metadata\n").unwrap();
+                } else {
+                    fs::create_dir(&forbidden).unwrap();
+                }
+                let relative = format!("../local-utils-{index}-{kind}");
 
-        let error = resolve_local_dependencies(&app, &root_manifest("../local-utils"))
-            .unwrap_err()
-            .to_string();
+                let error = resolve_local_dependencies(&app, &root_manifest(&relative))
+                    .unwrap_err()
+                    .to_string();
 
-        assert!(
-            error.contains("transitive dependencies (nested)"),
-            "{error}"
-        );
+                assert!(error.contains("source-only package"), "{error}");
+                assert!(error.contains(filename), "{error}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_dependency_manifest_and_lock_symlinks_are_rejected() {
+        use std::os::unix::fs::symlink;
+
+        for (index, filename) in FORBIDDEN_LOCAL_PACKAGE_METADATA.iter().enumerate() {
+            let temp = TempDir::new().unwrap();
+            let app = temp.path().join("app");
+            let dependency = temp.path().join(format!("local-utils-{index}"));
+            fs::create_dir_all(&app).unwrap();
+            write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
+            let target = dependency.join("missing-metadata-target");
+            symlink(&target, dependency.join(filename)).unwrap();
+            let relative = format!("../local-utils-{index}");
+
+            let error = resolve_local_dependencies(&app, &root_manifest(&relative))
+                .unwrap_err()
+                .to_string();
+
+            assert!(error.contains("source-only package"), "{error}");
+            assert!(error.contains(filename), "{error}");
+        }
     }
 
     #[test]
-    fn snapshot_rejects_source_changes_after_lock_planning() {
+    fn snapshot_rejects_source_changes_after_resolution() {
         let temp = TempDir::new().unwrap();
         let app = temp.path().join("app");
         let dependency = temp.path().join("local-utils");
         fs::create_dir_all(&app).unwrap();
-        write_package(
-            &dependency,
-            "local-utils",
-            "1.2.3",
-            "pub fun score: () -> Int32 = { 7 }\n",
-        );
-        let (resolved, vault) =
+        write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
+        let (resolved, _) =
             resolve_local_dependencies(&app, &root_manifest("../local-utils")).unwrap();
         fs::write(
             dependency.join("src/lib.rl"),
@@ -812,7 +763,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = snapshot_local_dependencies(&resolved, &vault, &temp.path().join("snapshot"))
+        let error = snapshot_local_dependencies(&resolved, &temp.path().join("snapshot"))
             .unwrap_err()
             .to_string();
 
@@ -823,22 +774,37 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_copies_only_restrict_sources() {
+        let temp = TempDir::new().unwrap();
+        let app = temp.path().join("app");
+        let dependency = temp.path().join("local-utils");
+        fs::create_dir_all(&app).unwrap();
+        write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
+        fs::write(dependency.join("src/notes.txt"), "not compiler input\n").unwrap();
+        let (resolved, _) =
+            resolve_local_dependencies(&app, &root_manifest("../local-utils")).unwrap();
+
+        let snapshots =
+            snapshot_local_dependencies(&resolved, &temp.path().join("snapshot")).unwrap();
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].source_hash, resolved[0].source_hash);
+        assert!(snapshots[0].source_dir.join("lib.rl").is_file());
+        assert!(!snapshots[0].source_dir.join("notes.txt").exists());
+    }
+
+    #[test]
     fn snapshot_root_inside_live_dependency_source_is_rejected_before_creation() {
         let temp = TempDir::new().unwrap();
         let app = temp.path().join("app");
         let dependency = temp.path().join("local-utils");
         fs::create_dir_all(&app).unwrap();
-        write_package(
-            &dependency,
-            "local-utils",
-            "1.2.3",
-            "pub fun score: () -> Int32 = { 7 }\n",
-        );
-        let (resolved, vault) =
+        write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
+        let (resolved, _) =
             resolve_local_dependencies(&app, &root_manifest("../local-utils")).unwrap();
         let snapshot_root = dependency.join("src/snapshots");
 
-        let error = snapshot_local_dependencies(&resolved, &vault, &snapshot_root)
+        let error = snapshot_local_dependencies(&resolved, &snapshot_root)
             .unwrap_err()
             .to_string();
 
@@ -856,18 +822,8 @@ mod tests {
         let upper_dependency = temp.path().join("upper-package");
         let lower_dependency = temp.path().join("lower-package");
         fs::create_dir_all(&app).unwrap();
-        write_package(
-            &upper_dependency,
-            "upper-package",
-            "1.0.0",
-            "pub val upper: Int32 = 1\n",
-        );
-        write_package(
-            &lower_dependency,
-            "lower-package",
-            "1.0.0",
-            "pub val lower: Int32 = 2\n",
-        );
+        write_package(&upper_dependency, "pub val upper: Int32 = 1\n");
+        write_package(&lower_dependency, "pub val lower: Int32 = 2\n");
         let mut manifest = Manifest::new("app");
         manifest.dependencies.insert(
             "Foo".to_string(),
@@ -881,10 +837,10 @@ mod tests {
                 path: "../lower-package".to_string(),
             },
         );
-        let (resolved, vault) = resolve_local_dependencies(&app, &manifest).unwrap();
+        let (resolved, _) = resolve_local_dependencies(&app, &manifest).unwrap();
 
         let snapshots =
-            snapshot_local_dependencies(&resolved, &vault, &temp.path().join("snapshot")).unwrap();
+            snapshot_local_dependencies(&resolved, &temp.path().join("snapshot")).unwrap();
 
         assert_eq!(
             snapshots
@@ -918,12 +874,7 @@ mod tests {
         let app = temp.path().join("app");
         let dependency = temp.path().join("local-utils");
         fs::create_dir_all(&app).unwrap();
-        write_package(
-            &dependency,
-            "local-utils",
-            "1.2.3",
-            "pub fun score: () -> Int32 = { 7 }\n",
-        );
+        write_package(&dependency, "pub fun score: () -> Int32 = { 7 }\n");
         fs::write(
             dependency.join("src/detail.rl"),
             "pub fun detail: () -> Int32 = { 1 }\n",

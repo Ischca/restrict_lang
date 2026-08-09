@@ -100,8 +100,8 @@ dist/hello-world-0.1.0.wasm
 dist/hello-world-0.1.0.rgc
 ```
 
-The output stem is `<package-name>-<package-version>` from
-`package.rl.toml`.
+The output stem is `<package-name>-<package-version>` from the repository-root
+`warder.toml`.
 
 ## Language Server
 

@@ -5,14 +5,17 @@ does not expand the published v0.0.1 public host ABI. The default v0.0.1
 release surface still exports only scalar monomorphic functions and scalar
 literal globals. Post-v0.0.1 experiments must be selected explicitly; the
 first such profile is the narrow core-Wasm adapter `flat-record-v1` documented
-below.
+below. The explicit B1 synchronous Component ABI is defined in
+`V010_SYNCHRONOUS_COMPONENT_ABI.md` and is implemented separately from the
+default Core path.
 
 ## Goals
 
 1. Keep Restrict's internal value model explicit enough for optimization.
 2. Avoid publishing raw linear-memory layouts as a stable host ABI.
 3. Preserve affine ownership and arena region information across lowering.
-4. Leave room for later composite host adapters without blocking v0.0.1.
+4. Provide compiler-owned layouts as input to the separately versioned v0.1.0
+   Canonical ABI adapters without publishing those layouts.
 5. Define experimental adapters independently from mutable internal layouts.
 
 ## Non-Goals
@@ -32,6 +35,7 @@ Restrict values must be described through two separate ABI facets.
 | Internal ABI | Compiler, optimizer, Wasm lowering | May use typed references, layout descriptors, arena regions, and specialized layouts. |
 | Host ABI | External caller | v0.0.1 supports only `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `()`. |
 | Experimental host profile | Explicitly opted-in external caller | `flat-record-v1` adds generated scalar-flattening wrappers for a restricted class of records without publishing their internal layout. |
+| Explicit B1 component profile | Component hosts and Rust bindings | Schema-v1/schema-v2 selections recursively lift/lower the supported synchronous value set through WIT and the Canonical ABI. |
 
 The compiler must never treat internal layout as host-visible contract. Later
 composite host support should be generated through adapters that use layout
@@ -73,7 +77,9 @@ metadata and are not stable across builds or observable through the host ABI.
 
 ## Composite Values
 
-Composite values are internal-only in v0.0.1 host exports.
+Composite values are internal-only in ordinary v0.0.1 host exports. The
+explicit B1 path converts them through generated Canonical ABI adapters; none of the layouts below
+becomes the public Component contract.
 
 ### String
 
@@ -322,7 +328,26 @@ These rules establish the following invariants:
 The compiler must reject an unsupported record boundary instead of exporting
 the internal pointer-shaped calling convention. General composite ownership,
 nested-value copying, pointer-length values, WIT canonical lowering, and
-Component Model integration require a later, separately versioned profile.
+Component Model integration belong to the explicit B1 synchronous profile and
+never widen this Core adapter.
+
+## Implemented B1 Component Profile
+
+The v0.1.0 profile is defined in
+`V010_SYNCHRONOUS_COMPONENT_ABI.md`. It introduces a monomorphized Component
+Interface IR and recursively generated lift/lower adapters for `String`,
+`List`, `Array`, records, `Option`, `Result`, user enums/variants, synchronous
+scalar-signature resources, value-only capture once-callables, and explicit
+concrete generic function exports. External WIT is input for imported capabilities;
+normalized WIT is generated from explicitly selected Restrict exports. In both
+cases, normalized WIT plus stable profile metadata is the compatibility
+authority.
+
+This profile defines its own boundary allocator, `cabi_realloc`, return areas,
+post-return cleanup, handle tables, and failure/re-entry rules. It may
+query the internal descriptors in this document while generating adapters, but
+it must not expose their headers, offsets, `LayoutId` values, arena pointers,
+or function-table indexes.
 
 ## Optimization Contract
 
@@ -346,10 +371,11 @@ must not keep that metadata as runtime cost unless required.
 4. Treat `Range<Int32>` as a source-type migration item because the finalized
    typed representation does not yet expose a dedicated range variant even
    though the IR layout table has a dedicated descriptor for its internal shape.
-5. Keep general composite host adapters deferred until their descriptors and
-   ownership rules are stable. `flat-record-v1` is a narrower exception because
-   its external contract contains only source-ordered scalar values and never
-   publishes a descriptor or internal pointer.
+5. Keep the B1 Component Interface IR and ownership contract separate from
+   general Core exports. `flat-record-v1` remains a narrower
+   experimental predecessor because its external contract contains only
+   source-ordered scalar values and never publishes a descriptor or internal
+   pointer.
 
 ## Read-Only ABI Summary
 

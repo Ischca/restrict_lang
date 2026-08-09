@@ -46,15 +46,20 @@ impl<'a> CheckedIrBuilder<'a> {
             self.collect_function_ir_from_decl(decl, &mut functions, false)?;
         }
 
+        let named_types = CheckedNamedTypeCollector::new(self.checker, &self.layout_table)
+            .collect_from_functions(&functions)?;
         let sealed_functions = functions.clone();
         let sealed_layout_table = self.layout_table.clone();
+        let sealed_named_types = named_types.clone();
         let program_ir = CheckedProgramIr {
             functions,
             layout_table: self.layout_table,
+            named_types,
             source_program: program.clone(),
             source_node_ids: collect_node_ids(program),
             sealed_functions,
             sealed_layout_table,
+            sealed_named_types,
         };
         program_ir.validate_lowering_summaries()?;
         Ok(program_ir)
@@ -736,6 +741,350 @@ impl<'a> CheckedIrBuilder<'a> {
         let index = self.next_apply;
         self.next_apply += 1;
         index
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NamedTypeVisitState {
+    Visiting,
+    Complete,
+}
+
+/// Collect logical named-type metadata from finalized signatures while using
+/// the already-built layout graph only as optional internal representation
+/// evidence. Inserting a declaration before descending makes recursive record
+/// references cycle-safe and keeps open generic signatures representable.
+struct CheckedNamedTypeCollector<'a> {
+    checker: &'a TypeChecker,
+    layout_table: &'a LayoutTable,
+    graph: CheckedNamedTypeGraph,
+    states: Vec<NamedTypeVisitState>,
+}
+
+impl<'a> CheckedNamedTypeCollector<'a> {
+    fn new(checker: &'a TypeChecker, layout_table: &'a LayoutTable) -> Self {
+        Self {
+            checker,
+            layout_table,
+            graph: CheckedNamedTypeGraph::default(),
+            states: Vec::new(),
+        }
+    }
+
+    fn collect_from_functions(
+        mut self,
+        functions: &[CheckedFunctionIr],
+    ) -> Result<CheckedNamedTypeGraph, IrBuildError> {
+        for function in functions {
+            for param in &function.params {
+                self.collect_type(&param.final_type, Some(param.repr))?;
+            }
+            self.collect_type(&function.return_type, Some(function.return_repr))?;
+        }
+        Ok(self.graph)
+    }
+
+    fn collect_type(
+        &mut self,
+        final_type: &FinalType,
+        internal_repr: Option<ValueRepr>,
+    ) -> Result<(), IrBuildError> {
+        match final_type.as_typed_type() {
+            // Range is represented as a built-in record-shaped type but has no
+            // source record declaration metadata. Keep it in LayoutTable only.
+            TypedType::Record {
+                name, type_args, ..
+            } if name == "Range" => {
+                for type_arg in type_args {
+                    self.collect_typed_child(type_arg, None)?;
+                }
+            }
+            TypedType::Record { .. } => {
+                self.collect_record(final_type, internal_repr)?;
+            }
+            TypedType::Enum { .. } => {
+                self.collect_enum(final_type, internal_repr)?;
+            }
+            TypedType::List(inner) => {
+                let child_repr = match self.layout_kind(internal_repr) {
+                    Some(LayoutKind::List(layout)) => Some(layout.element.repr),
+                    _ => None,
+                };
+                self.collect_typed_child(inner, child_repr)?;
+            }
+            TypedType::Array(inner, _) => {
+                let child_repr = match self.layout_kind(internal_repr) {
+                    Some(LayoutKind::Array(layout)) => Some(layout.element.repr),
+                    _ => None,
+                };
+                self.collect_typed_child(inner, child_repr)?;
+            }
+            TypedType::Option(inner) => {
+                let child_repr = self.sum_payload_repr(internal_repr, "Some");
+                self.collect_typed_child(inner, child_repr)?;
+            }
+            TypedType::Result(ok, err) => {
+                let ok_repr = self.sum_payload_repr(internal_repr, "Ok");
+                let err_repr = self.sum_payload_repr(internal_repr, "Err");
+                self.collect_typed_child(ok, ok_repr)?;
+                self.collect_typed_child(err, err_repr)?;
+            }
+            TypedType::Function {
+                params,
+                return_type,
+            } => {
+                let (param_reprs, result_repr) = match self.layout_kind(internal_repr) {
+                    Some(LayoutKind::Closure(layout)) => (
+                        layout
+                            .params
+                            .iter()
+                            .map(|param| Some(param.repr))
+                            .collect::<Vec<_>>(),
+                        Some(layout.result.repr),
+                    ),
+                    _ => (vec![None; params.len()], None),
+                };
+                for (index, param) in params.iter().enumerate() {
+                    self.collect_typed_child(param, param_reprs.get(index).copied().flatten())?;
+                }
+                self.collect_typed_child(return_type, result_repr)?;
+            }
+            TypedType::Temporal { base_type, .. } => {
+                self.collect_typed_child(base_type, internal_repr)?;
+            }
+            TypedType::Int32
+            | TypedType::Int64
+            | TypedType::Float64
+            | TypedType::Boolean
+            | TypedType::String
+            | TypedType::Char
+            | TypedType::Unit
+            | TypedType::TypeParam(_) => {}
+            TypedType::InferVar(_) | TypedType::Projection { .. } => {
+                return Err(named_type_invariant_violation(format!(
+                    "unfinalized type {} reached named type collection",
+                    format_typed_type(final_type.as_typed_type())
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_typed_child(
+        &mut self,
+        ty: &TypedType,
+        internal_repr: Option<ValueRepr>,
+    ) -> Result<(), IrBuildError> {
+        let final_type = FinalType::new(ty.clone())?;
+        self.collect_type(&final_type, internal_repr)
+    }
+
+    fn collect_record(
+        &mut self,
+        final_type: &FinalType,
+        internal_repr: Option<ValueRepr>,
+    ) -> Result<(), IrBuildError> {
+        let (id, should_build) = self.begin_named_type(
+            final_type,
+            internal_repr,
+            CheckedNamedTypeKind::Record { fields: Vec::new() },
+        )?;
+        if !should_build {
+            return Ok(());
+        }
+
+        let fields = self
+            .checker
+            .checked_record_fields_for_type(final_type.as_typed_type())
+            .ok_or_else(|| {
+                named_type_invariant_violation(format!(
+                    "checked record metadata is missing for {}",
+                    format_typed_type(final_type.as_typed_type())
+                ))
+            })?;
+        let effective_repr = self.graph.declarations[id.0 as usize].internal_repr;
+        let checked_fields = fields
+            .into_iter()
+            .enumerate()
+            .map(|(source_index, (source_name, ty))| {
+                let field_type = FinalType::new(ty)?;
+                let field_repr = self.record_field_repr(effective_repr, source_index, &source_name);
+                Ok(CheckedRecordFieldIr {
+                    source_index,
+                    source_name,
+                    final_type: field_type,
+                    internal_repr: field_repr,
+                })
+            })
+            .collect::<Result<Vec<_>, IrBuildError>>()?;
+
+        self.graph.declarations[id.0 as usize].kind = CheckedNamedTypeKind::Record {
+            fields: checked_fields.clone(),
+        };
+        for field in &checked_fields {
+            self.collect_type(&field.final_type, field.internal_repr)?;
+        }
+        self.states[id.0 as usize] = NamedTypeVisitState::Complete;
+        Ok(())
+    }
+
+    fn collect_enum(
+        &mut self,
+        final_type: &FinalType,
+        internal_repr: Option<ValueRepr>,
+    ) -> Result<(), IrBuildError> {
+        let (id, should_build) = self.begin_named_type(
+            final_type,
+            internal_repr,
+            CheckedNamedTypeKind::Enum {
+                variants: Vec::new(),
+            },
+        )?;
+        if !should_build {
+            return Ok(());
+        }
+
+        let variants = self
+            .checker
+            .checked_enum_variants_for_type(final_type.as_typed_type())
+            .ok_or_else(|| {
+                named_type_invariant_violation(format!(
+                    "checked enum metadata is missing for {}",
+                    format_typed_type(final_type.as_typed_type())
+                ))
+            })?;
+        let effective_repr = self.graph.declarations[id.0 as usize].internal_repr;
+        let checked_variants = variants
+            .into_iter()
+            .enumerate()
+            .map(|(source_index, (source_name, payload))| {
+                let payload_type = payload.map(FinalType::new).transpose()?;
+                let payload_repr = payload_type.as_ref().and_then(|_| {
+                    self.enum_payload_repr(effective_repr, source_index, &source_name)
+                });
+                Ok(CheckedEnumVariantIr {
+                    source_index,
+                    source_name,
+                    payload_type,
+                    payload_repr,
+                })
+            })
+            .collect::<Result<Vec<_>, IrBuildError>>()?;
+
+        self.graph.declarations[id.0 as usize].kind = CheckedNamedTypeKind::Enum {
+            variants: checked_variants.clone(),
+        };
+        for variant in &checked_variants {
+            if let Some(payload_type) = &variant.payload_type {
+                self.collect_type(payload_type, variant.payload_repr)?;
+            }
+        }
+        self.states[id.0 as usize] = NamedTypeVisitState::Complete;
+        Ok(())
+    }
+
+    fn begin_named_type(
+        &mut self,
+        final_type: &FinalType,
+        internal_repr: Option<ValueRepr>,
+        placeholder: CheckedNamedTypeKind,
+    ) -> Result<(CheckedNamedTypeId, bool), IrBuildError> {
+        if let Some(index) = self
+            .graph
+            .declarations
+            .iter()
+            .position(|declaration| declaration.final_type == *final_type)
+        {
+            let declaration = &mut self.graph.declarations[index];
+            let upgraded = match (declaration.internal_repr, internal_repr) {
+                (None, Some(repr)) => {
+                    declaration.internal_repr = Some(repr);
+                    true
+                }
+                (Some(existing), Some(incoming)) if existing != incoming => {
+                    return Err(named_type_invariant_violation(format!(
+                        "{} reached named type collection with conflicting layouts",
+                        format_typed_type(final_type.as_typed_type())
+                    )));
+                }
+                _ => false,
+            };
+            if self.states[index] == NamedTypeVisitState::Visiting {
+                return Ok((declaration.id, false));
+            }
+            if !upgraded {
+                return Ok((declaration.id, false));
+            }
+            self.states[index] = NamedTypeVisitState::Visiting;
+            return Ok((declaration.id, true));
+        }
+
+        let id = CheckedNamedTypeId(self.graph.declarations.len() as u32);
+        self.graph.declarations.push(CheckedNamedTypeIr {
+            id,
+            final_type: final_type.clone(),
+            internal_repr,
+            resolution: named_type_resolution_for(final_type),
+            kind: placeholder,
+        });
+        self.states.push(NamedTypeVisitState::Visiting);
+        Ok((id, true))
+    }
+
+    fn layout_kind(&self, repr: Option<ValueRepr>) -> Option<&LayoutKind> {
+        let layout = match repr? {
+            ValueRepr::Ref(layout) | ValueRepr::Closure { layout, .. } => layout,
+            ValueRepr::Unit | ValueRepr::Scalar(_) => return None,
+        };
+        self.layout_table
+            .get(layout)
+            .map(|descriptor| &descriptor.kind)
+    }
+
+    fn sum_payload_repr(&self, repr: Option<ValueRepr>, variant_name: &str) -> Option<ValueRepr> {
+        let Some(LayoutKind::Sum(layout)) = self.layout_kind(repr) else {
+            return None;
+        };
+        layout
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)
+            .and_then(|variant| variant.payload.as_ref())
+            .map(|payload| payload.repr)
+    }
+
+    fn record_field_repr(
+        &self,
+        repr: Option<ValueRepr>,
+        source_index: usize,
+        source_name: &str,
+    ) -> Option<ValueRepr> {
+        match self.layout_kind(repr)? {
+            LayoutKind::Record(layout) => layout
+                .fields
+                .get(source_index)
+                .filter(|field| field.name == source_name)
+                .map(|field| field.element.repr),
+            LayoutKind::Range(layout) if source_index < 2 => Some(layout.endpoint.repr),
+            _ => None,
+        }
+    }
+
+    fn enum_payload_repr(
+        &self,
+        repr: Option<ValueRepr>,
+        source_index: usize,
+        source_name: &str,
+    ) -> Option<ValueRepr> {
+        let Some(LayoutKind::Sum(layout)) = self.layout_kind(repr) else {
+            return None;
+        };
+        layout
+            .variants
+            .get(source_index)
+            .filter(|variant| variant.name == source_name)
+            .and_then(|variant| variant.payload.as_ref())
+            .map(|payload| payload.repr)
     }
 }
 

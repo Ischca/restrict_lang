@@ -1,7 +1,15 @@
 use super::{find_project_root, load_manifest, print_info, print_success, print_warning};
 use crate::cage::Cage;
+use crate::component_artifact::{
+    validate_staged_component_artifacts, write_staged_file, write_staged_manifest,
+    ComponentArtifactManifest,
+};
 use crate::dependencies::{
     resolve_local_dependencies, snapshot_local_dependencies, validate_local_dependency_layout,
+};
+use crate::manifest::{
+    COMPONENT_SCHEMA_VERSION, COMPONENT_SCHEMA_VERSION_V2, WARDER_LOCK_FILENAME,
+    WARDER_MANIFEST_FILENAME,
 };
 use anyhow::{bail, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -15,6 +23,17 @@ use std::process::Command;
 use walkdir::WalkDir;
 
 const APPLICATION_SOURCE_HASH_VERSION: &[u8] = b"warder.application-source.v1";
+const COMPONENT_ARENA_SIZE_BYTES: u32 = 4096;
+
+enum PublishedBuild {
+    Core {
+        cage_abi_hash: String,
+    },
+    Component {
+        interface_hash: String,
+        component_sha256: String,
+    },
+}
 
 pub async fn build_project(
     release: bool,
@@ -25,6 +44,24 @@ pub async fn build_project(
 ) -> Result<()> {
     let root = find_project_root()?;
     let manifest = load_manifest()?;
+    let component_contract = manifest.compiler_component_contract()?;
+    let component_selection = match component_contract
+        .as_ref()
+        .map(|contract| contract.schema_version)
+    {
+        Some(COMPONENT_SCHEMA_VERSION) => manifest.compiler_component_selection()?,
+        Some(COMPONENT_SCHEMA_VERSION_V2) | None => None,
+        Some(schema) => bail!("Unsupported component schema {schema}"),
+    };
+    if component && component_contract.is_none() {
+        bail!(
+            "warder build --component requires an explicit [component] selection in {}",
+            WARDER_MANIFEST_FILENAME
+        );
+    }
+    if component && watch {
+        bail!("warder build --component does not support --watch");
+    }
     let root = std::fs::canonicalize(&root)
         .with_context(|| format!("Failed to canonicalize project root {}", root.display()))?;
     validate_utf8_path(&root, "Project root")?;
@@ -49,7 +86,7 @@ pub async fn build_project(
     print_info("Resolving dependencies...");
     let (resolved_dependencies, vault) = resolve_local_dependencies(&root, &manifest)?;
     validate_local_dependency_layout(&root, &manifest, &resolved_dependencies)?;
-    let vault_path = root.join("restrict-lock.toml");
+    let vault_path = root.join(WARDER_LOCK_FILENAME);
 
     // Create build directory only after dependency validation succeeds.
     let build_dir =
@@ -63,15 +100,25 @@ pub async fn build_project(
     let wat_output = build_dir.join(format!("{}.wat", output_name));
     let wasm_output = build_dir.join(format!("{}.wasm", output_name));
     let cage_output = build_dir.join(format!("{}.rgc", output_name));
-    recover_interrupted_artifact_transaction(
+    let component_wasm_output = build_dir.join(format!("{}.component.wasm", output_name));
+    let component_wit_output = build_dir.join(format!("{}.component.wit", output_name));
+    let component_manifest_output = build_dir.join(format!("{}.component.toml", output_name));
+    let core_destinations = [
+        wat_output.as_path(),
+        wasm_output.as_path(),
+        cage_output.as_path(),
+        vault_path.as_path(),
+    ];
+    let component_destinations = [
+        component_wasm_output.as_path(),
+        component_wit_output.as_path(),
+        component_manifest_output.as_path(),
+        vault_path.as_path(),
+    ];
+    recover_interrupted_artifact_transaction_for_allowed_sets(
         &root,
         &build_dir,
-        &[
-            wat_output.as_path(),
-            wasm_output.as_path(),
-            cage_output.as_path(),
-            vault_path.as_path(),
-        ],
+        &[&core_destinations, &component_destinations],
     )?;
     let staging_dir = tempfile::Builder::new()
         .prefix(".warder-build-")
@@ -86,7 +133,7 @@ pub async fn build_project(
     application_exclusions.extend(
         resolved_dependencies
             .iter()
-            .map(|dependency| dependency.package_root.as_path()),
+            .map(|dependency| dependency.source_dir.as_path()),
     );
     let application_snapshot = snapshot_application_source(
         &root,
@@ -96,7 +143,6 @@ pub async fn build_project(
     )?;
     let snapshot_dependencies = snapshot_local_dependencies(
         &resolved_dependencies,
-        &vault,
         &staging_dir.path().join("dependencies"),
     )?;
 
@@ -118,26 +164,15 @@ pub async fn build_project(
     let staged_wat_output = staging_dir.path().join(format!("{}.wat", output_name));
     let staged_wasm_output = staging_dir.path().join(format!("{}.wasm", output_name));
     let staged_cage_output = staging_dir.path().join(format!("{}.rgc", output_name));
-
-    // Call restrict_lang compiler
-    let compiler =
-        std::env::var("RESTRICT_LANG_BIN").unwrap_or_else(|_| "restrict_lang".to_string());
-    let mut cmd = Command::new(compiler);
-    for dependency in &snapshot_dependencies {
-        cmd.arg("--module-root").arg(dependency.module_root_arg());
-    }
-    if release || manifest.build.optimize {
-        cmd.arg("--release");
-    }
-    cmd.current_dir(&application_snapshot.source_root)
-        .arg(&application_snapshot.entry_path)
-        .arg(&staged_wat_output);
-
-    if component {
-        print_warning(
-            "WASM Component output is experimental and out-of-scope for v0.0.1; building a core module cage",
-        );
-    }
+    let staged_component_wasm_output = staging_dir
+        .path()
+        .join(format!("{}.component.wasm", output_name));
+    let staged_component_wit_output = staging_dir
+        .path()
+        .join(format!("{}.component.wit", output_name));
+    let staged_component_manifest_output = staging_dir
+        .path()
+        .join(format!("{}.component.toml", output_name));
 
     if repro {
         print_warning(
@@ -145,48 +180,134 @@ pub async fn build_project(
         );
     }
 
-    let output = cmd
-        .output()
-        .context("Failed to run restrict_lang compiler. Is it installed and in PATH?")?;
+    let published_build = if component {
+        progress.set_message("Compiling and validating Component...");
+        let source =
+            std::fs::read_to_string(&application_snapshot.entry_path).with_context(|| {
+                format!(
+                    "Failed to read immutable application snapshot {}",
+                    application_snapshot.entry_path.display()
+                )
+            })?;
+        let package_roots = snapshot_dependencies
+            .iter()
+            .map(|dependency| (dependency.alias.clone(), dependency.source_dir.clone()))
+            .collect::<Vec<_>>();
+        let contract = component_contract
+            .as_ref()
+            .context("validated Component contract disappeared before compilation")?;
+        let optimization_level = if release || manifest.build.optimize {
+            restrict_lang::WasmOptimizationLevel::Release
+        } else {
+            restrict_lang::WasmOptimizationLevel::None
+        };
+        let artifact = match contract.schema_version {
+            COMPONENT_SCHEMA_VERSION => {
+                let selection = component_selection.as_ref().context(
+                    "validated schema-v1 Component selection disappeared before compilation",
+                )?;
+                restrict_lang::component::compile_component(
+                    restrict_lang::component::ComponentCompileRequest {
+                        source: &source,
+                        entry_path: &application_snapshot.entry_path,
+                        package_roots: &package_roots,
+                        selection,
+                        optimization_level,
+                        arena_size_bytes: COMPONENT_ARENA_SIZE_BYTES,
+                    },
+                )
+            }
+            COMPONENT_SCHEMA_VERSION_V2 => restrict_lang::component::compile_component_contract(
+                restrict_lang::component::ComponentCompileContractRequest {
+                    source: &source,
+                    entry_path: &application_snapshot.entry_path,
+                    package_roots: &package_roots,
+                    selection: contract,
+                    optimization_level,
+                    arena_size_bytes: COMPONENT_ARENA_SIZE_BYTES,
+                },
+            ),
+            schema => bail!("Unsupported component schema {schema}"),
+        }
+        .context("Component compilation failed")?;
+        let interface_hash = artifact.interface_hash_hex();
+        let component_manifest = ComponentArtifactManifest::new(
+            artifact.package,
+            artifact.world,
+            artifact.abi_profile,
+            artifact.implementation_subset,
+            interface_hash.clone(),
+            &artifact.component_wasm,
+            &artifact.normalized_wit,
+        )?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("Compilation failed:\n{}", stderr);
-    }
+        write_staged_file(&staged_component_wasm_output, &artifact.component_wasm)?;
+        write_staged_file(
+            &staged_component_wit_output,
+            artifact.normalized_wit.as_bytes(),
+        )?;
+        write_staged_manifest(&staged_component_manifest_output, &component_manifest)?;
+        let validated_manifest = validate_staged_component_artifacts(
+            &staged_component_wasm_output,
+            &staged_component_wit_output,
+            &staged_component_manifest_output,
+            &component_manifest,
+        )?;
+        progress.set_position(90);
+        PublishedBuild::Component {
+            interface_hash,
+            component_sha256: validated_manifest.component_sha256,
+        }
+    } else {
+        // Core builds retain the installed-compiler boundary used by Warder
+        // v0.0.1. Component builds use the pinned compiler library above.
+        let compiler =
+            std::env::var("RESTRICT_LANG_BIN").unwrap_or_else(|_| "restrict_lang".to_string());
+        let mut cmd = Command::new(compiler);
+        for dependency in &snapshot_dependencies {
+            cmd.arg("--module-root").arg(dependency.module_root_arg());
+        }
+        if release || manifest.build.optimize {
+            cmd.arg("--release");
+        }
+        cmd.current_dir(&application_snapshot.source_root)
+            .arg(&application_snapshot.entry_path)
+            .arg(&staged_wat_output);
 
-    progress.set_position(90);
+        let output = cmd
+            .output()
+            .context("Failed to run restrict_lang compiler. Is it installed and in PATH?")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Compilation failed:\n{}", stderr);
+        }
 
-    let wasm_bytes = wat::parse_file(&staged_wat_output).with_context(|| {
-        format!(
-            "Failed to convert WAT to WASM: {}",
-            staged_wat_output.display()
-        )
-    })?;
-    std::fs::write(&staged_wasm_output, &wasm_bytes).with_context(|| {
-        format!(
-            "Failed to write staged WASM output: {}",
-            staged_wasm_output.display()
-        )
-    })?;
+        progress.set_position(90);
+        let wasm_bytes = wat::parse_file(&staged_wat_output).with_context(|| {
+            format!(
+                "Failed to convert WAT to WASM: {}",
+                staged_wat_output.display()
+            )
+        })?;
+        std::fs::write(&staged_wasm_output, &wasm_bytes).with_context(|| {
+            format!(
+                "Failed to write staged WASM output: {}",
+                staged_wasm_output.display()
+            )
+        })?;
 
-    // Create cage
-    progress.set_message("Creating cage...");
-    let mut cage = Cage::new(
-        manifest.package.name.clone(),
-        manifest.package.version.clone(),
-        wasm_bytes,
-    );
-
-    // Add WIT if component mode
-    if component {
-        // TODO: Extract WIT from component or generate it
-        // For now, just calculate ABI hash
-    }
-
-    cage.calculate_abi_hash()?;
-
-    // Save cage
-    cage.save(&staged_cage_output)?;
+        progress.set_message("Creating cage...");
+        let mut cage = Cage::new(
+            manifest.package.name.clone(),
+            manifest.package.version.clone(),
+            wasm_bytes,
+        );
+        cage.calculate_abi_hash()?;
+        cage.save(&staged_cage_output)?;
+        PublishedBuild::Core {
+            cage_abi_hash: cage.manifest.abi_hash,
+        }
+    };
 
     // Verify if requested
     if verify {
@@ -198,7 +319,10 @@ pub async fn build_project(
 
     let current_manifest = load_manifest()?;
     if current_manifest != manifest {
-        bail!("package.rl.toml changed during the build; retry with a stable manifest");
+        bail!(
+            "{} changed during the build; retry with a stable manifest",
+            WARDER_MANIFEST_FILENAME
+        );
     }
     let current_application_hash = hash_application_source(&root, &application_exclusions)?;
     if current_application_hash != application_snapshot.source_hash {
@@ -207,23 +331,36 @@ pub async fn build_project(
     let (current_dependencies, current_vault) =
         resolve_local_dependencies(&root, &current_manifest)?;
     if current_dependencies != resolved_dependencies || current_vault != vault {
-        bail!("Local dependency sources changed during the build; retry to produce a consistent lock and artifact set");
+        bail!("Local dependency sources changed during the build; retry to produce a consistent artifact set");
     }
 
-    let staged_vault_path = staging_dir.path().join("restrict-lock.toml");
+    let staged_vault_path = staging_dir.path().join(WARDER_LOCK_FILENAME);
     vault.save(&staged_vault_path)?;
     let backup_dir = staging_dir.path().join("backups");
     let transaction_path = root.join(".warder-build-transaction.toml");
-    if let Err(error) = commit_staged_files(
-        &[
-            (&staged_wat_output, &wat_output),
-            (&staged_wasm_output, &wasm_output),
-            (&staged_cage_output, &cage_output),
-            (&staged_vault_path, &vault_path),
+    let mut files = match &published_build {
+        PublishedBuild::Core { .. } => vec![
+            (staged_wat_output.as_path(), wat_output.as_path()),
+            (staged_wasm_output.as_path(), wasm_output.as_path()),
+            (staged_cage_output.as_path(), cage_output.as_path()),
         ],
-        &backup_dir,
-        &transaction_path,
-    ) {
+        PublishedBuild::Component { .. } => vec![
+            (
+                staged_component_wasm_output.as_path(),
+                component_wasm_output.as_path(),
+            ),
+            (
+                staged_component_wit_output.as_path(),
+                component_wit_output.as_path(),
+            ),
+            (
+                staged_component_manifest_output.as_path(),
+                component_manifest_output.as_path(),
+            ),
+        ],
+    };
+    files.push((staged_vault_path.as_path(), vault_path.as_path()));
+    if let Err(error) = commit_staged_files(&files, &backup_dir, &transaction_path) {
         if error.downcast_ref::<ArtifactRollbackFailure>().is_some() {
             let recovery_path = staging_dir.keep();
             return Err(error.context(format!(
@@ -236,20 +373,40 @@ pub async fn build_project(
 
     progress.finish_and_clear();
 
-    print_success(&format!(
-        "Built {} v{} → {}",
-        manifest.package.name,
-        manifest.package.version,
-        cage_output.display()
-    ));
-
-    // Report build stats
-    let cage_size = std::fs::metadata(&cage_output)?.len();
-    print_info(&format!(
-        "Cage size: {} KB (ABI hash: {})",
-        cage_size / 1024,
-        &cage.manifest.abi_hash[..8]
-    ));
+    match published_build {
+        PublishedBuild::Core { cage_abi_hash } => {
+            print_success(&format!(
+                "Built {} v{} → {}",
+                manifest.package.name,
+                manifest.package.version,
+                cage_output.display()
+            ));
+            let cage_size = std::fs::metadata(&cage_output)?.len();
+            print_info(&format!(
+                "Cage size: {} KB (ABI hash: {})",
+                cage_size / 1024,
+                &cage_abi_hash[..8]
+            ));
+        }
+        PublishedBuild::Component {
+            interface_hash,
+            component_sha256,
+        } => {
+            print_success(&format!(
+                "Built Component {} v{} → {}",
+                manifest.package.name,
+                manifest.package.version,
+                component_wasm_output.display()
+            ));
+            let component_size = std::fs::metadata(&component_wasm_output)?.len();
+            print_info(&format!(
+                "Component size: {} KB (interface hash: {}, artifact SHA-256: {})",
+                component_size / 1024,
+                &interface_hash[..8],
+                &component_sha256[..8]
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -620,10 +777,10 @@ impl std::fmt::Display for ArtifactRollbackFailure {
 
 impl std::error::Error for ArtifactRollbackFailure {}
 
-fn recover_interrupted_artifact_transaction(
+fn recover_interrupted_artifact_transaction_for_allowed_sets(
     root: &Path,
     build_dir: &Path,
-    expected_destinations: &[&Path],
+    allowed_destination_sets: &[&[&Path]],
 ) -> Result<()> {
     let journal_path = root.join(".warder-build-transaction.toml");
     let metadata = match std::fs::symlink_metadata(&journal_path) {
@@ -664,10 +821,6 @@ fn recover_interrupted_artifact_transaction(
         );
     }
 
-    let expected_destinations = expected_destinations
-        .iter()
-        .map(|path| path.to_path_buf())
-        .collect::<HashSet<_>>();
     let mut destinations = HashSet::new();
     let mut backups = HashSet::new();
     for (index, entry) in journal.entries.iter().enumerate() {
@@ -687,8 +840,15 @@ fn recover_interrupted_artifact_transaction(
             );
         }
     }
-    if destinations != expected_destinations {
-        bail!("Build transaction destinations do not match the current artifact and lock set");
+    let matches_allowed_set = allowed_destination_sets.iter().any(|expected| {
+        let expected = expected
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect::<HashSet<_>>();
+        destinations == expected
+    });
+    if !matches_allowed_set {
+        bail!("Build transaction destinations do not match a known artifact and lock set");
     }
 
     for entry in &journal.entries {
@@ -787,6 +947,19 @@ fn recover_interrupted_artifact_transaction(
     })?;
     print_warning("Recovered the previous interrupted Warder artifact transaction");
     Ok(())
+}
+
+#[cfg(test)]
+fn recover_interrupted_artifact_transaction(
+    root: &Path,
+    build_dir: &Path,
+    expected_destinations: &[&Path],
+) -> Result<()> {
+    recover_interrupted_artifact_transaction_for_allowed_sets(
+        root,
+        build_dir,
+        &[expected_destinations],
+    )
 }
 
 fn validate_journal_path(root: &Path, path: &Path, label: &str) -> Result<()> {
@@ -1363,6 +1536,72 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(output_a).unwrap(), "old-a");
         assert!(!output_b.exists());
+        assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn interrupted_component_transaction_recovers_when_the_next_build_is_core() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let build_dir = root.join("dist");
+        let staging = build_dir.join(".warder-build-component-test");
+        let backups = staging.join("backups");
+        std::fs::create_dir_all(&backups).unwrap();
+
+        let component_destinations = [
+            build_dir.join("app.component.wasm"),
+            build_dir.join("app.component.wit"),
+            build_dir.join("app.component.toml"),
+            root.join(WARDER_LOCK_FILENAME),
+        ];
+        let mut entries = Vec::new();
+        for (index, destination) in component_destinations.iter().enumerate() {
+            let backup = backups.join(format!("{index}.backup"));
+            std::fs::write(destination, format!("new-{index}")).unwrap();
+            std::fs::write(&backup, format!("old-{index}")).unwrap();
+            entries.push(ArtifactTransactionEntry {
+                destination: destination.clone(),
+                backup,
+                destination_existed: true,
+            });
+        }
+        let journal_path = root.join(".warder-build-transaction.toml");
+        save_artifact_transaction_journal(
+            &ArtifactTransactionJournal {
+                version: 1,
+                entries,
+            },
+            &journal_path,
+        )
+        .unwrap();
+
+        let core_destinations = [
+            build_dir.join("app.wat"),
+            build_dir.join("app.wasm"),
+            build_dir.join("app.rgc"),
+            root.join(WARDER_LOCK_FILENAME),
+        ];
+        let core_paths = core_destinations
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        let component_paths = component_destinations
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        recover_interrupted_artifact_transaction_for_allowed_sets(
+            &root,
+            &build_dir,
+            &[&core_paths, &component_paths],
+        )
+        .unwrap();
+
+        for (index, destination) in component_destinations.iter().enumerate() {
+            assert_eq!(
+                std::fs::read_to_string(destination).unwrap(),
+                format!("old-{index}")
+            );
+        }
         assert!(!journal_path.exists());
     }
 

@@ -1,0 +1,71 @@
+package test:external-scalar@0.1.0;
+
+interface calculator {
+  record packet {
+    label: string,
+    values: list<s32>,
+  }
+
+  enum state {
+    ready,
+    stopped,
+  }
+
+  variant event {
+    idle,
+    message(string),
+    values(list<s32>),
+  }
+
+  type maybe-text = option<string>;
+  type text-result = result<string, string>;
+  type fixed-values = list<s32>;
+
+  consume: func(value: s32);
+  echo-long: func(value: s64) -> s64;
+  echo-marker: func(value: char) -> char;
+  echo-ratio: func(value: f64) -> f64;
+  increment: func(value: s32) -> s32;
+  invert: func(value: bool) -> bool;
+
+  make-string: func() -> string;
+  check-string: func(value: string) -> s32;
+  make-list: func() -> list<s32>;
+  check-list: func(value: list<s32>) -> s32;
+  make-packet: func() -> packet;
+  check-packet: func(value: packet) -> s32;
+  make-option: func() -> maybe-text;
+  check-option: func(value: maybe-text) -> s32;
+  make-result: func() -> text-result;
+  check-result: func(value: text-result) -> s32;
+  make-state: func() -> state;
+  check-state: func(value: state) -> s32;
+  make-event: func() -> event;
+  check-event: func(value: event) -> s32;
+  make-array: func() -> fixed-values;
+  make-bad-array: func() -> fixed-values;
+  check-array: func(value: fixed-values) -> s32;
+}
+
+world producer {
+  export calculator;
+}
+
+world restrict-consumer {
+  import calculator;
+  export run-consume: func(value: s32);
+  export run-long: func(value: s64) -> s64;
+  export run-marker: func(value: char) -> char;
+  export run-ratio: func(value: f64) -> f64;
+  export run-s32: func(value: s32) -> s32;
+  export run-bool: func(value: bool) -> bool;
+  export run-string: func() -> s32;
+  export run-list: func() -> s32;
+  export run-record: func() -> s32;
+  export run-option: func() -> s32;
+  export run-result: func() -> s32;
+  export run-enum: func() -> s32;
+  export run-variant: func() -> s32;
+  export run-array: func() -> s32;
+  export run-array-mismatch: func() -> s32;
+}

@@ -26,7 +26,7 @@ This creates:
 
 ```text
 hello-world/
-├── package.rl.toml
+├── warder.toml
 ├── src/
 │   └── main.rl
 ├── tests/
@@ -43,9 +43,10 @@ fun main: () -> () = {
 }
 ```
 
-## Check The Manifest
+## Check The Repository Configuration
 
-`package.rl.toml` controls the entry point, dependency table, and build output:
+The root `warder.toml` is the repository's only authored Warder configuration.
+It controls the entry point, dependency table, and build output:
 
 ```toml
 [package]
@@ -112,14 +113,20 @@ surface such as `println` and `print_int`.
 ## Dependencies
 
 ```bash
-warder add math
-warder add json@1.0.0
-warder add local-utils --path ../local-utils
-warder add json@v1.0.0 --git https://example.com/json.git
-warder remove math
+warder add local_utils --path ../local-utils
+warder remove local_utils
 ```
 
-`warder build` refreshes `restrict-lock.toml` from `package.rl.toml`.
+Direct local source packages are selected centrally from `[dependencies]` and
+need only `src/lib.rl`; they have no leaf manifest or lock. `warder build`
+generates one repository-root `warder.lock` for nondeterministic external
+resolution. Registry, Git, foreign-Wasm, and transitive resolution currently
+fail closed, so a local-only lock has no resolved package entries.
+
+The current implementation has one publishable root package. Future
+multi-publish workspace support will extend the same root `warder.toml`
+without adding leaf manifests or deriving public identity from directory
+placement.
 
 ## Local Cage Files
 
@@ -142,8 +149,8 @@ evaluation.
 warder doctor
 ```
 
-`warder doctor` checks the manifest, entry source path, lock file integrity when
-present, required compiler, and available WASM runtime.
+`warder doctor` checks the root configuration, entry source path, root lock
+integrity when present, required compiler, and available WASM runtime.
 
 ## Next Steps
 

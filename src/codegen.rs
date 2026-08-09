@@ -88,6 +88,32 @@ pub enum WasmOptimizationLevel {
     Release,
 }
 
+/// One Core scalar value in the Standard32 Canonical ABI.
+///
+/// This remains crate-private because external-WIT compilation is the only
+/// supported producer of these descriptors. Keeping it separate from
+/// `WasmType` prevents callers from treating Restrict's internal layouts as a
+/// public Component contract.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CanonicalAbiScalarType {
+    I32,
+    I64,
+    F64,
+}
+
+/// A generated Restrict binding whose body is supplied by a Standard32 Core
+/// import while compiling an externally owned WIT world.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CanonicalAbiScalarImport {
+    pub source_function: String,
+    pub module: String,
+    pub name: String,
+    pub params: Vec<CanonicalAbiScalarType>,
+    pub result: Option<CanonicalAbiScalarType>,
+}
+
 impl FromStr for WasmOptimizationLevel {
     type Err = String;
 
@@ -188,6 +214,39 @@ pub struct WasmCodeGen {
     generated_host_adapter_globals: HashSet<String>,
     /// Host ABI surface selected by the caller. v0.0.1 remains the default.
     host_abi_profile: HostAbiProfile,
+    /// Explicit source functions retained as private Core implementation
+    /// exports for Component adapters. When present, ordinary `pub` functions
+    /// are not treated as direct host entries and no unselected Core ABI is
+    /// published.
+    component_internal_exports: Option<HashSet<String>>,
+    /// Root-private support functions validated by the schema-v2 resource
+    /// planner. These may be exposed only to the nested Component adapter and
+    /// never become source-public Core exports.
+    component_private_internal_exports: HashSet<String>,
+    /// Schema-v2 free exports whose result is an affine callable resource.
+    /// Their closure captures receive an additional ownership-safety check.
+    component_callable_factory_functions: HashSet<String>,
+    /// Source record identities represented as Component resources.
+    component_resource_source_records: HashSet<String>,
+    /// Finite, explicitly checked generic instances published only through a
+    /// Component adapter. The source generic declaration is never itself a
+    /// Core export; each instance receives the planner-owned stable symbol.
+    component_generic_specializations:
+        Vec<crate::component_specialization::ComponentFunctionSpecialization>,
+    /// Stable Core export symbol paired with the actual monomorphized WAT
+    /// function name produced during this generation run.
+    component_specialization_core_exports: Vec<(String, String)>,
+    /// Private source declarations replaced by Standard32 Core imports for an
+    /// externally authoritative WIT contract.
+    #[cfg(not(target_arch = "wasm32"))]
+    canonical_abi_scalar_imports: Vec<CanonicalAbiScalarImport>,
+    /// Compiler-reserved invocation arena used by Component adapters.
+    component_adapter_arena_addr: Option<u32>,
+    /// Compiler-reserved Canonical ABI result arena retained until post-return.
+    component_boundary_arena_addr: Option<u32>,
+    /// Monotonic instance-lifetime arena for exported resources and affine
+    /// callable captures. It is never reset by ordinary invocation cleanup.
+    component_resource_arena_addr: Option<u32>,
     /// Host environment selected for the generated Core Wasm module.
     target_profile: WasmTargetProfile,
     /// Bytes reserved for each compiler-managed arena.
@@ -345,6 +404,17 @@ impl WasmCodeGen {
             generated_host_adapter_functions: HashSet::new(),
             generated_host_adapter_globals: HashSet::new(),
             host_abi_profile: HostAbiProfile::V001Scalar,
+            component_internal_exports: None,
+            component_private_internal_exports: HashSet::new(),
+            component_callable_factory_functions: HashSet::new(),
+            component_resource_source_records: HashSet::new(),
+            component_generic_specializations: Vec::new(),
+            component_specialization_core_exports: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            canonical_abi_scalar_imports: Vec::new(),
+            component_adapter_arena_addr: None,
+            component_boundary_arena_addr: None,
+            component_resource_arena_addr: None,
             target_profile: WasmTargetProfile::WasiP1,
             arena_size_bytes: DEFAULT_ARENA_SIZE_BYTES,
             optimization_level: WasmOptimizationLevel::None,
@@ -394,6 +464,93 @@ impl WasmCodeGen {
         let mut codegen = Self::new();
         codegen.host_abi_profile = profile;
         codegen
+    }
+
+    /// Generate a Core implementation module for compiler-owned Component
+    /// adapters.
+    ///
+    /// The selected functions remain Core exports only so the componentizer
+    /// can bind generated Canonical ABI wrappers to them. They are nested
+    /// implementation details of the final Component, not public Core ABI.
+    /// Source-public functions omitted from `functions` are not exported.
+    pub fn with_component_internal_exports<I, S>(mut self, functions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.component_internal_exports = Some(functions.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Retain planner-validated root-private resource support functions for
+    /// the generated Component adapter. Calling this without Component mode
+    /// has no effect on the ordinary Core ABI.
+    pub(crate) fn with_component_private_internal_exports<I, S>(mut self, functions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.component_private_internal_exports = functions.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Install the checked callable-capture guard for schema-v2 Component
+    /// factories. v0.1 supports value captures but deliberately rejects
+    /// resource/callable transfer through a closure environment.
+    pub(crate) fn with_component_callable_capture_guard<FI, FS, RI, RS>(
+        mut self,
+        factories: FI,
+        resource_records: RI,
+    ) -> Self
+    where
+        FI: IntoIterator<Item = FS>,
+        FS: Into<String>,
+        RI: IntoIterator<Item = RS>,
+        RS: Into<String>,
+    {
+        self.component_callable_factory_functions = factories.into_iter().map(Into::into).collect();
+        self.component_resource_source_records =
+            resource_records.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Attach the finite set of checked generic Component instances selected
+    /// by schema v2. This method does not infer instances from call sites.
+    pub(crate) fn with_component_generic_specializations(
+        mut self,
+        mut specializations: Vec<crate::component_specialization::ComponentFunctionSpecialization>,
+    ) -> Self {
+        specializations.sort_by(|left, right| left.core_symbol.cmp(&right.core_symbol));
+        self.component_generic_specializations = specializations;
+        self
+    }
+
+    /// Replace generated private Restrict binding stubs with their exact
+    /// Standard32 Core imports.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn with_canonical_abi_scalar_imports(
+        mut self,
+        imports: Vec<CanonicalAbiScalarImport>,
+    ) -> Self {
+        self.canonical_abi_scalar_imports = imports;
+        self
+    }
+
+    /// Address of the invocation arena reserved for Component adapters after
+    /// a successful generation in Component-internal mode.
+    pub fn component_adapter_arena_addr(&self) -> Option<u32> {
+        self.component_adapter_arena_addr
+    }
+
+    /// Address of the Canonical ABI result arena reserved in Component mode.
+    pub fn component_boundary_arena_addr(&self) -> Option<u32> {
+        self.component_boundary_arena_addr
+    }
+
+    /// Address of the instance-lifetime resource/callable arena reserved in
+    /// Component-internal mode.
+    pub fn component_resource_arena_addr(&self) -> Option<u32> {
+        self.component_resource_arena_addr
     }
 
     /// Select the host environment for the generated Core Wasm module.
@@ -463,6 +620,9 @@ impl WasmCodeGen {
 
         // Process module imports first
         self.generate_imports(&program.imports)?;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.generate_canonical_abi_scalar_imports(program)?;
 
         if self.target_profile == WasmTargetProfile::WasiP1 {
             self.output.push_str("  ;; WASI Preview 1 imports\n");
@@ -616,6 +776,9 @@ impl WasmCodeGen {
             }
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        self.validate_canonical_abi_scalar_import_signatures()?;
+
         self.generate_global_bindings(program)?;
 
         // Generate functions
@@ -623,6 +786,10 @@ impl WasmCodeGen {
         for decl in &program.declarations {
             match Self::decl_codegen_item(decl) {
                 TopDecl::Function(func) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if self.is_canonical_abi_scalar_import(&func.name) {
+                        continue;
+                    }
                     self.generate_function(func)?;
                 }
                 TopDecl::Binding(_) => {}
@@ -646,6 +813,11 @@ impl WasmCodeGen {
             }
         }
 
+        // Component schema v2 declares a finite set of generic instances as
+        // ABI surface. Emit those bodies before draining deferred functions;
+        // the specialization routine appends each body to `lambda_functions`.
+        self.generate_component_generic_specializations()?;
+
         // Generate lambda functions
         for lambda_func in &self.lambda_functions {
             self.output.push_str(lambda_func);
@@ -655,7 +827,14 @@ impl WasmCodeGen {
         if self.has_indirect_closure_call || !self.function_table.is_empty() {
             self.output
                 .push_str("\n  ;; Function table for indirect calls\n");
-            self.output.push_str("  (table ");
+            let keep_component_callable_table = self.component_internal_exports.is_some()
+                && !self.component_callable_factory_functions.is_empty();
+            if keep_component_callable_table {
+                self.output
+                    .push_str("  (table $__restrict_component_callable_table ");
+            } else {
+                self.output.push_str("  (table ");
+            }
             self.output
                 .push_str(&self.function_table.len().max(1).to_string());
             self.output.push_str(" funcref)\n");
@@ -665,6 +844,24 @@ impl WasmCodeGen {
                 self.output
                     .push_str(&format!("  (elem (i32.const {}) func ${})\n", i, func_name));
             }
+
+            // The schema-v2 resource adapter is injected after release DCE,
+            // so its `call_indirect` is not yet visible to that pass. Keep the
+            // table, elements, and callable thunks rooted through a private
+            // nested-Core export. It is emitted only for explicitly selected
+            // Component callable factories and is not part of WIT or the
+            // ordinary Core/WASI ABI.
+            if keep_component_callable_table {
+                self.output.push_str(
+                    "  (export \"__restrict_component_callable_table\" (table $__restrict_component_callable_table))\n",
+                );
+            }
+        }
+
+        if self.component_internal_exports.is_some() {
+            self.component_adapter_arena_addr = Some(self.reserve_arena()?);
+            self.component_boundary_arena_addr = Some(self.reserve_arena()?);
+            self.component_resource_arena_addr = Some(self.reserve_arena()?);
         }
 
         // Generate module exports
@@ -673,7 +870,7 @@ impl WasmCodeGen {
         // Export a no-result program entry wrapper only for zero-argument
         // `main`. A parameterized function named `main` remains an ordinary
         // Restrict function with its declared ABI.
-        if self.should_generate_start_wrapper() {
+        if self.component_internal_exports.is_none() && self.should_generate_start_wrapper() {
             self.generate_start_wrapper()?;
         }
 
@@ -7229,7 +7426,8 @@ impl WasmCodeGen {
         self.record_tmp_count =
             RECORD_TMP_MIN_COUNT.max(Self::max_record_tmp_depth_in_block(&func.body));
         self.current_function = Some(func.name.clone());
-        let is_host_entry = self.exported_functions.contains(&func.name)
+        let is_host_entry = self.component_internal_exports.is_none()
+            && self.exported_functions.contains(&func.name)
             && !self.function_requires_flat_record_adapter(&func.name);
         self.push_scope();
 
@@ -9562,14 +9760,34 @@ impl WasmCodeGen {
             })
             .collect();
 
+        if let Some(factory) = self.current_function.as_ref().filter(|factory| {
+            self.component_callable_factory_functions
+                .contains(factory.as_str())
+        }) {
+            for (capture, _) in &free_vars {
+                let source_ty = free_var_sources.get(capture).ok_or_else(|| {
+                    CodeGenError::UnsupportedFeature(format!(
+                        "Component callable factory '{}' capture '{}' has no checked source type",
+                        factory, capture
+                    ))
+                })?;
+                if self.component_capture_contains_handle(source_ty, &mut HashSet::new()) {
+                    return Err(CodeGenError::UnsupportedFeature(format!(
+                        "Component callable factory '{}' capture '{}' has handle-bearing type '{}'; v0.1 callable captures are value-only",
+                        factory, capture, source_ty
+                    )));
+                }
+            }
+        }
+
         let lambda_locals = self.collect_lambda_locals(lambda)?;
         let lambda_record_tmp_count =
             RECORD_TMP_MIN_COUNT.max(Self::max_record_tmp_depth_in_expr(&lambda.body));
 
-        // Closure layout: [function_index, captured_var1, captured_var2, ...].
-        // Even non-capturing lambdas use this layout so function values have a
-        // single runtime representation.
-        let closure_size = 4 + free_vars
+        // Closure layout: [function_index, byte_size, captured_var1, ...].
+        // The size header lets a callable-resource destructor invalidate the
+        // full affine capture environment without exposing its layout in WIT.
+        let closure_size = 8 + free_vars
             .iter()
             .map(|(_, ty)| self.wasm_type_size(*ty))
             .sum::<usize>();
@@ -9586,7 +9804,14 @@ impl WasmCodeGen {
         ));
         self.output.push_str("    i32.store\n");
 
-        let mut offset = 4;
+        self.output.push_str("    local.get $closure_tmp\n");
+        self.output.push_str(&format!(
+            "    i32.const {} ;; closure byte size\n",
+            closure_size
+        ));
+        self.output.push_str("    i32.store offset=4\n");
+
+        let mut offset = 8;
         for (i, (var_name, _)) in free_vars.iter().enumerate() {
             let captured_ty = free_vars[i].1;
             self.output.push_str("    local.get $closure_tmp\n");
@@ -9690,7 +9915,7 @@ impl WasmCodeGen {
             }
 
             // Load captured variables from closure
-            let mut offset = 4;
+            let mut offset = 8;
             for (var_name, ty) in &free_vars {
                 lambda_code.push_str("    local.get $closure\n");
                 lambda_code.push_str(&format!("    i32.const {}\n", offset));
@@ -9764,6 +9989,35 @@ impl WasmCodeGen {
         self.lambda_functions.push(lambda_code);
 
         Ok(())
+    }
+
+    fn component_capture_contains_handle(
+        &self,
+        ty: &Type,
+        seen_records: &mut HashSet<String>,
+    ) -> bool {
+        match ty {
+            Type::Function(_, _) | Type::Temporal(_, _) => true,
+            Type::Named(name) => {
+                if self.component_resource_source_records.contains(name) {
+                    return true;
+                }
+                if !seen_records.insert(name.clone()) {
+                    return false;
+                }
+                self.records.get(name).is_some_and(|fields| {
+                    fields.iter().any(|(_, field_ty)| {
+                        self.component_capture_contains_handle(field_ty, seen_records)
+                    })
+                })
+            }
+            Type::Generic(name, arguments) => {
+                self.component_resource_source_records.contains(name)
+                    || arguments.iter().any(|argument| {
+                        self.component_capture_contains_handle(argument, seen_records)
+                    })
+            }
+        }
     }
 
     fn collect_lambda_locals(
@@ -11859,6 +12113,70 @@ impl WasmCodeGen {
         Ok(specialized_name)
     }
 
+    fn generate_component_generic_specializations(&mut self) -> Result<(), CodeGenError> {
+        if self.component_generic_specializations.is_empty() {
+            return Ok(());
+        }
+        if self.component_internal_exports.is_none() {
+            return Err(CodeGenError::InvalidCheckedIr(
+                "Component generic specializations require Component-internal generation mode"
+                    .to_string(),
+            ));
+        }
+
+        let specializations = self.component_generic_specializations.clone();
+        let mut stable_symbols = HashSet::new();
+        for specialization in specializations {
+            if !stable_symbols.insert(specialization.core_symbol.clone()) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate Component specialization Core symbol '{}'",
+                    specialization.core_symbol
+                )));
+            }
+            let source_sig = self
+                .function_source_sigs
+                .get(&specialization.source_function)
+                .cloned()
+                .ok_or_else(|| {
+                    CodeGenError::InvalidCheckedIr(format!(
+                        "Component generic specialization source '{}' has no registered signature",
+                        specialization.source_function
+                    ))
+                })?;
+            if source_sig.type_params.is_empty() {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "Component specialization source '{}' is not generic",
+                    specialization.source_function
+                )));
+            }
+
+            let substitution = specialization
+                .type_arguments
+                .iter()
+                .map(|(parameter, ty)| {
+                    Self::source_type_from_checked(ty)
+                        .map(|ty| (parameter.clone(), ty))
+                        .map_err(|reason| {
+                            CodeGenError::UnsupportedFeature(format!(
+                                "Component specialization '{}' type argument '{}' is not source-representable: {}",
+                                specialization.source_function, parameter, reason
+                            ))
+                        })
+                })
+                .collect::<Result<HashMap<_, _>, _>>()?;
+            let generated_name = self.ensure_generic_function_specialization_with_substitution(
+                &specialization.source_function,
+                &source_sig,
+                substitution,
+            )?;
+            self.component_specialization_core_exports
+                .push((specialization.core_symbol, generated_name));
+        }
+        self.component_specialization_core_exports
+            .sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(())
+    }
+
     fn generic_specialization_name(
         function_name: &str,
         type_params: &[String],
@@ -12327,7 +12645,7 @@ impl WasmCodeGen {
         self.function_table.push(thunk_name.clone());
 
         self.output
-            .push_str("    i32.const 4 ;; identity closure size\n");
+            .push_str("    i32.const 8 ;; identity closure size\n");
         self.output.push_str("    call $allocate\n");
         self.output.push_str("    local.set $closure_tmp\n");
         self.output.push_str("    local.get $closure_tmp\n");
@@ -12336,6 +12654,10 @@ impl WasmCodeGen {
             table_index, thunk_name
         ));
         self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $closure_tmp\n");
+        self.output
+            .push_str("    i32.const 8 ;; closure byte size\n");
+        self.output.push_str("    i32.store offset=4\n");
         self.output.push_str("    local.get $closure_tmp\n");
 
         let param_ty = abi.params[0];
@@ -12481,7 +12803,7 @@ impl WasmCodeGen {
         self.function_table.push(thunk_name.clone());
 
         self.output
-            .push_str("    i32.const 4 ;; named function closure size\n");
+            .push_str("    i32.const 8 ;; named function closure size\n");
         self.output.push_str("    call $allocate\n");
         self.output.push_str("    local.set $closure_tmp\n");
         self.output.push_str("    local.get $closure_tmp\n");
@@ -12490,6 +12812,10 @@ impl WasmCodeGen {
             table_index, thunk_name
         ));
         self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $closure_tmp\n");
+        self.output
+            .push_str("    i32.const 8 ;; closure byte size\n");
+        self.output.push_str("    i32.store offset=4\n");
         self.output.push_str("    local.get $closure_tmp\n");
 
         let mut thunk_code = String::new();
@@ -18456,6 +18782,177 @@ impl WasmCodeGen {
         )))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn generate_canonical_abi_scalar_imports(
+        &mut self,
+        program: &Program,
+    ) -> Result<(), CodeGenError> {
+        if self.canonical_abi_scalar_imports.is_empty() {
+            return Ok(());
+        }
+
+        let mut source_names = HashSet::new();
+        let mut core_names = HashSet::new();
+        for import in &self.canonical_abi_scalar_imports {
+            if !Self::is_safe_generated_wasm_identifier(&import.source_function) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import has invalid source binding '{}'",
+                    import.source_function
+                )));
+            }
+            if import.module.is_empty() || import.name.is_empty() {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import '{}' has an empty Core import name",
+                    import.source_function
+                )));
+            }
+            if !source_names.insert(import.source_function.as_str()) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate generated Canonical ABI source binding '{}'",
+                    import.source_function
+                )));
+            }
+            if !core_names.insert((import.module.as_str(), import.name.as_str())) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate generated Canonical ABI Core import '{}::{}'",
+                    import.module, import.name
+                )));
+            }
+
+            let mut matching_declarations = 0usize;
+            for declaration in &program.declarations {
+                let source_public = matches!(declaration, TopDecl::Export(_));
+                let TopDecl::Function(function) = Self::decl_codegen_item(declaration) else {
+                    continue;
+                };
+                if function.name != import.source_function {
+                    continue;
+                }
+                matching_declarations += 1;
+                if source_public {
+                    return Err(CodeGenError::InvalidCheckedIr(format!(
+                        "generated Canonical ABI import binding '{}' must remain private",
+                        import.source_function
+                    )));
+                }
+                if function.is_async
+                    || !function.type_params.is_empty()
+                    || !function.temporal_constraints.is_empty()
+                {
+                    return Err(CodeGenError::InvalidCheckedIr(format!(
+                        "generated Canonical ABI import binding '{}' must be synchronous and concrete",
+                        import.source_function
+                    )));
+                }
+            }
+            if matching_declarations != 1 {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import binding '{}' has {} source declarations; expected exactly one",
+                    import.source_function, matching_declarations
+                )));
+            }
+        }
+
+        self.output
+            .push_str("  ;; External WIT Standard32 imports\n");
+        for import in &self.canonical_abi_scalar_imports {
+            self.output.push_str("  (import \"");
+            Self::push_wat_string_contents(&mut self.output, &import.module);
+            self.output.push_str("\" \"");
+            Self::push_wat_string_contents(&mut self.output, &import.name);
+            self.output
+                .push_str(&format!("\" (func ${}", import.source_function));
+            if !import.params.is_empty() {
+                self.output.push_str(" (param");
+                for ty in &import.params {
+                    self.output.push(' ');
+                    self.output
+                        .push_str(Self::canonical_abi_scalar_type_name(*ty));
+                }
+                self.output.push(')');
+            }
+            if let Some(result) = import.result {
+                self.output.push_str(" (result ");
+                self.output
+                    .push_str(Self::canonical_abi_scalar_type_name(result));
+                self.output.push(')');
+            }
+            self.output.push_str("))\n");
+        }
+        self.output.push('\n');
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn validate_canonical_abi_scalar_import_signatures(&self) -> Result<(), CodeGenError> {
+        for import in &self.canonical_abi_scalar_imports {
+            let signature = self.functions.get(&import.source_function).ok_or_else(|| {
+                CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import binding '{}' has no checked signature",
+                    import.source_function
+                ))
+            })?;
+            let expected_params = import
+                .params
+                .iter()
+                .copied()
+                .map(Self::canonical_abi_scalar_wasm_type)
+                .collect::<Vec<_>>();
+            let expected_result = import.result.map(Self::canonical_abi_scalar_wasm_type);
+            if signature._params != expected_params || signature.result != expected_result {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import binding '{}' does not match its checked Restrict signature",
+                    import.source_function
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn is_canonical_abi_scalar_import(&self, function: &str) -> bool {
+        self.canonical_abi_scalar_imports
+            .iter()
+            .any(|import| import.source_function == function)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn canonical_abi_scalar_wasm_type(ty: CanonicalAbiScalarType) -> WasmType {
+        match ty {
+            CanonicalAbiScalarType::I32 => WasmType::I32,
+            CanonicalAbiScalarType::I64 => WasmType::I64,
+            CanonicalAbiScalarType::F64 => WasmType::F64,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn canonical_abi_scalar_type_name(ty: CanonicalAbiScalarType) -> &'static str {
+        match ty {
+            CanonicalAbiScalarType::I32 => "i32",
+            CanonicalAbiScalarType::I64 => "i64",
+            CanonicalAbiScalarType::F64 => "f64",
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn is_safe_generated_wasm_identifier(value: &str) -> bool {
+        let mut chars = value.chars();
+        matches!(chars.next(), Some('a'..='z' | 'A'..='Z' | '_'))
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn push_wat_string_contents(output: &mut String, value: &str) {
+        for byte in value.bytes() {
+            match byte {
+                b'"' => output.push_str("\\\""),
+                b'\\' => output.push_str("\\\\"),
+                0x20..=0x7e => output.push(char::from(byte)),
+                _ => output.push_str(&format!("\\{byte:02x}")),
+            }
+        }
+    }
+
     fn format_import(import: &ImportDecl) -> String {
         let module_name = import.module_path.join(".");
 
@@ -18904,6 +19401,11 @@ impl WasmCodeGen {
     }
 
     fn generate_exports(&mut self, program: &Program) -> Result<(), CodeGenError> {
+        if let Some(selected) = self.component_internal_exports.clone() {
+            let private_selected = self.component_private_internal_exports.clone();
+            return self.generate_component_internal_exports(program, &selected, &private_selected);
+        }
+
         let mut has_exports = false;
 
         for decl in &program.declarations {
@@ -19016,6 +19518,158 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn generate_component_internal_exports(
+        &mut self,
+        program: &Program,
+        selected: &HashSet<String>,
+        private_selected: &HashSet<String>,
+    ) -> Result<(), CodeGenError> {
+        // Adapters are injected after the optional Core optimizer runs. Keep
+        // their arena entry primitives as private nested-module exports so
+        // reachability elimination cannot discard the named definitions that
+        // the injected wrappers call.
+        self.output
+            .push_str("\n  ;; Private Core runtime for Component adapters\n");
+        self.output.push_str(
+            "  (export \"__restrict_component_current_arena\" (global $current_arena))\n",
+        );
+        self.output
+            .push_str("  (export \"__restrict_component_arena_init\" (func $arena_init))\n");
+        self.output
+            .push_str("  (export \"__restrict_component_arena_reset\" (func $arena_reset))\n");
+        self.output
+            .push_str("  (export \"__restrict_component_allocate\" (func $allocate))\n");
+        let mut found = HashSet::new();
+        for declaration in &program.declarations {
+            let TopDecl::Export(export) = declaration else {
+                continue;
+            };
+            let TopDecl::Function(function) = export.item.as_ref() else {
+                continue;
+            };
+            if !selected.contains(&function.name) {
+                continue;
+            }
+            if !function.type_params.is_empty() {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "Component implementation export '{}' requires an explicit concrete specialization",
+                    function.name
+                )));
+            }
+            if found.insert(function.name.clone()) {
+                if found.len() == 1 {
+                    self.output
+                        .push_str("\n  ;; Private Core exports for Component adapters\n");
+                }
+                self.output.push_str(&format!(
+                    "  (export \"{}\" (func ${}))\n",
+                    function.name, function.name
+                ));
+            }
+        }
+
+        if found != *selected {
+            let mut missing = selected.difference(&found).cloned().collect::<Vec<_>>();
+            missing.sort();
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "Component adapter selections are not source-public root functions: {}",
+                missing.join(", ")
+            )));
+        }
+
+        let mut found_private = HashSet::new();
+        for declaration in &program.declarations {
+            let TopDecl::Function(function) = declaration else {
+                continue;
+            };
+            if !private_selected.contains(&function.name) {
+                continue;
+            }
+            if !function.type_params.is_empty() {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "private Component support function '{}' must be concrete",
+                    function.name
+                )));
+            }
+            if found_private.insert(function.name.clone()) {
+                self.output.push_str(&format!(
+                    "  (export \"{}\" (func ${}))\n",
+                    function.name, function.name
+                ));
+            }
+        }
+
+        if found_private != *private_selected {
+            let mut missing = private_selected
+                .difference(&found_private)
+                .cloned()
+                .collect::<Vec<_>>();
+            missing.sort();
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "Component private support selections are not root-private functions: {}",
+                missing.join(", ")
+            )));
+        }
+
+        if !self.component_specialization_core_exports.is_empty() {
+            let root_generic_functions = program
+                .declarations
+                .iter()
+                .filter_map(|declaration| {
+                    let TopDecl::Export(export) = declaration else {
+                        return None;
+                    };
+                    let TopDecl::Function(function) = export.item.as_ref() else {
+                        return None;
+                    };
+                    (!function.type_params.is_empty()).then_some(function.name.as_str())
+                })
+                .collect::<HashSet<_>>();
+            for specialization in &self.component_generic_specializations {
+                if !root_generic_functions.contains(specialization.source_function.as_str()) {
+                    return Err(CodeGenError::InvalidCheckedIr(format!(
+                        "Component specialization source '{}' is not a source-public root generic function",
+                        specialization.source_function
+                    )));
+                }
+            }
+            self.output
+                .push_str("\n  ;; Private specialized Core exports for Component adapters\n");
+            for (core_symbol, generated_name) in &self.component_specialization_core_exports {
+                let signature = self.functions.get(generated_name).ok_or_else(|| {
+                    CodeGenError::InvalidCheckedIr(format!(
+                        "generated Component specialization '{}' has no Core signature",
+                        generated_name
+                    ))
+                })?;
+                self.output.push_str(&format!("  (func ${core_symbol}"));
+                for (index, ty) in signature._params.iter().enumerate() {
+                    self.output.push_str(&format!(
+                        " (param $component_specialization_arg_{index} {})",
+                        self.wasm_type_str(*ty)
+                    ));
+                }
+                if let Some(result) = signature.result {
+                    self.output
+                        .push_str(&format!(" (result {})", self.wasm_type_str(result)));
+                }
+                self.output.push('\n');
+                for index in 0..signature._params.len() {
+                    self.output.push_str(&format!(
+                        "    local.get $component_specialization_arg_{index}\n"
+                    ));
+                }
+                self.output
+                    .push_str(&format!("    call ${generated_name}\n  )\n"));
+                self.output.push_str(&format!(
+                    "  (export \"{}\" (func ${}))\n",
+                    core_symbol, core_symbol
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn generate_prototype_clone_expr(
         &mut self,
         proto_clone: &PrototypeCloneExpr,
@@ -19053,9 +19707,167 @@ impl WasmCodeGen {
 
 #[cfg(test)]
 mod memory_layout_tests {
-    use super::WasmCodeGen;
+    use super::{WasmCodeGen, WasmOptimizationLevel};
     use crate::ast::Type;
+    use crate::ir::builder::build_checked_ir;
+    use crate::{parse_program, TypeChecker, WasmTargetProfile};
     use std::collections::HashMap;
+
+    fn checked_program(
+        source: &str,
+    ) -> (crate::ast::Program, crate::ir::builder::CheckedProgramIr) {
+        let (remaining, program) = parse_program(source).expect("source should parse");
+        assert!(remaining.trim().is_empty());
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .expect("source should type check");
+        let checked = build_checked_ir(&program, &checker).expect("checked IR should build");
+        (program, checked)
+    }
+
+    #[test]
+    fn component_internal_mode_keeps_only_selected_composite_implementations() {
+        let (program, checked) = checked_program(
+            r#"
+pub record Pair {
+    left: Int32,
+    right: Int64
+}
+
+pub fun keep_pair: (pair: Pair) -> Pair = { pair }
+pub fun unselected: (value: Int32) -> Int32 = { value }
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["keep_pair"]);
+        let wat = codegen
+            .generate_checked(&program, &checked)
+            .expect("Component mode should retain the internal pointer ABI without publishing it");
+
+        assert!(wat.contains("(export \"keep_pair\" (func $keep_pair))"));
+        assert!(!wat.contains("(export \"unselected\""));
+        assert!(!wat.contains("(export \"_start\""));
+        assert!(codegen.component_adapter_arena_addr().is_some());
+        let wasm = wat::parse_str(&wat).expect("Component implementation WAT should assemble");
+        wasmparser::Validator::new()
+            .validate_all(&wasm)
+            .expect("Component implementation Core Wasm should validate");
+    }
+
+    #[test]
+    fn component_internal_mode_rejects_non_public_or_missing_selections() {
+        let (program, checked) = checked_program(
+            r#"
+fun private_value: () -> Int32 = { 1 }
+pub fun public_value: () -> Int32 = { 2 }
+"#,
+        );
+        let error = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["private_value"])
+            .generate_checked(&program, &checked)
+            .expect_err("private Component implementation selection must fail closed");
+        assert!(error
+            .to_string()
+            .contains("not source-public root functions: private_value"));
+    }
+
+    #[test]
+    fn component_internal_mode_retains_explicit_private_resource_support() {
+        let (program, checked) = checked_program(
+            r#"
+fun close_value: (value: Int32) -> () = { () }
+pub fun public_value: () -> Int32 = { 2 }
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["public_value"])
+            .with_component_private_internal_exports(["close_value"]);
+        let wat = codegen
+            .generate_checked(&program, &checked)
+            .expect("validated private Component support should be retained");
+
+        assert!(wat.contains("(export \"public_value\" (func $public_value))"));
+        assert!(wat.contains("(export \"close_value\" (func $close_value))"));
+    }
+
+    #[test]
+    fn component_callable_factory_rejects_resource_capture() {
+        let (program, checked) = checked_program(
+            r#"
+pub record Counter {
+    value: Int32
+}
+
+pub fun make_transform: (seed: Int32) -> Int32 -> Int32 = {
+    val counter = Counter { value: seed };
+    |value: Int32| value + counter.value
+}
+"#,
+        );
+        let error = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["make_transform"])
+            .with_component_callable_capture_guard(["make_transform"], ["Counter"])
+            .generate_checked(&program, &checked)
+            .expect_err("resource-bearing callable captures must fail closed in v0.1");
+
+        let message = error.to_string();
+        assert!(message.contains("make_transform"));
+        assert!(message.contains("counter"));
+        assert!(message.contains("value-only"));
+    }
+
+    #[test]
+    fn component_callable_factory_accepts_value_capture() {
+        let (program, checked) = checked_program(
+            r#"
+pub fun make_transform: (offset: Int32) -> Int32 -> Int32 = {
+    |value: Int32| value + offset
+}
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["make_transform"])
+            .with_component_callable_capture_guard(["make_transform"], ["Counter"]);
+        codegen
+            .generate_checked(&program, &checked)
+            .expect("ordinary value captures remain valid once-callable environments");
+    }
+
+    #[test]
+    fn release_component_callable_factory_keeps_private_indirect_table() {
+        let (program, checked) = checked_program(
+            r#"
+pub fun make_transform: (offset: Int32) -> Int32 -> Int32 = {
+    |value: Int32| value + offset
+}
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_optimization_level(WasmOptimizationLevel::Release)
+            .with_component_internal_exports(["make_transform"])
+            .with_component_callable_capture_guard(["make_transform"], std::iter::empty::<&str>());
+        let wat = codegen
+            .generate_checked(&program, &checked)
+            .expect("release Component callable factories must retain their indirect target");
+
+        assert!(wat.contains("(table $__restrict_component_callable_table 1 funcref)"));
+        assert!(wat.contains(
+            "(export \"__restrict_component_callable_table\" (table $__restrict_component_callable_table))"
+        ));
+        assert!(wat.contains("(elem (i32.const 0) func $lambda_0)"));
+        assert!(wat.contains("(func $lambda_0"));
+        let wasm = wat::parse_str(&wat).expect("release callable Core WAT should assemble");
+        wasmparser::Validator::new()
+            .validate_all(&wasm)
+            .expect("release callable Core Wasm should validate");
+    }
 
     #[test]
     fn string_memory_offsets_align_and_reject_address_overflow() {

@@ -72,6 +72,6 @@ fn test_lambda_without_captures() {
 
     // Non-capturing lambdas still use the uniform closure representation, but
     // the closure only stores the function table index.
-    assert!(wat.contains("i32.const 4 ;; closure size"));
+    assert!(wat.contains("i32.const 8 ;; closure size"));
     assert!(!wat.contains("offset for captured var"));
 }

@@ -10,6 +10,12 @@ The language specification remains authoritative. In particular, `await` and
 `spawn` are currently reserved or experimental, and the v0.0.1 code generator
 does not provide a concurrency runtime.
 
+The accepted product split places only the local async foundation in v0.2.0:
+async functions, structured tasks, futures/streams, cancellation,
+backpressure, and cleanup across suspension. Multicore scheduling,
+distributed actors, supervision, and multi-node delivery in this document are
+post-v0.2 exploration and are not implied by the v0.2.0 milestone.
+
 ## Goal
 
 Restrict should not aim to reproduce BEAM processes unchanged. The intended

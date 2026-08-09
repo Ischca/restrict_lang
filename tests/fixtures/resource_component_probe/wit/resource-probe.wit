@@ -1,0 +1,15 @@
+package test:resource-probe;
+
+interface api {
+  resource counter {
+    constructor(init: s32);
+    get: func() -> s32;
+    consume: static func(counter: own<counter>) -> s32;
+  }
+
+  drop-count: func() -> s32;
+}
+
+world resource-probe {
+  export api;
+}

@@ -100,7 +100,6 @@ pub mod component_compat;
 pub mod component_external;
 
 /// Explicit, deterministic Component-boundary generic specialization
-#[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub mod component_specialization;
 

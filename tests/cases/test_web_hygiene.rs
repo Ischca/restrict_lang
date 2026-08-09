@@ -172,6 +172,22 @@ fn shell_installer_uses_portable_checksum_flags() {
 }
 
 #[test]
+fn ci_checks_the_browser_compiler_target_before_merge() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = read_fixture(root, ".github/workflows/ci.yml");
+
+    assert!(
+        workflow.contains("targets: wasm32-unknown-unknown"),
+        "CI should install the browser compiler target before checking it"
+    );
+    assert!(
+        workflow.contains("cargo check -p restrict_lang --locked")
+            && workflow.contains("--target wasm32-unknown-unknown --lib"),
+        "CI should compile-check the browser-facing library target on every PR"
+    );
+}
+
+#[test]
 fn pages_shell_hosts_docs_blog_and_compiler_routes() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 

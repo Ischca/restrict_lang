@@ -26,6 +26,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -37,6 +38,11 @@ jobs:
 
       - name: Lint workspace
         run: cargo clippy --workspace --locked -- -D warnings
+
+      - name: Check browser compiler target
+        run: >-
+          cargo check -p restrict_lang --locked
+          --target wasm32-unknown-unknown --lib
 
   test-shards:
     name: Tests (${{ matrix.name }})

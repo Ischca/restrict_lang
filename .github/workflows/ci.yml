@@ -132,7 +132,7 @@ jobs:
       - name: Enforce deterministic benchmark baseline
         run: >-
           ./target/release/restrict_bench_compare
-          --baseline benchmarks/baselines/core-wasm-v0.0.1.json
+          --baseline benchmarks/baselines/core-wasm-v0.1.0-rc.1.json
           --candidate target/benchmark-results/restrict-baseline.json
           --policy benchmarks/regression-policy.json
 

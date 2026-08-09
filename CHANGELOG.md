@@ -33,6 +33,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Release candidate boundaries
 
+- Add a reviewed v0.1.0-rc.1 deterministic Core Wasm benchmark baseline while
+  retaining the v0.0.1 baseline as historical evidence.
 - Keep the ordinary scalar Core Wasm compatibility profile from v0.0.1 and
   require explicit `[component]` selection for rich Component exports.
 - Keep async functions, futures, streams, cancellation, backpressure, and

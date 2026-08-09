@@ -33,7 +33,7 @@ fi
 
 if [[ "$COMPARE" == true ]]; then
   ./target/release/restrict_bench_compare \
-    --baseline benchmarks/baselines/core-wasm-v0.0.1.json \
+    --baseline benchmarks/baselines/core-wasm-v0.1.0-rc.1.json \
     --candidate "$OUTPUT" \
     --policy benchmarks/regression-policy.json
 fi

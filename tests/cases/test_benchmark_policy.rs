@@ -380,7 +380,7 @@ fn stability_policy_rejects_mixed_hosts() {
 #[test]
 fn checked_in_benchmark_contract_matches_manifest() {
     let manifest = read_repository_json("benchmarks/manifest.json");
-    let baseline = read_repository_json("benchmarks/baselines/core-wasm-v0.0.1.json");
+    let baseline = read_repository_json("benchmarks/baselines/core-wasm-v0.1.0-rc.1.json");
     let policy = read_repository_json("benchmarks/regression-policy.json");
     let stability_policy = read_repository_json("benchmarks/stability-policy.json");
 

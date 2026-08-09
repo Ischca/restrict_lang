@@ -34,7 +34,7 @@ for ((run = 1; run <= RUN_COUNT; run++)); do
   report="$OUTPUT_DIR/run-${run}.json"
   ./target/release/restrict_bench --output "$report"
   ./target/release/restrict_bench_compare \
-    --baseline benchmarks/baselines/core-wasm-v0.0.1.json \
+    --baseline benchmarks/baselines/core-wasm-v0.1.0-rc.1.json \
     --candidate "$report" \
     --policy benchmarks/regression-policy.json
   reports+=("$report")

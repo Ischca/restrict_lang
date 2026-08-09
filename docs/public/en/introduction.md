@@ -1,10 +1,10 @@
 # Introduction
 
-Restrict is a small, WebAssembly-oriented programming language built around
+Restrict is a WebAssembly-oriented programming language built around
 object-subject-verb calls, affine ownership, and explicit release boundaries.
-The current documentation distinguishes the historical v0.0.1 surface from
-the small post-v0.0.1 additions: what is implemented and intended for public
-use, what is intentionally rejected, and what remains reserved design space.
+The current documentation distinguishes the v0.0.1 release surface—what is
+implemented and intended for public use—from what is intentionally rejected
+or remains reserved design space.
 
 ## What Restrict Is Today
 
@@ -30,6 +30,14 @@ methods, conditional or generic adoptions, dynamic dispatch, and exported
 generic or composite host ABIs remain outside the current compiler surface.
 User enums may be used inside `Result<T, CustomError>`, but the `?` propagation
 operator is not implemented yet.
+
+WebAssembly is the only Restrict code-generation target. Native WASI runtimes,
+browsers, cloud/edge platforms, and container runtimes are different hosts for
+that output, not separate JavaScript or native language backends. A host may
+currently require generated JavaScript glue, but Restrict application logic
+still compiles to Wasm. The [WebAssembly Integration](./advanced/wasm.md) page
+separates the current executable surface from planned WASI, Component Model,
+Web, and edge adapters.
 
 ## Why OSV
 
@@ -74,7 +82,7 @@ fun choose_label: (passing: Boolean) -> String = {
 }
 
 fun main: () -> String = {
-    val passing = true
+    val passing = true;
     passing |> choose_label
 }
 ```

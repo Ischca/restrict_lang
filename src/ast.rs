@@ -932,6 +932,12 @@ pub struct AssignStmt {
 pub struct LambdaExpr {
     pub params: Vec<LambdaParam>,
     pub body: Box<Expr>,
+    /// True when the lambda came from an implicit scoped-clause focus block.
+    ///
+    /// The marker preserves the surface distinction between `map { it + 1 }`
+    /// and an explicitly bound lambda such as `map { |value| value + 1 }`.
+    /// Type checking uses it to reject ambiguous nested implicit focus scopes.
+    pub implicit_focus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1360,8 +1366,8 @@ fun main: () -> Int32 = {
     val casted = 7 as Int64
     val negated = -1
     val opt = (5) Option::Some
-    mut val count = 0
-    count = count + 1
+    mut val count = 0;
+    count = count + 1;
     true |> pick |> classify |> countdown
 }
 "#;

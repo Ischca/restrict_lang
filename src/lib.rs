@@ -76,8 +76,55 @@ pub mod type_constraints;
 /// Typed IR, internal ABI layout, and optimization-stage foundations
 pub mod ir;
 
+mod wasm_optimize;
+
 /// Code generation module for producing WebAssembly output
 pub mod codegen;
+
+/// Internal WebAssembly Component interface scaffold
+#[doc(hidden)]
+pub mod component;
+
+/// Canonical ABI adapter lowering for compiler-owned Components
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod component_adapter;
+
+/// Semantic WebAssembly Component interface compatibility diffing
+#[doc(hidden)]
+pub mod component_compat;
+
+/// External-WIT-first Component bindings and conformance validation
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod component_external;
+
+/// Explicit, deterministic Component-boundary generic specialization
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod component_specialization;
+
+/// Schema-v2 explicit generic concretization planning
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod component_generic;
+
+/// Per-instance synchronous own/borrow/callable resource table
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod component_resource;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod component_resource_adapter;
+/// Checked schema-v2 resource and callable publication plan
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod component_resource_plan;
+
+/// Versioned Component selection model for resources, callables, and explicit instances
+#[doc(hidden)]
+pub mod component_selection_v2;
 
 /// Lifetime inference module for Temporal Affine Types
 pub mod lifetime_inference;
@@ -110,7 +157,9 @@ pub mod web;
 
 // Re-exports for convenience
 pub use ast::*;
-pub use codegen::{CodeGenError, WasmCodeGen};
+pub use codegen::{
+    CodeGenError, ReleaseOptimizationReport, WasmCodeGen, WasmOptimizationLevel, WasmTargetProfile,
+};
 pub use lexer::*;
 pub use parser::*;
 pub use release_surface::{

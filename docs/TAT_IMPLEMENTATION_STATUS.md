@@ -137,10 +137,10 @@ This document tracks the implementation progress of Temporal Affine Types in Res
 - `src/lifetime_inference.rs` - Lifetime inference algorithm ✨
 
 ### Tests
-- `tests/test_temporal_types.rs` - Main temporal tests
-- `tests/test_lifetime_inference.rs` - Lifetime inference tests ✨
-- `tests/test_with_lifetime.rs` - With lifetime block tests ✨
-- `tests/test_temporal_borrowing.rs` - Temporal borrowing and sublifetime tests ✨
+- `tests/cases/test_temporal_types.rs` - Main temporal tests
+- `tests/cases/test_lifetime_inference.rs` - Lifetime inference tests ✨
+- `tests/cases/test_with_lifetime.rs` - With lifetime block tests ✨
+- `tests/cases/test_temporal_borrowing.rs` - Temporal borrowing and sublifetime tests ✨
 - `test_escape_debug.rl` - Escape test case
 - `test_temp_debug.rl` - Debug test case
 

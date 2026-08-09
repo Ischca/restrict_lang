@@ -74,19 +74,39 @@ fun main: () -> Int32 = {
 }
 ```
 
-## Collection Pipelines
+## Scoped Verb Clauses
 
-Higher-order functions are still OSV. The collection and function value are
-both arguments, so they appear together before `map`, `filter`, or `fold`.
+A higher-order verb can open its final function argument as a typed scope. The
+ordinary object stays before the verb, while the complete clause becomes the
+object of the next verb.
 
 ```restrict
 fun main: () -> Int32 = {
     val numbers: List<Int32> = [1, 2, 3, 4]
-    val kept = (numbers, |n| n > 1) filter
-    val doubled = (kept, |n| n * 2) map
-    (doubled, 0, |total, n| total + n) fold
+    val doubled = numbers map {
+        it * 2
+    } filter {
+        it > 2
+    }
+    (doubled, 0) fold { |total, number|
+        total + number
+    }
 }
 ```
+
+An unheaded scope receives one contextual `it` binding. Use the existing
+lambda binder syntax in the scope header when a name is clearer or the
+callback has multiple parameters:
+
+```restrict
+values map { |value|
+    value + 1
+}
+```
+
+The compiler checks these scopes exactly like ordinary lambdas. Nested
+implicit `it` scopes are rejected; name at least one binder so ownership and
+capture intent remain visible.
 
 ## Pattern Matching
 
@@ -170,3 +190,6 @@ fun main: () -> Int32 = {
 OSV makes ownership and data flow explicit: values move from left to right,
 multi-argument calls use tuples, and `impl` functions are still called through
 OSV syntax.
+
+For the complete callback model and the current `map`, `filter`, and `fold`
+surface, continue to [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md).

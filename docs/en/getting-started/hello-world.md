@@ -15,7 +15,7 @@ Warder creates a project like this:
 
 ```text
 hello-world/
-├── package.rl.toml
+├── warder.toml
 ├── src/
 │   └── main.rl
 ├── tests/
@@ -201,7 +201,7 @@ compiler-registered standard-library surface:
 - Temporal Affine Types
 - generic or recursive user enums and direct host enum ABI
 
-The current post-v0.0.1 compiler does support closed, non-generic,
+The v0.0.1 compiler does support closed, non-generic,
 non-recursive enums inside Restrict programs. See [Types](../guide/types.md) and
 [Pattern Matching](../guide/patterns.md) after completing this first path.
 

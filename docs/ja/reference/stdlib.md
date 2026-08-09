@@ -1,6 +1,6 @@
 # 標準ライブラリリファレンス
 
-このページは、v0.0.1互換helperとpost-v0.0.1のDisplay追加を含む、現在のstandard-library surfaceを説明します。
+このページは、Displayと互換helperを含む、v0.0.1のcompiler-registered standard-library surfaceを説明します。
 
 ## import について
 
@@ -21,6 +21,9 @@ or: (Boolean, Boolean) -> Boolean
 assert: (Boolean, String) -> ()
 panic: (String) -> ()
 ```
+
+対応コンテナ、コールバック型、スコープ呼び出し、アフィン動作は
+[高階関数とコレクション変換](../advanced/higher-order.md)で説明します。
 
 ```restrict
 fun prelude_example: () -> Boolean = {
@@ -169,7 +172,7 @@ fun list_composition_example: () -> Int32 = {
 }
 ```
 
-専用の list map/filter/fold helper は current list module surface には含まれていません。prelude の compiler-registered generic container builtins として扱われます。
+専用の list map/filter/fold helper は current list module surface には含まれていません。prelude の compiler-registered generic container builtins として扱われます。正確なv0.0.1のコンテナ境界は高階関数ガイドを参照してください。
 
 ## option.rl
 

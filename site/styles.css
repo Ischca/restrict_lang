@@ -82,14 +82,10 @@ a { color: inherit; }
 }
 
 .brand-mark {
-  display: inline-grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--accent);
-  color: white;
-  font-size: 0.85rem;
+  display: block;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
 }
 
 nav {
@@ -256,6 +252,7 @@ pre code.language-restrict { display: block; color: var(--code-fg); white-space:
 
 .horizontal-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .post-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 36px; }
+.post-list.single { grid-template-columns: minmax(0, 760px); }
 .post-list.standalone { grid-template-columns: 1fr; max-width: 860px; margin: 42px 0 0; }
 .post-list a { display: flex; min-height: 220px; flex-direction: column; padding: 25px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); text-decoration: none; transition: transform 160ms ease, border-color 160ms ease; }
 .post-list a:hover { transform: translateY(-2px); border-color: var(--accent); }
@@ -275,6 +272,10 @@ pre code.language-restrict { display: block; color: var(--code-fg); white-space:
 .article-shell h1 { font-size: clamp(2.7rem, 6vw, 4.8rem); }
 .article-shell h2 { margin-top: 48px; font-size: 1.65rem; line-height: 1.25; }
 .article-shell p, .article-shell li { font-size: 1.03rem; }
+.article-lede { color: var(--ink) !important; font-size: 1.2rem !important; line-height: 1.7; }
+.article-summary { margin: 36px 0; padding: 24px 26px; border: 1px solid var(--line); border-left: 5px solid var(--accent); border-radius: 8px; background: var(--surface); }
+.article-summary strong { font-size: 0.84rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.article-summary p { margin: 8px 0 0; }
 .article-shell pre { margin: 30px 0; padding: 26px; border-radius: 10px; background: var(--code); color: var(--code-fg); }
 .article-shell code:not(.language-restrict) { padding: 0.12em 0.35em; border-radius: 4px; background: var(--surface); color: var(--accent-strong); }
 .article-meta { margin: 18px 0 34px; font-size: 0.88rem !important; }

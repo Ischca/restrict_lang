@@ -62,7 +62,7 @@ fun value_or_zero: (maybe: Option<Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val maybe: Option<Int32> = 42 Option::Some
+    val maybe: Option<Int32> = 42 Option::Some;
     maybe |> value_or_zero
 }
 ```

@@ -55,7 +55,7 @@ When multiple fields are needed from the same affine record, destructure once:
 
 ```restrict
 fun sum_point: (point: Point) -> Int32 = {
-    val Point { x, y } = point
+    val Point { x, y } = point;
     x + y
 }
 ```
@@ -143,7 +143,7 @@ For multiple arguments, keep the receiver first:
 ```restrict
 fun moved_x: () -> Int32 = {
     val point = Point { x: 3, y: 4 }
-    val moved = (point, 1, 2) translate
+    val moved = (point, 1, 2) translate;
     moved.x
 }
 ```
@@ -167,7 +167,7 @@ record Employee {
 
 fun employee_city: (employee: Employee) -> String = {
     val Employee { name, age, address } = employee
-    val Address { street, city, country } = address
+    val Address { street, city, country } = address;
     city
 }
 ```

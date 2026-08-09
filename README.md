@@ -10,7 +10,7 @@
   [![WASM](https://img.shields.io/badge/target-WebAssembly-orange.svg)](https://webassembly.org/)
   [![Documentation](https://img.shields.io/badge/docs-mdBook-green.svg)](https://ischca.github.io/restrict_lang/docs/)
 
-  [Website](https://ischca.github.io/restrict_lang/) · [Playground](https://ischca.github.io/restrict_lang/compiler/) · [Release surface](docs/en/reference/release-surface.md)
+  [Website](https://ischca.github.io/restrict_lang/) · [Playground](https://ischca.github.io/restrict_lang/compiler/) · [Release surface](docs/public/en/reference/release-surface.md)
 </div>
 
 ---
@@ -21,9 +21,87 @@
 
 A statically-typed functional programming language that compiles to WebAssembly, featuring an affine type system, pattern matching, lambda expressions with closures, and arena-based memory management.
 
+## WebAssembly-First Execution Model
+
+WebAssembly is Restrict's sole code-generation target. Native WASI runtimes,
+browsers, cloud/edge platforms, and container runtimes are hosts for the same
+Wasm backend rather than separate JavaScript or native language backends.
+
+```text
+Restrict source
+    ↓
+Core WebAssembly
+    ↓
+host profile or generated adapter
+    ├── native WASI runtime
+    ├── Component Model host
+    ├── browser host
+    └── cloud or edge host
+```
+
+The ordinary compiler uses WASI Preview 1 imports for basic program output. The
+browser playground implements those imports with a small JavaScript bridge;
+Restrict source still compiles only to Wasm. The v0.1.0-rc.1 candidate also
+implements the explicit B1 synchronous Component path, including rich values,
+generated and consumed WIT, Canonical ABI adapters, validated Components,
+compatibility diffing, and Rust interoperability. Full WASI 0.2 and Web/cloud
+adapters remain independently scoped host-profile work.
+
+Native WASI runtimes can provide a JavaScript-free application environment.
+Browsers do not currently expose the DOM directly to Wasm, so Web applications
+still need a host adapter. The compiler keeps that adapter separate so a future
+standard browser host interface can replace it without changing the language
+backend. Docker and containerd are treated as ways to run or package WASI
+artifacts, not as Restrict targets or ABIs.
+
+See [WebAssembly Integration](docs/public/en/advanced/wasm.md) for the public
+boundary and [WebAssembly Execution Strategy](docs/WASM_EXECUTION_STRATEGY.md)
+for the accepted architecture direction.
+
+### Versioned Interoperability Boundary
+
+- **Stable Core compatibility boundary (v0.0.1)** remains the scalar-only Core
+  Wasm host ABI. The opt-in `flat-record-v1` profile is experimental and does
+  not generate WIT.
+- **Current v0.1.0-rc.1 release candidate** is the explicit synchronous
+  Component boundary for `String`, `List`, `Array`, records, `Option`, `Result`,
+  user enums/variants, scalar-signature affine resources, value-capturing
+  once-callable resources, and explicitly named concrete generic function
+  instances. Warder transactionally emits normalized WIT, validated Component
+  Wasm, and semantic/content metadata. Stable v0.1.0 has not been published.
+- **Target v0.2.0 / B2** adds async functions, `await`, structured `spawn`,
+  futures, streams, cancellation, backpressure, generic async Component
+  capability adapters, and cleanup across suspension. Complete network/HTTP
+  profiles are follow-on host integration.
+
+The ordinary artifact path is still `.rl -> WAT -> Core Wasm`. With an explicit
+schema-v1 or schema-v2 `[component]` selection in the repository-root
+`warder.toml`, the compiler instead lowers checked `ComponentInterfaceIr`
+through normalized WIT, stable metadata, and Canonical ABI adapters. `warder
+build --component` publishes the validated
+`.component.wasm`, `.component.wit`, and `.component.toml` set transactionally.
+`wrap --wit` remains unverified caller-supplied text attached to a Core module
+cage and is not Component generation.
+
+Interface authority follows API ownership. WASI, standard worlds, and other
+externally owned contracts are WIT-first whether Restrict consumes/imports or
+implements/exports them. Explicit Restrict-owned component exports are checked
+through `ComponentInterfaceIr` and generate normalized WIT; ordinary `pub`
+declarations do not become host exports by accident. Rich external-WIT guest
+imports and scalar external implementation/export conformance are implemented;
+rich external implementations and external-WIT resources fail closed.
+Normalized WIT and stable ABI metadata are the compatibility contract, but WIT output alone
+is not the gate: Canonical ABI adaptation, Rust bindings,
+validation, composition, and runtime execution also pass. Repository E2E covers both
+Rust-produced Component -> Restrict consumer and
+Restrict-produced Component -> Rust consumer. MoonBit remains a design
+precedent and optional external comparison. The complete accepted scope and
+release gate are in
+[v0.1 Synchronous Component ABI Scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md).
+
 ## 🚀 Quick Start
 
-The current browser preview runs without an installation at the
+The browser playground runs without an installation at the
 [Restrict playground](https://ischca.github.io/restrict_lang/compiler/).
 
 ### From Source
@@ -37,11 +115,27 @@ mise exec -- cargo build --release
 
 # Compile your first program
 echo 'fun main: () -> Int32 = { 42 }' > hello.rl
-./target/release/restrict_lang hello.rl
+./target/release/restrict_lang --emit wasm hello.rl
 
 # Run the generated WebAssembly
-wasmtime hello.wat
+wasmtime hello.wasm
 ```
+
+For import-free compute modules, select the host-neutral benchmark target:
+
+```bash
+./target/release/restrict_lang --target wasm-core --emit wasm compute.rl
+./target/release/restrict_lang --target wasm-core --emit wasm --release compute.rl
+./target/release/restrict_lang --target wasm-core --emit wasm --release \
+  --instrument-memory compute.rl
+```
+
+`wasm-core` rejects host I/O. The default `wasip1` profile supports the current
+`print` and `println` surface. `--release` removes unreachable generated code;
+the default artifact remains unoptimized for compiler debugging.
+`--instrument-memory` exports arena peak, allocation, live-byte, and reset
+metrics for diagnostics; benchmark timing should continue to use the ordinary
+release artifact.
 
 ## ✨ Features
 
@@ -49,6 +143,7 @@ wasmtime hello.wat
 - **🧠 Arena Memory Management**: No garbage collection, deterministic memory usage with arena allocation
 - **🎯 Pattern Matching**: Exhaustive pattern matching with type safety for closed user enums, Option, Result, List, and Record types
 - **🌟 Lambda Expressions**: First-class functions with closure capture and bidirectional type inference
+- **🧭 Scoped Verb Clauses**: Higher-order verbs open typed focus scopes such as `values map { it + 1 }`
 - **⚡ WebAssembly Target**: Compiles to efficient WebAssembly with WASI support for the current concrete ABI surface
 - **📝 OSV Syntax**: Object-Subject-Verb syntax for natural function composition (traditional function calls not supported)
 - **🧩 Forms**: Explicit `form` / `takes` contracts with static, monomorphized dispatch
@@ -58,26 +153,27 @@ wasmtime hello.wat
 
 ## Release Design Boundaries
 
-The v0.0.1 tag intentionally kept several language-shaping decisions out of
-its support promise. The current post-v0.0.1 compiler adds a deliberately
-small user-defined enum slice while retaining the ABI boundaries below.
+The v0.0.1 release includes a deliberately small user-defined enum and static
+form surface while retaining the ABI boundaries below.
 
 - Closed, non-generic, non-recursive user-defined `enum` declarations are
   supported. Variants have zero or one payload, constructors use qualified
   `Type::Variant` names in OSV order, patterns use the same qualified names,
   and matches must be exhaustive. `pub enum` is source-module metadata only:
   user enums have no host WebAssembly ABI.
-- The current post-v0.0.1 compiler supports non-generic, method-only `form`
+- The v0.0.1 compiler supports non-generic, method-only `form`
   contracts, concrete record `takes` declarations, and `<T of A + B>` generic
   bounds. Dispatch is static and monomorphized. Associated types, generic or
   conditional adoptions, defaults, enum adoptions, and dynamic dispatch remain
   future work. The current `Container` behavior used by `map` and `filter`
   remains compiler-internal.
-- Exported generic functions do not yet have a stable WebAssembly ABI and are
+- Ordinary Core exports of generic functions still have no stable ABI and are
   rejected by v0.0.1 release-surface validation before `--check` success or
-  code generation. Exported records are source-level module metadata only; they
-  do not create host-visible Wasm exports until a concrete record ABI is
-  designed.
+  code generation. The explicit B1 Component path may publish a generic
+  function only through a concrete instance explicitly selected in the root
+  `warder.toml`. Exported
+  records remain source-level metadata unless explicitly lowered as a
+  Component value or resource.
 - Exported top-level constants are host-visible only when their literal value
   has a scalar ABI: `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, or `()`.
   Composite global exports are rejected until that ABI is designed.
@@ -94,7 +190,7 @@ small user-defined enum slice while retaining the ABI boundaries below.
 ```restrict
 // hello.rl
 fun main: () -> () = {
-    "Hello, Restrict Language!" |> println
+    "Hello, Restrict Language!" println
 }
 ```
 
@@ -108,8 +204,8 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 
 fun main: () -> Int32 = {
     val result = (10, 20) add
-    "Result: " |> println
-    result |> println
+    "Result: " println;
+    result println;
     result
 }
 ```
@@ -126,8 +222,8 @@ val message = "hello"
 val next = message
 
 // Mutable bindings can be reassigned
-mut val counter = 0
-counter = counter + 1
+mut val counter = 0;
+counter = counter + 1;
 counter = counter + 1
 ```
 
@@ -146,6 +242,7 @@ fun say_hello: () -> String = { "hello" }
 // OSV function calls (ONLY supported syntax)
 val result = (5, 10) add      // Multiple arguments: (args) function
 val doubled = 21 |> double    // Single argument: value |> function
+val direct = 21 double        // Single argument: value function
 val greeting = () say_hello   // No arguments: () function
 
 // Pattern: Arguments come BEFORE the function name
@@ -159,6 +256,37 @@ val process_data = data
     |> save_to_database
 ```
 
+Line breaks are whitespace, so a direct OSV call may span lines. A literal or
+other value that cannot be a verb naturally starts a new expression:
+
+```restrict
+"first" println
+"second" println
+```
+
+Use `;` when the next callable-shaped expression must not extend the current
+OSV chain. This most often appears when a named intermediate is declared and
+then used by the block's final expression:
+
+```restrict
+val message = "ready";
+message println
+```
+
+That semicolon is intentional when `val` stages a named intermediate before a
+separate identifier-started expression. If the name is only needed inside a
+higher-order transformation, open a scoped verb clause and name its lambda
+input instead:
+
+```restrict
+values map { |value|
+    value + 1
+}
+```
+
+This keeps the transformation semicolon-free without making line breaks carry
+statement semantics.
+
 ### Lambda Expressions and Closures
 
 ```restrict
@@ -170,6 +298,28 @@ fun main: () -> Int32 = {
     (|x| x * 2, 21) apply_int
 }
 ```
+
+### Scoped Verb Clauses
+
+A higher-order verb can open its final function parameter as a lexical scope.
+The complete clause becomes the object of the next verb, preserving
+left-to-right clause-level OSV flow.
+
+```restrict
+fun main: () -> Int32 = {
+    val values = [1, 2, 3]
+    val shifted = values map {
+        it + 1
+    }
+    (shifted, 0) fold { |total, value|
+        total + value
+    }
+}
+```
+
+An unheaded unary scope receives the contextual `it` binding. Use an explicit
+lambda-style header such as `{ |value| ... }` when naming the focus or handling
+multiple parameters.
 
 ### Pattern Matching
 
@@ -299,13 +449,15 @@ Badge takes Labelled {
 }
 
 fun read_label: <T of Labelled>(value: T) -> String = {
-    value |> label
+    value label
 }
 ```
 
 The compiler provides `Display` for `String`, all scalar types, and `()`. User
 records opt in explicitly. `print` and `println` accept any value that takes
-`Display`; `print_int` and `print_float` remain available for compatibility.
+`Display` and are called directly in OSV position; they are not first-class
+function values in this initial slice. `print_int` and `print_float` remain
+available for compatibility.
 
 ```restrict
 record Notice {
@@ -319,9 +471,9 @@ Notice takes Display {
 }
 
 fun main: () -> () = {
-    42 |> print
-    " · " |> print
-    Notice { text: "records too" } |> println
+    42 print
+    " · " print
+    Notice { text: "records too" } println
 }
 ```
 
@@ -335,7 +487,7 @@ methods, enum adoptions, and dynamic dispatch are not in this initial slice.
 // Arena context with scoped temporary heap allocation
 fun process_batch: () -> Int32 = {
     with Arena { } {
-        val big_list = [1, 2, 3, 4, 5]
+        val big_list = [1, 2, 3, 4, 5];
         big_list |> list_count
     }
 }
@@ -350,9 +502,10 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 ## 📚 Documentation
 
-- **[Quick Start](docs/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
-- **[Language Guide](docs/en/guide/README.md)** - Current release-facing syntax and design rules
-- **[Release Surface](docs/en/reference/release-surface.md)** - Historical v0.0.1 boundaries and current post-v0.0.1 additions
+- **[Quick Start](docs/public/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
+- **[Language Guide](docs/public/en/guide/README.md)** - Current release-facing syntax and design rules
+- **[Release Surface](docs/public/en/reference/release-surface.md)** - Current v0.0.1 language and host ABI boundaries
+- **[v0.1 Component ABI Scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md)** - Implemented B1 boundary, intentional limits, and v0.2 async split
 - **[Examples](examples/)** - Sample programs and use cases
 
 ## 🏗️ Implementation Status
@@ -377,10 +530,18 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [x] Method-only forms, concrete record adoptions, `of` bounds, and static form dispatch
 - [x] Display-polymorphic `print` and `println`
 - [x] Source import resolution through the CLI
-- [x] Direct local Warder dependencies with manifest-bound namespaces and deterministic lock hashes
+- [x] Direct local Warder source packages selected from the root
+  `warder.toml`, with no leaf manifests
 - [x] Affine checking across complex expressions, OSV calls, field access, and branching
 - [x] Conditional expressions with chained/nested runtime coverage
 - [x] Recursive functions with direct and mutual runtime coverage
+- [x] Explicit B1 Component path with checked CIR, normalized WIT, Canonical
+  ABI adapters, validation, compatibility diffing, and Warder publication
+- [x] Component values for String/List/Array/Record/Option/Result/enum/variant
+- [x] Schema-v2 resources, value-only capture once-callables, and explicit
+  generic function instances
+- [x] Rust-produced Component -> Restrict consumer and Restrict-produced
+  Component -> Rust consumer E2E through WIT only
 
 ### 🚧 In Progress
 
@@ -388,24 +549,31 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [ ] Generic, recursive, and host-ABI user enum support beyond the current closed enum slice
 - [ ] Registry, Git, foreign-WASM, and transitive Warder dependency resolution
 - [ ] Source-level import aliases, re-exports, and std aggregators
-- [ ] Direct WebAssembly ABI for exported generic functions and host-visible record values
+- [ ] Core-Wasm ABI for exported generic functions and host-visible record values
+- [ ] Rich external-WIT implementation/export, external-WIT resources, rich
+  resource signatures, `many` callables, and generic nominal Component types
 - [ ] Associated types, generic/conditional form adoptions, and default form methods
 
 ### 📋 Planned Features
 
 - [ ] String interpolation
-- [ ] Async/await support
+- [ ] v0.2.0 async/await/spawn, future/stream, cancellation, and backpressure
 - [ ] Ergonomic error propagation syntax
+- [ ] Generated Web and cloud host adapters
 - [ ] SIMD operations
-- [ ] WebGPU backend
+- [ ] WebGPU host integration
 
 ### ⚠️ Current Boundaries
 
 - Pattern guards and tuple patterns are future/design gaps; v0.0.1 covers
   Option, Result, List, Record, nested, and spread record patterns
-- Source-file imports and manifest-bound namespaces for direct local Warder
-  dependencies are implemented. Source `import ... as`, re-exports, std
-  aggregators, and non-local or transitive package graphs remain future work
+- Source-file imports and root-configuration-bound namespaces for direct local
+  Warder source packages are implemented. A managed repository has one
+  `warder.toml` and one generated `warder.lock`; local packages need only
+  `src/lib.rl`. Commit `warder.lock` when it is generated; do not hand-edit it.
+  Source `import ... as`, re-exports, std aggregators,
+  non-local/transitive resolution, and a multi-publish workspace graph remain
+  future work
 - String interpolation is not part of the v0.0.1 syntax; use concatenation today
 - Closed user-defined enums are supported after v0.0.1, including use as the
   error type in `Result<T, CustomError>`. Generic and recursive user enums,
@@ -414,9 +582,9 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
   concrete non-generic record adoptions only. `takes` is not independently
   public, and associated types, generic/conditional adoptions, defaults,
   dynamic dispatch, and enum adoptions remain future work
-- Exported generic functions require a concrete WebAssembly ABI design before
-  codegen support; exported records are source-level only and emit no direct
-  host-visible Wasm export
+- Ordinary Core exports of generic functions remain unsupported; explicit B1
+  Component exports require finite concrete function instances. Generic
+  nominal Component types and direct Core record exports remain unsupported
 - TAT examples and tests are experimental and run outside the default test gate
 - Some older examples are design sketches and may use syntax that is not in the v0.0.1 gate
 - Mutable variables use `mut val`
@@ -434,7 +602,9 @@ Type Checker → Typed AST
     ↓
 Code Generator → WebAssembly (.wat)
     ↓
-WebAssembly Runtime (wasmtime, browser, etc.)
+Host Profile / Generated Adapter
+    ↓
+WebAssembly Runtime (WASI, Component host, browser, edge, etc.)
 ```
 
 ### Type System
@@ -446,8 +616,12 @@ WebAssembly Runtime (wasmtime, browser, etc.)
 
 ### WebAssembly Backend
 
-- Compiles to WebAssembly Text Format (WAT)
-- Supports WASI for I/O operations
+- WebAssembly is the sole language backend
+- The native compiler emits WAT; Warder also packages binary Wasm
+- Current program output uses WASI Preview 1 for basic I/O operations
+- Browser and cloud integration belongs in generated host adapters
+- The explicit B1 path emits WIT, validated Components, and rich Canonical ABI
+  adapters; the default Core path remains separate
 - Function tables for lambda/closure calls
 - Linear memory management with arenas
 
@@ -470,10 +644,8 @@ mise run preflight
 mise run preflight-pages
 
 # Run specific test suites
-mise exec -- cargo test lambda        # Lambda expression tests
-mise exec -- cargo test pattern       # Pattern matching tests
-mise exec -- cargo test type_check    # Type checker tests
-mise exec -- cargo test codegen       # Code generation tests
+mise exec -- cargo test --lib parser::tests::
+mise exec -- cargo test --test integration_07 test_wasm_target_profiles:: -- --test-threads=1
 ```
 
 ## 🤝 Contributing
@@ -498,7 +670,7 @@ cd restrict_lang
 mise exec -- cargo build
 
 # Run tests
-mise exec -- cargo test
+mise run test
 
 # Install WebAssembly runtime for testing
 curl https://wasmtime.dev/install.sh -sSf | bash

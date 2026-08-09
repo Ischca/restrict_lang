@@ -1,8 +1,8 @@
 # Restrict Language Development Roadmap
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-08-09
 **Status**: Active Development
-**Target**: v1.0 Release
+**Target**: v0.1.0 synchronous Component ABI, then v0.2.0 async runtime
 
 ---
 
@@ -19,7 +19,441 @@
 
 ---
 
-## 📊 Current Status (as of 2025-01-13)
+## WebAssembly Execution Strategy
+
+**Decision date**: 2026-08-07
+
+WebAssembly remains Restrict's sole code-generation target. WASI, browsers,
+cloud/edge platforms, and container runtimes are host profiles, adapters, or
+packaging around the same Wasm backend. Restrict will not add a JavaScript
+backend merely because a current host requires JavaScript glue.
+
+### Current Baseline
+
+- [x] Generate Core WebAssembly text
+- [x] Package binary Wasm through Warder
+- [x] Export `_start` for zero-argument `main`
+- [x] Import WASI Preview 1 `fd_write` and `proc_exit` for basic program I/O
+- [x] Run generated programs in the browser through a small WASI bridge
+- [x] Keep the stable v0.0.1 host ABI scalar-only
+
+The ordinary pipeline remains `.rl -> WAT -> Core Wasm`. The v0.1.0-rc.1
+candidate also has an explicit B1 path from schema-v1/schema-v2 selections
+through checked `ComponentInterfaceIr`, normalized WIT and metadata, Canonical
+ABI adapters, and validated Component bytes. Warder publishes the `.component.wasm`,
+`.component.wit`, and `.component.toml` set transactionally. A Core module cage
+created by `warder wrap --wit` is still only an attachment container; it is not
+the Component build path.
+
+### Milestone B0: Core Wasm Benchmark Ready
+
+**Goal**: Make Restrict measurable and reproducible before publishing a
+Rust, Grain, or MoonBit comparison. This milestone covers host-neutral Core
+Wasm workloads; it does not claim that Restrict is already a complete
+application platform.
+
+#### Target and Artifact Boundary
+
+- [x] Separate documented `wasm-core` and `wasip1` target profiles
+- [x] Omit WASI imports from `wasm-core` artifacts when the program does not
+  use host I/O
+- [x] Make direct `.wasm` output and validation a first-class compiler flow
+- [x] Pin and test the reference runtime and Wasm validation tool versions
+
+#### Release Code Generation
+
+- [x] Connect release mode to the optimizer and document its exact pipeline
+- [x] Eliminate unreachable functions, unused runtime helpers and imports, and
+  dead internal declarations while preserving explicit exports as roots
+- [x] Define the role of `wasm-opt` and retain both raw and optimized artifact
+  measurements
+- [x] Make identical source, compiler revision, and options produce
+  reproducible benchmark artifacts
+
+#### Benchmark Language Surface
+
+- [x] Stabilize release Wasm code generation for scalar arithmetic, branches,
+  loops, and monomorphic function calls
+- [x] Complete recursion for the forms used by the benchmark corpus
+- [x] Complete closure calls and the `map`/`filter`/`fold` paths used by the
+  collection workloads
+- [x] Verify record and collection workloads against interpreter-independent
+  expected results
+- [x] Freeze and document the exact supported subset before comparing it with
+  other languages
+
+#### Memory Behavior
+
+- [x] Replace or explicitly configure the current fixed 4 KiB arena limit
+- [x] Detect arena exhaustion and report it rather than relying on an
+  accidental Wasm trap
+- [x] Support memory growth or a configurable larger arena for benchmark
+  workloads
+- [x] Reset the arena reliably between iterations and expose enough data to
+  measure peak memory
+
+#### In-Repository Regression Benchmarks
+
+- [x] Add a `benchmarks/` suite for compiler time, runtime, and artifact size
+- [x] Cover scalar loops, function calls and recursion, records, and
+  `map`/`filter`/`fold`
+- [x] Give every workload a deterministic checksum or other correctness oracle
+- [x] Run correctness and a short smoke subset in pull-request CI
+- [x] Record repeated timing reports and machine-check exact host, toolchain,
+  source revision, workload set, and within-run dispersion
+- [x] Keep timing informational and collect repeated evidence locally on demand
+- [x] Adopt a same-session local comparison protocol: run every implementation
+  on one machine in one time window, interleave their measurement order, and
+  retain all observed samples
+- [x] Keep hosted CI focused on correctness, reproducible artifacts, artifact
+  size, and memory instead of treating shared-runner timing as a baseline
+- [x] Store machine-readable raw results before producing charts or summaries
+
+#### Reproducibility Contract
+
+- [x] Pin the Restrict compiler build toolchain, runtime, validator,
+  compressor, and compiler-owned release optimizer used by this baseline
+- [x] Record source revision, target profile, flags, OS, CPU, and tool versions
+- [x] Measure compile time, raw and compressed Wasm size, cold instantiation,
+  warm execution, and peak memory where the runtime exposes it
+- [x] Specify warm-up, iteration count, process isolation, and statistical
+  summary rules
+- [x] Provide one documented command that builds, validates, runs, verifies,
+  and records all Restrict baselines on a clean machine
+
+#### Exit Criteria
+
+- [x] A non-I/O `wasm-core` workload runs without JavaScript and without
+  unnecessary WASI imports
+- [x] Release builds demonstrably optimize code and remove unused runtime code
+- [x] Every language feature used by the corpus passes its semantic and Wasm
+  execution checks in release mode
+- [x] A representative workload can exceed the former 4 KiB arena boundary
+  without an accidental trap
+- [x] Every benchmark rejects an incorrect result through its correctness
+  oracle
+- [x] A clean machine can reproduce the complete baseline with pinned tools;
+  the required GitHub `ubuntu-24.04` benchmark job builds, records, compares,
+  and uploads the full baseline from a fresh checkout
+- [x] Baseline results and an explicit regression policy are checked in
+- [x] One documented local command records repeated raw timing evidence without
+  turning machine-dependent timings into a persistent regression gate
+
+WIT, the Component Model, a composite-value host ABI, filesystem or HTTP APIs,
+async support, DOM access, threads, SIMD, and a JavaScript backend are not
+required for this Core Wasm milestone. They must be evaluated separately when
+benchmarking application or platform integration.
+
+The Restrict regression suite belongs in this repository. No dedicated or
+self-hosted benchmark runner is required at this stage. Timing is measured on
+demand locally and remains informational; deterministic correctness, artifact,
+size, and memory checks remain enforceable in CI.
+
+### Post-B0: Cross-Language Comparison Gate
+
+- [ ] Create a separate cross-language harness so Rust, Grain, MoonBit,
+  Restrict, and any later comparison targets can pin their toolchains, sources,
+  runtimes, and raw results without coupling them to the compiler release cycle
+- [ ] Execute every comparison on the same local machine in the same session,
+  use equivalent workloads and correctness oracles, and interleave execution
+  order to reduce time- and temperature-dependent bias
+- [ ] Report host and toolchain metadata, every raw sample, summary statistics,
+  and unfavorable results; do not combine or compare absolute timing values
+  collected on different machines or in different sessions
+- [ ] Only after these checks pass may public cross-language performance claims
+  be based on the suite
+
+### Milestone B1 / v0.1.0: Synchronous Component Project Ready
+
+**Status**: Implementation complete; `0.1.0-rc.1` is the first release
+candidate. Stable v0.1.0 has not been published.
+
+**Goal**: Make a Restrict package a first-class synchronous WebAssembly
+Component producer and consumer in native Component hosts. The repository B1
+gate is Rust-only; JS/TS bindings, Worker loaders, and browser bundler
+integration are optional host-adapter follow-on work rather than v0.1 exit
+criteria.
+
+The target is not WIT file generation in isolation. B1 completes the WIT +
+Component Model + Canonical ABI + language bindings +
+component composition/runtime stack needed for independent-language
+interoperability.
+
+The completed B0 benchmark gate remains valid and independent. The unchecked
+Post-B0 cross-language comparison gate does not block B1.
+
+#### Interface Authority and ABI Architecture
+
+Interface authority follows API ownership, not import/export direction.
+
+- [x] Add a checked, monomorphized `ComponentInterfaceIr` (Component Interface
+  IR) independent of the compiler-owned Core Wasm arena layout
+- [x] Make checked/monomorphized IR authoritative for boundary function bodies
+  and layouts, including reconciling the current String descriptor/codegen
+  header mismatch
+- [x] For Restrict-owned APIs, generate normalized WIT from explicitly selected
+  Restrict component exports through Component Interface IR; do not expose
+  every source-level `pub` declaration implicitly
+- [x] For externally owned APIs such as WASI, standard worlds, and third-party
+  components, treat external WIT as authoritative both when Restrict
+  consumes/imports and when Restrict implements/exports the interface
+- [x] Generate typed Restrict guest-import bindings from rich external WIT and
+  scalar implementation obligations; rich implementation/export and
+  external-WIT resources fail closed pending a follow-on adapter slice
+- [x] Treat normalized WIT plus the stable ABI profile metadata as the public
+  compatibility contract
+- [x] Generate Canonical ABI lift/lower adapters, `cabi_realloc`, return-area
+  handling, post-return cleanup, and trap-safe ownership transitions
+- [x] Move or copy every composite result into boundary-owned storage before
+  resetting the Restrict invocation arena
+- [x] Keep raw pointers, arena offsets, layout IDs, function-table indexes, and
+  unresolved type parameters private
+
+This ownership-based source-first/WIT-first model avoids duplicate Restrict
+type declarations and handwritten WIT drift for Restrict-owned APIs while
+preserving affine ownership/capture facts and Restrict source diagnostics. It
+retains WIT-first conformance for externally owned contracts. See
+the [v0.1 Component ABI scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md) for the
+normative target and the
+[B1 Component Implementation Design](docs/B1_COMPONENT_IMPLEMENTATION_DESIGN.md)
+for the Component selection schema, Component Interface IR boundaries, phased
+implementation, and kill criteria.
+
+#### Component Foundation and Publication
+
+- [x] Parse and structurally validate schema-v1 `[component]` metadata with an
+  explicit `namespace:name@semver` package identity and
+  `abi = "canonical-v1-sync"`
+- [x] Resolve schema-v1 root selections internally with a source-public plus
+  repository-root `warder.toml` selection double gate; preserve existing
+  `pub` / `export` Core Wasm behavior
+- [x] Limit schema-v1 selections to public root-module functions and
+  reject unknown schema versions, private or missing declarations, duplicate
+  selections, WIT-name collisions, and unsupported types
+- [x] Build `ComponentInterfaceIr` independent of `HostAbi`,
+  `ValueRepr`, `LayoutId`, arena addresses, and resolver-mangled symbols
+- [x] Generate deterministic normalized WIT and reparse it with pinned tooling
+- [x] Package deterministic Component bytes and validate them with pinned
+  in-process tooling
+- [x] Execute the selected function from an independently built Rust consumer
+  that shares only the versioned WIT world and Canonical ABI
+- [x] Keep exact artifact content identity separate from the semantic interface
+  hash derived from normalized WIT and stable ABI-profile metadata
+- [x] Publish `.component.wasm`, `.component.wit`, `.component.toml`, and the
+  generated root `warder.lock` update as one recoverable Warder transaction
+- [x] Revalidate staged Component bytes, normalized WIT, identity, and content
+  hashes before publication; preserve the prior artifact set on failure
+
+The default Core module cage and explicit Component artifact remain distinct.
+`warder wrap --wit` attaches caller-supplied text to a cage and does not run
+this generation or validation pipeline. Durable cross-module
+`CanonicalDeclId` remains open; schema v2 selections are root-only.
+
+#### Complete Synchronous Type Boundary
+
+- [x] `String` maps to WIT `string` with validated UTF-8 lifting and lowering
+- [x] `List<T>` maps recursively to WIT `list<T>`
+- [x] `Array<T, N>` maps to WIT `list<T>` plus generated exact-length metadata
+  and boundary validation
+- [x] Records map recursively to WIT `record` without exposing internal padding
+- [x] `Option<T>` and `Result<T, E>` map to WIT `option` and `result`
+- [x] Payload-free user enums map to WIT `enum`; payload-carrying enums map to
+  WIT `variant`
+- [x] Explicit synchronous resources map to WIT `resource` with affine
+  `own`/call-scoped `borrow`, exactly-once drop, and scalar-signature
+  factories/methods
+- [x] Value-only capture closure/function values map to signature-specific
+  once-callable resources; captured raw table indexes never cross the boundary
+- [x] Generic functions require explicit finite concrete instantiations with
+  deterministic host names; open generics never appear in WIT
+- [x] Nested combinations of supported ordinary value categories round-trip through
+  the same recursive adapter implementation
+- [ ] Add an explicit source byte type before exposing WIT `list<u8>`; `Char`
+  is not a byte substitute
+- [ ] Extend resources beyond scalar-signature methods/factories, callable
+  captures beyond value-only state, and generic nominal boundary types
+
+WIT alone cannot express Restrict open generics, first-class closures, affine
+capture multiplicity, or a stable `Array<T, N>` length constraint. Explicit
+concrete instantiation, callable resources, ownership/drop adapters, and list
+length validation are therefore normative B1 rules.
+
+#### Synchronous WASI and Host Profiles
+
+- [x] Preserve the current Core Wasm and WASI Preview 1 profiles as compatible
+  legacy output paths
+- [x] Consume synchronous WIT capabilities and run the B1 conformance world
+  in a pinned Component host, adapting the current basic output/exit path where
+  required
+- [x] Track full WASI 0.2 command coverage for arguments, environment,
+  filesystem, clocks, randomness, and other standard interfaces as a separate
+  host-profile milestone rather than a v0.1.0 ABI release blocker
+- [x] Keep futures, streams, async functions, and suspension semantics in
+  v0.2.0; keep complete network/HTTP profiles independently scoped
+- [ ] Optionally generate a framework-neutral Worker loader and typed JS/TS
+  bindings as later host adapters; these are not v0.1 repository exit gates
+
+#### Project, Artifacts, and Developer Experience
+
+- [x] Use one authored repository-root `warder.toml` and one generated
+  repository-root `warder.lock`; do not require package/member leaf manifests
+- [x] Keep the current project model to one publishable root package plus
+  direct local source packages selected centrally from `[dependencies]`
+- [x] Require only `src/lib.rl` for a direct local source package and keep the
+  local source graph out of `warder.lock`; the current local-only lock has no
+  resolved package entries
+- [ ] Extend the same root file with a multi-publish workspace graph without
+  adding leaf manifests or deriving public identity from directory placement
+- [ ] Introduce a future edition's source-first Component ergonomics by
+  distinguishing package-visible `pub` from Component-intent `export`; until
+  then retain the implemented source-public plus `[component]` double gate
+- [ ] Let Warder build an explicit project directory without changing the
+  caller's working directory (follow-on CLI ergonomics; not a B1 ABI gate)
+- [x] Emit deterministic normalized WIT, validated Component Wasm, and
+  machine-readable artifact metadata from the explicit Component build path
+- [x] Compose independently built components by their WIT worlds and execute
+  the result in pinned Component runtimes
+- [x] Separate the normalized semantic interface hash from exact artifact
+  content hashes
+- [x] Preserve Restrict source identities in component diagnostics
+- [ ] Add optional watch/incremental and reference-bundler integration without
+  making Warder an npm dependency resolver
+- [x] Run the compiler, Warder publication, Rust Component host, and
+  compatibility tests through the repository test commands
+
+#### v0.1.0 Exit Criteria
+
+- [x] Every supported B1 type, including nested ordinary composites,
+  round-trips through generated Rust bindings in a pinned native Component
+  runtime
+- [x] WIT parsing, Component validation, and semantic-interface compatibility
+  tests are automated with pinned Rust tooling
+- [x] Rich external WIT produces working Restrict guest-import bindings;
+  scalar external implementation/export conformance is checked
+- [x] Array-length, invalid/stale handle, repeated borrow, terminal ownership,
+  drop, and callable-capture cleanup paths have negative/runtime tests
+- [x] Explicit generic function specializations produce stable named exports,
+  while unresolved generic boundaries fail with typed diagnostics
+- [x] Resource and callable handles remain valid for their documented lifetime,
+  release captured state exactly once, and do not grow without bound under
+  repeated create/call/drop cycles
+- [x] An independent Rust Component host builds generated bindings from WIT and
+  calls non-trivial Restrict Components
+- [x] Internal layout or optimizer changes leave the interface hash unchanged;
+  a real normalized-WIT shape change updates it, and compatibility diff reports
+  breaking versus non-breaking changes
+- [x] Rust-produced Component -> Restrict consumer executes from independently
+  built artifacts
+- [x] Restrict-produced Component -> Rust consumer executes from independently
+  built artifacts
+- [x] Cross-language tests share only the versioned WIT package/world; they do
+  not share an allocator, linear memory, arena layout, runtime representation,
+  or bridge that bypasses the Canonical ABI
+
+MoonBit remains a design precedent and an optional external comparison target.
+It is not a required repository E2E toolchain or v0.1.0 release dependency.
+
+Intentional B1 follow-ons are rich external-WIT implementation/export,
+external-WIT resources, resource methods/factories with rich signatures,
+resource/callable-bearing captures, `many` callables, generic nominal boundary
+types, and durable cross-module schema-v2 identity. They do not invalidate the
+implemented Rust-only synchronous gate.
+
+Every v0.1.0 component function is synchronous. `async`, `await`, `spawn`,
+future/stream values, cancellation, and cleanup across suspension are release
+validation errors rather than partially supported ABI features.
+
+### Milestone B2 / v0.2.0: Async Component Runtime
+
+**Goal**: Add suspension and structured concurrency only after the synchronous
+Component ABI, ownership, and cleanup rules are stable.
+
+#### Language and Runtime
+
+- [ ] Specify and implement async functions, `await`, and structured `spawn`
+- [ ] Lower suspended calls to stackless state machines with affine and
+  temporal escape checks
+- [ ] Provide a single-thread executor, structured task ownership,
+  cancellation, deadlines, and bounded channels
+- [ ] Add streams with explicit backpressure and deterministic cleanup on
+  completion, error, cancellation, and trap
+
+#### Async Component Boundary
+
+- [ ] Generate and consume WIT async functions, `future<T>`, and `stream<T>`
+- [ ] Define callback, re-entry, waitable, and concurrent-call state transitions
+- [ ] Prohibit borrowed resource handles from crossing suspension unless a
+  later explicit ownership rule permits it
+- [ ] Generate Promise and AsyncIterator host bindings
+- [ ] Prove generic async WIT capability adapters; track complete network/HTTP
+  profiles as follow-on v0.2.x host integration
+
+#### v0.2.0 Exit Criteria
+
+- [ ] Cancellation and errors release tasks, resources, closures, and buffers
+  exactly once at every suspension point
+- [ ] Bounded stream tests prove backpressure rather than unbounded buffering
+- [ ] Native Component and JS/TS hosts pass the same async conformance corpus
+- [ ] All v0.1.0 synchronous components and host bindings remain compatible
+
+Shared-memory threads, distributed actors, supervision trees, and multi-node
+transport are later work; completing local async does not imply them.
+
+### Post-v0.2 Showcase: Embeddable Restrict Sandbox
+
+**Goal**: Build a separate `restrict-sandbox` repository as a language showcase
+after B1 and B2. It is intentionally a polyglot product: a JS/TS frontend owns
+the editor and browser UI, while Restrict owns substantial session, policy,
+capability, and result-processing logic.
+
+- [ ] Build the GUI with an existing JS/TS framework, HTML, and CSS
+- [ ] Ship an iframe embed SDK with a versioned `postMessage` protocol
+- [ ] Run both compilation and generated user programs away from the UI thread
+  in disposable Workers
+- [ ] Enforce source, compile-time, execution-time, memory, and output limits
+- [ ] Validate generated Wasm imports, exports, memory limits, and target profile
+  before instantiation
+- [ ] Keep the default capability surface limited to console output and exit;
+  add stdin, deterministic clock/randomness, or virtual files explicitly
+- [ ] Use the Rust-compiled Restrict compiler Wasm as a dependency while keeping
+  the sandbox's product logic primarily in its Restrict subproject
+- [ ] Support read-only examples, editable snippets, shareable state, Stop and
+  Reset actions, structured diagnostics, and downloadable Wasm
+- [ ] Document the trust model, CSP, hosting requirements, compiler version,
+  supported browsers, and data-retention behavior
+
+The showcase measures "Restrict-main" by ownership of domain behavior, not by
+eliminating every line of JavaScript. The fixed JS/TS host may load Wasm, manage
+DOM and Workers, and render the UI; user-program semantics and selected sandbox
+policies should remain implemented and tested in Restrict.
+
+### Later Application Milestones
+
+1. **Generated platform adapters beyond v0.2**
+   - [ ] Browser entry and Web API adapter without a JavaScript source backend
+   - [ ] Cloud/edge adapters, including a Cloudflare Workers entry adapter
+   - [ ] OCI packaging for WASI runtimes without a Docker-specific ABI
+2. **Future browser integration**
+   - [ ] Adopt direct browser host interfaces when portable standards and
+     implementations exist
+   - [ ] Keep DOM and Web APIs out of core language semantics
+3. **Advanced concurrency**
+   - [ ] Shared-memory threads and multicore scheduling
+   - [ ] Distributed actors, supervision, and multi-node transport
+4. **Standard WASI capability profiles**
+   - [ ] Full WASI 0.2 command interfaces beyond the v0.1 ABI conformance world
+   - [ ] Network and HTTP profiles after the v0.2 async adapter gate
+
+See `docs/WASM_EXECUTION_STRATEGY.md` for the decision record and platform
+assumptions.
+
+---
+
+## 📊 Historical Implementation Snapshot (recorded 2025-01-13)
+
+This snapshot and the older phase plan below are retained as implementation
+history. They are not the active release schedule. The versioned B milestones
+above govern v0.1.0 and v0.2.0 wherever older v1/v2 wording conflicts.
 
 ### ✅ Implemented & Stable (70-95%)
 
@@ -51,8 +485,8 @@
 
 | Feature | Status | Decision |
 |---------|--------|----------|
-| **Temporal Affine Types (TAT)** | ⚠️ 50% (parsing/AST) | **→ Experimental feature, v2.0 target** |
-| Async/Await | 📋 Design only | Post v1.0 |
+| **Temporal Affine Types (TAT)** | ⚠️ 50% (parsing/AST) | Historical snapshot; v0.2 only takes the rules needed for async safety |
+| Async/Await | 📋 Design only | Superseded by B2 / v0.2.0 |
 | Recursive Functions | ⚠️ 30% | Needs work |
 | Higher-order Functions | ⚠️ 40% | map/filter/fold incomplete |
 
@@ -78,11 +512,15 @@
 - ✅ **Keep**: Syntax reserved (`~`, `within`, `lifetime`)
 - ✅ **Keep**: Documentation archived for future reference
 - ⚠️ **Move to experimental**: Implementation behind feature flag
-- 📋 **Postpone**: Full implementation to v2.0+
+- 📋 **Postpone**: Full general TAT design until after the focused v0.2.0 async-safety slice
 
 ---
 
-## 🚀 Roadmap to v1.0
+## 🚀 Historical Roadmap to Language Specification v1.0 (Archived)
+
+The specification document version and compiler product versions are
+independent. The following phase inventory predates the active v0.1.0/v0.2.0
+plan and must not be used to move Component or async work out of B1/B2.
 
 ### Phase 1: Core Stabilization (1-2 months)
 
@@ -382,9 +820,9 @@ After:  Affine type violation: variable 'p' has already been used.
 
 ---
 
-## 🔬 Post v1.0: Future Directions
+## 🔬 Beyond v0.2.0: Future Directions
 
-### v1.1 - v1.x: Stability & Adoption
+### Stability and Adoption
 
 - Bug fixes and stability improvements
 - Performance optimization
@@ -392,7 +830,7 @@ After:  Affine type violation: variable 'p' has already been used.
 - Additional standard library functions
 - More example applications
 
-### v2.0: Advanced Features (6+ months after v1.0)
+### Advanced Features After the Focused Async Release
 
 **Temporal Affine Types Revival**:
 - [ ] Formal specification completion
@@ -401,11 +839,10 @@ After:  Affine type violation: variable 'p' has already been used.
 - [ ] Gradual rollout as experimental → stable
 
 **Other Potential Features**:
-- [ ] Async/await (if TAT is stable)
 - [ ] Effect system
 - [ ] Advanced generics
 - [ ] SIMD operations
-- [ ] WebGPU backend
+- [ ] WebGPU host integration
 
 ---
 
@@ -530,7 +967,7 @@ Type error: Variable p has already been used (affine type violation)
 
 ## 🎯 Success Metrics
 
-### v1.0 Release Criteria
+### Historical General-Release Quality Criteria
 
 **Functionality**:
 - ✅ All core features implemented and tested
@@ -587,7 +1024,7 @@ Type error: Variable p has already been used (affine type violation)
 
 - GitHub Issues for bug reports
 - Discussions for feature requests
-- Discord/forum for community support (post v1.0)
+- Discord/forum for community support (after the active release milestones)
 
 ---
 
@@ -596,7 +1033,7 @@ Type error: Variable p has already been used (affine type violation)
 This roadmap will be reviewed and updated:
 - **Monthly**: Progress check and priority adjustment
 - **Quarterly**: Major milestone assessment
-- **After v1.0**: Planning for v2.0
+- **After v0.2.0**: Plan subsequent stability and advanced-feature releases
 
 ---
 
@@ -606,7 +1043,8 @@ This roadmap will be reviewed and updated:
 
 **Date**: 2025-12-27
 
-**Decision**: Move Temporal Affine Types to experimental feature, targeting v2.0
+**Decision**: Keep general Temporal Affine Types experimental; v0.2.0 adopts
+only the temporal rules required for safe async suspension and cleanup
 
 **Context**:
 - Core value is "scope strictness", already achieved through:
@@ -616,10 +1054,10 @@ This roadmap will be reviewed and updated:
   - with blocks
 - TAT implementation would take 6-12 months
 - Interactions with other features undefined
-- Risk of delaying v1.0 significantly
+- Risk of delaying the synchronous v0.1.0 boundary significantly
 
 **Consequences**:
-- ✅ Faster path to v1.0
+- ✅ Faster path to v0.1.0 and a focused v0.2.0 async release
 - ✅ More stable core language
 - ✅ TAT can be added later without breaking changes
 - ⚠️ Some advanced use cases postponed
@@ -627,13 +1065,13 @@ This roadmap will be reviewed and updated:
 
 **Alternatives Considered**:
 1. Complete TAT now - Rejected due to time/complexity
-2. Remove TAT entirely - Rejected, valuable for v2.0
+2. Remove TAT entirely - Rejected, valuable for async safety and later research
 3. Simplify TAT - Would still take significant time
 
-**Review Date**: After v1.0 release (6+ months)
+**Review Date**: After v0.2.0 release
 
 ---
 
 **End of Roadmap**
 
-*This is a living document. Last updated: 2025-01-11*
+*This is a living document. Last updated: 2026-08-09*

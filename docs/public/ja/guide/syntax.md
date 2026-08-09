@@ -1,6 +1,6 @@
 # 構文リファレンス
 
-このガイドは、v0.0.1 の公開範囲と、現在のpost-v0.0.1 compilerで追加された構文を区別して説明します。将来予定の構文はcurrent surfaceには含めません。
+このガイドは、v0.0.1 の公開構文と、意図的に範囲外としている将来構文を区別して説明します。
 
 ## コメント
 
@@ -87,11 +87,38 @@ val x = 42
 val y: Int32 = 42
 val pi: Float64 = 3.14
 
-mut val counter = 0
+mut val counter = 0;
 counter = counter + 1
 ```
 
 不変束縛は `val`、複数回の使用や再代入が必要な束縛は `mut val` を使います。
+
+## 式の境界
+
+改行は空白として扱われるため、直接 OSV 式は次の行へ継続できます。一方、
+動詞になれない値が続く場合は、セミコロンなしでも新しい式が始まります。
+
+```restrict
+"first" println
+"second" println
+```
+
+ローカル束縛の直後に識別子から始まる式を置き、それを束縛値の動詞として
+解釈させたくない場合は `;` で境界を明示します。
+
+```restrict
+val message = "ready";
+message println
+```
+
+高階変換の内側だけで名前が必要なら、スコープ動詞節のラムダ引数を使うと、
+流れをセミコロンなしで表せます。
+
+```restrict
+values map { |value|
+    value + 1
+}
+```
 
 ## 基本式
 
@@ -187,7 +214,7 @@ val origin = Point { x: 0, y: 0 }
 
 レコード定義とレコードリテラルのフィールドは `:` を使います。
 
-## ユーザー定義enum（post-v0.0.1）
+## ユーザー定義enum
 
 現在のcompilerでは、閉じたユーザー定義enumを宣言できます。
 
@@ -248,6 +275,28 @@ val transformer: Int32 -> Int32 = |x: Int32| x * 2
 val reducer: (Int32, Int32) -> Int32 = |left: Int32, right: Int32| left + right
 ```
 
+## スコープ動詞節
+
+最後に残った仮引数が関数型である動詞は、その関数をスコープとして
+開けます。
+
+```restrict
+val shifted = values map {
+    it + 1
+}
+
+val total = (shifted, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+ヘッダーのない形式は文脈的な`it`束縛を1つ導入します。明示スコープの
+ヘッダーはラムダのバインダーを再利用します。完成したスコープ節は、
+後続の節やパイプより先に評価されます。
+
+コールバック形式、コレクション動作、型推論、アフィンなキャプチャは
+[高階関数とコレクション変換](../advanced/higher-order.md)を参照してください。
+
 ## 型
 
 ### 基本型
@@ -304,7 +353,7 @@ pub enum PublicError {
 }
 ```
 
-v0.0.1 では、export されたレコードや generic 関数はソースレベルのモジュールメタデータです。post-v0.0.1の`pub enum`もRestrictソースモジュール間だけの公開で、直接のhost-visible WebAssembly enum ABIは提供しません。
+v0.0.1 では、export されたレコードや generic 関数はソースレベルのモジュールメタデータです。v0.0.1の`pub enum`もRestrictソースモジュール間だけの公開で、直接のhost-visible WebAssembly enum ABIは提供しません。
 
 ## context と with
 
@@ -335,7 +384,7 @@ val strict = base.clone { timeout: 3 }
 
 ## 演算子の優先順位
 
-1. フィールドアクセス、修飾されたバリアント名、グループ化された直接OSV呼び出し: `.field`、`.clone`、`Type::Variant`、`freeze`、`(value) f`、`() f`
+1. フィールドアクセス、修飾されたバリアント名、グループ化された直接OSV呼び出し、スコープ動詞節: `.field`、`.clone`、`Type::Variant`、`freeze`、`(value) f`、`() f`、`values map { ... }`
 2. 単項演算子: `!`、`-`
 3. 乗除余: `*`、`/`、`%`
 4. 加減: `+`、`-`
@@ -347,7 +396,7 @@ val strict = base.clone { timeout: 3 }
 
 ## 現在のenum境界
 
-v0.0.1の公開リリースではユーザー定義enumは未対応でした。現在のpost-v0.0.1 compilerは上記の閉じた範囲をサポートしますが、ジェネリックenum、再帰enum、1バリアントに複数の直接payloadを持たせる構文、host enum ABIは将来の設計対象です。`Result<T, E>`のエラー伝播は`match`で明示し、`?`演算子はまだ使えません。
+v0.0.1 compilerは上記の閉じたユーザー定義enumをサポートします。ジェネリックenum、再帰enum、1バリアントに複数の直接payloadを持たせる構文、host enum ABIは将来の設計対象です。`Result<T, E>`のエラー伝播は`match`で明示し、`?`演算子はまだ使えません。
 
 ## v0.0.1 の current example ではない構文
 

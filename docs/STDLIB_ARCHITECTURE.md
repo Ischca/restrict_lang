@@ -217,7 +217,8 @@ fun getUser: (req: Request) = {
 
 ### 9. Package Management Integration
 
-The standard library should integrate with Warder:
+The standard library should eventually integrate with the repository-root
+Warder configuration:
 
 ```toml
 # warder.toml for a web app
@@ -228,6 +229,11 @@ std-json = "1.0"
 ```
 
 This allows users to only include what they need, reducing binary size.
+It is a future registry-resolution example, not current behavior: registry
+dependencies still fail closed. The design uses the same single root
+`warder.toml` and generated root `warder.lock`; standard-library packages do
+not introduce member manifests or derive public identity from their directory
+placement.
 
 ### 10. Migration Path for Existing Builtins
 

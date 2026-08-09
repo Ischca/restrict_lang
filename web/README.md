@@ -99,6 +99,11 @@ program needs a zero-argument `main`; use Display-polymorphic `print` or
 write to stderr, while `print_int` and `print_float` remain available for
 compatibility. The source and generated program stay in the browser.
 
+This JavaScript is a browser host adapter, not a Restrict JavaScript backend.
+Restrict program logic still compiles to Wasm. Native WASI runtimes can provide
+the same program imports without JavaScript, while future Web or cloud adapters
+should remain separate from core code generation.
+
 ## Browser Compatibility
 
 The web compiler requires a modern browser with WebAssembly support:

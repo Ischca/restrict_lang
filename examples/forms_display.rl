@@ -11,7 +11,7 @@ Notice takes Display {
 }
 
 fun main: () -> () = {
-    42 |> print
-    " · " |> print
-    Notice { text: "records too" } |> println
+    42 print
+    " · " print
+    Notice { text: "records too" } println
 }

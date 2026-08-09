@@ -1,8 +1,16 @@
 # Async Design with Temporal Affine Types (TAT)
 
+## Status
+
+This is a non-normative design exploration. TAT is planned/experimental rather
+than a completed default language feature. The active local async target is B2
+/ v0.2.0 in `ROADMAP.md`; examples below may use speculative syntax.
+
 ## Overview
 
-This document explores async/concurrent programming models for Restrict Language, leveraging the newly implemented Temporal Affine Types (TAT) for safe and expressive async operations.
+This document explores async/concurrent programming models for Restrict
+Language using possible Temporal Affine Type rules for safe suspension and
+resource cleanup.
 
 ## Design Options
 

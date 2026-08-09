@@ -1,0 +1,5 @@
+manifest-version = 1
+
+[package]
+name = "my-app"
+version = "0.1.0"

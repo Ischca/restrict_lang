@@ -1,6 +1,6 @@
 ```restrict
 // Affine types prevent use-after-move
-val message = "Hello"
+val message = "Hello";
 message |> println     // OK: first use
 // message |> println  // ERROR: already consumed
 
@@ -11,6 +11,6 @@ record Greeting {
 }
 
 val original = Greeting { text: "Hello", count: 1 }
-val updated = original.clone { count: 2 }
+val updated = original.clone { count: 2 };
 updated.count |> print_int
 ```

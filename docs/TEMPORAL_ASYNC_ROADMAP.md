@@ -1,5 +1,12 @@
 # Temporal Types + Async: Implementation Roadmap
 
+## Status
+
+This week-based plan is a historical design sketch and is superseded by B2 /
+v0.2.0 in `ROADMAP.md`. v0.2.0 adopts only the temporal/affine rules needed for
+safe suspension, cancellation, backpressure, and cleanup; it does not imply
+the full general TAT program described below.
+
 ## Vision
 
 Combine temporal type variables with async programming to create a unique, safe concurrency model where:

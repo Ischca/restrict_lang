@@ -19,7 +19,7 @@ context AppConfig {
 fun main: () -> Int32 = {
     with Logging { level: 10 } {
         with AppConfig { debug: 1 } {
-            val event = Event { severity: 4 }
+            val event = Event { severity: 4 };
             event.severity + level + debug
         }
     }

@@ -1,5 +1,13 @@
 # Async/Concurrency Design for Restrict Language
 
+## Status
+
+This is a non-normative design exploration. The active product boundary is B2
+/ v0.2.0 in `ROADMAP.md`: local async functions, structured tasks,
+future/stream adapters, cancellation, backpressure, and deterministic resource
+cleanup. Syntax and examples below may predate the canonical specification and
+must not be read as implemented behavior.
+
 ## Overview
 
 This document explores async/concurrency models suitable for Restrict Language, considering its unique features: affine types, OSV syntax, zero-GC, and context-based resource management.

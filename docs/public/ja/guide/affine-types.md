@@ -34,7 +34,7 @@ fun consume: (value: String) -> () = {
     value |> println
 }
 
-val text = "hello"
+val text = "hello";
 text |> consume
 
 // エラー: text はすでに使用されています。
@@ -46,9 +46,9 @@ text |> consume
 `mut val` は複数回の使用や再代入が必要な場合に使います。
 
 ```restrict
-mut val counter = 0
+mut val counter = 0;
 
-counter = counter + 1
+counter = counter + 1;
 counter = counter + 2
 
 val final_count = counter
@@ -108,9 +108,9 @@ val saved = "raw data"
 単純に同じ束縛を複数回読む必要がある場合は、可変束縛にします。
 
 ```restrict
-mut val label = "ready"
+mut val label = "ready";
 
-label |> println
+label |> println;
 label |> println
 ```
 

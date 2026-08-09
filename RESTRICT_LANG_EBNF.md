@@ -74,7 +74,7 @@ temporal_type       = simple_type "<" temporal_var ">" ;
 
 func_type           = "|" [ type { "," type } ] "|" "->" type ;
 
-(* Post-v0.0.1 form bounds. Multiple required forms are intersections. *)
+(* Form bounds. Multiple required forms are intersections. *)
 form_bounds         = "of" identifier { "+" identifier } ;
 
 (* Temporal Constraints *)
@@ -115,6 +115,7 @@ postfix_suffix      = field_access | clone_suffix | await_suffix ;
 field_access        = "." identifier ;
 clone_suffix        = "." "clone" [ record_literal ] [ "freeze" ] ;
 await_suffix        = "await" ;
+                      (* reserved/planned for v0.2.0; not current v0.0.1 syntax *)
 
 (* Primary Expressions *)
 primary_expr        = literal
@@ -252,7 +253,7 @@ impl_decl           = "impl" identifier "{" method_decl { method_decl } "}" ;
 method_decl         = "fun" identifier ":" function_signature "=" block_expr ;
                       (* first parameter must be self: Target; calls remain OSV *)
 
-(* Post-v0.0.1 method-only forms. A form and each form method are non-generic.
+(* Method-only forms. A form and each form method are non-generic.
    Every method is fully typed and has no default body. *)
 form_decl           = [ "pub" ] "form" identifier "{"
                       form_method_decl { form_method_decl } "}" ;

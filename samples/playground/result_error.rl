@@ -23,5 +23,5 @@ fun explain: (result: Result<Int32, DecodeError>) -> String = {
 }
 
 fun main: () = {
-    1 |> decode |> explain |> println
+    1 decode explain println
 }

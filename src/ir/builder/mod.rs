@@ -11,7 +11,7 @@ use thiserror::Error;
 const FLAT_RECORD_V1_MAX_SLOTS: usize = 16;
 
 use crate::ast::*;
-use crate::type_checker::{CheckedFunctionSignature, TypeChecker, TypedType};
+use crate::type_checker::{format_typed_type, CheckedFunctionSignature, TypeChecker, TypedType};
 
 use super::layout::{LayoutId, LayoutKind, LayoutTable};
 use super::{
@@ -30,10 +30,15 @@ mod tests;
 pub struct CheckedProgramIr {
     pub functions: Vec<CheckedFunctionIr>,
     pub layout_table: LayoutTable,
+    /// Final logical metadata for named types reachable from checked function
+    /// signatures. `LayoutId` remains an internal representation detail and is
+    /// intentionally insufficient as a source-language or component ABI type.
+    pub named_types: CheckedNamedTypeGraph,
     source_program: Program,
     source_node_ids: Vec<NodeId>,
     sealed_functions: Vec<CheckedFunctionIr>,
     sealed_layout_table: LayoutTable,
+    sealed_named_types: CheckedNamedTypeGraph,
 }
 
 impl CheckedProgramIr {
@@ -45,15 +50,169 @@ impl CheckedProgramIr {
     }
 
     pub(crate) fn is_unmodified(&self) -> bool {
-        self.functions == self.sealed_functions && self.layout_table == self.sealed_layout_table
+        self.functions == self.sealed_functions
+            && self.layout_table == self.sealed_layout_table
+            && self.named_types == self.sealed_named_types
     }
 
     pub fn validate_lowering_summaries(&self) -> Result<(), IrBuildError> {
+        self.named_types.validate(&self.layout_table)?;
         for function in &self.functions {
+            for param in &function.params {
+                self.named_types
+                    .validate_references_from(&param.final_type)?;
+            }
+            self.named_types
+                .validate_references_from(&function.return_type)?;
             function.validate_lowering_summary(&self.layout_table)?;
         }
         Ok(())
     }
+}
+
+/// A deterministic, checked graph of the concrete and open named types that
+/// function signatures can reach. Graph-local ids are dense build artifacts;
+/// stable external identities must be derived from `final_type` instead.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CheckedNamedTypeGraph {
+    pub declarations: Vec<CheckedNamedTypeIr>,
+}
+
+impl CheckedNamedTypeGraph {
+    pub fn get(&self, id: CheckedNamedTypeId) -> Option<&CheckedNamedTypeIr> {
+        self.declarations.get(id.0 as usize)
+    }
+
+    pub fn find(&self, final_type: &FinalType) -> Option<&CheckedNamedTypeIr> {
+        self.declarations
+            .iter()
+            .find(|declaration| declaration.final_type == *final_type)
+    }
+
+    pub fn validate(&self, layout_table: &LayoutTable) -> Result<(), IrBuildError> {
+        let mut seen_types = Vec::<&FinalType>::new();
+
+        for (index, declaration) in self.declarations.iter().enumerate() {
+            if declaration.id != CheckedNamedTypeId(index as u32) {
+                return Err(named_type_invariant_violation(format!(
+                    "named type id {:?} is not dense at declaration index {}",
+                    declaration.id, index
+                )));
+            }
+            if seen_types
+                .iter()
+                .any(|seen| **seen == declaration.final_type)
+            {
+                return Err(named_type_invariant_violation(format!(
+                    "duplicate named type metadata for {}",
+                    format_typed_type(declaration.final_type.as_typed_type())
+                )));
+            }
+            seen_types.push(&declaration.final_type);
+
+            let expected_resolution = named_type_resolution_for(&declaration.final_type);
+            if declaration.resolution != expected_resolution {
+                return Err(named_type_invariant_violation(format!(
+                    "named type {} has stale generic resolution metadata",
+                    format_typed_type(declaration.final_type.as_typed_type())
+                )));
+            }
+
+            if let Some(repr) = declaration.internal_repr {
+                validate_repr_for_type(&declaration.final_type, repr, layout_table)?;
+            }
+
+            match (declaration.final_type.as_typed_type(), &declaration.kind) {
+                (
+                    TypedType::Record {
+                        name, type_args, ..
+                    },
+                    CheckedNamedTypeKind::Record { fields },
+                ) => validate_checked_record(declaration, name, type_args, fields, layout_table)?,
+                (TypedType::Enum { name }, CheckedNamedTypeKind::Enum { variants }) => {
+                    validate_checked_enum(declaration, name, variants, layout_table)?
+                }
+                (ty, _) => {
+                    return Err(named_type_invariant_violation(format!(
+                        "{} is not paired with matching named type metadata",
+                        format_typed_type(ty)
+                    )));
+                }
+            }
+        }
+
+        for declaration in &self.declarations {
+            match &declaration.kind {
+                CheckedNamedTypeKind::Record { fields } => {
+                    for field in fields {
+                        self.validate_references_from(&field.final_type)?;
+                    }
+                }
+                CheckedNamedTypeKind::Enum { variants } => {
+                    for variant in variants {
+                        if let Some(payload) = &variant.payload_type {
+                            self.validate_references_from(payload)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_references_from(&self, final_type: &FinalType) -> Result<(), IrBuildError> {
+        validate_named_type_references(self, final_type.as_typed_type())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CheckedNamedTypeId(pub u32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckedNamedTypeIr {
+    pub id: CheckedNamedTypeId,
+    /// Exact finalized source type, including concrete generic arguments.
+    pub final_type: FinalType,
+    /// Internal representation when it was available from a checked signature
+    /// or enclosing finalized layout. Open generic paths may leave this absent.
+    pub internal_repr: Option<ValueRepr>,
+    pub resolution: CheckedNamedTypeResolution,
+    pub kind: CheckedNamedTypeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckedNamedTypeResolution {
+    Concrete,
+    OpenGeneric { type_params: Vec<String> },
+}
+
+impl CheckedNamedTypeResolution {
+    pub fn is_concrete(&self) -> bool {
+        matches!(self, Self::Concrete)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckedNamedTypeKind {
+    Record { fields: Vec<CheckedRecordFieldIr> },
+    Enum { variants: Vec<CheckedEnumVariantIr> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckedRecordFieldIr {
+    pub source_index: usize,
+    pub source_name: String,
+    pub final_type: FinalType,
+    pub internal_repr: Option<ValueRepr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckedEnumVariantIr {
+    pub source_index: usize,
+    pub source_name: String,
+    pub payload_type: Option<FinalType>,
+    pub payload_repr: Option<ValueRepr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -477,6 +636,8 @@ pub enum IrBuildError {
     ShadowInvariantViolation(String),
     #[error("checked IR lowering summaries are inconsistent")]
     LoweringInvariantViolation(String),
+    #[error("checked IR named type metadata is inconsistent")]
+    NamedTypeInvariantViolation(String),
     #[error("checked IR contains an unfinalized type")]
     UnfinalizedType(String),
 }
@@ -494,6 +655,10 @@ impl From<super::IrError> for IrBuildError {
 
 fn missing_apply_value(value: &str) -> IrBuildError {
     IrBuildError::MissingApplyValue(value.to_string())
+}
+
+fn named_type_invariant_violation(message: String) -> IrBuildError {
+    IrBuildError::NamedTypeInvariantViolation(message)
 }
 
 // Gathers every finalized fact needed for one function's lowering summary in a
@@ -691,6 +856,361 @@ fn contains_record_layout_type_param(ty: &TypedType) -> bool {
         | TypedType::Enum { .. }
         | TypedType::Unit => false,
     }
+}
+
+fn named_type_resolution_for(final_type: &FinalType) -> CheckedNamedTypeResolution {
+    let mut type_params = Vec::new();
+    collect_type_param_names(final_type.as_typed_type(), &mut type_params);
+    if type_params.is_empty() {
+        CheckedNamedTypeResolution::Concrete
+    } else {
+        CheckedNamedTypeResolution::OpenGeneric { type_params }
+    }
+}
+
+fn collect_type_param_names(ty: &TypedType, names: &mut Vec<String>) {
+    match ty {
+        TypedType::TypeParam(name) => {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        TypedType::Record { type_args, .. } => {
+            for type_arg in type_args {
+                collect_type_param_names(type_arg, names);
+            }
+        }
+        TypedType::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                collect_type_param_names(param, names);
+            }
+            collect_type_param_names(return_type, names);
+        }
+        TypedType::Option(inner)
+        | TypedType::List(inner)
+        | TypedType::Array(inner, _)
+        | TypedType::Temporal {
+            base_type: inner, ..
+        } => collect_type_param_names(inner, names),
+        TypedType::Result(ok, err) => {
+            collect_type_param_names(ok, names);
+            collect_type_param_names(err, names);
+        }
+        TypedType::Int32
+        | TypedType::Int64
+        | TypedType::Float64
+        | TypedType::Boolean
+        | TypedType::String
+        | TypedType::Char
+        | TypedType::Unit
+        | TypedType::Enum { .. }
+        | TypedType::InferVar(_)
+        | TypedType::Projection { .. } => {}
+    }
+}
+
+fn validate_checked_record(
+    declaration: &CheckedNamedTypeIr,
+    name: &str,
+    type_args: &[TypedType],
+    fields: &[CheckedRecordFieldIr],
+    layout_table: &LayoutTable,
+) -> Result<(), IrBuildError> {
+    let mut names = HashSet::new();
+    for (index, field) in fields.iter().enumerate() {
+        if field.source_index != index {
+            return Err(named_type_invariant_violation(format!(
+                "record {name} field '{}' has stale source index {}",
+                field.source_name, field.source_index
+            )));
+        }
+        if !names.insert(field.source_name.as_str()) {
+            return Err(named_type_invariant_violation(format!(
+                "record {name} repeats field '{}'",
+                field.source_name
+            )));
+        }
+        if let Some(repr) = field.internal_repr {
+            validate_repr_for_type(&field.final_type, repr, layout_table)?;
+        }
+    }
+
+    let Some(root_repr) = declaration.internal_repr else {
+        return Ok(());
+    };
+    let ValueRepr::Ref(layout_id) = root_repr else {
+        return Err(named_type_invariant_violation(format!(
+            "record {name} does not use an internal reference representation"
+        )));
+    };
+    let descriptor = layout_table.get(layout_id).ok_or_else(|| {
+        named_type_invariant_violation(format!(
+            "record {name} references missing layout {:?}",
+            layout_id
+        ))
+    })?;
+
+    match &descriptor.kind {
+        LayoutKind::Record(layout) => {
+            let expected_type_args = type_args.iter().map(format_typed_type).collect::<Vec<_>>();
+            if layout.name != name || layout.type_args != expected_type_args {
+                return Err(named_type_invariant_violation(format!(
+                    "record {name} points at a different nominal layout"
+                )));
+            }
+            if declaration.resolution.is_concrete() {
+                if layout.fields.len() != fields.len() {
+                    return Err(named_type_invariant_violation(format!(
+                        "concrete record {name} has incomplete internal field metadata"
+                    )));
+                }
+                for (field, layout_field) in fields.iter().zip(&layout.fields) {
+                    if field.source_name != layout_field.name
+                        || field.internal_repr != Some(layout_field.element.repr)
+                    {
+                        return Err(named_type_invariant_violation(format!(
+                            "record {name} field '{}' disagrees with its internal layout",
+                            field.source_name
+                        )));
+                    }
+                }
+            }
+        }
+        LayoutKind::Range(layout) if name == "Range" => {
+            if declaration.resolution.is_concrete()
+                && fields
+                    .iter()
+                    .any(|field| field.internal_repr != Some(layout.endpoint.repr))
+            {
+                return Err(named_type_invariant_violation(
+                    "Range field metadata disagrees with its internal layout".to_string(),
+                ));
+            }
+        }
+        _ => {
+            return Err(named_type_invariant_violation(format!(
+                "record {name} references a non-record layout"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_checked_enum(
+    declaration: &CheckedNamedTypeIr,
+    name: &str,
+    variants: &[CheckedEnumVariantIr],
+    layout_table: &LayoutTable,
+) -> Result<(), IrBuildError> {
+    let mut names = HashSet::new();
+    for (index, variant) in variants.iter().enumerate() {
+        if variant.source_index != index {
+            return Err(named_type_invariant_violation(format!(
+                "enum {name} variant '{}' has stale source index {}",
+                variant.source_name, variant.source_index
+            )));
+        }
+        if !names.insert(variant.source_name.as_str()) {
+            return Err(named_type_invariant_violation(format!(
+                "enum {name} repeats variant '{}'",
+                variant.source_name
+            )));
+        }
+        match (&variant.payload_type, variant.payload_repr) {
+            (Some(payload_type), Some(payload_repr)) => {
+                validate_repr_for_type(payload_type, payload_repr, layout_table)?;
+            }
+            (None, None) => {}
+            (Some(_), None) if declaration.internal_repr.is_none() => {}
+            _ => {
+                return Err(named_type_invariant_violation(format!(
+                    "enum {name} variant '{}' has stale payload representation metadata",
+                    variant.source_name
+                )));
+            }
+        }
+    }
+
+    let Some(ValueRepr::Ref(layout_id)) = declaration.internal_repr else {
+        if declaration.internal_repr.is_some() {
+            return Err(named_type_invariant_violation(format!(
+                "enum {name} does not use an internal reference representation"
+            )));
+        }
+        return Ok(());
+    };
+    let descriptor = layout_table.get(layout_id).ok_or_else(|| {
+        named_type_invariant_violation(format!(
+            "enum {name} references missing layout {:?}",
+            layout_id
+        ))
+    })?;
+    let LayoutKind::Sum(layout) = &descriptor.kind else {
+        return Err(named_type_invariant_violation(format!(
+            "enum {name} references a non-sum layout"
+        )));
+    };
+    if layout.type_name != name || layout.variants.len() != variants.len() {
+        return Err(named_type_invariant_violation(format!(
+            "enum {name} disagrees with its internal variant layout"
+        )));
+    }
+    for (variant, layout_variant) in variants.iter().zip(&layout.variants) {
+        let layout_payload = layout_variant.payload.as_ref().map(|payload| payload.repr);
+        if variant.source_index as u32 != layout_variant.tag
+            || variant.source_name != layout_variant.name
+            || variant.payload_repr != layout_payload
+        {
+            return Err(named_type_invariant_violation(format!(
+                "enum {name} variant '{}' disagrees with its internal layout",
+                variant.source_name
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_repr_for_type(
+    final_type: &FinalType,
+    repr: ValueRepr,
+    layout_table: &LayoutTable,
+) -> Result<(), IrBuildError> {
+    if repr_matches_type(final_type.as_typed_type(), repr, layout_table) {
+        return Ok(());
+    }
+    Err(named_type_invariant_violation(format!(
+        "{} has an incompatible internal representation {:?}",
+        format_typed_type(final_type.as_typed_type()),
+        repr
+    )))
+}
+
+fn repr_matches_type(ty: &TypedType, repr: ValueRepr, layout_table: &LayoutTable) -> bool {
+    match ty {
+        TypedType::Unit => repr == ValueRepr::Unit,
+        TypedType::Int32 | TypedType::Boolean | TypedType::Char => {
+            repr == ValueRepr::Scalar(super::ScalarRepr::I32)
+        }
+        TypedType::Int64 => repr == ValueRepr::Scalar(super::ScalarRepr::I64),
+        TypedType::Float64 => repr == ValueRepr::Scalar(super::ScalarRepr::F64),
+        TypedType::String => repr_has_layout(repr, layout_table, |kind| {
+            matches!(kind, LayoutKind::String(_))
+        }),
+        TypedType::List(_) => repr_has_layout(repr, layout_table, |kind| {
+            matches!(kind, LayoutKind::List(_))
+        }),
+        TypedType::Array(_, _) => repr_has_layout(repr, layout_table, |kind| {
+            matches!(kind, LayoutKind::Array(_))
+        }),
+        TypedType::Option(_) | TypedType::Result(_, _) | TypedType::Enum { .. } => {
+            repr_has_layout(repr, layout_table, |kind| {
+                matches!(kind, LayoutKind::Sum(_))
+            })
+        }
+        TypedType::Record { name, .. } => repr_has_layout(repr, layout_table, |kind| {
+            matches!(kind, LayoutKind::Record(_))
+                || (name == "Range" && matches!(kind, LayoutKind::Range(_)))
+        }),
+        TypedType::Function { .. } => match repr {
+            ValueRepr::Closure { layout, .. } => layout_table
+                .get(layout)
+                .is_some_and(|descriptor| matches!(descriptor.kind, LayoutKind::Closure(_))),
+            _ => false,
+        },
+        TypedType::Temporal { base_type, .. } => repr_matches_type(base_type, repr, layout_table),
+        TypedType::TypeParam(_) => repr_has_layout(repr, layout_table, |kind| {
+            matches!(kind, LayoutKind::Opaque(_))
+        }),
+        TypedType::InferVar(_) | TypedType::Projection { .. } => false,
+    }
+}
+
+fn repr_has_layout(
+    repr: ValueRepr,
+    layout_table: &LayoutTable,
+    expected: impl FnOnce(&LayoutKind) -> bool,
+) -> bool {
+    let ValueRepr::Ref(layout) = repr else {
+        return false;
+    };
+    layout_table
+        .get(layout)
+        .is_some_and(|descriptor| expected(&descriptor.kind))
+}
+
+fn validate_named_type_references(
+    graph: &CheckedNamedTypeGraph,
+    ty: &TypedType,
+) -> Result<(), IrBuildError> {
+    match ty {
+        TypedType::Record {
+            name, type_args, ..
+        } if name == "Range" => {
+            for type_arg in type_args {
+                validate_named_type_references(graph, type_arg)?;
+            }
+        }
+        TypedType::Record { type_args, .. } => {
+            let final_type = FinalType::new(ty.clone())?;
+            if graph.find(&final_type).is_none() {
+                return Err(named_type_invariant_violation(format!(
+                    "named type graph is missing {}",
+                    format_typed_type(ty)
+                )));
+            }
+            for type_arg in type_args {
+                validate_named_type_references(graph, type_arg)?;
+            }
+        }
+        TypedType::Enum { .. } => {
+            let final_type = FinalType::new(ty.clone())?;
+            if graph.find(&final_type).is_none() {
+                return Err(named_type_invariant_violation(format!(
+                    "named type graph is missing {}",
+                    format_typed_type(ty)
+                )));
+            }
+        }
+        TypedType::Function {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                validate_named_type_references(graph, param)?;
+            }
+            validate_named_type_references(graph, return_type)?;
+        }
+        TypedType::Option(inner)
+        | TypedType::List(inner)
+        | TypedType::Array(inner, _)
+        | TypedType::Temporal {
+            base_type: inner, ..
+        } => validate_named_type_references(graph, inner)?,
+        TypedType::Result(ok, err) => {
+            validate_named_type_references(graph, ok)?;
+            validate_named_type_references(graph, err)?;
+        }
+        TypedType::Int32
+        | TypedType::Int64
+        | TypedType::Float64
+        | TypedType::Boolean
+        | TypedType::String
+        | TypedType::Char
+        | TypedType::Unit
+        | TypedType::TypeParam(_) => {}
+        TypedType::InferVar(_) | TypedType::Projection { .. } => {
+            return Err(named_type_invariant_violation(format!(
+                "named type graph contains unfinalized reference {}",
+                format_typed_type(ty)
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn producer_for_value(typed_exprs: &[TypedExpr], value: ValueId) -> Option<&TypedExpr> {

@@ -4,7 +4,7 @@ This document summarizes the comprehensive temporal type test coverage added to 
 
 ## Test Files Created
 
-### 1. `test_temporal_edge_cases.rs`
+### 1. `tests/cases/test_temporal_edge_cases.rs`
 Tests for edge cases and error scenarios in temporal type handling:
 
 - **test_temporal_escape_through_closure** - Ensures temporal values cannot escape through closures (Currently failing - type checker needs improvement)
@@ -20,7 +20,7 @@ Tests for edge cases and error scenarios in temporal type handling:
 - **test_temporal_empty_scope** - Tests empty temporal scope behavior
 - **test_temporal_shadowing** - Tests temporal variable shadowing
 
-### 2. `test_temporal_inference_edge_cases.rs`
+### 2. `tests/cases/test_temporal_inference_edge_cases.rs`
 Tests for temporal type inference edge cases:
 
 - **test_temporal_inference_with_generics** - Tests inference with generic types (Parser limitation: complex types)
@@ -36,7 +36,7 @@ Tests for temporal type inference edge cases:
 - **test_temporal_inference_polymorphic_constraint** - Tests inference with polymorphic constraints
 - **test_temporal_inference_error_propagation** - Tests error propagation in temporal inference
 
-### 3. `test_temporal_cleanup.rs`
+### 3. `tests/cases/test_temporal_cleanup.rs`
 Tests for temporal scope cleanup and memory management:
 
 - **test_temporal_cleanup_order** - Tests LIFO cleanup order (Codegen not implemented)

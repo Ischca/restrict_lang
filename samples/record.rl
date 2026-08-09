@@ -10,6 +10,6 @@ fun show_x: (p: Point) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val p = Point { x: 3, y: 4 }
+    val p = Point { x: 3, y: 4 };
     p |> show_x
 }

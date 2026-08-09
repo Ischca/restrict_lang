@@ -103,6 +103,8 @@ Fixes #123
 - Add integration tests for new features
 - Ensure all existing tests pass
 - Aim for good test coverage
+- Follow [`docs/TESTING_GUIDELINES.md`](docs/TESTING_GUIDELINES.md) for test
+  placement, harness registration, isolation, and local commands
 
 ### Documentation
 - Document public APIs with doc comments

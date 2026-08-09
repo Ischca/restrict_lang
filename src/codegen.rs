@@ -38,15 +38,95 @@ use crate::ir::builder::{CheckedFunctionIr, CheckedProgramIr};
 use crate::ir::{FinalType, HostAbi, ScalarRepr, ValueRepr};
 use crate::release_surface::HostAbiProfile;
 use crate::type_checker::{ArrayLength, TypedType};
+use crate::wasm_optimize::eliminate_unreachable;
+pub use crate::wasm_optimize::ReleaseOptimizationReport;
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use thiserror::Error;
 
 const RECORD_TMP_MIN_COUNT: usize = 8;
-const ARENA_SIZE_BYTES: u32 = 0x1000;
+const DEFAULT_ARENA_SIZE_BYTES: u32 = 0x1000;
+const ARENA_HEADER_BYTES: u32 = 8;
+const ARENA_ERROR_EXHAUSTED: i32 = 1;
+const ARENA_ERROR_NO_ACTIVE_ARENA: i32 = 2;
 const WITH_ARENA_TMP_COUNT: usize = 8;
 const FLAT_RECORD_V1_MAX_SLOTS: usize = 16;
 const WASM_PAGE_SIZE_BYTES: u64 = 65_536;
 const MEMORY_DECLARATION_PLACEHOLDER: &str = "  (memory __restrict_initial_memory_pages__)\n";
+
+/// Host environment expected by a generated Core WebAssembly module.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WasmTargetProfile {
+    /// Host-neutral Core Wasm. Programs using host I/O are rejected.
+    WasmCore,
+    /// Core Wasm with the v0.0.1 WASI Preview 1 program-I/O imports.
+    #[default]
+    WasiP1,
+}
+
+impl FromStr for WasmTargetProfile {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "wasm-core" => Ok(Self::WasmCore),
+            "wasip1" => Ok(Self::WasiP1),
+            _ => Err(format!(
+                "Unknown target profile '{value}'; expected 'wasm-core' or 'wasip1'"
+            )),
+        }
+    }
+}
+
+/// Optimization pipeline applied to generated Core WebAssembly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WasmOptimizationLevel {
+    /// Preserve the complete compiler-generated module for debugging.
+    #[default]
+    None,
+    /// Remove unreachable functions and the types and globals they leave unused.
+    Release,
+}
+
+/// One Core scalar value in the Standard32 Canonical ABI.
+///
+/// This remains crate-private because external-WIT compilation is the only
+/// supported producer of these descriptors. Keeping it separate from
+/// `WasmType` prevents callers from treating Restrict's internal layouts as a
+/// public Component contract.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CanonicalAbiScalarType {
+    I32,
+    I64,
+    F64,
+}
+
+/// A generated Restrict binding whose body is supplied by a Standard32 Core
+/// import while compiling an externally owned WIT world.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CanonicalAbiScalarImport {
+    pub source_function: String,
+    pub module: String,
+    pub name: String,
+    pub params: Vec<CanonicalAbiScalarType>,
+    pub result: Option<CanonicalAbiScalarType>,
+}
+
+impl FromStr for WasmOptimizationLevel {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "none" => Ok(Self::None),
+            "release" => Ok(Self::Release),
+            _ => Err(format!(
+                "Unknown optimization level '{value}'; expected 'none' or 'release'"
+            )),
+        }
+    }
+}
 
 /// Code generation errors.
 #[derive(Debug, Error)]
@@ -134,6 +214,49 @@ pub struct WasmCodeGen {
     generated_host_adapter_globals: HashSet<String>,
     /// Host ABI surface selected by the caller. v0.0.1 remains the default.
     host_abi_profile: HostAbiProfile,
+    /// Explicit source functions retained as private Core implementation
+    /// exports for Component adapters. When present, ordinary `pub` functions
+    /// are not treated as direct host entries and no unselected Core ABI is
+    /// published.
+    component_internal_exports: Option<HashSet<String>>,
+    /// Root-private support functions validated by the schema-v2 resource
+    /// planner. These may be exposed only to the nested Component adapter and
+    /// never become source-public Core exports.
+    component_private_internal_exports: HashSet<String>,
+    /// Schema-v2 free exports whose result is an affine callable resource.
+    /// Their closure captures receive an additional ownership-safety check.
+    component_callable_factory_functions: HashSet<String>,
+    /// Source record identities represented as Component resources.
+    component_resource_source_records: HashSet<String>,
+    /// Finite, explicitly checked generic instances published only through a
+    /// Component adapter. The source generic declaration is never itself a
+    /// Core export; each instance receives the planner-owned stable symbol.
+    component_generic_specializations:
+        Vec<crate::component_specialization::ComponentFunctionSpecialization>,
+    /// Stable Core export symbol paired with the actual monomorphized WAT
+    /// function name produced during this generation run.
+    component_specialization_core_exports: Vec<(String, String)>,
+    /// Private source declarations replaced by Standard32 Core imports for an
+    /// externally authoritative WIT contract.
+    #[cfg(not(target_arch = "wasm32"))]
+    canonical_abi_scalar_imports: Vec<CanonicalAbiScalarImport>,
+    /// Compiler-reserved invocation arena used by Component adapters.
+    component_adapter_arena_addr: Option<u32>,
+    /// Compiler-reserved Canonical ABI result arena retained until post-return.
+    component_boundary_arena_addr: Option<u32>,
+    /// Monotonic instance-lifetime arena for exported resources and affine
+    /// callable captures. It is never reset by ordinary invocation cleanup.
+    component_resource_arena_addr: Option<u32>,
+    /// Host environment selected for the generated Core Wasm module.
+    target_profile: WasmTargetProfile,
+    /// Bytes reserved for each compiler-managed arena.
+    arena_size_bytes: u32,
+    /// Deterministic optimization applied after WAT lowering.
+    optimization_level: WasmOptimizationLevel,
+    /// Statistics from the most recent release optimization.
+    optimization_report: Option<ReleaseOptimizationReport>,
+    /// Emit compiler-owned arena metrics for benchmark and diagnostic hosts.
+    instrument_memory: bool,
     /// Top-level immutable globals and their Wasm ABI types.
     global_types: HashMap<String, WasmType>,
     /// Top-level immutable globals and their source-level Restrict types.
@@ -281,6 +404,22 @@ impl WasmCodeGen {
             generated_host_adapter_functions: HashSet::new(),
             generated_host_adapter_globals: HashSet::new(),
             host_abi_profile: HostAbiProfile::V001Scalar,
+            component_internal_exports: None,
+            component_private_internal_exports: HashSet::new(),
+            component_callable_factory_functions: HashSet::new(),
+            component_resource_source_records: HashSet::new(),
+            component_generic_specializations: Vec::new(),
+            component_specialization_core_exports: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            canonical_abi_scalar_imports: Vec::new(),
+            component_adapter_arena_addr: None,
+            component_boundary_arena_addr: None,
+            component_resource_arena_addr: None,
+            target_profile: WasmTargetProfile::WasiP1,
+            arena_size_bytes: DEFAULT_ARENA_SIZE_BYTES,
+            optimization_level: WasmOptimizationLevel::None,
+            optimization_report: None,
+            instrument_memory: false,
             global_types: HashMap::new(),
             global_source_types: HashMap::new(),
             methods: HashMap::new(),
@@ -327,6 +466,130 @@ impl WasmCodeGen {
         codegen
     }
 
+    /// Generate a Core implementation module for compiler-owned Component
+    /// adapters.
+    ///
+    /// The selected functions remain Core exports only so the componentizer
+    /// can bind generated Canonical ABI wrappers to them. They are nested
+    /// implementation details of the final Component, not public Core ABI.
+    /// Source-public functions omitted from `functions` are not exported.
+    pub fn with_component_internal_exports<I, S>(mut self, functions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.component_internal_exports = Some(functions.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Retain planner-validated root-private resource support functions for
+    /// the generated Component adapter. Calling this without Component mode
+    /// has no effect on the ordinary Core ABI.
+    pub(crate) fn with_component_private_internal_exports<I, S>(mut self, functions: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.component_private_internal_exports = functions.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Install the checked callable-capture guard for schema-v2 Component
+    /// factories. v0.1 supports value captures but deliberately rejects
+    /// resource/callable transfer through a closure environment.
+    pub(crate) fn with_component_callable_capture_guard<FI, FS, RI, RS>(
+        mut self,
+        factories: FI,
+        resource_records: RI,
+    ) -> Self
+    where
+        FI: IntoIterator<Item = FS>,
+        FS: Into<String>,
+        RI: IntoIterator<Item = RS>,
+        RS: Into<String>,
+    {
+        self.component_callable_factory_functions = factories.into_iter().map(Into::into).collect();
+        self.component_resource_source_records =
+            resource_records.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Attach the finite set of checked generic Component instances selected
+    /// by schema v2. This method does not infer instances from call sites.
+    pub(crate) fn with_component_generic_specializations(
+        mut self,
+        mut specializations: Vec<crate::component_specialization::ComponentFunctionSpecialization>,
+    ) -> Self {
+        specializations.sort_by(|left, right| left.core_symbol.cmp(&right.core_symbol));
+        self.component_generic_specializations = specializations;
+        self
+    }
+
+    /// Replace generated private Restrict binding stubs with their exact
+    /// Standard32 Core imports.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn with_canonical_abi_scalar_imports(
+        mut self,
+        imports: Vec<CanonicalAbiScalarImport>,
+    ) -> Self {
+        self.canonical_abi_scalar_imports = imports;
+        self
+    }
+
+    /// Address of the invocation arena reserved for Component adapters after
+    /// a successful generation in Component-internal mode.
+    pub fn component_adapter_arena_addr(&self) -> Option<u32> {
+        self.component_adapter_arena_addr
+    }
+
+    /// Address of the Canonical ABI result arena reserved in Component mode.
+    pub fn component_boundary_arena_addr(&self) -> Option<u32> {
+        self.component_boundary_arena_addr
+    }
+
+    /// Address of the instance-lifetime resource/callable arena reserved in
+    /// Component-internal mode.
+    pub fn component_resource_arena_addr(&self) -> Option<u32> {
+        self.component_resource_arena_addr
+    }
+
+    /// Select the host environment for the generated Core Wasm module.
+    pub fn with_target_profile(mut self, profile: WasmTargetProfile) -> Self {
+        self.target_profile = profile;
+        self
+    }
+
+    /// Configure the capacity of every compiler-managed arena.
+    pub fn with_arena_size_bytes(mut self, bytes: u32) -> Result<Self, CodeGenError> {
+        if bytes < ARENA_HEADER_BYTES || !bytes.is_multiple_of(4) {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "arena size must be at least {ARENA_HEADER_BYTES} bytes and a multiple of 4"
+            )));
+        }
+        self.arena_size_bytes = bytes;
+        Ok(self)
+    }
+
+    /// Select the deterministic post-lowering optimization pipeline.
+    pub fn with_optimization_level(mut self, level: WasmOptimizationLevel) -> Self {
+        self.optimization_level = level;
+        self
+    }
+
+    /// Return statistics for the most recent release optimization, if enabled.
+    pub fn optimization_report(&self) -> Option<ReleaseOptimizationReport> {
+        self.optimization_report
+    }
+
+    /// Export compiler-owned arena high-water and reset metrics.
+    ///
+    /// This is intentionally separate from the normal benchmark artifact so
+    /// metric bookkeeping does not affect execution timing.
+    pub fn with_memory_instrumentation(mut self, enabled: bool) -> Self {
+        self.instrument_memory = enabled;
+        self
+    }
+
     pub fn generate(&mut self, program: &Program) -> Result<String, CodeGenError> {
         self.generate_internal(program, None)
     }
@@ -358,12 +621,16 @@ impl WasmCodeGen {
         // Process module imports first
         self.generate_imports(&program.imports)?;
 
-        // Import WASI functions for I/O
-        self.output.push_str("  ;; WASI imports\n");
-        self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
-        self.output.push_str(
-            "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n",
-        );
+        #[cfg(not(target_arch = "wasm32"))]
+        self.generate_canonical_abi_scalar_imports(program)?;
+
+        if self.target_profile == WasmTargetProfile::WasiP1 {
+            self.output.push_str("  ;; WASI Preview 1 imports\n");
+            self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
+            self.output.push_str(
+                "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n",
+            );
+        }
 
         // Memory
         self.output.push_str("\n  ;; Memory\n");
@@ -509,6 +776,9 @@ impl WasmCodeGen {
             }
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        self.validate_canonical_abi_scalar_import_signatures()?;
+
         self.generate_global_bindings(program)?;
 
         // Generate functions
@@ -516,6 +786,10 @@ impl WasmCodeGen {
         for decl in &program.declarations {
             match Self::decl_codegen_item(decl) {
                 TopDecl::Function(func) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if self.is_canonical_abi_scalar_import(&func.name) {
+                        continue;
+                    }
                     self.generate_function(func)?;
                 }
                 TopDecl::Binding(_) => {}
@@ -539,6 +813,11 @@ impl WasmCodeGen {
             }
         }
 
+        // Component schema v2 declares a finite set of generic instances as
+        // ABI surface. Emit those bodies before draining deferred functions;
+        // the specialization routine appends each body to `lambda_functions`.
+        self.generate_component_generic_specializations()?;
+
         // Generate lambda functions
         for lambda_func in &self.lambda_functions {
             self.output.push_str(lambda_func);
@@ -548,7 +827,14 @@ impl WasmCodeGen {
         if self.has_indirect_closure_call || !self.function_table.is_empty() {
             self.output
                 .push_str("\n  ;; Function table for indirect calls\n");
-            self.output.push_str("  (table ");
+            let keep_component_callable_table = self.component_internal_exports.is_some()
+                && !self.component_callable_factory_functions.is_empty();
+            if keep_component_callable_table {
+                self.output
+                    .push_str("  (table $__restrict_component_callable_table ");
+            } else {
+                self.output.push_str("  (table ");
+            }
             self.output
                 .push_str(&self.function_table.len().max(1).to_string());
             self.output.push_str(" funcref)\n");
@@ -558,6 +844,24 @@ impl WasmCodeGen {
                 self.output
                     .push_str(&format!("  (elem (i32.const {}) func ${})\n", i, func_name));
             }
+
+            // The schema-v2 resource adapter is injected after release DCE,
+            // so its `call_indirect` is not yet visible to that pass. Keep the
+            // table, elements, and callable thunks rooted through a private
+            // nested-Core export. It is emitted only for explicitly selected
+            // Component callable factories and is not part of WIT or the
+            // ordinary Core/WASI ABI.
+            if keep_component_callable_table {
+                self.output.push_str(
+                    "  (export \"__restrict_component_callable_table\" (table $__restrict_component_callable_table))\n",
+                );
+            }
+        }
+
+        if self.component_internal_exports.is_some() {
+            self.component_adapter_arena_addr = Some(self.reserve_arena()?);
+            self.component_boundary_arena_addr = Some(self.reserve_arena()?);
+            self.component_resource_arena_addr = Some(self.reserve_arena()?);
         }
 
         // Generate module exports
@@ -566,20 +870,31 @@ impl WasmCodeGen {
         // Export a no-result program entry wrapper only for zero-argument
         // `main`. A parameterized function named `main` remains an ordinary
         // Restrict function with its declared ABI.
-        if self.should_generate_start_wrapper() {
+        if self.component_internal_exports.is_none() && self.should_generate_start_wrapper() {
             self.generate_start_wrapper()?;
         }
 
         self.output.push_str(")\n");
         self.finalize_initial_memory_size()?;
 
+        self.optimization_report = None;
+        if self.optimization_level == WasmOptimizationLevel::Release {
+            let (optimized, report) = eliminate_unreachable(&self.output).map_err(|error| {
+                CodeGenError::InvalidCheckedIr(format!(
+                    "release optimization failed for generated WAT: {error}"
+                ))
+            })?;
+            self.output = optimized;
+            self.optimization_report = Some(report);
+        }
+
         Ok(self.output.clone())
     }
 
     fn place_arena_region_after_static_data(&mut self) -> Result<(), CodeGenError> {
         let aligned_static_end = u64::from(self.next_mem_offset)
-            .div_ceil(u64::from(ARENA_SIZE_BYTES))
-            .checked_mul(u64::from(ARENA_SIZE_BYTES))
+            .div_ceil(u64::from(self.arena_size_bytes))
+            .checked_mul(u64::from(self.arena_size_bytes))
             .ok_or_else(|| {
                 CodeGenError::UnsupportedFeature(
                     "static data exceeds the WebAssembly linear-memory address space".to_string(),
@@ -598,7 +913,7 @@ impl WasmCodeGen {
         let arena_addr = self.next_arena_addr;
         self.next_arena_addr = self
             .next_arena_addr
-            .checked_add(ARENA_SIZE_BYTES)
+            .checked_add(self.arena_size_bytes)
             .ok_or_else(|| {
                 CodeGenError::UnsupportedFeature(
                     "arena layout exceeds the WebAssembly linear-memory address space".to_string(),
@@ -1080,210 +1395,213 @@ impl WasmCodeGen {
     }
 
     fn generate_builtin_functions(&mut self) -> Result<(), CodeGenError> {
-        // Internal low-level writer. Source-level `println` dispatches through Display.
         self.output.push_str("\n  ;; Built-in functions\n");
-        self.output
-            .push_str("  (func $__restrict_println_string (param $str i32)\n");
-        self.output.push_str("    (local $len i32)\n");
-        self.output.push_str("    (local $iov_base i32)\n");
-        self.output.push_str("    (local $iov_len i32)\n");
-        self.output.push_str("    (local $nwritten i32)\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    ;; Read string length from memory (first 4 bytes)\n");
-        self.output.push_str("    local.get $str\n");
-        self.output.push_str("    i32.load\n");
-        self.output.push_str("    local.set $len\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    ;; Prepare iovec structure at memory address 0\n");
-        self.output
-            .push_str("    ;; iov_base = str + 4 (skip length prefix)\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    local.get $str\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; iov_len = string length\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    local.get $len\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add newline to iovec\n");
-        self.output.push_str("    ;; Store newline at address 16\n");
-        self.output.push_str("    i32.const 16\n");
-        self.output.push_str("    i32.const 10  ;; '\\n'\n");
-        self.output.push_str("    i32.store8\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Second iovec for newline\n");
-        self.output
-            .push_str("    i32.const 8   ;; second iovec base\n");
-        self.output
-            .push_str("    i32.const 16  ;; address of newline\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    i32.const 12  ;; second iovec len\n");
-        self.output
-            .push_str("    i32.const 1   ;; length of newline\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Call fd_write\n");
-        self.output.push_str("    i32.const 1   ;; stdout\n");
-        self.output.push_str("    i32.const 0   ;; iovs\n");
-        self.output
-            .push_str("    i32.const 2   ;; iovs_len (2 iovecs)\n");
-        self.output
-            .push_str("    i32.const 20  ;; nwritten (output param)\n");
-        self.output.push_str("    call $fd_write\n");
-        self.output.push_str("    drop\n");
-        self.output.push_str("  )\n");
+        if self.target_profile == WasmTargetProfile::WasiP1 {
+            // Internal low-level writer. Source-level `println` dispatches through Display.
+            self.output
+                .push_str("  (func $__restrict_println_string (param $str i32)\n");
+            self.output.push_str("    (local $len i32)\n");
+            self.output.push_str("    (local $iov_base i32)\n");
+            self.output.push_str("    (local $iov_len i32)\n");
+            self.output.push_str("    (local $nwritten i32)\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    ;; Read string length from memory (first 4 bytes)\n");
+            self.output.push_str("    local.get $str\n");
+            self.output.push_str("    i32.load\n");
+            self.output.push_str("    local.set $len\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    ;; Prepare iovec structure at memory address 0\n");
+            self.output
+                .push_str("    ;; iov_base = str + 4 (skip length prefix)\n");
+            self.output.push_str("    i32.const 0\n");
+            self.output.push_str("    local.get $str\n");
+            self.output.push_str("    i32.const 4\n");
+            self.output.push_str("    i32.add\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; iov_len = string length\n");
+            self.output.push_str("    i32.const 4\n");
+            self.output.push_str("    local.get $len\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Add newline to iovec\n");
+            self.output.push_str("    ;; Store newline at address 16\n");
+            self.output.push_str("    i32.const 16\n");
+            self.output.push_str("    i32.const 10  ;; '\\n'\n");
+            self.output.push_str("    i32.store8\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Second iovec for newline\n");
+            self.output
+                .push_str("    i32.const 8   ;; second iovec base\n");
+            self.output
+                .push_str("    i32.const 16  ;; address of newline\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    i32.const 12  ;; second iovec len\n");
+            self.output
+                .push_str("    i32.const 1   ;; length of newline\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Call fd_write\n");
+            self.output.push_str("    i32.const 1   ;; stdout\n");
+            self.output.push_str("    i32.const 0   ;; iovs\n");
+            self.output
+                .push_str("    i32.const 2   ;; iovs_len (2 iovecs)\n");
+            self.output
+                .push_str("    i32.const 20  ;; nwritten (output param)\n");
+            self.output.push_str("    call $fd_write\n");
+            self.output.push_str("    drop\n");
+            self.output.push_str("  )\n");
 
-        // print_int function with proper integer to string conversion
-        self.output
-            .push_str("\n  (func $print_int (param $value i32)\n");
-        self.output.push_str("    (local $num i32)\n");
-        self.output.push_str("    (local $digit i32)\n");
-        self.output.push_str("    (local $buffer_start i32)\n");
-        self.output.push_str("    (local $buffer_end i32)\n");
-        self.output.push_str("    (local $is_negative i32)\n");
-        self.output.push_str("    (local $len i32)\n");
-        self.output.push_str("    \n");
-        self.output
-            .push_str("    ;; Use memory starting at address 400 for the buffer\n");
-        self.output
-            .push_str("    i32.const 420  ;; Start from the end of buffer and work backwards\n");
-        self.output.push_str("    local.set $buffer_end\n");
-        self.output.push_str("    local.get $buffer_end\n");
-        self.output.push_str("    local.set $buffer_start\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Check if negative\n");
-        self.output.push_str("    local.get $value\n");
-        self.output.push_str("    i32.const 0\n");
-        self.output.push_str("    i32.lt_s\n");
-        self.output.push_str("    local.set $is_negative\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Get absolute value\n");
-        self.output.push_str("    local.get $is_negative\n");
-        self.output.push_str("    (if (result i32)\n");
-        self.output.push_str("      (then\n");
-        self.output.push_str("        i32.const 0\n");
-        self.output.push_str("        local.get $value\n");
-        self.output.push_str("        i32.sub\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("      (else\n");
-        self.output.push_str("        local.get $value\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("    )\n");
-        self.output.push_str("    local.set $num\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Handle zero special case\n");
-        self.output.push_str("    local.get $num\n");
-        self.output.push_str("    i32.eqz\n");
-        self.output.push_str("    (if\n");
-        self.output.push_str("      (then\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 1\n");
-        self.output.push_str("        i32.sub\n");
-        self.output.push_str("        local.set $buffer_start\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 48  ;; '0'\n");
-        self.output.push_str("        i32.store8\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("      (else\n");
-        self.output.push_str("        ;; Convert digits\n");
-        self.output.push_str("        (block $break\n");
-        self.output.push_str("          (loop $digit_loop\n");
-        self.output.push_str("            local.get $num\n");
-        self.output.push_str("            i32.eqz\n");
-        self.output.push_str("            br_if $break\n");
-        self.output.push_str("          \n");
-        self.output.push_str("          ;; Get last digit\n");
-        self.output.push_str("          local.get $num\n");
-        self.output.push_str("          i32.const 10\n");
-        self.output.push_str("          i32.rem_u\n");
-        self.output.push_str("          local.set $digit\n");
-        self.output.push_str("          \n");
-        self.output.push_str("          ;; Store digit character\n");
-        self.output.push_str("          local.get $buffer_start\n");
-        self.output.push_str("          i32.const 1\n");
-        self.output.push_str("          i32.sub\n");
-        self.output.push_str("          local.set $buffer_start\n");
-        self.output.push_str("          local.get $buffer_start\n");
-        self.output.push_str("          local.get $digit\n");
-        self.output.push_str("          i32.const 48  ;; '0'\n");
-        self.output.push_str("          i32.add\n");
-        self.output.push_str("          i32.store8\n");
-        self.output.push_str("          \n");
-        self.output.push_str("          ;; Divide by 10\n");
-        self.output.push_str("          local.get $num\n");
-        self.output.push_str("          i32.const 10\n");
-        self.output.push_str("          i32.div_u\n");
-        self.output.push_str("          local.set $num\n");
-        self.output.push_str("          \n");
-        self.output.push_str("            br $digit_loop\n");
-        self.output.push_str("          )\n");
-        self.output.push_str("        )\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("    )\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add negative sign if needed\n");
-        self.output.push_str("    local.get $is_negative\n");
-        self.output.push_str("    (if\n");
-        self.output.push_str("      (then\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 1\n");
-        self.output.push_str("        i32.sub\n");
-        self.output.push_str("        local.set $buffer_start\n");
-        self.output.push_str("        local.get $buffer_start\n");
-        self.output.push_str("        i32.const 45  ;; '-'\n");
-        self.output.push_str("        i32.store8\n");
-        self.output.push_str("      )\n");
-        self.output.push_str("    )\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Add newline\n");
-        self.output.push_str("    local.get $buffer_end\n");
-        self.output.push_str("    i32.const 10  ;; '\\n'\n");
-        self.output.push_str("    i32.store8\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Calculate length\n");
-        self.output.push_str("    local.get $buffer_end\n");
-        self.output.push_str("    local.get $buffer_start\n");
-        self.output.push_str("    i32.sub\n");
-        self.output.push_str("    i32.const 1\n");
-        self.output.push_str("    i32.add  ;; +1 for newline\n");
-        self.output.push_str("    local.set $len\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Setup iovec\n");
-        self.output.push_str("    i32.const 200\n");
-        self.output
-            .push_str("    local.get $buffer_start  ;; iov_base\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    i32.const 204\n");
-        self.output
-            .push_str("    local.get $len          ;; iov_len\n");
-        self.output.push_str("    i32.store\n");
-        self.output.push_str("    \n");
-        self.output.push_str("    ;; Call fd_write\n");
-        self.output.push_str("    i32.const 1   ;; stdout\n");
-        self.output.push_str("    i32.const 200 ;; iovec\n");
-        self.output.push_str("    i32.const 1   ;; iovec count\n");
-        self.output.push_str("    i32.const 300 ;; nwritten\n");
-        self.output.push_str("    call $fd_write\n");
-        self.output.push_str("    drop\n");
-        self.output.push_str("  )\n");
+            // print_int function with proper integer to string conversion
+            self.output
+                .push_str("\n  (func $print_int (param $value i32)\n");
+            self.output.push_str("    (local $num i32)\n");
+            self.output.push_str("    (local $digit i32)\n");
+            self.output.push_str("    (local $buffer_start i32)\n");
+            self.output.push_str("    (local $buffer_end i32)\n");
+            self.output.push_str("    (local $is_negative i32)\n");
+            self.output.push_str("    (local $len i32)\n");
+            self.output.push_str("    \n");
+            self.output
+                .push_str("    ;; Use memory starting at address 400 for the buffer\n");
+            self.output.push_str(
+                "    i32.const 420  ;; Start from the end of buffer and work backwards\n",
+            );
+            self.output.push_str("    local.set $buffer_end\n");
+            self.output.push_str("    local.get $buffer_end\n");
+            self.output.push_str("    local.set $buffer_start\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Check if negative\n");
+            self.output.push_str("    local.get $value\n");
+            self.output.push_str("    i32.const 0\n");
+            self.output.push_str("    i32.lt_s\n");
+            self.output.push_str("    local.set $is_negative\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Get absolute value\n");
+            self.output.push_str("    local.get $is_negative\n");
+            self.output.push_str("    (if (result i32)\n");
+            self.output.push_str("      (then\n");
+            self.output.push_str("        i32.const 0\n");
+            self.output.push_str("        local.get $value\n");
+            self.output.push_str("        i32.sub\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("      (else\n");
+            self.output.push_str("        local.get $value\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("    )\n");
+            self.output.push_str("    local.set $num\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Handle zero special case\n");
+            self.output.push_str("    local.get $num\n");
+            self.output.push_str("    i32.eqz\n");
+            self.output.push_str("    (if\n");
+            self.output.push_str("      (then\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 1\n");
+            self.output.push_str("        i32.sub\n");
+            self.output.push_str("        local.set $buffer_start\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 48  ;; '0'\n");
+            self.output.push_str("        i32.store8\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("      (else\n");
+            self.output.push_str("        ;; Convert digits\n");
+            self.output.push_str("        (block $break\n");
+            self.output.push_str("          (loop $digit_loop\n");
+            self.output.push_str("            local.get $num\n");
+            self.output.push_str("            i32.eqz\n");
+            self.output.push_str("            br_if $break\n");
+            self.output.push_str("          \n");
+            self.output.push_str("          ;; Get last digit\n");
+            self.output.push_str("          local.get $num\n");
+            self.output.push_str("          i32.const 10\n");
+            self.output.push_str("          i32.rem_u\n");
+            self.output.push_str("          local.set $digit\n");
+            self.output.push_str("          \n");
+            self.output.push_str("          ;; Store digit character\n");
+            self.output.push_str("          local.get $buffer_start\n");
+            self.output.push_str("          i32.const 1\n");
+            self.output.push_str("          i32.sub\n");
+            self.output.push_str("          local.set $buffer_start\n");
+            self.output.push_str("          local.get $buffer_start\n");
+            self.output.push_str("          local.get $digit\n");
+            self.output.push_str("          i32.const 48  ;; '0'\n");
+            self.output.push_str("          i32.add\n");
+            self.output.push_str("          i32.store8\n");
+            self.output.push_str("          \n");
+            self.output.push_str("          ;; Divide by 10\n");
+            self.output.push_str("          local.get $num\n");
+            self.output.push_str("          i32.const 10\n");
+            self.output.push_str("          i32.div_u\n");
+            self.output.push_str("          local.set $num\n");
+            self.output.push_str("          \n");
+            self.output.push_str("            br $digit_loop\n");
+            self.output.push_str("          )\n");
+            self.output.push_str("        )\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("    )\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Add negative sign if needed\n");
+            self.output.push_str("    local.get $is_negative\n");
+            self.output.push_str("    (if\n");
+            self.output.push_str("      (then\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 1\n");
+            self.output.push_str("        i32.sub\n");
+            self.output.push_str("        local.set $buffer_start\n");
+            self.output.push_str("        local.get $buffer_start\n");
+            self.output.push_str("        i32.const 45  ;; '-'\n");
+            self.output.push_str("        i32.store8\n");
+            self.output.push_str("      )\n");
+            self.output.push_str("    )\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Add newline\n");
+            self.output.push_str("    local.get $buffer_end\n");
+            self.output.push_str("    i32.const 10  ;; '\\n'\n");
+            self.output.push_str("    i32.store8\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Calculate length\n");
+            self.output.push_str("    local.get $buffer_end\n");
+            self.output.push_str("    local.get $buffer_start\n");
+            self.output.push_str("    i32.sub\n");
+            self.output.push_str("    i32.const 1\n");
+            self.output.push_str("    i32.add  ;; +1 for newline\n");
+            self.output.push_str("    local.set $len\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Setup iovec\n");
+            self.output.push_str("    i32.const 200\n");
+            self.output
+                .push_str("    local.get $buffer_start  ;; iov_base\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    i32.const 204\n");
+            self.output
+                .push_str("    local.get $len          ;; iov_len\n");
+            self.output.push_str("    i32.store\n");
+            self.output.push_str("    \n");
+            self.output.push_str("    ;; Call fd_write\n");
+            self.output.push_str("    i32.const 1   ;; stdout\n");
+            self.output.push_str("    i32.const 200 ;; iovec\n");
+            self.output.push_str("    i32.const 1   ;; iovec count\n");
+            self.output.push_str("    i32.const 300 ;; nwritten\n");
+            self.output.push_str("    call $fd_write\n");
+            self.output.push_str("    drop\n");
+            self.output.push_str("  )\n");
 
-        // Add print_int to function signatures
-        self.functions.insert(
-            "print_int".to_string(),
-            FunctionSig {
-                _params: vec![WasmType::I32],
-                result: None,
-            },
-        );
+            // Add print_int to function signatures
+            self.functions.insert(
+                "print_int".to_string(),
+                FunctionSig {
+                    _params: vec![WasmType::I32],
+                    result: None,
+                },
+            );
 
-        self.generate_std_io_functions()?;
+            self.generate_std_io_functions()?;
+        }
         self.generate_display_functions()?;
         self.generate_std_math_functions()?;
         self.generate_std_prelude_functions()?;
@@ -2585,10 +2903,41 @@ impl WasmCodeGen {
         self.output
             .push_str("  (global $current_arena (mut i32) (i32.const 0))\n\n");
 
+        // Stable trap diagnostics are always available to a host. An
+        // allocation failure still traps because source-level recovery is not
+        // part of the current language surface, but it no longer traps without
+        // a machine-readable cause.
+        self.output
+            .push_str("  (global $arena_error_code (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_error_requested_bytes (mut i32) (i32.const 0))\n");
+        self.output.push_str(&format!(
+            "  (global $arena_capacity_bytes i32 (i32.const {}))\n",
+            self.arena_size_bytes
+        ));
+        self.output
+            .push_str("  (export \"__restrict_arena_error_code\" (global $arena_error_code))\n");
+        self.output.push_str(
+            "  (export \"__restrict_arena_error_requested_bytes\" (global $arena_error_requested_bytes))\n",
+        );
+        self.output.push_str(
+            "  (export \"__restrict_arena_capacity_bytes\" (global $arena_capacity_bytes))\n",
+        );
+
+        if self.instrument_memory {
+            self.generate_arena_metric_declarations();
+        }
+        self.output.push('\n');
+
         // Arena init function
         self.output
             .push_str("  (func $arena_init (param $start i32) (result i32)\n");
         self.output.push_str("    ;; Initialize arena header\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    global.set $arena_error_code\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output
+            .push_str("    global.set $arena_error_requested_bytes\n");
         self.output
             .push_str("    ;; Store start address at offset 0\n");
         self.output.push_str("    local.get $start\n");
@@ -2648,16 +2997,27 @@ impl WasmCodeGen {
         self.output.push_str("    ;; Arena bounds check\n");
         self.output.push_str("    local.get $arena\n");
         self.output
-            .push_str(&format!("    i32.const {}\n", ARENA_SIZE_BYTES));
+            .push_str(&format!("    i32.const {}\n", self.arena_size_bytes));
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.set $arena_end\n");
         self.output.push_str("    local.get $new_current\n");
+        self.output.push_str("    local.get $current\n");
+        self.output.push_str("    i32.lt_u\n");
+        self.output.push_str("    local.get $new_current\n");
         self.output.push_str("    local.get $arena_end\n");
         self.output.push_str("    i32.gt_u\n");
+        self.output.push_str("    i32.or\n");
         self.output.push_str("    (if\n");
         self.output.push_str("      (then\n");
         self.output
-            .push_str("        ;; Arena allocation overflow - trap\n");
+            .push_str("        ;; Report arena exhaustion before the deliberate trap\n");
+        self.output.push_str("        local.get $size\n");
+        self.output
+            .push_str("        global.set $arena_error_requested_bytes\n");
+        self.output
+            .push_str(&format!("        i32.const {ARENA_ERROR_EXHAUSTED}\n"));
+        self.output
+            .push_str("        global.set $arena_error_code\n");
         self.output.push_str("        unreachable\n");
         self.output.push_str("      )\n");
         self.output.push_str("    )\n");
@@ -2668,6 +3028,9 @@ impl WasmCodeGen {
         self.output.push_str("    i32.add\n");
         self.output.push_str("    local.get $new_current\n");
         self.output.push_str("    i32.store\n");
+        if self.instrument_memory {
+            self.generate_arena_allocation_metrics();
+        }
         self.output.push_str("    \n");
         self.output.push_str("    ;; Return allocated address\n");
         self.output.push_str("    local.get $current\n");
@@ -2694,6 +3057,14 @@ impl WasmCodeGen {
         self.output.push_str("    i32.const 8\n");
         self.output.push_str("    i32.add\n");
         self.output.push_str("    i32.store\n");
+        if self.instrument_memory {
+            self.output.push_str("    i32.const 0\n");
+            self.output.push_str("    global.set $arena_live_bytes\n");
+            self.output.push_str("    global.get $arena_reset_count\n");
+            self.output.push_str("    i32.const 1\n");
+            self.output.push_str("    i32.add\n");
+            self.output.push_str("    global.set $arena_reset_count\n");
+        }
         self.output.push_str("  )\n");
 
         self.functions.insert(
@@ -2713,6 +3084,14 @@ impl WasmCodeGen {
         self.output.push_str("    i32.eqz\n");
         self.output.push_str("    (if\n");
         self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $size\n");
+        self.output
+            .push_str("        global.set $arena_error_requested_bytes\n");
+        self.output.push_str(&format!(
+            "        i32.const {ARENA_ERROR_NO_ACTIVE_ARENA}\n"
+        ));
+        self.output
+            .push_str("        global.set $arena_error_code\n");
         self.output.push_str("        unreachable\n");
         self.output.push_str("      )\n");
         self.output.push_str("    )\n");
@@ -2733,6 +3112,75 @@ impl WasmCodeGen {
         self.generate_string_eq_function();
 
         Ok(())
+    }
+
+    fn generate_arena_metric_declarations(&mut self) {
+        self.output
+            .push_str("  (global $arena_peak_bytes (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_live_bytes (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_reset_count (mut i32) (i32.const 0))\n");
+        self.output
+            .push_str("  (global $arena_allocation_count (mut i32) (i32.const 0))\n");
+        for (export_name, global_name) in [
+            ("__restrict_arena_peak_bytes", "arena_peak_bytes"),
+            ("__restrict_arena_live_bytes", "arena_live_bytes"),
+            ("__restrict_arena_reset_count", "arena_reset_count"),
+            (
+                "__restrict_arena_allocation_count",
+                "arena_allocation_count",
+            ),
+        ] {
+            self.output.push_str(&format!(
+                "  (export \"{export_name}\" (global ${global_name}))\n"
+            ));
+        }
+        self.output
+            .push_str("  (func $__restrict_memory_metrics_reset\n");
+        for global_name in [
+            "arena_error_code",
+            "arena_error_requested_bytes",
+            "arena_peak_bytes",
+            "arena_live_bytes",
+            "arena_reset_count",
+            "arena_allocation_count",
+        ] {
+            self.output.push_str("    i32.const 0\n");
+            self.output
+                .push_str(&format!("    global.set ${global_name}\n"));
+        }
+        self.output.push_str("  )\n");
+        self.output.push_str(
+            "  (export \"__restrict_memory_metrics_reset\" (func $__restrict_memory_metrics_reset))\n",
+        );
+    }
+
+    fn generate_arena_allocation_metrics(&mut self) {
+        self.output.push_str("    local.get $new_current\n");
+        self.output.push_str("    local.get $arena\n");
+        self.output.push_str("    i32.sub\n");
+        self.output
+            .push_str(&format!("    i32.const {ARENA_HEADER_BYTES}\n"));
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    global.set $arena_live_bytes\n");
+        self.output.push_str("    global.get $arena_live_bytes\n");
+        self.output.push_str("    global.get $arena_peak_bytes\n");
+        self.output.push_str("    i32.gt_u\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output
+            .push_str("        global.get $arena_live_bytes\n");
+        self.output
+            .push_str("        global.set $arena_peak_bytes\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output
+            .push_str("    global.get $arena_allocation_count\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.add\n");
+        self.output
+            .push_str("    global.set $arena_allocation_count\n");
     }
 
     fn generate_string_concat_function(&mut self) {
@@ -6978,7 +7426,8 @@ impl WasmCodeGen {
         self.record_tmp_count =
             RECORD_TMP_MIN_COUNT.max(Self::max_record_tmp_depth_in_block(&func.body));
         self.current_function = Some(func.name.clone());
-        let is_host_entry = self.exported_functions.contains(&func.name)
+        let is_host_entry = self.component_internal_exports.is_none()
+            && self.exported_functions.contains(&func.name)
             && !self.function_requires_flat_record_adapter(&func.name);
         self.push_scope();
 
@@ -9311,14 +9760,34 @@ impl WasmCodeGen {
             })
             .collect();
 
+        if let Some(factory) = self.current_function.as_ref().filter(|factory| {
+            self.component_callable_factory_functions
+                .contains(factory.as_str())
+        }) {
+            for (capture, _) in &free_vars {
+                let source_ty = free_var_sources.get(capture).ok_or_else(|| {
+                    CodeGenError::UnsupportedFeature(format!(
+                        "Component callable factory '{}' capture '{}' has no checked source type",
+                        factory, capture
+                    ))
+                })?;
+                if self.component_capture_contains_handle(source_ty, &mut HashSet::new()) {
+                    return Err(CodeGenError::UnsupportedFeature(format!(
+                        "Component callable factory '{}' capture '{}' has handle-bearing type '{}'; v0.1 callable captures are value-only",
+                        factory, capture, source_ty
+                    )));
+                }
+            }
+        }
+
         let lambda_locals = self.collect_lambda_locals(lambda)?;
         let lambda_record_tmp_count =
             RECORD_TMP_MIN_COUNT.max(Self::max_record_tmp_depth_in_expr(&lambda.body));
 
-        // Closure layout: [function_index, captured_var1, captured_var2, ...].
-        // Even non-capturing lambdas use this layout so function values have a
-        // single runtime representation.
-        let closure_size = 4 + free_vars
+        // Closure layout: [function_index, byte_size, captured_var1, ...].
+        // The size header lets a callable-resource destructor invalidate the
+        // full affine capture environment without exposing its layout in WIT.
+        let closure_size = 8 + free_vars
             .iter()
             .map(|(_, ty)| self.wasm_type_size(*ty))
             .sum::<usize>();
@@ -9335,7 +9804,14 @@ impl WasmCodeGen {
         ));
         self.output.push_str("    i32.store\n");
 
-        let mut offset = 4;
+        self.output.push_str("    local.get $closure_tmp\n");
+        self.output.push_str(&format!(
+            "    i32.const {} ;; closure byte size\n",
+            closure_size
+        ));
+        self.output.push_str("    i32.store offset=4\n");
+
+        let mut offset = 8;
         for (i, (var_name, _)) in free_vars.iter().enumerate() {
             let captured_ty = free_vars[i].1;
             self.output.push_str("    local.get $closure_tmp\n");
@@ -9439,7 +9915,7 @@ impl WasmCodeGen {
             }
 
             // Load captured variables from closure
-            let mut offset = 4;
+            let mut offset = 8;
             for (var_name, ty) in &free_vars {
                 lambda_code.push_str("    local.get $closure\n");
                 lambda_code.push_str(&format!("    i32.const {}\n", offset));
@@ -9513,6 +9989,35 @@ impl WasmCodeGen {
         self.lambda_functions.push(lambda_code);
 
         Ok(())
+    }
+
+    fn component_capture_contains_handle(
+        &self,
+        ty: &Type,
+        seen_records: &mut HashSet<String>,
+    ) -> bool {
+        match ty {
+            Type::Function(_, _) | Type::Temporal(_, _) => true,
+            Type::Named(name) => {
+                if self.component_resource_source_records.contains(name) {
+                    return true;
+                }
+                if !seen_records.insert(name.clone()) {
+                    return false;
+                }
+                self.records.get(name).is_some_and(|fields| {
+                    fields.iter().any(|(_, field_ty)| {
+                        self.component_capture_contains_handle(field_ty, seen_records)
+                    })
+                })
+            }
+            Type::Generic(name, arguments) => {
+                self.component_resource_source_records.contains(name)
+                    || arguments.iter().any(|argument| {
+                        self.component_capture_contains_handle(argument, seen_records)
+                    })
+            }
+        }
     }
 
     fn collect_lambda_locals(
@@ -10663,6 +11168,12 @@ impl WasmCodeGen {
         value: &Expr,
         synthesize_pipe_unit: bool,
     ) -> Result<(), CodeGenError> {
+        if self.target_profile == WasmTargetProfile::WasmCore && matches!(name, "print" | "println")
+        {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "'{name}' requires the 'wasip1' target profile; 'wasm-core' does not import host I/O"
+            )));
+        }
         let source_type = self.infer_expr_source_type(value).ok_or_else(|| {
             CodeGenError::UnsupportedFeature(format!(
                 "{} requires a statically known Display argument",
@@ -10977,6 +11488,18 @@ impl WasmCodeGen {
                         &call.args,
                         Some(expected_source),
                     );
+                }
+
+                if matches!(func_name.as_str(), "display" | "print" | "println")
+                    && !self.has_local_callable_binding(func_name)
+                {
+                    if call.args.len() != 1 {
+                        return Err(CodeGenError::UnsupportedFeature(format!(
+                            "{} expects exactly one Display value",
+                            func_name
+                        )));
+                    }
+                    return self.generate_display_intrinsic(func_name, &call.args[0], false);
                 }
 
                 if func_name == "identity" {
@@ -11590,6 +12113,70 @@ impl WasmCodeGen {
         Ok(specialized_name)
     }
 
+    fn generate_component_generic_specializations(&mut self) -> Result<(), CodeGenError> {
+        if self.component_generic_specializations.is_empty() {
+            return Ok(());
+        }
+        if self.component_internal_exports.is_none() {
+            return Err(CodeGenError::InvalidCheckedIr(
+                "Component generic specializations require Component-internal generation mode"
+                    .to_string(),
+            ));
+        }
+
+        let specializations = self.component_generic_specializations.clone();
+        let mut stable_symbols = HashSet::new();
+        for specialization in specializations {
+            if !stable_symbols.insert(specialization.core_symbol.clone()) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate Component specialization Core symbol '{}'",
+                    specialization.core_symbol
+                )));
+            }
+            let source_sig = self
+                .function_source_sigs
+                .get(&specialization.source_function)
+                .cloned()
+                .ok_or_else(|| {
+                    CodeGenError::InvalidCheckedIr(format!(
+                        "Component generic specialization source '{}' has no registered signature",
+                        specialization.source_function
+                    ))
+                })?;
+            if source_sig.type_params.is_empty() {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "Component specialization source '{}' is not generic",
+                    specialization.source_function
+                )));
+            }
+
+            let substitution = specialization
+                .type_arguments
+                .iter()
+                .map(|(parameter, ty)| {
+                    Self::source_type_from_checked(ty)
+                        .map(|ty| (parameter.clone(), ty))
+                        .map_err(|reason| {
+                            CodeGenError::UnsupportedFeature(format!(
+                                "Component specialization '{}' type argument '{}' is not source-representable: {}",
+                                specialization.source_function, parameter, reason
+                            ))
+                        })
+                })
+                .collect::<Result<HashMap<_, _>, _>>()?;
+            let generated_name = self.ensure_generic_function_specialization_with_substitution(
+                &specialization.source_function,
+                &source_sig,
+                substitution,
+            )?;
+            self.component_specialization_core_exports
+                .push((specialization.core_symbol, generated_name));
+        }
+        self.component_specialization_core_exports
+            .sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(())
+    }
+
     fn generic_specialization_name(
         function_name: &str,
         type_params: &[String],
@@ -12058,7 +12645,7 @@ impl WasmCodeGen {
         self.function_table.push(thunk_name.clone());
 
         self.output
-            .push_str("    i32.const 4 ;; identity closure size\n");
+            .push_str("    i32.const 8 ;; identity closure size\n");
         self.output.push_str("    call $allocate\n");
         self.output.push_str("    local.set $closure_tmp\n");
         self.output.push_str("    local.get $closure_tmp\n");
@@ -12067,6 +12654,10 @@ impl WasmCodeGen {
             table_index, thunk_name
         ));
         self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $closure_tmp\n");
+        self.output
+            .push_str("    i32.const 8 ;; closure byte size\n");
+        self.output.push_str("    i32.store offset=4\n");
         self.output.push_str("    local.get $closure_tmp\n");
 
         let param_ty = abi.params[0];
@@ -12212,7 +12803,7 @@ impl WasmCodeGen {
         self.function_table.push(thunk_name.clone());
 
         self.output
-            .push_str("    i32.const 4 ;; named function closure size\n");
+            .push_str("    i32.const 8 ;; named function closure size\n");
         self.output.push_str("    call $allocate\n");
         self.output.push_str("    local.set $closure_tmp\n");
         self.output.push_str("    local.get $closure_tmp\n");
@@ -12221,6 +12812,10 @@ impl WasmCodeGen {
             table_index, thunk_name
         ));
         self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $closure_tmp\n");
+        self.output
+            .push_str("    i32.const 8 ;; closure byte size\n");
+        self.output.push_str("    i32.store offset=4\n");
         self.output.push_str("    local.get $closure_tmp\n");
 
         let mut thunk_code = String::new();
@@ -18187,6 +18782,177 @@ impl WasmCodeGen {
         )))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn generate_canonical_abi_scalar_imports(
+        &mut self,
+        program: &Program,
+    ) -> Result<(), CodeGenError> {
+        if self.canonical_abi_scalar_imports.is_empty() {
+            return Ok(());
+        }
+
+        let mut source_names = HashSet::new();
+        let mut core_names = HashSet::new();
+        for import in &self.canonical_abi_scalar_imports {
+            if !Self::is_safe_generated_wasm_identifier(&import.source_function) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import has invalid source binding '{}'",
+                    import.source_function
+                )));
+            }
+            if import.module.is_empty() || import.name.is_empty() {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import '{}' has an empty Core import name",
+                    import.source_function
+                )));
+            }
+            if !source_names.insert(import.source_function.as_str()) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate generated Canonical ABI source binding '{}'",
+                    import.source_function
+                )));
+            }
+            if !core_names.insert((import.module.as_str(), import.name.as_str())) {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "duplicate generated Canonical ABI Core import '{}::{}'",
+                    import.module, import.name
+                )));
+            }
+
+            let mut matching_declarations = 0usize;
+            for declaration in &program.declarations {
+                let source_public = matches!(declaration, TopDecl::Export(_));
+                let TopDecl::Function(function) = Self::decl_codegen_item(declaration) else {
+                    continue;
+                };
+                if function.name != import.source_function {
+                    continue;
+                }
+                matching_declarations += 1;
+                if source_public {
+                    return Err(CodeGenError::InvalidCheckedIr(format!(
+                        "generated Canonical ABI import binding '{}' must remain private",
+                        import.source_function
+                    )));
+                }
+                if function.is_async
+                    || !function.type_params.is_empty()
+                    || !function.temporal_constraints.is_empty()
+                {
+                    return Err(CodeGenError::InvalidCheckedIr(format!(
+                        "generated Canonical ABI import binding '{}' must be synchronous and concrete",
+                        import.source_function
+                    )));
+                }
+            }
+            if matching_declarations != 1 {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import binding '{}' has {} source declarations; expected exactly one",
+                    import.source_function, matching_declarations
+                )));
+            }
+        }
+
+        self.output
+            .push_str("  ;; External WIT Standard32 imports\n");
+        for import in &self.canonical_abi_scalar_imports {
+            self.output.push_str("  (import \"");
+            Self::push_wat_string_contents(&mut self.output, &import.module);
+            self.output.push_str("\" \"");
+            Self::push_wat_string_contents(&mut self.output, &import.name);
+            self.output
+                .push_str(&format!("\" (func ${}", import.source_function));
+            if !import.params.is_empty() {
+                self.output.push_str(" (param");
+                for ty in &import.params {
+                    self.output.push(' ');
+                    self.output
+                        .push_str(Self::canonical_abi_scalar_type_name(*ty));
+                }
+                self.output.push(')');
+            }
+            if let Some(result) = import.result {
+                self.output.push_str(" (result ");
+                self.output
+                    .push_str(Self::canonical_abi_scalar_type_name(result));
+                self.output.push(')');
+            }
+            self.output.push_str("))\n");
+        }
+        self.output.push('\n');
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn validate_canonical_abi_scalar_import_signatures(&self) -> Result<(), CodeGenError> {
+        for import in &self.canonical_abi_scalar_imports {
+            let signature = self.functions.get(&import.source_function).ok_or_else(|| {
+                CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import binding '{}' has no checked signature",
+                    import.source_function
+                ))
+            })?;
+            let expected_params = import
+                .params
+                .iter()
+                .copied()
+                .map(Self::canonical_abi_scalar_wasm_type)
+                .collect::<Vec<_>>();
+            let expected_result = import.result.map(Self::canonical_abi_scalar_wasm_type);
+            if signature._params != expected_params || signature.result != expected_result {
+                return Err(CodeGenError::InvalidCheckedIr(format!(
+                    "generated Canonical ABI import binding '{}' does not match its checked Restrict signature",
+                    import.source_function
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn is_canonical_abi_scalar_import(&self, function: &str) -> bool {
+        self.canonical_abi_scalar_imports
+            .iter()
+            .any(|import| import.source_function == function)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn canonical_abi_scalar_wasm_type(ty: CanonicalAbiScalarType) -> WasmType {
+        match ty {
+            CanonicalAbiScalarType::I32 => WasmType::I32,
+            CanonicalAbiScalarType::I64 => WasmType::I64,
+            CanonicalAbiScalarType::F64 => WasmType::F64,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn canonical_abi_scalar_type_name(ty: CanonicalAbiScalarType) -> &'static str {
+        match ty {
+            CanonicalAbiScalarType::I32 => "i32",
+            CanonicalAbiScalarType::I64 => "i64",
+            CanonicalAbiScalarType::F64 => "f64",
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn is_safe_generated_wasm_identifier(value: &str) -> bool {
+        let mut chars = value.chars();
+        matches!(chars.next(), Some('a'..='z' | 'A'..='Z' | '_'))
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn push_wat_string_contents(output: &mut String, value: &str) {
+        for byte in value.bytes() {
+            match byte {
+                b'"' => output.push_str("\\\""),
+                b'\\' => output.push_str("\\\\"),
+                0x20..=0x7e => output.push(char::from(byte)),
+                _ => output.push_str(&format!("\\{byte:02x}")),
+            }
+        }
+    }
+
     fn format_import(import: &ImportDecl) -> String {
         let module_name = import.module_path.join(".");
 
@@ -18635,6 +19401,11 @@ impl WasmCodeGen {
     }
 
     fn generate_exports(&mut self, program: &Program) -> Result<(), CodeGenError> {
+        if let Some(selected) = self.component_internal_exports.clone() {
+            let private_selected = self.component_private_internal_exports.clone();
+            return self.generate_component_internal_exports(program, &selected, &private_selected);
+        }
+
         let mut has_exports = false;
 
         for decl in &program.declarations {
@@ -18747,6 +19518,158 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn generate_component_internal_exports(
+        &mut self,
+        program: &Program,
+        selected: &HashSet<String>,
+        private_selected: &HashSet<String>,
+    ) -> Result<(), CodeGenError> {
+        // Adapters are injected after the optional Core optimizer runs. Keep
+        // their arena entry primitives as private nested-module exports so
+        // reachability elimination cannot discard the named definitions that
+        // the injected wrappers call.
+        self.output
+            .push_str("\n  ;; Private Core runtime for Component adapters\n");
+        self.output.push_str(
+            "  (export \"__restrict_component_current_arena\" (global $current_arena))\n",
+        );
+        self.output
+            .push_str("  (export \"__restrict_component_arena_init\" (func $arena_init))\n");
+        self.output
+            .push_str("  (export \"__restrict_component_arena_reset\" (func $arena_reset))\n");
+        self.output
+            .push_str("  (export \"__restrict_component_allocate\" (func $allocate))\n");
+        let mut found = HashSet::new();
+        for declaration in &program.declarations {
+            let TopDecl::Export(export) = declaration else {
+                continue;
+            };
+            let TopDecl::Function(function) = export.item.as_ref() else {
+                continue;
+            };
+            if !selected.contains(&function.name) {
+                continue;
+            }
+            if !function.type_params.is_empty() {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "Component implementation export '{}' requires an explicit concrete specialization",
+                    function.name
+                )));
+            }
+            if found.insert(function.name.clone()) {
+                if found.len() == 1 {
+                    self.output
+                        .push_str("\n  ;; Private Core exports for Component adapters\n");
+                }
+                self.output.push_str(&format!(
+                    "  (export \"{}\" (func ${}))\n",
+                    function.name, function.name
+                ));
+            }
+        }
+
+        if found != *selected {
+            let mut missing = selected.difference(&found).cloned().collect::<Vec<_>>();
+            missing.sort();
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "Component adapter selections are not source-public root functions: {}",
+                missing.join(", ")
+            )));
+        }
+
+        let mut found_private = HashSet::new();
+        for declaration in &program.declarations {
+            let TopDecl::Function(function) = declaration else {
+                continue;
+            };
+            if !private_selected.contains(&function.name) {
+                continue;
+            }
+            if !function.type_params.is_empty() {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "private Component support function '{}' must be concrete",
+                    function.name
+                )));
+            }
+            if found_private.insert(function.name.clone()) {
+                self.output.push_str(&format!(
+                    "  (export \"{}\" (func ${}))\n",
+                    function.name, function.name
+                ));
+            }
+        }
+
+        if found_private != *private_selected {
+            let mut missing = private_selected
+                .difference(&found_private)
+                .cloned()
+                .collect::<Vec<_>>();
+            missing.sort();
+            return Err(CodeGenError::InvalidCheckedIr(format!(
+                "Component private support selections are not root-private functions: {}",
+                missing.join(", ")
+            )));
+        }
+
+        if !self.component_specialization_core_exports.is_empty() {
+            let root_generic_functions = program
+                .declarations
+                .iter()
+                .filter_map(|declaration| {
+                    let TopDecl::Export(export) = declaration else {
+                        return None;
+                    };
+                    let TopDecl::Function(function) = export.item.as_ref() else {
+                        return None;
+                    };
+                    (!function.type_params.is_empty()).then_some(function.name.as_str())
+                })
+                .collect::<HashSet<_>>();
+            for specialization in &self.component_generic_specializations {
+                if !root_generic_functions.contains(specialization.source_function.as_str()) {
+                    return Err(CodeGenError::InvalidCheckedIr(format!(
+                        "Component specialization source '{}' is not a source-public root generic function",
+                        specialization.source_function
+                    )));
+                }
+            }
+            self.output
+                .push_str("\n  ;; Private specialized Core exports for Component adapters\n");
+            for (core_symbol, generated_name) in &self.component_specialization_core_exports {
+                let signature = self.functions.get(generated_name).ok_or_else(|| {
+                    CodeGenError::InvalidCheckedIr(format!(
+                        "generated Component specialization '{}' has no Core signature",
+                        generated_name
+                    ))
+                })?;
+                self.output.push_str(&format!("  (func ${core_symbol}"));
+                for (index, ty) in signature._params.iter().enumerate() {
+                    self.output.push_str(&format!(
+                        " (param $component_specialization_arg_{index} {})",
+                        self.wasm_type_str(*ty)
+                    ));
+                }
+                if let Some(result) = signature.result {
+                    self.output
+                        .push_str(&format!(" (result {})", self.wasm_type_str(result)));
+                }
+                self.output.push('\n');
+                for index in 0..signature._params.len() {
+                    self.output.push_str(&format!(
+                        "    local.get $component_specialization_arg_{index}\n"
+                    ));
+                }
+                self.output
+                    .push_str(&format!("    call ${generated_name}\n  )\n"));
+                self.output.push_str(&format!(
+                    "  (export \"{}\" (func ${}))\n",
+                    core_symbol, core_symbol
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn generate_prototype_clone_expr(
         &mut self,
         proto_clone: &PrototypeCloneExpr,
@@ -18784,9 +19707,167 @@ impl WasmCodeGen {
 
 #[cfg(test)]
 mod memory_layout_tests {
-    use super::WasmCodeGen;
+    use super::{WasmCodeGen, WasmOptimizationLevel};
     use crate::ast::Type;
+    use crate::ir::builder::build_checked_ir;
+    use crate::{parse_program, TypeChecker, WasmTargetProfile};
     use std::collections::HashMap;
+
+    fn checked_program(
+        source: &str,
+    ) -> (crate::ast::Program, crate::ir::builder::CheckedProgramIr) {
+        let (remaining, program) = parse_program(source).expect("source should parse");
+        assert!(remaining.trim().is_empty());
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .expect("source should type check");
+        let checked = build_checked_ir(&program, &checker).expect("checked IR should build");
+        (program, checked)
+    }
+
+    #[test]
+    fn component_internal_mode_keeps_only_selected_composite_implementations() {
+        let (program, checked) = checked_program(
+            r#"
+pub record Pair {
+    left: Int32,
+    right: Int64
+}
+
+pub fun keep_pair: (pair: Pair) -> Pair = { pair }
+pub fun unselected: (value: Int32) -> Int32 = { value }
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["keep_pair"]);
+        let wat = codegen
+            .generate_checked(&program, &checked)
+            .expect("Component mode should retain the internal pointer ABI without publishing it");
+
+        assert!(wat.contains("(export \"keep_pair\" (func $keep_pair))"));
+        assert!(!wat.contains("(export \"unselected\""));
+        assert!(!wat.contains("(export \"_start\""));
+        assert!(codegen.component_adapter_arena_addr().is_some());
+        let wasm = wat::parse_str(&wat).expect("Component implementation WAT should assemble");
+        wasmparser::Validator::new()
+            .validate_all(&wasm)
+            .expect("Component implementation Core Wasm should validate");
+    }
+
+    #[test]
+    fn component_internal_mode_rejects_non_public_or_missing_selections() {
+        let (program, checked) = checked_program(
+            r#"
+fun private_value: () -> Int32 = { 1 }
+pub fun public_value: () -> Int32 = { 2 }
+"#,
+        );
+        let error = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["private_value"])
+            .generate_checked(&program, &checked)
+            .expect_err("private Component implementation selection must fail closed");
+        assert!(error
+            .to_string()
+            .contains("not source-public root functions: private_value"));
+    }
+
+    #[test]
+    fn component_internal_mode_retains_explicit_private_resource_support() {
+        let (program, checked) = checked_program(
+            r#"
+fun close_value: (value: Int32) -> () = { () }
+pub fun public_value: () -> Int32 = { 2 }
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["public_value"])
+            .with_component_private_internal_exports(["close_value"]);
+        let wat = codegen
+            .generate_checked(&program, &checked)
+            .expect("validated private Component support should be retained");
+
+        assert!(wat.contains("(export \"public_value\" (func $public_value))"));
+        assert!(wat.contains("(export \"close_value\" (func $close_value))"));
+    }
+
+    #[test]
+    fn component_callable_factory_rejects_resource_capture() {
+        let (program, checked) = checked_program(
+            r#"
+pub record Counter {
+    value: Int32
+}
+
+pub fun make_transform: (seed: Int32) -> Int32 -> Int32 = {
+    val counter = Counter { value: seed };
+    |value: Int32| value + counter.value
+}
+"#,
+        );
+        let error = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["make_transform"])
+            .with_component_callable_capture_guard(["make_transform"], ["Counter"])
+            .generate_checked(&program, &checked)
+            .expect_err("resource-bearing callable captures must fail closed in v0.1");
+
+        let message = error.to_string();
+        assert!(message.contains("make_transform"));
+        assert!(message.contains("counter"));
+        assert!(message.contains("value-only"));
+    }
+
+    #[test]
+    fn component_callable_factory_accepts_value_capture() {
+        let (program, checked) = checked_program(
+            r#"
+pub fun make_transform: (offset: Int32) -> Int32 -> Int32 = {
+    |value: Int32| value + offset
+}
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_component_internal_exports(["make_transform"])
+            .with_component_callable_capture_guard(["make_transform"], ["Counter"]);
+        codegen
+            .generate_checked(&program, &checked)
+            .expect("ordinary value captures remain valid once-callable environments");
+    }
+
+    #[test]
+    fn release_component_callable_factory_keeps_private_indirect_table() {
+        let (program, checked) = checked_program(
+            r#"
+pub fun make_transform: (offset: Int32) -> Int32 -> Int32 = {
+    |value: Int32| value + offset
+}
+"#,
+        );
+        let mut codegen = WasmCodeGen::new()
+            .with_target_profile(WasmTargetProfile::WasmCore)
+            .with_optimization_level(WasmOptimizationLevel::Release)
+            .with_component_internal_exports(["make_transform"])
+            .with_component_callable_capture_guard(["make_transform"], std::iter::empty::<&str>());
+        let wat = codegen
+            .generate_checked(&program, &checked)
+            .expect("release Component callable factories must retain their indirect target");
+
+        assert!(wat.contains("(table $__restrict_component_callable_table 1 funcref)"));
+        assert!(wat.contains(
+            "(export \"__restrict_component_callable_table\" (table $__restrict_component_callable_table))"
+        ));
+        assert!(wat.contains("(elem (i32.const 0) func $lambda_0)"));
+        assert!(wat.contains("(func $lambda_0"));
+        let wasm = wat::parse_str(&wat).expect("release callable Core WAT should assemble");
+        wasmparser::Validator::new()
+            .validate_all(&wasm)
+            .expect("release callable Core Wasm should validate");
+    }
 
     #[test]
     fn string_memory_offsets_align_and_reject_address_overflow() {

@@ -224,6 +224,250 @@ fun keep_box: <T>(item: Box<T>) -> Box<T> = {
     assert!(function.lowering.required_layouts.contains(&layout_id));
     assert!(!function.lowering.readiness.v001_host_abi_eligible);
     assert!(!function.lowering.readiness.flat_record_v1_host_abi_eligible);
+
+    let named = ir
+        .named_types
+        .find(&function.return_type)
+        .expect("open Box<T> metadata should remain available");
+    assert_eq!(
+        named.resolution,
+        CheckedNamedTypeResolution::OpenGeneric {
+            type_params: vec!["T".to_string()]
+        }
+    );
+    let CheckedNamedTypeKind::Record { fields } = &named.kind else {
+        panic!("Box<T> should retain checked record metadata");
+    };
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].source_name, "value");
+    assert_eq!(
+        fields[0].final_type.as_typed_type(),
+        &TypedType::TypeParam("T".to_string())
+    );
+    assert!(fields[0].internal_repr.is_none());
+    ir.named_types
+        .validate(&ir.layout_table)
+        .expect("open generic metadata should be valid checked IR");
+}
+
+#[test]
+fn builder_preserves_logical_record_field_types_beyond_i32_repr() {
+    let ir = checked_ir(
+        r#"
+record BoundaryRecord {
+    count: Int32,
+    ready: Boolean,
+    marker: Char
+}
+
+fun keep: (value: BoundaryRecord) -> BoundaryRecord = { value }
+"#,
+    );
+
+    let function = &ir.functions[0];
+    let named = ir
+        .named_types
+        .find(&function.return_type)
+        .expect("BoundaryRecord metadata should be present");
+    assert_eq!(named.resolution, CheckedNamedTypeResolution::Concrete);
+    let CheckedNamedTypeKind::Record { fields } = &named.kind else {
+        panic!("BoundaryRecord should be a checked record");
+    };
+    assert_eq!(
+        fields
+            .iter()
+            .map(|field| (field.source_index, field.source_name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(0, "count"), (1, "ready"), (2, "marker")]
+    );
+    assert_eq!(
+        fields
+            .iter()
+            .map(|field| field.final_type.as_typed_type())
+            .collect::<Vec<_>>(),
+        vec![&TypedType::Int32, &TypedType::Boolean, &TypedType::Char]
+    );
+    assert!(fields
+        .iter()
+        .all(|field| { field.internal_repr == Some(ValueRepr::Scalar(ScalarRepr::I32)) }));
+}
+
+#[test]
+fn builder_seals_distinct_concrete_generic_record_instantiations() {
+    let ir = checked_ir(
+        r#"
+record Box<T> {
+    value: T
+}
+
+fun keep_number: (item: Box<Int64>) -> Box<Int64> = { item }
+fun keep_label: (item: Box<String>) -> Box<String> = { item }
+"#,
+    );
+
+    assert_eq!(ir.named_types.declarations.len(), 2);
+    let number = &ir.named_types.declarations[0];
+    let label = &ir.named_types.declarations[1];
+    assert_ne!(number.final_type, label.final_type);
+    assert_eq!(number.resolution, CheckedNamedTypeResolution::Concrete);
+    assert_eq!(label.resolution, CheckedNamedTypeResolution::Concrete);
+
+    let CheckedNamedTypeKind::Record {
+        fields: number_fields,
+    } = &number.kind
+    else {
+        panic!("Box<Int64> should be a checked record");
+    };
+    let CheckedNamedTypeKind::Record {
+        fields: label_fields,
+    } = &label.kind
+    else {
+        panic!("Box<String> should be a checked record");
+    };
+    assert_eq!(
+        number_fields[0].final_type.as_typed_type(),
+        &TypedType::Int64
+    );
+    assert_eq!(
+        label_fields[0].final_type.as_typed_type(),
+        &TypedType::String
+    );
+    assert_eq!(
+        number_fields[0].internal_repr,
+        Some(ValueRepr::Scalar(ScalarRepr::I64))
+    );
+    assert!(matches!(
+        label_fields[0].internal_repr,
+        Some(ValueRepr::Ref(_))
+    ));
+}
+
+#[test]
+fn builder_preserves_enum_case_order_and_payload_final_types() {
+    let ir = checked_ir(
+        r#"
+enum ParseState {
+    Empty
+    Message(String)
+    Code(Int32)
+}
+
+fun keep: (state: ParseState) -> ParseState = { state }
+"#,
+    );
+
+    let function = &ir.functions[0];
+    let named = ir
+        .named_types
+        .find(&function.return_type)
+        .expect("ParseState metadata should be present");
+    assert_eq!(named.resolution, CheckedNamedTypeResolution::Concrete);
+    let CheckedNamedTypeKind::Enum { variants } = &named.kind else {
+        panic!("ParseState should be checked enum metadata");
+    };
+    assert_eq!(
+        variants
+            .iter()
+            .map(|variant| (variant.source_index, variant.source_name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(0, "Empty"), (1, "Message"), (2, "Code")]
+    );
+    assert!(variants[0].payload_type.is_none());
+    assert!(variants[0].payload_repr.is_none());
+    assert_eq!(
+        variants[1]
+            .payload_type
+            .as_ref()
+            .map(FinalType::as_typed_type),
+        Some(&TypedType::String)
+    );
+    assert!(matches!(variants[1].payload_repr, Some(ValueRepr::Ref(_))));
+    assert_eq!(
+        variants[2]
+            .payload_type
+            .as_ref()
+            .map(FinalType::as_typed_type),
+        Some(&TypedType::Int32)
+    );
+    assert_eq!(
+        variants[2].payload_repr,
+        Some(ValueRepr::Scalar(ScalarRepr::I32))
+    );
+}
+
+#[test]
+fn named_type_graph_validates_recursive_dependencies_cycle_safely() {
+    fn record_type(name: &str) -> FinalType {
+        FinalType::new(TypedType::Record {
+            name: name.to_string(),
+            type_args: Vec::new(),
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+        })
+        .unwrap()
+    }
+
+    let left = record_type("Left");
+    let right = record_type("Right");
+    let graph = CheckedNamedTypeGraph {
+        declarations: vec![
+            CheckedNamedTypeIr {
+                id: CheckedNamedTypeId(0),
+                final_type: left.clone(),
+                internal_repr: None,
+                resolution: CheckedNamedTypeResolution::Concrete,
+                kind: CheckedNamedTypeKind::Record {
+                    fields: vec![CheckedRecordFieldIr {
+                        source_index: 0,
+                        source_name: "right".to_string(),
+                        final_type: right.clone(),
+                        internal_repr: None,
+                    }],
+                },
+            },
+            CheckedNamedTypeIr {
+                id: CheckedNamedTypeId(1),
+                final_type: right,
+                internal_repr: None,
+                resolution: CheckedNamedTypeResolution::Concrete,
+                kind: CheckedNamedTypeKind::Record {
+                    fields: vec![CheckedRecordFieldIr {
+                        source_index: 0,
+                        source_name: "left".to_string(),
+                        final_type: left,
+                        internal_repr: None,
+                    }],
+                },
+            },
+        ],
+    };
+
+    graph
+        .validate(&LayoutTable::new())
+        .expect("recursive graph validation should terminate");
+}
+
+#[test]
+fn builder_named_type_mutation_breaks_seal_and_validation() {
+    let mut ir = checked_ir(
+        r#"
+record Score { value: Int32 }
+fun keep: (score: Score) -> Score = { score }
+"#,
+    );
+    assert!(ir.is_unmodified());
+
+    let CheckedNamedTypeKind::Record { fields } = &mut ir.named_types.declarations[0].kind else {
+        panic!("Score should be record metadata");
+    };
+    fields[0].source_index = 1;
+
+    assert!(!ir.is_unmodified());
+    assert!(matches!(
+        ir.validate_lowering_summaries(),
+        Err(IrBuildError::NamedTypeInvariantViolation(_))
+    ));
 }
 
 #[test]
@@ -261,7 +505,7 @@ fun keep: (items: List<Int32>) -> List<Int32> = {
 }
 
 fun main: (items: List<Int32>) -> List<Int32> = {
-    val alias = items
+    val alias = items;
     alias |> keep
 }
 "#,
@@ -1360,7 +1604,7 @@ fun keep: (items: List<Int32>) -> List<Int32> = {
 }
 
 fun main: (items: List<Int32>) -> List<Int32> = {
-    val alias = items
+    val alias = items;
     alias |> keep
 }
 "#;
@@ -1408,7 +1652,7 @@ fun bump: (value: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val seed = 41
+    val seed = 41;
     seed |> bump
 }
 "#;

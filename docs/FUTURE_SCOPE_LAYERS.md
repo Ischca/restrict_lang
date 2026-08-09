@@ -147,6 +147,6 @@ The three-layer scope system may be revisited once the core language features ar
 
 ## Related Documents
 
-- `/tests/test_three_layer_scope_edge_cases.rs` - Edge case tests exploring the concept
+- `/tests/cases/test_three_layer_scope_edge_cases.rs` - Edge case tests exploring the concept
 - `LANGUAGE_SPECIFICATION.md` - Current language specification
 - `src/type_checker.rs` - Current temporal scope implementation

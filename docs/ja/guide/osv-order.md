@@ -35,9 +35,9 @@ fun increment: (x: Int32) -> Int32 = {
 
 fun main: () = {
     val result1 = 21 |> double
-    val result2 = 41 |> increment
+    val result2 = 41 |> increment;
 
-    result1 |> print_int
+    result1 |> print_int;
     result2 |> print_int
 }
 ```
@@ -84,11 +84,45 @@ fun main: () = {
     val result = 5
         |> increment
         |> double
-        |> square
+        |> square;
 
     result |> print_int
 }
 ```
+
+## スコープ動詞節
+
+最後の引数に関数を受け取る動詞は、その関数本体を型付きスコープとして
+開けます。通常の目的語は動詞より前に置かれ、完成した節全体が次の動詞の
+目的語になります。
+
+```restrict
+fun main: () -> Int32 = {
+    val numbers: List<Int32> = [1, 2, 3, 4]
+    val doubled = numbers map {
+        it * 2
+    } filter {
+        it > 2
+    }
+    (doubled, 0) fold { |total, number|
+        total + number
+    }
+}
+```
+
+ヘッダーのない単項スコープには、文脈的な束縛`it`が1つ導入されます。
+名前を明示したい場合や複数引数のコールバックでは、既存ラムダの
+バインダーをスコープ先頭で使います。
+
+```restrict
+values map { |value|
+    value + 1
+}
+```
+
+これらのスコープは通常ラムダと同じ型推論・アフィン検査を通ります。
+暗黙`it`を使うスコープの入れ子は認められないため、少なくとも片方の
+バインダーを明示してください。
 
 ## パイプ演算子との併用
 
@@ -169,7 +203,7 @@ fun main: () = {
     val result = raw_data
         |> validate
         |> normalize
-        |> transform
+        |> transform;
 
     result |> print_int
 }
@@ -194,7 +228,7 @@ fun main: () = {
     val result = 10
         |> double
         |> increment
-        |> square
+        |> square;
 
     result |> print_int
 }
@@ -263,5 +297,5 @@ fun main: () = {
 ## 関連項目
 
 - [関数](functions.md) - 関数定義と呼び出し
+- [高階関数とコレクション変換](../advanced/higher-order.md) - `map`、`filter`、`fold`とスコープ動詞節
 - [パイプ演算子](../reference/operators.md#pipe) - `|>`演算子
-- [関数合成](../advanced/composition.md) - 高度な合成パターン

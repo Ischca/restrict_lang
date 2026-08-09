@@ -93,6 +93,9 @@ fun main: () -> Int32 = {
 }
 ```
 
+For collection callbacks, scoped verb clauses, `map`, `filter`, and `fold`, see
+[Higher-Order Functions and Collection Transforms](../advanced/higher-order.md).
+
 ## Generic Functions
 
 Generic parameters appear between the function name and parameter list:
@@ -227,6 +230,7 @@ fun map_option: <T, U>(value: Option<T>, f: T -> U) -> Option<U> = {
 
 ## See Also
 
+- [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md) - Collection callbacks and scoped verb clauses
 - [Type Inference](type-inference.md) - How function types are inferred
 - [Types](types.md) - Function type syntax and generic containers
 - [Syntax](syntax.md) - Current syntax reference

@@ -1094,7 +1094,7 @@ fun keep: (items: List<Int32>) -> List<Int32> = {
 }
 
 fun main: (items: List<Int32>) -> List<Int32> = {
-    val alias = items
+    val alias = items;
     alias |> keep
 }
 "#,
@@ -1130,7 +1130,7 @@ fun keep: (items: List<Int32>) -> List<Int32> = {
 }
 
 fun main: () -> List<Int32> = {
-    mut val alias: List<Int32> = []
+    mut val alias: List<Int32> = [];
     alias |> keep
 }
 "#,

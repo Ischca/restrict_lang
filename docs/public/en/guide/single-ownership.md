@@ -18,7 +18,7 @@ fun accept_message: (message: String) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val message = "ready"
+    val message = "ready";
     message |> accept_message
 }
 ```
@@ -34,7 +34,7 @@ fun count_items: (items: List<Int32>) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val items = [1, 2, 3]
+    val items = [1, 2, 3];
     items |> count_items
 }
 ```
@@ -45,7 +45,7 @@ Scalars can be read more than once because each read copies the value:
 
 ```restrict
 fun main: () -> Int32 = {
-    val score = 40
+    val score = 40;
     score >= 40 then {
         score + score
     } else {
@@ -69,7 +69,7 @@ record Reading {
 }
 
 fun delta: (reading: Reading) -> Float64 = {
-    val Reading { celsius, threshold } = reading
+    val Reading { celsius, threshold } = reading;
     celsius - threshold
 }
 ```
@@ -83,8 +83,8 @@ Use `mut val` when a local slot must change:
 
 ```restrict
 fun main: () -> Int32 = {
-    mut val total = 0
-    total = total + 1
+    mut val total = 0;
+    total = total + 1;
     total = total + 2
     total
 }
@@ -101,9 +101,9 @@ heap-backed values live.
 ```restrict
 fun main: () -> Int32 = {
     val count = with Arena { } {
-        val items = [1, 2, 3]
+        val items = [1, 2, 3];
         items |> list_count
-    }
+    };
     count
 }
 ```

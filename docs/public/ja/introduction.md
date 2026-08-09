@@ -50,7 +50,7 @@ fun consume: (x: String) -> () = {
 }
 
 fun main: () = {
-    val msg = "Hello"
+    val msg = "Hello";
     msg |> consume
     // msgはここでは使用できません
 }
@@ -58,7 +58,7 @@ fun main: () = {
 
 ### 3. 閉じたユーザー定義enum
 
-現在のpost-v0.0.1 compilerでは、非ジェネリックかつ非再帰のenumを定義できます。各バリアントはpayloadなし、または1つのpayloadを持ち、名前は必ず`型名::バリアント名`で修飾します。構築もOSV語順です。
+v0.0.1 compilerでは、非ジェネリックかつ非再帰のenumを定義できます。各バリアントはpayloadなし、または1つのpayloadを持ち、名前は必ず`型名::バリアント名`で修飾します。構築もOSV語順です。
 
 ```restrict
 enum ParseError {
@@ -80,7 +80,7 @@ fun error_code: (error: ParseError) -> Int32 = {
 
 payloadなしの値は`() ParseError::Empty`のように構築します。`match`はすべてのバリアントを扱う必要があります。`pub enum`はRestrictソースモジュール間で公開できますが、ユーザー定義enumを直接渡すhost-visible WebAssembly ABIはまだありません。エラー伝播は`match`で明示し、`?`演算子は未実装です。
 
-v0.0.1の公開リリースにはユーザー定義enumやsource-level formは含まれていませんでした。この節と[Form と静的ポリモーフィズム](./guide/forms.md)は現在のpost-v0.0.1追加分を説明しています。
+v0.0.1にはユーザー定義enumとsource-level formが含まれます。この節と[Form と静的ポリモーフィズム](./guide/forms.md)は、その公開範囲を説明しています。
 
 ### 4. プロトタイプベース継承
 
@@ -95,7 +95,7 @@ record Car {
 fun main: () = {
     val base_car = Car { wheels: 4, color: "未設定" }
     val my_car = base_car.clone { color: "赤" }
-    val frozen_car = my_car freeze
+    val frozen_car = my_car freeze;
     frozen_car
 }
 ```
@@ -134,10 +134,10 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 // メインエントリポイント
 fun main: () = {
     val name = "世界"
-    val message = name |> greet
+    val message = name |> greet;
     message |> println
 
-    val total = (20, 22) add
+    val total = (20, 22) add;
     total |> print_int
 }
 ```

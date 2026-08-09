@@ -222,7 +222,7 @@ fun keep: (items: List<Int32>) -> List<Int32> = {
 }
 
 fun main: (items: List<Int32>) -> List<Int32> = {
-    val alias = items
+    val alias = items;
     alias |> keep
 }
 "#,

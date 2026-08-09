@@ -13,12 +13,14 @@ enum VisitState {
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Vault {
     pub version: u32,
     pub packages: BTreeMap<String, PackageLock>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageLock {
     pub version: String,
     pub source: LockSource,
@@ -30,6 +32,7 @@ pub struct PackageLock {
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[serde(deny_unknown_fields)]
 pub enum LockSource {
     Registry { url: String },
     Path { path: String },
@@ -47,8 +50,9 @@ impl Vault {
 
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read vault from {:?}", path))?;
-        toml::from_str(&content).with_context(|| format!("Failed to parse vault from {:?}", path))
+            .with_context(|| format!("Failed to read dependency lock from {:?}", path))?;
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse dependency lock from {:?}", path))
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -69,6 +73,7 @@ impl Vault {
             .with_context(|| format!("Failed to atomically replace vault at {:?}", path))
     }
 
+    #[allow(dead_code)]
     pub fn add_package(&mut self, name: String, lock: PackageLock) {
         self.packages.insert(name, lock);
     }
@@ -94,6 +99,13 @@ impl Vault {
         }
 
         for (package_name, package) in &self.packages {
+            if matches!(&package.source, LockSource::Path { .. }) {
+                errors.push(format!(
+                    "Package '{}' uses a local path source; deterministic local source packages must not be persisted in warder.lock",
+                    package_name
+                ));
+            }
+
             if semver::Version::parse(&package.version).is_err() {
                 errors.push(format!(
                     "Package '{}' version '{}' is not an exact semantic version",
@@ -312,14 +324,14 @@ mod tests {
     }
 
     #[test]
-    fn local_lock_serializes_empty_abi_hash_for_v1_readers() {
+    fn lock_serializes_empty_abi_hash_for_v1_readers() {
         let mut vault = Vault::new();
         vault.add_package(
-            "local_utils".to_string(),
+            "external_utils".to_string(),
             PackageLock {
                 version: "1.2.3".to_string(),
-                source: LockSource::Path {
-                    path: "../local-utils".to_string(),
+                source: LockSource::Registry {
+                    url: "https://registry.example.test".to_string(),
                 },
                 abi_hash: String::new(),
                 sha256: "abc123".to_string(),
@@ -337,19 +349,19 @@ mod tests {
         let serialized = r#"
 version = 1
 
-[packages.local_utils]
+[packages.external_utils]
 version = "1.2.3"
 sha256 = "abc123"
 
-[packages.local_utils.source]
-type = "Path"
-path = "../local-utils"
+[packages.external_utils.source]
+type = "Registry"
+url = "https://registry.example.test"
 
-[packages.local_utils.dependencies]
+[packages.external_utils.dependencies]
 "#;
 
         let vault: Vault = toml::from_str(serialized).unwrap();
-        assert_eq!(vault.packages["local_utils"].abi_hash, "");
+        assert_eq!(vault.packages["external_utils"].abi_hash, "");
     }
 
     #[test]
@@ -360,8 +372,8 @@ path = "../local-utils"
             "bad".to_string(),
             PackageLock {
                 version: "^1.2.3".to_string(),
-                source: LockSource::Path {
-                    path: "../bad".to_string(),
+                source: LockSource::Registry {
+                    url: "https://registry.example.test".to_string(),
                 },
                 abi_hash: "A".repeat(64),
                 sha256: "ABCDEF".repeat(10) + "ABCD",
@@ -387,11 +399,11 @@ path = "../local-utils"
     fn verify_integrity_accepts_exact_semver_and_canonical_hashes() {
         let mut vault = Vault::new();
         vault.add_package(
-            "local_utils".to_string(),
+            "external_utils".to_string(),
             PackageLock {
                 version: "1.2.3-beta.1+build.9".to_string(),
-                source: LockSource::Path {
-                    path: "../local-utils".to_string(),
+                source: LockSource::Registry {
+                    url: "https://registry.example.test".to_string(),
                 },
                 abi_hash: String::new(),
                 sha256: "0123456789abcdef".repeat(4),
@@ -400,5 +412,27 @@ path = "../local-utils"
         );
 
         assert!(vault.verify_integrity().unwrap().is_empty());
+    }
+
+    #[test]
+    fn verify_integrity_rejects_local_path_entries() {
+        let mut vault = Vault::new();
+        vault.add_package(
+            "local_utils".to_string(),
+            PackageLock {
+                version: "1.2.3".to_string(),
+                source: LockSource::Path {
+                    path: "../local-utils".to_string(),
+                },
+                abi_hash: String::new(),
+                sha256: "0123456789abcdef".repeat(4),
+                dependencies: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(
+            vault.verify_integrity().unwrap(),
+            vec!["Package 'local_utils' uses a local path source; deterministic local source packages must not be persisted in warder.lock"]
+        );
     }
 }

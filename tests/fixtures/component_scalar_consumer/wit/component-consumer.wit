@@ -1,0 +1,16 @@
+package test:component-consumer@0.1.0;
+
+interface api {
+  answer: func() -> s32;
+  consume-unit: func() -> s32;
+  consume-value: func(value: s32);
+  echo-long: func(value: s64) -> s64;
+  echo-marker: func(value: char) -> char;
+  echo-ratio: func(value: f64) -> f64;
+  increment: func(value: s32) -> s32;
+  keep-active: func(left: s32, total: s64, ratio: f64, active: bool, marker: char) -> bool;
+}
+
+world component-consumer {
+  export api;
+}

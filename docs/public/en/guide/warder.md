@@ -1,8 +1,8 @@
 # Warder
 
 Warder is the project tool for Restrict Language v0.0.1. It creates project
-layouts, edits `package.rl.toml`, builds Restrict source through the compiler,
-creates local cage files, and runs basic project checks.
+layouts, edits the repository-root `warder.toml`, builds Restrict source
+through the compiler, creates local cage files, and runs basic project checks.
 
 ## Commands
 
@@ -37,7 +37,7 @@ This creates:
 
 ```text
 my-project/
-├── package.rl.toml
+├── warder.toml
 ├── src/
 │   └── main.rl
 ├── tests/
@@ -52,34 +52,42 @@ Initialize an existing directory:
 warder init
 ```
 
-`warder init` writes `package.rl.toml`, creates `src/` and `tests/` when
+`warder init` writes the root `warder.toml`, creates `src/` and `tests/` when
 needed, and adds a starter `src/main.rl` only when there is no existing source
 entry point.
 
-## Manifest
+## Repository Configuration
 
-`package.rl.toml` is the project manifest. A typical v0.0.1 manifest is:
+`warder.toml` is the only authored Warder configuration in a managed
+repository. `warder new` and `warder init` generate this minimal form:
 
 ```toml
+manifest-version = 1
+
 [package]
 name = "my-project"
 version = "0.1.0"
-description = "A short package description"
-authors = ["Your Name <you@example.com>"]
-entry = "src/main.rl"
-edition = "2025"
-
-[dependencies]
-local_utils = { path = "../local-utils" }
-
-[build]
-target = "wasm32"
-optimize = true
-output = "dist/"
 ```
 
-The `package` table names the package, version, entry source file, and edition.
-`description` and `authors` are optional metadata fields.
+The project conventions supply `src/main.rl` as the entry, edition `2025`,
+and the default build settings (`wasm32`, optimization enabled, and `dist/`).
+Empty dependencies are omitted. Write `package.entry`, `package.edition`, or a
+`build` table only when overriding those conventions; `description` and
+`authors` remain optional metadata.
+
+Adding a local dependency creates a separate table when it is needed:
+
+```toml
+[dependencies]
+local_utils = { path = "../local-utils" }
+```
+
+The current implementation has one publishable root package. Direct local
+source packages are selected centrally from this root file; they do not have
+leaf manifests or leaf locks. A future multi-publish workspace graph will
+extend this same root `warder.toml` rather than add a workspace file or member
+manifests. Public package and Component identities are explicit configuration,
+not values derived from directory names.
 
 The dependency-table key is the source namespace used by `import`. In the
 current v0.0.1 buildable slice, every dependency must be a **direct local path
@@ -93,8 +101,8 @@ add`, `warder build`, and `warder test` reject those forms explicitly instead
 of writing placeholder lock entries. Use `warder wrap` separately for
 experimental local evaluation of a foreign WASM file.
 
-The `build` table controls the target name, whether optimization is requested,
-and the output directory. The current default output directory is `dist/`.
+An explicit `build` table controls the target name, whether optimization is
+requested, and the output directory when the defaults are overridden.
 
 ## Dependencies
 
@@ -104,18 +112,16 @@ Add a local dependency:
 warder add local_utils --path ../local-utils
 ```
 
-The referenced package must contain its own manifest and library root:
+The referenced local source package needs only its library root:
 
 ```text
 local-utils/
-├── package.rl.toml
 └── src/
     ├── lib.rl
     └── numbers.rl
 ```
 
-The dependency manifest supplies the version recorded in the lock file. A
-minimal `src/lib.rl` might export a function:
+A minimal `src/lib.rl` might export a function:
 
 ```restrict
 pub fun score: () -> Int32 = {
@@ -131,7 +137,8 @@ warder remove local_utils
 
 ### Package namespaces
 
-The manifest binding mounts the dependency's `src/` directory under its alias:
+The root configuration binding mounts the dependency's `src/` directory under
+its alias:
 
 | Source import | Dependency file |
 |---------------|-----------------|
@@ -143,13 +150,16 @@ An unqualified import inside a dependency stays package-local. For example,
 `import numbers.{double}` inside `local-utils/src/lib.rl` resolves to that
 package's `src/numbers.rl`, not an application module.
 
-This is a manifest-to-compiler namespace binding. It does not add source-level
+This is a configuration-to-compiler namespace binding. It does not add source-level
 `import ... as` aliases or re-exports; both remain unsupported.
 
-On a successful build, Warder rewrites `restrict-lock.toml` with the local
-package's manifest version and a deterministic SHA-256 over its manifest and
-Restrict source files. Dependency validation happens first, so an unsupported
-or invalid dependency does not create a fake lock entry.
+On a successful build, Warder writes one generated `warder.lock` beside the
+root configuration. The lock records only dependency choices that cannot be
+reconstructed deterministically from repository sources. Direct local source
+packages are therefore not lock entries. Registry, Git, foreign WASM, and
+transitive resolution currently fail closed, so a local-only lock has no
+resolved package entries. Commit `warder.lock` when Warder generates it; do not
+edit it by hand.
 
 Warder compiles immutable snapshots of both the application source tree and
 each dependency source tree. It rejects overlapping application, dependency,
@@ -174,9 +184,55 @@ dist/my-project-0.1.0.rgc
 ```
 
 The output stem is always `<name>-<version>`. Change the output directory with
-the manifest `build.output` field.
+the root configuration's `build.output` field.
 
-The build target is read from `package.rl.toml`, not from a command-line flag.
+The build target is read from `warder.toml`, not from a command-line flag.
+
+### Component build
+
+An explicit Component build requires a schema-v1 or schema-v2 `[component]`
+selection in the root `warder.toml`. Ordinary `pub` and `export` declarations
+are not published implicitly. For example, schema v1 selects a public root
+function:
+
+```toml
+[component]
+schema = 1
+package = "acme:my-project@0.1.0"
+world = "my-project"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "run"
+name = "run"
+```
+
+Build it with:
+
+```bash
+warder build --component
+```
+
+Warder validates and transactionally publishes this set together with the lock
+update:
+
+```text
+dist/my-project-0.1.0.component.wasm
+dist/my-project-0.1.0.component.wit
+dist/my-project-0.1.0.component.toml
+```
+
+The metadata separates the semantic interface hash from exact Component and
+WIT content hashes. A failed rebuild preserves the previous complete set.
+Schema v2 adds root-only resources, value-only capture once-callables, and
+explicit generic function instances.
+
+The `.component.toml` file above is generated artifact metadata under `dist/`,
+not another project configuration file. Source-first Component publication is
+also future work: a later edition may distinguish package-visible `pub` from
+Component-intent `export`, but the current implementation still requires the
+source-public plus `[component]` double gate.
 
 ## Run And Test
 
@@ -232,7 +288,11 @@ warder unwrap module-name-0.1.0.rgc
 warder unwrap module-name-0.1.0.rgc --output extracted-module
 ```
 
-Foreign WASM wrapping and component conversion are experimental in v0.0.1.
+Foreign Wasm wrapping is experimental in v0.0.1. `wrap --wit` stores the
+caller-supplied WIT text without parsing, type-checking, matching it to the Core
+module, or componentizing the module. It is separate from
+`warder build --component`, which generates and validates the Component
+artifact set from a Restrict package selection.
 
 ## Doctor
 
@@ -242,8 +302,7 @@ Check the current project:
 warder doctor
 ```
 
-`warder doctor` validates the manifest, checks that the entry source exists,
-loads `restrict-lock.toml` when present, and detects missing, malformed, or
-source-stale locks for direct local dependencies. It also checks for a Restrict
+`warder doctor` validates the root `warder.toml`, checks that the entry source
+exists, and validates `warder.lock` when present. It also checks for a Restrict
 compiler and reports whether a WASM runtime such as Wasmtime or Wasmer is
 available.

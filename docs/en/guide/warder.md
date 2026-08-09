@@ -1,8 +1,8 @@
 # Warder
 
 Warder is the project tool for Restrict Language v0.0.1. It creates project
-layouts, edits `package.rl.toml`, builds Restrict source through the compiler,
-creates local cage files, and runs basic project checks.
+layouts, edits the repository-root `warder.toml`, builds Restrict source
+through the compiler, creates local cage files, and runs basic project checks.
 
 ## Commands
 
@@ -12,7 +12,7 @@ The v0.0.1 CLI exposes these subcommands:
 |---------|-------------|
 | `warder new <name>` | Create a project directory |
 | `warder init` | Initialize the current directory |
-| `warder add <dep>` | Add a dependency |
+| `warder add <alias> --path <dir>` | Add a direct local path dependency |
 | `warder remove <name>` | Remove a dependency |
 | `warder build` | Build the package |
 | `warder run [args...]` | Build, then run the generated WASM |
@@ -37,7 +37,7 @@ This creates:
 
 ```text
 my-project/
-├── package.rl.toml
+├── warder.toml
 ├── src/
 │   └── main.rl
 ├── tests/
@@ -52,78 +52,65 @@ Initialize an existing directory:
 warder init
 ```
 
-`warder init` writes `package.rl.toml`, creates `src/` and `tests/` when
+`warder init` writes the root `warder.toml`, creates `src/` and `tests/` when
 needed, and adds a starter `src/main.rl` only when there is no existing source
 entry point.
 
-## Manifest
+## Repository Configuration
 
-`package.rl.toml` is the project manifest. A typical v0.0.1 manifest is:
+`warder.toml` is the only authored Warder configuration in a managed
+repository. `warder new` and `warder init` generate this minimal form:
 
 ```toml
+manifest-version = 1
+
 [package]
 name = "my-project"
 version = "0.1.0"
-description = "A short package description"
-authors = ["Your Name <you@example.com>"]
-entry = "src/main.rl"
-edition = "2025"
-
-[dependencies]
-math = "0.1.0"
-local_utils = { path = "../local-utils" }
-json = { git = "https://example.com/json.git", tag = "v1.0.0" }
-foreign_module = { wasm = "https://example.com/module.wasm", wit = "https://example.com/module.wit" }
-
-[build]
-target = "wasm32"
-optimize = true
-output = "dist/"
 ```
 
-The `package` table names the package, version, entry source file, and edition.
-`description` and `authors` are optional metadata fields.
+The project conventions supply `src/main.rl` as the entry, edition `2025`,
+and the default build settings (`wasm32`, optimization enabled, and `dist/`).
+Empty dependencies are omitted. Write `package.entry`, `package.edition`, or a
+`build` table only when overriding those conventions; `description` and
+`authors` remain optional metadata.
 
-The `dependencies` table supports registry versions, local paths, Git
-repositories, and foreign WASM plus WIT references.
+Adding a local dependency creates a separate table when it is needed:
 
-The `build` table controls the target name, whether optimization is requested,
-and the output directory. The current default output directory is `dist/`.
+```toml
+[dependencies]
+local_utils = { path = "../local-utils" }
+```
+
+The current implementation has one publishable root package. The
+`dependencies` table selects direct local source packages centrally; each
+needs only `src/lib.rl` and has no leaf manifest or lock. Registry, Git,
+foreign-Wasm, and transitive resolution fail closed. Future multi-publish
+workspace support will extend the same root file, and public identity will
+remain independent of directory placement.
+
+An explicit `build` table controls the target name, whether optimization is
+requested, and the output directory when the defaults are overridden.
 
 ## Dependencies
-
-Add a registry dependency:
-
-```bash
-warder add http
-warder add json@1.0.0
-```
 
 Add a local dependency:
 
 ```bash
-warder add local-utils --path ../local-utils
-```
-
-Add a Git dependency:
-
-```bash
-warder add json@v1.0.0 --git https://example.com/json.git
-```
-
-Add a foreign WASM dependency:
-
-```bash
-warder add foreign-module --wasm https://example.com/module.wasm --wit https://example.com/module.wit
+warder add local_utils --path ../local-utils
 ```
 
 Remove a dependency:
 
 ```bash
-warder remove http
+warder remove local_utils
 ```
 
-`warder build` updates `restrict-lock.toml` from the manifest dependency table.
+The dependency directory needs `src/lib.rl`; it has no Warder leaf file.
+`warder build` generates one root `warder.lock` for nondeterministic external
+resolution. Direct local source packages are not lock entries, so the current
+local-only lock has no resolved package entries. Commit `warder.lock` when
+Warder generates it; do not edit it by hand.
 
 ## Build Outputs
 
@@ -142,9 +129,54 @@ dist/my-project-0.1.0.rgc
 ```
 
 The output stem is always `<name>-<version>`. Change the output directory with
-the manifest `build.output` field.
+the root configuration's `build.output` field.
 
-The build target is read from `package.rl.toml`, not from a command-line flag.
+The build target is read from `warder.toml`, not from a command-line flag.
+
+### Component build
+
+An explicit Component build requires a schema-v1 or schema-v2 `[component]`
+selection in the root `warder.toml`. Ordinary `pub` and `export` declarations
+are not published implicitly. For example, schema v1 selects a public root
+function:
+
+```toml
+[component]
+schema = 1
+package = "acme:my-project@0.1.0"
+world = "my-project"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "run"
+name = "run"
+```
+
+Build it with:
+
+```bash
+warder build --component
+```
+
+Warder validates and transactionally publishes this set together with the lock
+update:
+
+```text
+dist/my-project-0.1.0.component.wasm
+dist/my-project-0.1.0.component.wit
+dist/my-project-0.1.0.component.toml
+```
+
+The metadata separates the semantic interface hash from exact Component and
+WIT content hashes. A failed rebuild preserves the previous complete set.
+Schema v2 adds root-only resources, value-only capture once-callables, and
+explicit generic function instances.
+
+The emitted `.component.toml` is artifact metadata, not project
+configuration. A future edition may distinguish package-visible `pub` from
+Component-intent `export`; today the source-public plus `[component]` double
+gate remains required.
 
 ## Run And Test
 
@@ -197,7 +229,11 @@ warder unwrap module-name-0.1.0.rgc
 warder unwrap module-name-0.1.0.rgc --output extracted-module
 ```
 
-Foreign WASM wrapping and component conversion are experimental in v0.0.1.
+Foreign Wasm wrapping is experimental in v0.0.1. `wrap --wit` stores the
+caller-supplied WIT text without parsing, type-checking, matching it to the Core
+module, or componentizing the module. It is separate from
+`warder build --component`, which generates and validates the Component
+artifact set from a Restrict package selection.
 
 ## Doctor
 
@@ -207,6 +243,6 @@ Check the current project:
 warder doctor
 ```
 
-`warder doctor` validates the manifest, checks that the entry source exists,
-loads `restrict-lock.toml` when present, checks for a Restrict compiler, and
+`warder doctor` validates the root `warder.toml`, checks that the entry source
+exists, loads `warder.lock` when present, checks for a Restrict compiler, and
 reports whether a WASM runtime such as Wasmtime or Wasmer is available.

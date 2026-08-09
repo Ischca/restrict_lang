@@ -5,7 +5,7 @@
     "Restrict Language Team"
   ],
   "description": "A modern programming language for WebAssembly with affine types",
-  "version": "0.0.1",
+  "version": "0.1.0-rc.1",
   "license": "MIT",
   "repository": {
     "type": "git",

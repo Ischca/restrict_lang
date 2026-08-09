@@ -1,0 +1,19 @@
+package test:component-resource-consumer@0.1.0;
+
+interface api {
+  resource counter {
+    finish: static func(counter: own<counter>) -> s32;
+    read: func() -> s32;
+  }
+
+  resource transform {
+    call: static func(callback: own<transform>, value: s32) -> s32;
+  }
+
+  make-counter: func(value: s32) -> own<counter>;
+  make-transform: func(offset: s32) -> own<transform>;
+}
+
+world component-resource-consumer {
+  export api;
+}

@@ -1,8 +1,7 @@
 # Standard Library Reference
 
-This page documents the compiler-registered standard-library surface. It keeps
-v0.0.1 compatibility helpers while recording the current post-v0.0.1 Display
-addition.
+This page documents the v0.0.1 compiler-registered standard-library surface,
+including Display and the compatibility helpers retained by the release.
 
 The current standard library is intentionally small. APIs listed as absent below
 are not user-facing v0.0.1 features, even if their names appear in older
@@ -46,6 +45,9 @@ or: (Boolean, Boolean) -> Boolean
 assert: (Boolean, String) -> ()
 panic: (String) -> ()
 ```
+
+The supported containers, callback types, scoped call forms, and affine
+behavior are described in [Higher-Order Functions and Collection Transforms](../advanced/higher-order.md).
 
 Canonical call shapes:
 
@@ -132,7 +134,8 @@ fixed-size array. The bracket-bar array literal form is removed.
 
 Dedicated `list_map`, `list_filter`, and `list_fold_left` helpers are not part
 of the current std surface. Use the compiler-registered prelude `map`, `filter`,
-and `fold` builtins where the type checker has the required context.
+and `fold` builtins where the type checker has the required context. The
+higher-order guide records the exact v0.0.1 container boundary.
 
 ## Math
 

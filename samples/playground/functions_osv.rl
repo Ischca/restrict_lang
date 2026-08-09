@@ -1,4 +1,4 @@
-// Arguments come before verbs; pipes continue the value flow.
+// Arguments come before verbs; adjacent verbs continue the value flow.
 fun add: (left: Int32, right: Int32) -> Int32 = {
     left + right
 }
@@ -8,6 +8,7 @@ fun increment: (value: Int32) -> Int32 = {
 }
 
 fun main: () = {
-    val total = (20, 21) add
-    total |> increment |> println
+    // The semicolon stages a named value before a new identifier-led expression.
+    val total = (20, 21) add;
+    total increment println
 }

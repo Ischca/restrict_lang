@@ -26,7 +26,7 @@ This creates:
 
 ```text
 hello-world/
-├── package.rl.toml
+├── warder.toml
 ├── src/
 │   └── main.rl
 ├── tests/
@@ -43,9 +43,10 @@ fun main: () -> () = {
 }
 ```
 
-## Check The Manifest
+## Check The Repository Configuration
 
-`package.rl.toml` controls the entry point, dependency table, and build output:
+The root `warder.toml` is the repository's only authored Warder configuration.
+It controls the entry point, dependency table, and build output:
 
 ```toml
 [package]
@@ -94,7 +95,7 @@ fun add_bonus: (base: Int32, bonus: Int32) -> Int32 = {
 }
 
 fun main: () -> () = {
-    val total = (21, 4) add_bonus
+    val total = (21, 4) add_bonus;
     total |> print_int
 }
 ```
@@ -116,9 +117,9 @@ warder add local_utils --path ../local-utils
 warder remove local_utils
 ```
 
-The dependency directory must contain `package.rl.toml` and `src/lib.rl`. The
-alias `local_utils` is also its source namespace, so an exported `score`
-function from the library root is imported with:
+The dependency directory needs only `src/lib.rl`; it has no leaf Warder
+configuration or lock. The alias `local_utils` is also its source namespace,
+so an exported `score` function from the library root is imported with:
 
 ```restrict
 import local_utils.{score}
@@ -128,10 +129,16 @@ Submodules follow the same mapping: `import local_utils.numbers.{double}` loads
 `../local-utils/src/numbers.rl`. Aliases must be non-keyword Restrict
 identifiers, `std` is reserved, and hyphens are not converted automatically.
 
-`warder build` refreshes `restrict-lock.toml` with the dependency manifest
-version and a deterministic source SHA-256. `warder test` uses the same local
-package roots. Registry, Git, foreign WASM, and transitive dependencies fail
-explicitly in the current direct-local slice.
+`warder build` generates one repository-root `warder.lock`. It records only
+nondeterministic external dependency resolutions, not direct local source
+packages. Registry, Git, foreign WASM, and transitive resolution fail
+explicitly in the current slice, so a local-only lock has no resolved package
+entries. `warder test` uses the same local package roots.
+
+The current implementation has one publishable root package. A future
+multi-publish workspace graph will extend the same root `warder.toml` without
+leaf manifests; public package identity will not be inferred from directory
+placement.
 
 Builds compile immutable application and dependency snapshots. Concurrent
 builds of one project are serialized, and the generated WAT, WASM, Cage, and
@@ -158,8 +165,8 @@ evaluation.
 warder doctor
 ```
 
-`warder doctor` checks the manifest, entry source path, lock file integrity when
-present, required compiler, and available WASM runtime.
+`warder doctor` checks the root configuration, entry source path, root lock
+integrity when present, required compiler, and available WASM runtime.
 
 ## Next Steps
 

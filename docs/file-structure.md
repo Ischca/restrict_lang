@@ -6,31 +6,44 @@
 
 ```
 my-project/
-├── package.rl.toml      # プロジェクトマニフェスト
-├── restrict-lock.toml   # 依存関係ロックファイル (自動生成)
+├── warder.toml          # リポジトリルートの唯一のWarder設定
+├── warder.lock          # 外部依存解決用ロックファイル (自動生成)
 ├── src/                 # ソースコード
-│   ├── Main.rl         # エントリーポイント
-│   ├── Lib.rl          # ライブラリエントリー (オプション)
+│   ├── main.rl         # エントリーポイント
+│   ├── lib.rl          # ライブラリエントリー (オプション)
 │   └── lib/            # モジュール
-│       ├── Math.rl     # 数学関数
-│       ├── String.rl   # 文字列処理
-│       └── IO.rl       # 入出力
+│       ├── math.rl     # 数学関数
+│       ├── string.rl   # 文字列処理
+│       └── io.rl       # 入出力
 ├── tests/              # テストファイル
-│   ├── MathTest.rl
-│   └── StringTest.rl
+│   ├── math_test.rl
+│   └── string_test.rl
 ├── examples/           # サンプルコード
-│   └── Hello.rl
+│   └── hello.rl
 ├── dist/              # ビルド出力 (自動生成)
 │   ├── my-project-0.1.0.wasm
 │   └── my-project-0.1.0.rgc
 └── .restrict-cache/   # ビルドキャッシュ (自動生成)
 ```
 
+`warder.toml`はリポジトリに1つだけ置きます。現行実装は公開可能な
+ルートパッケージ1つと、ルート`[dependencies]`から選択する直接ローカル
+ソースパッケージを扱います。ローカルパッケージに必要なのは
+`src/lib.rl`だけで、leaf manifestやleaf lockは置きません。
+`warder.lock`は決定的に再構築できない外部依存解決だけを固定します。
+現在はそのresolverがfail closedするため、ローカルのみのlockには解決済み
+package entryがありません。
+
+将来の複数公開パッケージworkspaceも同じroot `warder.toml`を拡張します。
+別のworkspace設定ファイルやmember manifestは導入せず、公開identityやABIを
+ディレクトリ配置から導出しません。`dist/*.component.toml`は生成成果物の
+metadataであり、追加のプロジェクト設定ではありません。
+
 ## モジュールシステム
 
 ### 1. モジュール定義
 
-**src/lib/Math.rl**
+**src/lib/math.rl**
 ```restrict
 // 関数をエクスポート
 pub fun add: (x: Int32, y: Int32) -> Int32 = {
@@ -49,16 +62,16 @@ fun helper: (x: Int32) -> Int32 = {
 
 ### 2. モジュールのインポート
 
-**src/Main.rl**
+**src/main.rl**
 ```restrict
 // 特定の関数のみインポート
-import lib.Math.{add, multiply}
+import lib.math.{add, multiply}
 
 // モジュール全体をインポート
-import lib.String.*
+import lib.string.*
 
 // エイリアス付きインポート (将来実装予定)
-// import lib.IO as io
+// import lib.io as io
 
 fun main: () = {
     val result = (10, 20) add
@@ -71,23 +84,23 @@ fun main: () = {
 ### 小規模プロジェクト
 ```
 simple-app/
-├── package.rl.toml
+├── warder.toml
 ├── src/
-│   └── Main.rl      # すべてのコードを1ファイルに
+│   └── main.rl      # すべてのコードを1ファイルに
 └── tests/
-    └── MainTest.rl
+    └── main_test.rl
 ```
 
 ### 中規模プロジェクト
 ```
 medium-app/
-├── package.rl.toml
+├── warder.toml
 ├── src/
-│   ├── Main.rl
+│   ├── main.rl
 │   └── lib/
-│       ├── Models.rl    # データモデル
-│       ├── Utils.rl     # ユーティリティ関数
-│       └── Api.rl       # API関連
+│       ├── models.rl    # データモデル
+│       ├── utils.rl     # ユーティリティ関数
+│       └── api.rl       # API関連
 ├── tests/
 └── examples/
 ```
@@ -95,22 +108,22 @@ medium-app/
 ### 大規模プロジェクト
 ```
 large-app/
-├── package.rl.toml
+├── warder.toml
 ├── src/
-│   ├── Main.rl
+│   ├── main.rl
 │   └── lib/
 │       ├── core/        # コア機能
-│       │   ├── Types.rl
-│       │   └── Errors.rl
+│       │   ├── types.rl
+│       │   └── errors.rl
 │       ├── domain/      # ドメインロジック
-│       │   ├── User.rl
-│       │   └── Product.rl
+│       │   ├── user.rl
+│       │   └── product.rl
 │       ├── infra/       # インフラストラクチャ
-│       │   ├── Db.rl
-│       │   └── Http.rl
+│       │   ├── db.rl
+│       │   └── http.rl
 │       └── ui/          # UI関連
-│           ├── Components.rl
-│           └── Views.rl
+│           ├── components.rl
+│           └── views.rl
 ├── tests/
 ├── examples/
 └── docs/
@@ -118,55 +131,55 @@ large-app/
 
 ## ファイル命名規則
 
-1. **ファイル名**: `CamelCase.rl`
-2. **モジュールパス**: ドット区切り (`lib.Math.Utils`)
-3. **テストファイル**: `*Test.rl`
-4. **エントリーポイント**: `Main.rl` または `Lib.rl`
+1. **ファイル名**: `snake_case.rl`
+2. **モジュールパス**: ドット区切り (`lib.math.utils`)
+3. **テストファイル**: `*_test.rl`
+4. **エントリーポイント**: `main.rl` または `lib.rl`
 
 ## ベストプラクティス
 
 ### 1. モジュールの責務分離
 ```restrict
 // ❌ 悪い例: 1つのファイルに複数の責務
-// src/lib/Utils.rl
+// src/lib/utils.rl
 pub fun add: (x: Int32, y: Int32) -> Int32 = { ... }
 pub fun parse_json: (input: String) -> Json = { ... }
 pub fun connect_db: () -> DbConnection = { ... }
 
 // ✅ 良い例: 責務ごとにファイルを分ける
-// src/lib/Math.rl
+// src/lib/math.rl
 pub fun add: (x: Int32, y: Int32) -> Int32 = { ... }
 
-// src/lib/Json.rl
+// src/lib/json.rl
 pub fun parse: (input: String) -> Json = { ... }
 
-// src/lib/Db.rl
+// src/lib/db.rl
 pub fun connect: () -> DbConnection = { ... }
 ```
 
 ### 2. 循環依存の回避
 ```restrict
 // ❌ 悪い例: A → B → A の循環
-// src/lib/A.rl
-import lib.B.{foo}
+// src/lib/a.rl
+import lib.b.{foo}
 
-// src/lib/B.rl
-import lib.A.{bar}  // 循環依存！
+// src/lib/b.rl
+import lib.a.{bar}  // 循環依存！
 
 // ✅ 良い例: 共通モジュールを作る
-// src/lib/Common.rl
+// src/lib/common.rl
 pub fun shared: () = { ... }
 
-// src/lib/A.rl
-import lib.Common.{shared}
+// src/lib/a.rl
+import lib.common.{shared}
 
-// src/lib/B.rl
-import lib.Common.{shared}
+// src/lib/b.rl
+import lib.common.{shared}
 ```
 
 ### 3. 公開APIの明確化
 ```restrict
-// src/lib/User.rl
+// src/lib/user.rl
 
 // 公開API（pub付き）
 pub record User {
@@ -188,17 +201,16 @@ fun generate_id: () -> Int32 = {
 
 ## warderとの統合
 
-### package.rl.toml の設定
+### warder.toml の設定
 ```toml
 [package]
 name = "my-app"
 version = "0.1.0"
-entry = "src/Main.rl"    # エントリーポイント
+entry = "src/main.rl"    # エントリーポイント
 edition = "2025"
 
 [dependencies]
-restrict-std = "0.2.0"   # 標準ライブラリ
-my-lib = { path = "../my-lib" }  # ローカル依存
+my_lib = { path = "../my-lib" }  # 直接ローカルソース依存
 
 [build]
 target = "wasm32"

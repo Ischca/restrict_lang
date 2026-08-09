@@ -1289,6 +1289,7 @@ fn rename_expr(
                     type_params,
                     &lambda_bound,
                 )),
+                implicit_focus: lambda.implicit_focus,
             }))
         }
         ExprKind::Await(expr) => Expr::new(ExprKind::Await(Box::new(rename_expr(

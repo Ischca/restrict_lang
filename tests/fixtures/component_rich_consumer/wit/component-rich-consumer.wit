@@ -1,0 +1,34 @@
+package test:component-rich-consumer@0.1.0;
+
+interface api {
+  variant event {
+    idle,
+    message(string),
+    values(list<s32>),
+  }
+  record packet {
+    label: string,
+    values: list<s32>,
+    fixed: list<s32>,
+    maybe: option<string>,
+    outcome: result<list<s32>, string>,
+    status: status,
+    event: event,
+  }
+  enum status {
+    ready,
+    paused,
+  }
+  echo-array: func(value: list<s32>) -> list<s32>;
+  echo-event: func(value: event) -> event;
+  echo-list: func(value: list<s32>) -> list<s32>;
+  echo-option: func(value: option<string>) -> option<string>;
+  echo-packet: func(value: packet) -> packet;
+  echo-result: func(value: result<list<s32>, string>) -> result<list<s32>, string>;
+  echo-status: func(value: status) -> status;
+  echo-string: func(value: string) -> string;
+}
+
+world component-rich-consumer {
+  export api;
+}

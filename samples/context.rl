@@ -13,7 +13,7 @@ context Database {
 
 fun main: () -> Int32 = {
     with Database { connection_id: 100 } {
-        val request = QueryRequest { id: 7 }
+        val request = QueryRequest { id: 7 };
         request.id + connection_id
     }
 }

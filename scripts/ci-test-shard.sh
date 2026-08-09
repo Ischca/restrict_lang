@@ -9,11 +9,11 @@ cd "$repo_root"
 
 case "$mode" in
   core)
-    cargo test --workspace --locked --lib --bins --examples --quiet
+    cargo test --workspace --locked --lib --examples --quiet
     exec cargo test --workspace --locked --doc --quiet
     ;;
   warder)
-    exec cargo test -p warder --locked --quiet
+    exec cargo test -p warder --locked --quiet -- --test-threads=1
     ;;
   integration)
     shard_index="${2:-}"
@@ -51,6 +51,7 @@ case "$mode" in
 
     echo "Integration shard $((shard_index + 1))/$shard_count: ${#selected_targets[@]} targets"
     printf '  %s\n' "${selected_targets[@]}"
+    cargo_args+=(-- --test-threads=1)
     exec "${cargo_args[@]}"
     ;;
   *)

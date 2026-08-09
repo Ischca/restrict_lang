@@ -5,8 +5,8 @@ boundaries. Function parameters, exported APIs, and record fields should keep
 clear types. Function bodies, local bindings, generic call sites, and lambdas can
 then use inference without drifting away from OSV syntax.
 
-This page documents the current inference surface while noting historical
-v0.0.1 boundaries. The current user-defined enum slice is closed, non-generic,
+This page documents the v0.0.1 inference surface and its deliberate boundaries.
+The current user-defined enum slice is closed, non-generic,
 and non-recursive. Constructors and patterns use qualified `Type::Variant`
 names; a constructor payload is checked against its declared type.
 Temporal Affine Types (TAT) remain outside the default v0.0.1 gate. Exported
@@ -22,7 +22,7 @@ Use `val` for immutable bindings. The initializer supplies the binding type:
 
 ```restrict
 fun adjust_score: (score: Int32) -> Int32 = {
-    val bonus = 2
+    val bonus = 2;
     score + bonus
 }
 
@@ -35,7 +35,7 @@ Mutable bindings use `mut val`. The initializer is inferred the same way:
 
 ```restrict
 fun seed_counter: () -> Int32 = {
-    mut val count = 0
+    mut val count = 0;
     count
 }
 ```
@@ -71,7 +71,7 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> String = {
-    val chosen = ("primary", "fallback") choose_first
+    val chosen = ("primary", "fallback") choose_first;
     chosen |> identity_local
 }
 ```
@@ -105,7 +105,7 @@ fun apply_predicate: (f: Int32 -> Boolean, value: Int32) -> Boolean = {
 
 fun main: () -> Int32 = {
     val incremented = (|x| x + 1, 41) apply_int
-    val positive = (|x| x > 0, incremented) apply_predicate
+    val positive = (|x| x > 0, incremented) apply_predicate;
 
     positive match {
         true => { incremented }
@@ -172,19 +172,19 @@ fun add_int: (total: Int32, value: Int32) -> Int32 = {
 
 fun main: (urgent: Boolean, bonus: Option<Int32>) -> Int32 = {
     val adjust = urgent then {
-        val boost = 2
+        val boost = 2;
         |score| score + boost
     } else {
-        val factor = 2
+        val factor = 2;
         |score| score * factor
     }
     val normalize = bonus match {
         Some(value) => {
-            val doubled = value * 2
+            val doubled = value * 2;
             |score| score + doubled
         }
         None => {
-            val doubled = 0
+            val doubled = 0;
             |score| score + doubled
         }
     }
@@ -231,9 +231,9 @@ Collection literals, `Ok`, `Err`, `None`, and higher-order container operations
 can infer their generic types from explicit result types, sibling arguments,
 sibling branches, or the surrounding expected type.
 
-The `Container` behavior behind `map` and `filter` is compiler-internal in
-v0.0.1. The current post-v0.0.1 compiler also supports method-only forms,
-concrete record `takes` declarations, and generic `of` bounds. Form-bounded
+Built-in `map` and `filter` use compiler-internal `Container` behavior. The
+v0.0.1 compiler also supports method-only forms, concrete record `takes`
+declarations, and generic `of` bounds. Form-bounded
 calls are resolved statically and monomorphized; associated types, generic
 forms or adoptions, conditional adoptions, default methods, enum adoptions, and
 dynamic dispatch remain future design work.
@@ -259,7 +259,7 @@ fun choose_option: <T>(value: Option<T>, fallback: Option<T>) -> Option<T> = {
 
 fun main: () -> List<Int32> = {
     val numbers = ([], [1, 2, 3]) choose_list
-    val maybe_limit = (() Option::None, 10 Option::Some) choose_option
+    val maybe_limit = (() Option::None, 10 Option::Some) choose_option;
 
     maybe_limit match {
         Some(limit) => { (numbers, |n| n + limit) map }
@@ -307,7 +307,7 @@ fun score_total: (score: Score) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val score = Score { value: 10, risk: 3 }
+    val score = Score { value: 10, risk: 3 };
     score |> score_total
 }
 ```
@@ -326,4 +326,5 @@ Current Restrict examples should use:
 - `fun name: (...) -> Type = { ... }`
 - record fields written with `:`
 - no function-first call style
-- no semicolons in guide examples
+- semicolons only where a following callable-shaped value could otherwise
+  extend the same OSV expression; line breaks alone do not terminate calls

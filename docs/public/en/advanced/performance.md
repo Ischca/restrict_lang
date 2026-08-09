@@ -66,7 +66,7 @@ record Reading {
 }
 
 fun weighted_reading: (reading: Reading) -> Int32 = {
-    val Reading { value, weight } = reading
+    val Reading { value, weight } = reading;
     value * weight
 }
 ```

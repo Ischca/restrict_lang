@@ -12,6 +12,128 @@ This document is the **single authoritative specification** for Restrict Languag
 - **No Side Effects**: Expression statements must be pure
 - **Arena Memory**: Deterministic memory management without garbage collection
 
+## Compilation and Host Model
+
+Restrict has one code-generation family: WebAssembly. JavaScript, native
+machine code, individual cloud platforms, and container runtimes are not
+separate Restrict language backends. A host profile may select imports,
+exports, ABI adapters, and packaging without changing Restrict source semantics.
+
+Core language behavior must remain independent of JavaScript objects, DOM APIs,
+specific cloud bindings, Docker, and individual WebAssembly runtimes. External
+operations are provided by explicit host imports or capabilities. This keeps a
+Restrict program portable between native WASI runtimes, component hosts,
+browsers, and edge environments when those hosts provide compatible
+interfaces.
+
+The current v0.0.1 program output is a Core WebAssembly module. It imports the
+WASI Preview 1 `fd_write` and `proc_exit` operations for basic program I/O, and
+a zero-argument `main` receives the `_start` wrapper specified below. The
+browser playground supplies equivalent behavior through a JavaScript bridge.
+That generated or handwritten bridge is host glue, not a JavaScript code-
+generation backend.
+
+The ordinary v0.0.1 compiler pipeline remains `.rl -> WAT -> Core Wasm`. This
+branch also implements an explicit B1 Component path. A schema-v1 or schema-v2
+selection from the repository-root `warder.toml` is checked and monomorphized
+into `ComponentInterfaceIr`,
+normalized WIT and stable ABI metadata, Canonical ABI adapters, and a validated
+WebAssembly Component. Warder publishes the resulting `.component.wasm`,
+`.component.wit`, and `.component.toml` files as one transactional artifact
+set. This explicit path does not change the default Core Wasm ABI, and the
+repository is versioned `0.1.0-rc.1` for its first release candidate; stable
+v0.1.0 has not been published.
+
+External standards and third-party contracts use the complementary WIT-first
+path. Rich synchronous guest imports are implemented and exercised by the
+Rust-produced Component -> Restrict consumer gate. Restrict implementation of
+an externally owned interface is currently implemented for the scalar slice;
+rich-value implementation/export and external-WIT resources fail closed with
+typed diagnostics. Warder `wrap --wit` remains a different operation: it
+stores caller-supplied WIT text in a Core module cage and does not generate or
+validate a Component.
+
+A Warder-managed repository has one authored configuration file,
+`warder.toml`, at its root. The current implementation describes one
+publishable root package plus any direct local source packages selected by the
+root `[dependencies]` table. Those local packages need `src/lib.rl`; they do
+not carry leaf manifests or leaf lock files. Warder generates one
+repository-root `warder.lock` for dependency resolutions that cannot be
+reconstructed deterministically from the repository sources. Registry, Git,
+foreign-Wasm, and transitive dependency resolution currently fail closed, so a
+local-only build has no resolved package entries in that lock.
+`warder.lock` is generated rather than hand-authored and is committed when it
+exists.
+
+The generated `dist/*.component.toml` files are Component artifact metadata,
+not additional Warder configuration. Likewise, Cage-internal `manifest.toml`
+and temporary Warder build/recovery state are not project manifests. A future
+multi-publish workspace graph will extend the same root `warder.toml`; it must
+not introduce member or package leaf manifests. Directory placement may help
+Warder discover local sources, but public package identity and Component ABI
+identity remain explicit, path-independent contract data.
+
+The compiler exposes two artifact target profiles. `wasip1` is the default and
+retains the v0.0.1 program-I/O imports. `wasm-core` emits an import-free Core
+WebAssembly module for host-neutral workloads and rejects `print`, `println`,
+and other host-I/O calls. Both profiles use the same Restrict source semantics.
+The native CLI can encode and validate binary output directly with `--emit
+wasm`; text output remains available with `--emit wat`.
+
+Compiler output is unoptimized by default so the complete lowered module stays
+available for debugging. `--release` applies the compiler's deterministic
+reachability pass after WAT lowering: host-visible exports and the start entry
+are roots, direct calls are followed transitively, and unused functions,
+function imports, named types, globals, tables, and element segments are
+removed when they cannot affect those roots. This release pass does not yet
+rewrite instructions or invoke an external `wasm-opt` binary.
+
+Compiler-managed arenas default to 4096 bytes for compatibility. A build may
+select a larger multiple-of-four capacity with `--arena-bytes`; this changes
+reserved linear-memory capacity, not source semantics or host ABI. Arena
+exhaustion deliberately traps and must not be treated as a recoverable
+source-level error. Before trapping, generated modules expose a compiler-owned
+diagnostic through the `__restrict_arena_error_code`,
+`__restrict_arena_error_requested_bytes`, and
+`__restrict_arena_capacity_bytes` `i32` globals. Error code `0` means no arena
+error, `1` means exhaustion, and `2` means allocation was attempted without an
+active arena. Initializing a new arena clears the error code and requested-byte
+value. A host may inspect these values after a trap to classify the failure,
+but must not resume the trapped call.
+
+`--instrument-memory` additionally exports compiler-owned peak-live-byte,
+current-live-byte, allocation-count, and reset-count globals plus
+`__restrict_memory_metrics_reset`. This instrumentation is for benchmarks and
+diagnostic hosts; it changes generated bookkeeping and therefore must not be
+used as the timed artifact in a performance comparison. Peak and live byte
+counts exclude the arena header. The current counters describe the B0
+single-host-entry arena path and do not claim aggregate accounting for nested
+arenas.
+
+The version boundary is:
+
+- **v0.1.0 / B1**: the synchronous Component Model implementation present in
+  the v0.1.0-rc.1 candidate: scalar and rich values (`String`, `List`, `Array`,
+  records, `Option`, `Result`, and user enums/variants), synchronous resources,
+  value-capturing once-callable resources, and explicitly selected concrete
+  generic function instances; generated and consumed WIT; Canonical ABI
+  lift/lower adapters; validated packaging, compatibility diffing,
+  composition, Rust bindings, and pinned-runtime execution;
+- **v0.2.0**: async functions, `await`, structured `spawn`, futures, streams,
+  cancellation, backpressure, generic async capability adapters, and
+  deterministic resource cleanup across suspension; and
+- later generated Web/cloud adapters and direct browser host or DOM interfaces
+  if and when portable standards expose them to WebAssembly.
+
+The normative implemented contract and its intentional limits are recorded in
+`docs/V010_SYNCHRONOUS_COMPONENT_ABI.md`. B1 implementation completion on this
+branch is distinct from publishing a versioned v0.1 release.
+
+Docker, containerd, and similar systems may execute or package a WASI artifact,
+but do not define a Restrict ABI. Likewise, a browser or cloud host may require
+JavaScript glue today without requiring Restrict to compile source code to
+JavaScript.
+
 ## 1. Lexical Elements
 
 ### 1.1 Keywords (Reserved)
@@ -26,21 +148,19 @@ Some reserved words are for planned or experimental features. A word being
 reserved does not imply that every related syntax form is part of the current
 v0.0.1 implementation.
 
-The v0.0.1 release did not expose source-level `form` / `takes` / `of` syntax.
-The current post-v0.0.1 compiler exposes the deliberately small, method-only
-form slice specified below. Generic forms, associated types, default methods,
-generic or conditional adoptions, enum adoptions, and dynamic dispatch remain
-future work.
+The v0.0.1 release exposes the deliberately small, method-only `form` /
+`takes` / `of` slice specified below. Generic forms, associated types, default
+methods, generic or conditional adoptions, enum adoptions, and dynamic dispatch
+remain future work.
 
-The v0.0.1 release included only compiler-provided `Option<T>` and
-`Result<T, E>` sum types. The current post-v0.0.1 compiler additionally
-supports the closed, non-generic user-defined `enum` slice specified below.
+The v0.0.1 release includes compiler-provided `Option<T>` and `Result<T, E>`
+sum types plus the closed, non-generic user-defined `enum` slice specified below.
 Generic enums, recursive enums, and variants with more than one direct payload
 remain future work.
 Host-visible WebAssembly exports that would require an exported
 generic/composite host ABI, including exported generic functions or direct
 exported record values, remain outside default v0.0.1 until that ABI is
-designed.
+implemented and passes the v0.1.0 Component ABI gate.
 
 ### 1.2 Operators
 ```
@@ -80,6 +200,52 @@ designed.
 ### 1.5 Comments
 - **Single-line**: `// comment`
 - **Multi-line**: `/* comment */` (no nesting)
+
+### 1.6 Whitespace and Expression Boundaries
+
+Spaces, tabs, comments, and line breaks are ordinary whitespace. A line break
+does not terminate an expression. The parser reads the maximal expression
+allowed by the grammar, including a direct OSV call split across lines:
+
+```rust
+val answer = 41
+    increment
+// Equivalent to: val answer = 41 increment
+```
+
+A direct OSV chain continues only while the following expression can serve as
+a verb (a function value). A literal, record, or collection value cannot be a
+verb, so it naturally begins a new expression even without a semicolon:
+
+```rust
+"first" println
+"second" println
+```
+
+A semicolon explicitly terminates the current statement when the following
+source could instead be interpreted as another verb in the same OSV chain:
+
+```rust
+val message = "ready";
+message println
+```
+
+Reserved declaration keywords, delimiters, operators, and values that cannot
+act as verbs still establish the boundaries required by their grammar, so
+semicolons are not required after every declaration or unambiguous expression.
+A block's final expression is not followed by a semicolon. Top-level
+declarations are never separated by semicolons.
+
+An explicit semicolon is appropriate when a local `val` deliberately stages a
+named value before an identifier-started expression. When the name exists only
+inside a higher-order transformation, a scoped verb clause can keep the same
+flow semicolon-free by naming the callback input instead:
+
+```rust
+values map { |value|
+    value + 1
+}
+```
 
 ## 2. Variable Declarations
 
@@ -191,7 +357,7 @@ Int32 -> String         // Function type
 (Int32, String) -> Boolean // Multi-parameter function
 ```
 
-### 4.5 User-Defined Enum Types (Post-v0.0.1)
+### 4.5 User-Defined Enum Types
 
 ```rust
 pub enum ParseError {
@@ -242,6 +408,7 @@ x               // Variable reference
 ```rust
 // ✅ CORRECT: OSV syntax (Object-Subject-Verb)
 value |> function           // Single argument via pipe
+value function              // Single argument via direct OSV
 (arg1, arg2) function       // Multiple arguments via tuple
 () function                 // No arguments via unit
 
@@ -252,8 +419,14 @@ object.method(args)         // ERROR: Traditional syntax forbidden
 ```
 
 **CRITICAL RULE**: Restrict Language **exclusively** uses OSV syntax.
-Arguments always come BEFORE the function name. Traditional parenthetical
-function calls `function(args)` will cause compilation errors.
+Ordinary value arguments always come BEFORE the function name. Traditional
+parenthetical function calls `function(args)` will cause compilation errors.
+The scoped verb clause in Section 5.9 is a separate OSV form: its trailing
+block is a scope opened by the verb, not an ordinary value argument.
+Whitespace, including line breaks, does not end a direct call. A following
+value that cannot be a verb begins a new expression naturally. Use `;` when a
+following callable-shaped expression must begin a new statement instead of
+extending the OSV call, as specified in Section 1.6.
 
 **OSV Pattern Examples:**
 ```rust
@@ -342,7 +515,78 @@ Point { x: 0, y: 0 }
 |x: Int32| x + 1    // With type annotations
 ```
 
-### 5.9 User-Defined Enum Construction
+### 5.9 Scoped Verb Clauses
+
+A function whose final remaining parameter is a function may open that
+function's body as a trailing scope. The ordinary value arguments remain
+before the verb:
+
+```rust
+val shifted = values map {
+    it + 1
+}
+
+val total = (values, 0) fold { |sum, value|
+    sum + value
+}
+```
+
+This is a **scoped verb clause**, not a general trailing-argument rule. In the
+first example, `values` is the ordinary object of `map`; `map` then opens a
+scope focused on each element. The complete clause produces a value that can
+become the object of the next clause:
+
+```rust
+values map {
+    it + 1
+} filter {
+    it > 2
+} |> list_count
+```
+
+Scoped verb clauses associate left-to-right. The example above applies
+`filter` to the complete result of the `map` clause, then pipes the complete
+filtered result to `list_count`.
+
+The compiler elaborates scoped clauses through ordinary lambdas:
+
+```rust
+values map { it + 1 }
+// elaborates as:
+(values, |it| { it + 1 }) map
+
+values map { |value| value + 1 }
+// elaborates as:
+(values, |value| { value + 1 }) map
+```
+
+Rules:
+
+- An unheaded scope introduces the contextual focus binding `it` and therefore
+  supplies exactly one lambda parameter.
+- `it` is a contextual binding, not a globally reserved name. It exists only
+  inside the implicit focus scope that introduces it.
+- Explicit binders reuse the lambda parameter syntax at the start of the
+  scope: `{ |value| ... }` or `{ |left, right| ... }`.
+- A zero-parameter scope uses an explicit empty lambda header: `{ || ... }`.
+- The clause supplies only the callable's final remaining parameter, and that
+  parameter must have a function type. All earlier parameters use ordinary
+  OSV object or tuple syntax.
+- Nested implicit focus scopes are rejected because two active `it` bindings
+  make affine use and capture intent unclear. Name at least one scope binder.
+- Scope statements, the final result expression, captures, affine consumption,
+  temporal escape checks, and type inference follow the ordinary block and
+  lambda rules. The syntax does not grant captures additional uses.
+- A scoped clause may execute its body zero, one, or many times according to
+  the receiving function's contract. The braces express a lexical scope, not
+  a guarantee of immediate or single execution.
+
+This form extends clause-level OSV rather than weakening it: a value precedes
+the scope-opening verb, and the resulting complete clause precedes its next
+verb. It follows the same value-then-verb-then-scope shape as `value match {
+... }` and `condition then { ... }`.
+
+### 5.10 User-Defined Enum Construction
 
 Enum constructors are qualified direct OSV call targets:
 
@@ -361,7 +605,7 @@ or pipe. Traditional call order remains invalid:
 ParseError::Message("invalid input") // ERROR: traditional call syntax
 ```
 
-### 5.10 Built-in Option and Result Construction
+### 5.11 Built-in Option and Result Construction
 
 `Option` and `Result` use the same qualified OSV constructor form as
 user-defined enums. The pipe is optional, and a single direct object does not
@@ -494,6 +738,10 @@ counter = counter + 1   // Only for mutable variables
 x + y                   // Must be pure (no side effects)
 ```
 
+Expression statements that could be parsed as one whitespace-adjacent OSV
+expression must be separated with `;`. A newline alone is not a statement
+terminator.
+
 ## 8. Record Types
 
 ### 8.1 Basic Records
@@ -558,7 +806,7 @@ Rules:
   They are a scoped, type-directed function namespace that preserves Restrict's
   value-flow-first OSV model.
 
-### 8.4 Forms, Adoptions, and Form Bounds (Post-v0.0.1)
+### 8.4 Forms, Adoptions, and Form Bounds
 
 A `form` is an explicit, compile-time behavioral contract. The initial source
 surface is intentionally method-only: forms are non-generic, every method has
@@ -722,7 +970,7 @@ supports dotted module paths with named imports, wildcard imports, or whole
 module imports. String paths, source-level import aliases, re-exports, and
 package-level standard-library aggregators are reserved for a later
 module-design pass. A build tool may bind the first dotted path segment to a
-package source root; that manifest/compiler binding is not an `import ... as`
+package source root; that root-configuration/compiler binding is not an `import ... as`
 source alias.
 
 Within one compilation, a source declaration has one canonical identity: its
@@ -754,11 +1002,14 @@ and must be pairwise disjoint: equal, ancestor, and descendant roots are
 rejected. This keeps one physical source file from acquiring both an
 application identity and a package-qualified identity.
 
-Warder v0.0.1 uses this binding for direct local path dependencies. A local
-dependency needs `package.rl.toml` and `src/lib.rl`; its dependency-table key is
-the source namespace. Registry, Git, foreign-Wasm, and transitive package
-graphs remain outside this buildable slice and must fail explicitly rather
-than producing unresolved lock entries.
+Warder uses this binding for direct local path dependencies selected centrally
+from the repository-root `warder.toml`. A local source package needs only
+`src/lib.rl`; its `[dependencies]` key is the source namespace. It does not
+have a leaf manifest or leaf lock. The current implementation has one
+publishable root package plus these direct local source packages. Registry,
+Git, foreign-Wasm, transitive dependency resolution, and a multi-publish
+workspace graph remain outside this buildable slice and must fail explicitly
+rather than producing unresolved `warder.lock` entries.
 
 ### 12.2 Exports
 ```rust
@@ -770,7 +1021,7 @@ pub val release_bias: Int32 = 3
 ```
 
 For the v0.0.1 implementation, exported records are source-level module
-metadata. Post-v0.0.1 exported enums have the same source-module-only meaning.
+metadata. Exported enums have the same source-module-only meaning.
 Records, enums, and forms can be imported and used by other Restrict source modules,
 but they do not emit direct host-visible WebAssembly exports. Importing an enum
 imports its type namespace; callers continue to spell constructors and patterns
@@ -839,10 +1090,231 @@ for subsequent `flat-record-v1` calls and instantiate a fresh module. A nested
 same-export call that traps may be caught by the host only when the outer call
 then returns normally, allowing the outer wrapper to restore its entry state.
 
+### 12.4 B1 v0.1.0 Synchronous Component ABI
+
+This section specifies the explicit B1 Component path implemented on this
+branch. It does not change the ordinary v0.0.1 Core Wasm output: the default
+ABI remains the scalar profile and `flat-record-v1` remains experimental.
+B1 implementation completion is not a claim that a v0.1 package has already
+been released.
+
+The public Component interface is not the compiler's arena representation.
+Interface authority follows API ownership, not import/export direction:
+
+- for a Restrict-owned API, an explicitly selected component export is type
+  checked and monomorphized into `ComponentInterfaceIr` (Component Interface
+  IR), from which the compiler generates normalized WIT and Canonical ABI
+  adapters. Ordinary source-level `pub` continues to mean module visibility
+  and is not an implicit component export;
+- for WASI, standard worlds, third-party APIs, and other externally owned
+  contracts, external WIT is authoritative whether Restrict consumes/imports
+  the API or implements/exports it. The toolchain generates typed Restrict
+  bindings or implementation obligations and verifies the resulting component
+  against that WIT; and
+- normalized WIT plus stable ABI-profile metadata is the final compatibility
+  authority for both ownership paths.
+
+The implemented Restrict-owned selection surface is versioned `[component]`
+metadata in the repository-root `warder.toml`, not a new language keyword. A
+declaration enters the Component ABI only when both conditions hold:
+
+1. it is source-public under the existing `pub` / `export` declaration
+   surface; and
+2. a schema-versioned `[component]` entry selects it explicitly.
+
+Neither `pub` nor `export` alone publishes a Component ABI, and this explicit
+selection rule does not change their current Core Wasm or source-module
+behavior. Schema v1 uses this manifest shape:
+
+```toml
+[component]
+schema = 1
+package = "acme:checkout@0.1.0"
+world = "checkout"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "quote"
+name = "quote"
+```
+
+`package` is the complete WIT package identity in
+`namespace:name@semver` form. In schema v1 its name and version must equal
+`[package].name` and `[package].version`; `abi` must be
+`canonical-v1-sync`. `world`, `interface`, and `name` are validated WIT
+identifiers. For schema v1, `source` names one source-public
+function in the package root module. An absent selection exports nothing to a
+Component; an unknown schema, ABI profile, or field, a private or missing
+declaration, duplicate selection, or external-name collision is an error.
+Cross-module selectors are not accepted until module resolution preserves a
+stable canonical declaration identity independent of its internal mangled
+name.
+
+Warder parses and validates the root configuration, resolves the selection
+through the compiler library, and transactionally publishes normalized WIT,
+validated Component bytes, and metadata. A future language edition may
+distinguish `pub` package visibility from `export` Component publication and
+derive ordinary concrete exports from typed source. That source-first surface
+is not implemented: today the explicit source-public plus `[component]`
+double gate remains required. Any future source sugar must lower to the same
+checked selection model and cannot become a second interface authority. The
+detailed invariants are specified in the
+[B1 Component Implementation Design](docs/B1_COMPONENT_IMPLEMENTATION_DESIGN.md).
+
+Restrict-owned APIs do not require a second handwritten WIT declaration. That
+would duplicate Restrict types, invite drift, and discard affine ownership and
+capture facts plus source-span diagnostics before interface checking. External
+standards and third-party contracts remain WIT-first because Restrict does not
+own those interfaces.
+
+WIT file emission alone does not describe the implemented B1 stack. The
+synchronous
+interoperability stack includes normalized WIT, Component Model packaging,
+Canonical ABI lift/lower and cleanup, Rust language bindings, component composition,
+compatibility diffing, and execution in pinned Component runtimes. The
+repository proves both Rust interoperability directions through
+the versioned WIT world; WIT-only output is not reported as Component support.
+
+The v0.1.0 synchronous type mapping is:
+
+- `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `()` map to the
+  corresponding WIT scalar or empty result;
+- `String` maps to WIT `string` with validated UTF-8 conversion;
+- `List<T>` maps recursively to `list<T>`;
+- `Array<T, N>` maps to `list<T>` plus stable exact-length metadata and a
+  generated length check at every boundary;
+- records map recursively to WIT `record` in source declaration order;
+- `Option<T>` and `Result<T, E>` map recursively to WIT `option` and `result`;
+- payload-free user enums map to WIT `enum`, while payload-carrying user enums
+  map to WIT `variant` by source case identity rather than internal tag layout;
+- explicitly declared synchronous host resources map to WIT `resource`, where
+  `own` transfers affine ownership, `borrow` is call-scoped, and destruction
+  occurs exactly once;
+- each exported closure/function-value signature maps to a generated once-
+  callable resource, which owns value-only captured state and exposes a
+  synchronous call operation; raw table indexes and arena pointers never cross
+  the boundary. Captures containing another resource or callable fail closed;
+  and
+- a generic function can cross the boundary only through a finite, explicit
+  set of concrete monomorphized instances with deterministic external names.
+  WIT never contains an unresolved Restrict type parameter. Generic nominal
+  boundary types are not part of this B1 implementation.
+
+Manifest schema v2 implements the declaration contract for synchronous
+resources, once-callable resources, and concrete generic function instances.
+Warder parses and normalizes it into a manifest-neutral compiler model that is
+connected to Component Interface IR, code generation, adapters, validation,
+runtime execution, and transactional artifact publication. Schema v1 remains
+valid and continues to reject every v2-only field.
+
+```toml
+[component]
+schema = 2
+package = "acme:checkout@0.1.0"
+world = "checkout"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "api"
+source = "identity"
+name = "identity-string"
+type-args = { T = "String" }
+
+[[component.resources]]
+interface = "api"
+source = "FileHandle"
+name = "file-handle"
+destructor = "close_file"
+destructor-visibility = "private"
+methods = [
+  { source = "read_file", name = "read", receiver = "borrow" },
+  { source = "finish_file", name = "finish", receiver = "own" },
+]
+
+[[component.callables]]
+interface = "api"
+name = "transform"
+params = [{ name = "value", type = "List<String>" }]
+result = "Result<String, TransformError>"
+multiplicity = "once"
+```
+
+Every entry is explicit. A resource `source` must resolve to one named public
+root record. Its destructor identity is explicit even when the implementation
+is private; `destructor-visibility` records whether source resolution must find
+a `private` or `public` declaration. Each method records an external name,
+source identity, and receiver fact: `own` consumes the affine handle, while
+`borrow` is valid only for the dynamic extent of one synchronous call. These
+facts are stable contract input; they do not infer a resource from record shape
+or method spelling. The destructor source cannot also be listed as an ordinary
+resource method.
+
+A callable declares a concrete parameter/result signature and capture-call
+multiplicity. The field is mandatory and accepts the vocabulary `once` and
+`many`, but the initial synchronous v0.1 contract accepts only `once`; `many`
+is rejected with a typed unsupported-multiplicity diagnostic until its affine
+capture semantics and adapters are implemented.
+
+`type-args` maps declared source type-parameter names to closed Restrict type
+expressions. The accepted expression grammar covers `()`, scalar types,
+root-nominal types with concrete arguments, `List`, `Array<T, N>`, `Option`,
+`Result`, and concrete function types. Temporal types, `Self`, wildcards,
+malformed arities, symbolic array lengths, and trailing input are rejected
+during manifest normalization. Nominal names are still resolved and bounds are
+still checked by the compiler; parsing a name does not prove that the type
+exists. Map and manifest order are non-semantic, and the specialization pass
+restores declaration order before computing its stable identity.
+
+Schema v2 remains root-only until durable `CanonicalDeclId` resolution lands.
+Types not listed above, including `Range<Int32>`, do not acquire an ABI by
+implication. A source byte type and direct `list<u8>` mapping are separate
+follow-on design work; `Char` is not a byte substitute.
+
+WIT alone cannot represent Restrict open generics, first-class closures,
+affine capture multiplicity, or a stable `Array<T, N>` length constraint.
+Explicit concrete instantiation, callable resources, ownership metadata and
+drop adapters, and `list<T>` length validation are therefore normative v0.1.0
+adapter rules rather than optional implementation conventions.
+
+Lifted arguments cannot expose host-retained pointers into a Restrict arena.
+Composite results must be copied or transferred to Canonical ABI-owned storage
+before invocation-arena reset. Generated post-return and drop paths must cover
+normal return, source `Result::Err`, host error, allocation failure, and trap.
+After an uncaught component trap the instance is terminal. Synchronous callback
+re-entry must preserve the outer arena and all resource/callable ownership.
+
+The B1 conformance gate covers rich external-WIT consumer bindings, scalar
+external implementation/export conformance, Canonical ABI lift/lower and
+post-return or drop cleanup, component packaging/validation/composition/runtime
+execution, resource-lifecycle negative tests, and breaking/non-breaking
+compatibility diffs over normalized WIT plus stable ABI metadata. Rich-value
+external implementation/export and external-WIT resources currently fail
+closed and remain follow-on work. Repository release gates use two
+independently compiled end-to-end paths:
+
+- Rust-produced Component -> Restrict consumer; and
+- Restrict-produced Component -> Rust consumer.
+
+These paths may share only the versioned WIT package/world; they must not share
+an allocator, linear memory, arena layout, runtime representation, or a bridge
+that bypasses the Canonical ABI. MoonBit remains an external design precedent
+and optional comparison target, not a required repository E2E toolchain.
+
+v0.1.0 retains the current Core Wasm and WASI Preview 1 outputs. It consumes
+synchronous WIT capability imports and runs its conformance world in a pinned
+Component host, adapting the current basic output/exit behavior where needed.
+Full WASI 0.2 command-interface coverage is a separate host-profile milestone,
+not part of this ABI gate. Async functions, `future`, `stream`, cancellation,
+backpressure, and ownership across suspension are excluded from v0.1.0 and
+form the v0.2.0 boundary. Complete network/HTTP profiles are follow-on host
+integration rather than implied core-language semantics.
+
 ## 13. Operator Precedence (Highest to Lowest)
 
-1. Field access, qualified variant names, and grouped direct OSV calls:
-   `.field`, `.clone`, `Type::Variant`, `freeze`, `(value) f`, `() f`
+1. Field access, qualified variant names, grouped direct OSV calls, and scoped
+   verb clauses: `.field`, `.clone`, `Type::Variant`, `freeze`, `(value) f`,
+   `() f`, `values map { ... }`
 2. Unary: `!`, `-`
 3. Multiplicative: `*`, `/`, `%`
 4. Additive: `+`, `-`
@@ -858,6 +1330,8 @@ Single-argument calls may use pipe form (`value |> f`) or direct OSV form
 right) max`), and compound objects should be grouped when precedence would
 otherwise change their meaning (`(1 + 2) double`). Pipe starts from a complete
 expression, so `1 + 2 |> double` is parsed as `(1 + 2) |> double`.
+Likewise, a scoped verb clause is complete before a following pipe:
+`values map { it + 1 } |> list_count` pipes the mapped collection.
 
 ## 14. Standard Library Types
 
@@ -1069,7 +1543,21 @@ fun main: () -> Float64 = {
 }
 ```
 
-### 16.6 Temporal Resource Management
+### 16.7 Scoped Collection Flow
+
+```rust
+fun main: () -> Int32 = {
+    val values = [1, 2, 3]
+    val shifted = values map {
+        it + 1
+    }
+    (shifted, 0) fold { |total, value|
+        total + value
+    }
+}
+```
+
+### 16.8 Temporal Resource Management
 ```rust
 fun processFile: (path: String) -> Result<String, Error> = {
     temporal ~file {
@@ -1143,7 +1631,11 @@ Err("missing")
 
 ## COMPLIANCE
 
-This specification defines Restrict Language v1.0. All implementations, documentation, tutorials, and examples MUST conform to this specification.
+This specification defines Restrict Language specification v1.0. Its document
+version is independent of compiler product releases such as v0.0.1, v0.1.0,
+and v0.2.0. All implementations, documentation, tutorials, and examples MUST
+conform to the implemented sections of this specification and must not present
+planned sections as current behavior.
 
 **Parser Implementation**: The official parser in `src/parser.rs` is the
 authority for the current implementation. Sections marked future, planned, or
@@ -1152,6 +1644,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-08-09
 **Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

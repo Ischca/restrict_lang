@@ -165,7 +165,7 @@ fun main: () -> String = {
 
 ## 現在の境界
 
-現在のpost-v0.0.1 compilerでは、具体的な非ジェネリックrecordを
+v0.0.1 compilerでは、具体的な非ジェネリックrecordを
 `RecordName takes FormName`でformへ適合できます。メソッドの`self`は通常の
 アフィン引数なので、非Copy recordを消費します。
 

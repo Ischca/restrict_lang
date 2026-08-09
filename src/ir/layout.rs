@@ -9,10 +9,19 @@ use super::{AbiId, FinalType, ScalarRepr, ValueRepr};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LayoutId(pub u32);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RecordLayoutIdentity {
+    name: String,
+    type_args: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutTable {
     layouts: Vec<LayoutDescriptor>,
     canonical: HashMap<LayoutKind, LayoutId>,
+    /// Nominal lookup is separate from structural interning so a record can
+    /// reserve its LayoutId before recursively resolving its fields.
+    record_layouts: HashMap<RecordLayoutIdentity, LayoutId>,
 }
 
 impl LayoutTable {
@@ -20,6 +29,7 @@ impl LayoutTable {
         Self {
             layouts: Vec::new(),
             canonical: HashMap::new(),
+            record_layouts: HashMap::new(),
         }
     }
 
@@ -34,6 +44,15 @@ impl LayoutTable {
 
         let id = self.push_descriptor(kind.clone());
         self.canonical.insert(kind, id);
+        if let LayoutKind::Record(record) = &self.layouts[id.0 as usize].kind {
+            self.record_layouts.insert(
+                RecordLayoutIdentity {
+                    name: record.name.clone(),
+                    type_args: record.type_args.clone(),
+                },
+                id,
+            );
+        }
         id
     }
 
@@ -200,6 +219,26 @@ impl LayoutTable {
                     return ValueRepr::Ref(id);
                 }
 
+                let formatted_type_args = type_args.iter().map(format_type_arg).collect::<Vec<_>>();
+                let identity = RecordLayoutIdentity {
+                    name: name.clone(),
+                    type_args: formatted_type_args.clone(),
+                };
+                if let Some(id) = self.record_layouts.get(&identity) {
+                    return ValueRepr::Ref(*id);
+                }
+
+                // Reserve the nominal id before descending. Recursive fields
+                // can now refer back to this descriptor without unbounded
+                // layout construction.
+                let id = self.push_descriptor(LayoutKind::Record(RecordLayout {
+                    name: name.clone(),
+                    type_args: formatted_type_args.clone(),
+                    fields: Vec::new(),
+                    strategy: RecordStrategy::DescriptorManaged,
+                }));
+                self.record_layouts.insert(identity, id);
+
                 let fields = record_fields(name, type_args)
                     .map(|fields| {
                         self.record_field_layouts_with_metadata(
@@ -209,13 +248,14 @@ impl LayoutTable {
                         )
                     })
                     .unwrap_or_default();
-                let type_args = type_args.iter().map(format_type_arg).collect();
-                let id = self.insert(LayoutKind::Record(RecordLayout {
+                let kind = LayoutKind::Record(RecordLayout {
                     name: name.clone(),
-                    type_args,
+                    type_args: formatted_type_args,
                     fields,
                     strategy: RecordStrategy::DescriptorManaged,
-                }));
+                });
+                self.layouts[id.0 as usize].kind = kind.clone();
+                self.canonical.insert(kind, id);
                 ValueRepr::Ref(id)
             }
             TypedType::Function {
@@ -566,6 +606,32 @@ mod tests {
         };
         assert_eq!(layout.element.size, 8);
         assert_eq!(layout.element.align, 8);
+    }
+
+    #[test]
+    fn recursive_record_layout_reuses_reserved_nominal_id() {
+        let node_type = TypedType::Record {
+            name: "Node".to_string(),
+            type_args: Vec::new(),
+            frozen: false,
+            hash: None,
+            parent_hash: None,
+        };
+        let final_type = FinalType::new(node_type.clone()).unwrap();
+        let mut table = LayoutTable::new();
+        let repr = table.value_repr_for_type_with_record_fields(&final_type, &|name, type_args| {
+            (name == "Node" && type_args.is_empty())
+                .then(|| vec![("next".to_string(), node_type.clone())])
+        });
+
+        let ValueRepr::Ref(layout_id) = repr else {
+            panic!("recursive record should use a reference layout");
+        };
+        let LayoutKind::Record(layout) = &table.get(layout_id).unwrap().kind else {
+            panic!("Node should resolve to a record layout");
+        };
+        assert_eq!(layout.fields.len(), 1);
+        assert_eq!(layout.fields[0].element.repr, ValueRepr::Ref(layout_id));
     }
 
     #[test]

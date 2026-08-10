@@ -7,8 +7,12 @@ export const exampleGroups = [
         "title": "Start here"
     },
     {
-        "id": "current",
-        "title": "Current compiler"
+        "id": "composition",
+        "title": "Composition and scopes"
+    },
+    {
+        "id": "types",
+        "title": "Types and contracts"
     },
     {
         "id": "diagnostics",
@@ -38,9 +42,19 @@ export const examples = [
         "source": "// Arguments come before verbs; adjacent verbs continue the value flow.\nfun add: (left: Int32, right: Int32) -> Int32 = {\n    left + right\n}\n\nfun increment: (value: Int32) -> Int32 = {\n    value + 1\n}\n\nfun main: () = {\n    // The semicolon stages a named value before a new identifier-led expression.\n    val total = (20, 21) add;\n    total increment println\n}\n"
     },
     {
+        "id": "completedValues",
+        "title": "Continue a completed value",
+        "group": "composition",
+        "description": "Feed a completed match directly through two typed OSV functions.",
+        "file": "completed_values.rl",
+        "kind": "run",
+        "expectedOutput": "36\n",
+        "source": "// A completed match stays composable as the next OSV expression's value.\nfun show: (value: Int32) -> () = {\n    value println\n}\n\nfun square: (value: Int32) -> Int32 = {\n    value * value\n}\n\nfun main: () = {\n    true match {\n        true => { 6 }\n        false => { 2 }\n    } square show\n}\n"
+    },
+    {
         "id": "scopedCollections",
         "title": "Map through a scope",
-        "group": "start",
+        "group": "composition",
         "description": "Name map's scoped value with a lambda binder, then name both values in a fold scope.",
         "file": "scoped_collections.rl",
         "kind": "run",
@@ -48,9 +62,29 @@ export const examples = [
         "source": "// A verb can open a typed scope; the complete clause feeds the next value flow.\nfun main: () = {\n    // A lambda binder names the scoped value without a separate local declaration.\n    val shifted = [20, 21] map { |value|\n        value + 1\n    };\n    ((shifted, 0) fold { |total, value|\n        total + value\n    }) println\n}\n"
     },
     {
+        "id": "typedContext",
+        "title": "Bind a typed context",
+        "group": "composition",
+        "description": "Provide typed capabilities to one lexical body and continue its completed value into println.",
+        "file": "typed_context.rl",
+        "kind": "run",
+        "expectedOutput": "42\n",
+        "source": "// A context supplies typed capabilities for one lexical body.\ncontext Pricing {\n    base: Int32\n    bonus: Int32\n}\n\nfun main: () = {\n    with Pricing { base: 40, bonus: 2 } {\n        base + bonus\n    } println\n}\n"
+    },
+    {
+        "id": "fixedArray",
+        "title": "Read a fixed-length Array",
+        "group": "types",
+        "description": "Declare an exact Array<T, N> length and read one element by index.",
+        "file": "fixed_array.rl",
+        "kind": "run",
+        "expectedOutput": "20\n",
+        "source": "// Array carries its exact length in the source type.\nfun main: () = {\n    val readings: Array<Int32, 3> = [10, 20, 30];\n    (readings, 1) array_get println\n}\n"
+    },
+    {
         "id": "records",
         "title": "Build a record",
-        "group": "start",
+        "group": "types",
         "description": "Construct a record with colon fields and pass it to a function.",
         "file": "records.rl",
         "kind": "run",
@@ -60,7 +94,7 @@ export const examples = [
     {
         "id": "optionMatch",
         "title": "Match an option",
-        "group": "start",
+        "group": "types",
         "description": "Handle both Some and None with an exhaustive match.",
         "file": "option_match.rl",
         "kind": "run",
@@ -70,7 +104,7 @@ export const examples = [
     {
         "id": "resultError",
         "title": "Result with a custom error",
-        "group": "current",
+        "group": "types",
         "description": "Carry a domain-specific enum through Result and turn the error into useful output.",
         "file": "result_error.rl",
         "kind": "run",
@@ -80,7 +114,7 @@ export const examples = [
     {
         "id": "formContract",
         "title": "Generic form contract",
-        "group": "current",
+        "group": "types",
         "description": "Follow a form from its contract, through a concrete adoption, into an explicit generic bound.",
         "file": "form_contract.rl",
         "kind": "run",
@@ -90,7 +124,7 @@ export const examples = [
     {
         "id": "displayTypes",
         "title": "Display across types",
-        "group": "current",
+        "group": "types",
         "description": "Use one output function for prelude types and a record that explicitly adopts Display.",
         "file": "display_types.rl",
         "kind": "run",

@@ -1,6 +1,8 @@
-# Restrict Language Web Compiler
+# Restrict Language v0.1.0 Playground
 
-A web-based compiler for the Restrict Language that runs entirely in the browser using WebAssembly.
+A browser-hosted Core WebAssembly compiler and runtime for the current Restrict
+v0.1.0 language surface. Source, compiler output, and program execution remain
+local to the browser unless the user explicitly creates a share URL.
 
 ## Features
 
@@ -8,7 +10,8 @@ A web-based compiler for the Restrict Language that runs entirely in the browser
 - **Interactive Interface**: Compile, lex, and parse actions from a browser editor
 - **Restrict Syntax Highlighting**: The source editor highlights keywords, types, literals, comments, strings, numbers, and OSV operators
 - **Step-by-Step Analysis**: View tokens, AST, and compilation errors separately
-- **Curated Example Programs**: Grouped runnable examples, separate generic form and Display lessons, and an intentional affine diagnostic
+- **Curated v0.1.0 Programs**: Grouped runnable examples for completed-value composition, scoped collection clauses, typed contexts, fixed arrays, records, sum types, forms, and Display
+- **Intentional Diagnostics**: A checked affine use-after-consume example demonstrates the current source diagnostic
 - **No Server Required**: Runs entirely in the browser
 
 ## Building
@@ -65,16 +68,21 @@ The web compiler consists of:
 
 ## Supported Syntax Surface
 
-The web demo examples use the current public syntax surface. Some planned or
-experimental language features may be reserved by the parser or documented in
-the language specification, but they are not guaranteed to compile through the
-browser demo.
+The web examples use the current v0.1.0 language surface while targeting the
+ordinary Core Wasm program profile. Some planned or experimental language
+features may be reserved by the parser or documented in the language
+specification, but they are not guaranteed to compile through the browser demo.
 
 - Function declarations with `fun name: (...) -> Type =`
 - Basic types such as `Int32`, `Float64`, and `Boolean`
 - Variable declarations with `val` and `mut val`
 - OSV calls such as `value |> function` and `(left, right) add`
+- Completed-value application from `match`, `then`, blocks, and scoped clauses
+- Exact-once anonymous scopes such as `value { |item| ... }`
+- `List<T>`, fixed-length `Array<T, N>`, `Option<T>`, and `Result<T, E>`
 - Record declarations and literals with colon-delimited fields
+- Closed user enums and exhaustive pattern matching
+- Typed `context` declarations and lexical `with Context { ... } { ... }` bindings
 - Method-only `form` declarations, concrete record `takes` adoptions, and `of` bounds
 - Display-polymorphic `display`, `print`, and `println`
 - `then`/`else` expressions, pattern matching, type checking, and WASM-oriented output where implemented
@@ -91,8 +99,8 @@ contract used by `println` across built-in types and an adopted record.
 
 ## Browser Runtime
 
-`Run` assembles the generated WAT inside the compiler bundle, instantiates the
-program with a small browser-side WASI bridge, invokes the generated `_start`
+`Run` assembles the generated Core WAT inside the compiler bundle, instantiates
+the program with a small browser-side WASI Preview 1 bridge, invokes the generated `_start`
 entry point, and displays stdout and stderr in the Output tab. A runnable
 program needs a zero-argument `main`; use Display-polymorphic `print` or
 `println` to produce visible output. The String-only `eprint` and `eprintln`
@@ -103,6 +111,12 @@ This JavaScript is a browser host adapter, not a Restrict JavaScript backend.
 Restrict program logic still compiles to Wasm. Native WASI runtimes can provide
 the same program imports without JavaScript, while future Web or cloud adapters
 should remain separate from core code generation.
+
+The v0.1.0 synchronous WIT and Component Model path is a separate packaging
+workflow. The browser playground does not synthesize `warder.toml`, select a
+Component world, or host Canonical ABI components. Use Warder for normalized
+WIT, `.component.wasm`, and stable Component metadata; the playground links to
+the corresponding interoperability documentation.
 
 ## Browser Compatibility
 

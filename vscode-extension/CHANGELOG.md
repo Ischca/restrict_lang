@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- No changes yet.
+
+## [0.1.0] - 2026-08-10
+
 ### Added
 - Syntax highlighting for `form`, `takes`, and `of`
 - Snippets for form declarations, Display adoptions, and form-bounded functions

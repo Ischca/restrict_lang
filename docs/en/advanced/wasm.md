@@ -153,15 +153,13 @@ The exported function is scalar even though the implementation uses a record.
 
 ## Versioned Interoperability Direction
 
-The ordinary v0.0.1 compatibility boundary remains scalar-only. The
-v0.1.0-rc.1 candidate implements a synchronous Component ABI
+The ordinary v0.0.1 compatibility boundary remains scalar-only. Stable
+v0.1.0 implements a synchronous Component ABI
 for `String`, `List`, `Array`, records, `Option`, `Result`, user enums/variants,
 scalar-signature resources, value-capturing once-callables, and explicit
 concrete generic function instances. It generates or consumes WIT, performs
 Canonical ABI lift/lower, validates and composes Components, classifies
 compatibility, and executes through Rust bindings in a pinned runtime.
-
-This is a release candidate; stable v0.1.0 has not been published.
 
 - v0.2.0 adds the asynchronous boundary: async Component functions,
   `future`/`stream`, cancellation, and cleanup across suspension.

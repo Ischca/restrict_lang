@@ -1,14 +1,14 @@
 # v0.1 Synchronous Component ABI Scope
 
-**Status**: B1 implementation complete; `0.1.0-rc.1` release candidate
+**Status**: B1 implementation complete; stable `0.1.0`
 **Target release**: v0.1.0
 **Successor**: v0.2.0 async and concurrency
 **Scope amendment date**: 2026-08-09
 
 `LANGUAGE_SPECIFICATION.md` remains authoritative. The ordinary v0.0.1
 compatibility boundary remains the default scalar Core host ABI. This document
-defines the explicit synchronous Component path implemented for B1 and keeps
-the release candidate distinct from stable v0.1.0.
+defines the explicit synchronous Component path implemented and released for
+B1.
 
 The implementation architecture, first Component selection schema, and phased acceptance
 gates are defined in the

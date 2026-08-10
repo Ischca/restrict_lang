@@ -1,7 +1,6 @@
 # B1 Component Implementation Design
 
-**Status**: B1 synchronous implementation complete; `0.1.0-rc.1` release
-candidate
+**Status**: B1 synchronous implementation complete; stable `0.1.0`
 **Target**: B1 / v0.1.0 synchronous Component ABI
 **Decision date**: 2026-08-09
 **Normative scope**:
@@ -491,8 +490,7 @@ matrix. It remains an optional external precedent or comparison target.
   artifact publication, and breaking/non-breaking compatibility diffing.
 - Optional follow-on: typed JS/TS bindings and a framework-neutral Worker
   loader. They are not repository B1 completion gates.
-- Release management remains separate: `0.1.0-rc.1` is a candidate, not stable
-  v0.1.0.
+- Release management promoted the validated B1 contract to stable v0.1.0.
 
 ## Diagnostics Contract
 

@@ -37,8 +37,8 @@ backend merely because a current host requires JavaScript glue.
 - [x] Run generated programs in the browser through a small WASI bridge
 - [x] Keep the stable v0.0.1 host ABI scalar-only
 
-The ordinary pipeline remains `.rl -> WAT -> Core Wasm`. The v0.1.0-rc.1
-candidate also has an explicit B1 path from schema-v1/schema-v2 selections
+The ordinary pipeline remains `.rl -> WAT -> Core Wasm`. Stable v0.1.0 also
+has an explicit B1 path from schema-v1/schema-v2 selections
 through checked `ComponentInterfaceIr`, normalized WIT and metadata, Canonical
 ABI adapters, and validated Component bytes. Warder publishes the `.component.wasm`,
 `.component.wit`, and `.component.toml` set transactionally. A Core module cage
@@ -165,8 +165,7 @@ size, and memory checks remain enforceable in CI.
 
 ### Milestone B1 / v0.1.0: Synchronous Component Project Ready
 
-**Status**: Implementation complete; `0.1.0-rc.1` is the first release
-candidate. Stable v0.1.0 has not been published.
+**Status**: Implementation complete and published as stable `0.1.0`.
 
 **Goal**: Make a Restrict package a first-class synchronous WebAssembly
 Component producer and consumer in native Component hosts. The repository B1

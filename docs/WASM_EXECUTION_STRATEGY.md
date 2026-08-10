@@ -56,7 +56,7 @@ The stable default v0.0.1 host ABI remains scalar-only, and the experimental
 `flat-record-v1` profile remains outside that compatibility boundary. The
 ordinary path is still `.rl -> WAT -> Core Wasm`.
 
-The v0.1.0-rc.1 candidate additionally implements the explicit B1 Component
+Stable v0.1.0 additionally implements the explicit B1 Component
 path. Schema-v1 and schema-v2 selections in the repository-root `warder.toml`
 become checked `ComponentInterfaceIr`, normalized WIT and stable ABI metadata, Canonical ABI
 adapters, and validated Component bytes.
@@ -72,8 +72,8 @@ cage and is not Component generation.
 
 The next two product releases have an explicit interoperability split:
 
-- **v0.1.0 / B1** is the synchronous Component Model implementation included
-  in the v0.1.0-rc.1 candidate. It covers `String`, `List`, `Array`, records,
+- **v0.1.0 / B1** is the stable synchronous Component Model implementation. It
+  covers `String`, `List`, `Array`, records,
   `Option`, `Result`, user enums/variants, synchronous resources with scalar-signature
   factories and methods, value-capturing once-callable resources, and explicit
   concrete generic function instances. It generates and consumes WIT, emits
@@ -84,9 +84,8 @@ The next two product releases have an explicit interoperability split:
   `await`, structured `spawn`, futures, streams, cancellation, backpressure,
   and deterministic cleanup across suspension.
 
-The repository is versioned `0.1.0-rc.1` for its first release candidate;
-stable v0.1.0 has not been published. The complete B1 contract and intentional
-limits are recorded in
+The repository is versioned and published as stable `0.1.0`. The complete B1
+contract and intentional limits are recorded in
 `V010_SYNCHRONOUS_COMPONENT_ABI.md`.
 
 ## Target Host Profiles
@@ -335,7 +334,7 @@ separate trust and resource boundaries.
 2. Optionally establish a separate, auditable Rust, Grain, MoonBit, and Restrict
    comparison harness after the milestone gate passes. This is a non-blocking
    parallel track, not a prerequisite for B1 or v0.1.0.
-3. The B1 / v0.1.0 implementation in the release candidate completes one
+3. The stable B1 / v0.1.0 implementation completes one
    synchronous interoperability gate: Component Interface IR, recursive rich-value
    lifting/lowering, resources, once-callable closures, concrete generic
    function instances, WIT generation and rich import consumption, validated

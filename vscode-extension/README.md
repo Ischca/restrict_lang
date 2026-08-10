@@ -37,7 +37,7 @@ npm ci
 npm run compile
 npm run test:lsp
 npm run package
-code --install-extension restrict-language-0.0.1.vsix
+code --install-extension restrict-language-0.1.0.vsix
 ```
 
 For extension development, open `vscode-extension` in VS Code and press F5. The included launch configuration compiles the TypeScript and opens an Extension Development Host.

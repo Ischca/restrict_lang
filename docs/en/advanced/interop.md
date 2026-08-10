@@ -15,14 +15,12 @@ and is not Component generation.
 
 ## Versioned Interoperability Direction
 
-The ordinary v0.0.1 compatibility boundary remains scalar-only. The
-v0.1.0-rc.1 candidate implements `String`, `List`, `Array`, records,
+The ordinary v0.0.1 compatibility boundary remains scalar-only. Stable
+v0.1.0 implements `String`, `List`, `Array`, records,
 `Option`, `Result`, enums/variants, scalar-signature resources, value-capturing
 once-callables, and concrete generic function instances. It generates and
 consumes WIT, performs Canonical ABI lift/lower, validates and composes
 Components, classifies compatibility, and executes through Rust bindings.
-
-This is a release candidate; stable v0.1.0 has not been published.
 
 - v0.2.0 adds the asynchronous boundary: async component functions,
   `future`/`stream`, cancellation, and cleanup across suspension.

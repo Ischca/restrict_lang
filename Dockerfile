@@ -58,5 +58,5 @@ CMD ["restrict_lang", "--help"]
 
 # Labels
 LABEL maintainer="Restrict Language Team"
-LABEL version="0.1.0-rc.1"
+LABEL version="0.1.0"
 LABEL description="Restrict Language Compiler and Warder Package Manager for WebAssembly"

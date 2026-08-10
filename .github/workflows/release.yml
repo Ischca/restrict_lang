@@ -9,7 +9,7 @@ on:
       version:
         description: Version label used for dry-run artifact names
         required: true
-        default: v0.1.0-rc.1
+        default: v0.1.0
 
 permissions:
   contents: read

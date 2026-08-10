@@ -45,7 +45,7 @@ node scripts/smoke-lsp.mjs /absolute/path/to/restrict_lang
 
 ```bash
 npm run package
-code --install-extension restrict-language-0.0.1.vsix
+code --install-extension restrict-language-0.1.0.vsix
 ```
 
 The VSIX includes the bundled extension client, TextMate grammar, snippets, themes, and icons. `esbuild` bundles the production JavaScript dependencies into `out/extension.js`; the package deliberately does not include `node_modules` or a platform-specific Restrict compiler binary.

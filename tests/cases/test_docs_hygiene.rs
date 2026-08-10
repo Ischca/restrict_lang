@@ -891,8 +891,8 @@ fn v010_component_scope_matches_implemented_b1_and_v02_boundary() {
 
     for required in [
         "B1 implementation complete",
-        "`0.1.0-rc.1` release candidate",
-        "release candidate distinct from stable v0.1.0",
+        "stable `0.1.0`",
+        "implemented and released for\nB1",
         "ordinary v0.0.1\ncompatibility boundary remains the default scalar Core host ABI",
         "v0.1.0",
         "v0.2.0",

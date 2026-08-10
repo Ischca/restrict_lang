@@ -485,6 +485,7 @@ impl WasmCodeGen {
     /// Retain planner-validated root-private resource support functions for
     /// the generated Component adapter. Calling this without Component mode
     /// has no effect on the ordinary Core ABI.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn with_component_private_internal_exports<I, S>(mut self, functions: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -497,6 +498,7 @@ impl WasmCodeGen {
     /// Install the checked callable-capture guard for schema-v2 Component
     /// factories. v0.1 supports value captures but deliberately rejects
     /// resource/callable transfer through a closure environment.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn with_component_callable_capture_guard<FI, FS, RI, RS>(
         mut self,
         factories: FI,
@@ -516,6 +518,7 @@ impl WasmCodeGen {
 
     /// Attach the finite set of checked generic Component instances selected
     /// by schema v2. This method does not infer instances from call sites.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn with_component_generic_specializations(
         mut self,
         mut specializations: Vec<crate::component_specialization::ComponentFunctionSpecialization>,

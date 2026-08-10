@@ -35,8 +35,9 @@ native `wasmi` benchmark runner in release mode. Results are written to
 `target/benchmark-results/restrict-baseline.json`; generated Wasm artifacts are
 stored beside the report under `artifacts/`.
 
-`benchmarks/baselines/core-wasm-v0.1.0-rc.1.json` is the current reviewed
-baseline. The v0.0.1 baseline remains checked in as historical evidence, and
+`benchmarks/baselines/core-wasm-v0.1.0.json` is the current reviewed stable
+baseline. The v0.1.0-rc.1 and v0.0.1 baselines remain checked in as historical
+evidence, and
 `benchmarks/regression-policy.json` is the machine-readable policy. The gate
 requires an exact compiler/runtime/validator/compressor toolchain, workload
 sources and inputs, Wasm hashes, and memory observations. It also rejects any

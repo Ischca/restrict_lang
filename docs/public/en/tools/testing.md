@@ -1,7 +1,7 @@
 # Testing
 
 Restrict has two practical testing layers today: repository tests for compiler
-development and Warder smoke tests for user projects.
+development and executable Warder tests for user projects.
 
 ## Repository Tests
 
@@ -44,7 +44,7 @@ such as `let`, `fn`, function-first calls, stale record initializers, and
 unsupported import forms. That test is intentionally part of the docs workflow:
 examples should not drift away from the language specification.
 
-## Warder Project Smoke Tests
+## Warder Project Tests
 
 A Warder project normally contains `.rl` files under `tests/`:
 
@@ -60,19 +60,35 @@ Run:
 warder test
 ```
 
-For v0.0.1, Warder test files are type-checking smoke files. They use ordinary
-Restrict functions rather than a dedicated test declaration syntax:
+Warder uses ordinary Restrict functions rather than a dedicated test
+declaration syntax. An executable test is source-public, synchronous,
+non-generic, takes no arguments, explicitly returns `Boolean`, and has a name
+that begins with `test_` or ends with `_test`:
 
 ```restrict
-fun test_math_smoke: () -> Boolean = {
+import project.main.{increment}
+
+pub fun test_math: () -> Boolean = {
     2 + 2 == 4
 }
 
-fun test_pipeline_smoke: () -> Int32 = {
-    val value = 41;
-    value + 1
+pub fun pipeline_test: () -> Boolean = {
+    (41) increment == 42
 }
 ```
+
+`warder test` compiles each test file to WASI Preview 1 Core Wasm and executes each matching
+export in a fresh instance. `true` passes; `false`, a trap, a compilation
+error, an invalid Boolean result, or a missing export fails. A positional
+filter matches test function names:
+
+```bash
+warder test pipeline
+```
+
+During tests, the reserved `project` namespace points at the directory
+containing `package.entry` (`src/` by default), so tests can import application
+modules such as `project.main`.
 
 ## Runtime Examples
 

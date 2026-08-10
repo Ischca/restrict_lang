@@ -11,7 +11,12 @@ pub async fn publish_package(registry: Option<String>) -> Result<()> {
 
     // Build in release mode first
     print_info("Running publish preflight build...");
-    super::build::build_project(true, false, false, true, true).await?;
+    if manifest.compiler_component_contract()?.is_some() {
+        print_info(
+            "warder publish currently validates the Core Cage package profile; forcing a Core build instead of the project's Component artifact",
+        );
+    }
+    super::build::build_project(true, false, false, true, true, true).await?;
 
     // Find the built cage
     let build_dir = root.join(&manifest.build.output);

@@ -16,12 +16,22 @@ frontend over the compiler's lexer, parser, and type checker rather than a
 separate language implementation. The language specification and compiler tests
 remain the source of truth.
 
-Typical editor features can include:
+The current server implements:
 
-- document diagnostics
-- syntax-aware tokenization
-- type-checking feedback
-- project-file awareness when the editor provides workspace roots
+- live lexer, parser, type, affine-use, import, and release-surface diagnostics
+- semantic tokens, hover, and document symbols
+- completion restricted to bindings and APIs available at the cursor, including
+  import visibility, qualified enum variants, record fields, and receiver types
+- cross-file definitions and workspace references that preserve imported source
+  URIs and ranges
+- reference CodeLens links on definitions
+- inlay hints for inferred binding, return, and lambda parameter types plus OSV
+  call parameter names
+
+Completion and definition requests traverse the active file's import closure.
+References and CodeLens search `.rl` files under the Restrict workspace. Open
+documents override disk content, so navigation follows unsaved edits when the
+imported file is open.
 
 ## Local Setup
 
@@ -50,6 +60,7 @@ If the editor shows no diagnostics, check:
 - the compiler binary path is correct
 - the editor starts the server with stdio, not TCP
 - the workspace root contains the `.rl` files being edited
+- imported modules are saved under the same paths used by source imports
 - the same source parses with the CLI
 
 Use the CLI to separate editor setup problems from compiler problems:

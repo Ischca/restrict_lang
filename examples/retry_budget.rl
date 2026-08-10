@@ -8,7 +8,7 @@ fun consume_retry_budget: (max_attempts: Int32, initial_budget: Int32) -> Int32 
     (attempts < max_attempts) while {
         budget = budget - 1;
         attempts = attempts + 1
-    }
+    };
 
     budget
 }

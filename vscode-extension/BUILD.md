@@ -1,216 +1,93 @@
-# Building the Restrict Language VS Code Extension
+# Building the Restrict Language VS Code extension
 
 ## Prerequisites
 
-- Node.js 16.x or later
-- npm or yarn
-- Visual Studio Code 1.74.0 or later
-- VSCE (Visual Studio Code Extension Manager)
+- Node.js 22 or later
+- npm
+- Visual Studio Code 1.74 or later
+- A native Restrict compiler built from this repository
 
-## Installation
+The VSCE packaging command is a locked development dependency; no global `vsce` installation is needed.
 
-### Install VSCE
+## Build
 
-```bash
-npm install -g vsce
-```
-
-### Install Dependencies
+From the repository root:
 
 ```bash
+mise exec -- cargo build --bin restrict_lang
 cd vscode-extension
-npm install
+npm ci
+npm run compile
 ```
 
-## Development
+Open `vscode-extension` as the VS Code workspace and press F5 to start the included Extension Development Host configuration.
 
-### Building
+## Automated checks
 
 ```bash
-# Compile TypeScript
+# TypeScript client
 npm run compile
 
-# Watch for changes during development
-npm run watch
+# Real JSON-RPC exchange with target/debug/restrict_lang --lsp
+npm run test:lsp
+
+# Rust LSP unit and protocol-service tests (from the repository root)
+mise exec -- cargo test lsp --lib
 ```
 
-### Testing
-
-1. Open VS Code in the `vscode-extension` directory
-2. Press `F5` to launch a new Extension Development Host window
-3. Open a `.rl` file to test the extension
-4. Make changes to the source code and reload the extension window
-
-### Debugging
-
-- Use `console.log()` statements in TypeScript code
-- Check the VS Code Developer Console (Help → Toggle Developer Tools)
-- Check the Output panel for Language Server communication
-
-## Packaging
-
-### Create VSIX Package
+`scripts/smoke-lsp.mjs` initializes the real server process against a temporary two-file project and checks imported-API completion, cross-file definitions and references, definition CodeLens, inlay hints, semantic tokens, AST execution, and clean shutdown. Pass another compiler path as its first argument when needed:
 
 ```bash
-# From the vscode-extension directory
-vsce package
-
-# This creates restrict-language-0.0.1.vsix
+node scripts/smoke-lsp.mjs /absolute/path/to/restrict_lang
 ```
 
-### Install Locally
+## Package
 
 ```bash
-# Install the packaged extension
-code --install-extension restrict-language-0.0.1.vsix
+npm run package
+code --install-extension restrict-language-0.1.0.vsix
 ```
 
-## Publishing (Future)
+The VSIX includes the bundled extension client, TextMate grammar, snippets, themes, and icons. `esbuild` bundles the production JavaScript dependencies into `out/extension.js`; the package deliberately does not include `node_modules` or a platform-specific Restrict compiler binary.
 
-### Prepare for Publishing
+## Server resolution
 
-1. Update version in `package.json`
-2. Update `CHANGELOG.md`
-3. Ensure all examples and documentation are up to date
-4. Test thoroughly
+The extension starts the selected executable with `--lsp`. Resolution order is:
 
-### Publish to VS Code Marketplace
+1. `restrict.languageServerPath`
+2. `restrict.compilerPath`
+3. `target/debug/restrict_lang` or `target/release/restrict_lang` when running from this repository
+4. `restrict_lang` from `PATH`
+
+CLI fallback commands prefer `restrict.compilerPath`, then `restrict.languageServerPath`, the development build, and finally `PATH`.
+
+The extension runs in the workspace extension host so remote workspaces use the compiler installed on the remote side. It is disabled in untrusted workspaces because it starts a configured native executable.
+
+## Implemented LSP surface
+
+- `textDocument/hover`
+- `textDocument/completion`
+- `textDocument/definition`
+- `textDocument/references`
+- `textDocument/codeLens`
+- `textDocument/inlayHint`
+- `textDocument/documentSymbol`
+- `textDocument/semanticTokens/full`
+- `textDocument/publishDiagnostics`
+- `workspace/executeCommand` for compile, type check, and AST inspection
+
+Unsupported operations are not advertised. Keep the server capabilities, extension README, and protocol smoke test aligned when adding another operation.
+Definitions keep their original module URI and range in a source index separate from compiler import splicing. Reference and CodeLens requests search the Restrict workspace, while latency-sensitive completion and definition requests load only the current import closure.
+
+## Release checklist
 
 ```bash
-# Login to marketplace (one-time setup)
-vsce login your-publisher-name
-
-# Publish the extension
-vsce publish
+mise exec -- cargo test lsp --lib
+cd vscode-extension
+npm ci
+npm run compile
+npm run test:lsp
+npm run package
 ```
 
-## Language Server Integration
-
-The extension integrates with the compiler's Language Server Protocol (LSP) implementation. The LSP server runs as the main compiler in stdio mode:
-
-1. `restrict_lang` executable in PATH, or
-2. A compiler executable configured via the `restrict.languageServerPath` setting
-
-The extension starts the configured command with the `--lsp` flag.
-
-### v0.0.1 LSP Features
-
-The Language Server currently implements and advertises:
-
-- **textDocument/hover**: Type information on hover
-- **textDocument/completion**: Auto-completion
-- **textDocument/definition**: Go to definition
-- **textDocument/references**: Find all references
-- **textDocument/documentSymbol**: Document outline
-- **textDocument/semanticTokens/full**: Semantic highlighting
-- **textDocument/publishDiagnostics**: Error and warning diagnostics
-
-Rename, document formatting, workspace symbols, code actions, signature help,
-code lens, and semantic-token range requests are not advertised in v0.0.1.
-
-### LSP Server Command Line
-
-The LSP server should accept:
-
-```bash
-restrict_lang --lsp                    # Start LSP stdio server mode
-```
-
-## File Structure
-
-```
-vscode-extension/
-├── src/
-│   ├── extension.ts          # Main extension entry point
-│   └── languageServer.ts     # LSP client implementation
-├── syntaxes/
-│   └── restrict.tmLanguage.json  # TextMate grammar
-├── themes/
-│   ├── restrict-dark.json    # Dark theme
-│   └── restrict-light.json   # Light theme
-├── snippets/
-│   └── restrict.json         # Code snippets
-├── examples/
-│   └── hello.rl             # Example file
-├── package.json             # Extension manifest
-├── tsconfig.json            # TypeScript configuration
-├── language-configuration.json  # Language configuration
-├── README.md                # Extension documentation
-├── CHANGELOG.md             # Version history
-└── .vscodeignore           # Files to exclude from package
-```
-
-## Configuration
-
-The extension can be configured through VS Code settings:
-
-```json
-{
-    "restrict.compilerPath": "restrict_lang",
-    "restrict.languageServerPath": "restrict_lang",
-    "restrict.enableTypeChecking": true,
-    "restrict.enableLSP": true,
-    "restrict.showWarnings": true
-}
-```
-
-## Troubleshooting
-
-### Extension Not Loading
-
-1. Check VS Code version compatibility
-2. Check TypeScript compilation errors
-3. Look at VS Code's Developer Console for errors
-
-### Language Server Not Starting
-
-1. Verify the compiler executable exists and is executable
-2. Check the `restrict.languageServerPath` setting
-3. Look at the "Restrict Language Server" output channel
-
-### Syntax Highlighting Issues
-
-1. Verify file has `.rl` extension
-2. Check that language mode is set to "Restrict Language"
-3. Reload VS Code window
-
-### IntelliSense Not Working
-
-1. Ensure LSP server is running (check output channel)
-2. Verify document is saved (LSP requires saved documents)
-3. Check for syntax errors that might prevent analysis
-
-## Testing Checklist
-
-Before releasing:
-
-- [ ] Syntax highlighting works for all language constructs
-- [ ] Code snippets insert correctly
-- [ ] Compiler integration (compile, type check, show AST) works
-- [ ] v0.0.1 LSP features work (hover, completion, definitions, references, document symbols, diagnostics)
-- [ ] Themes display correctly
-- [ ] Auto-completion triggers appropriately
-- [ ] Error diagnostics show up correctly
-- [ ] Extension loads without errors
-- [ ] All commands are accessible via Command Palette
-- [ ] Keyboard shortcuts work as expected
-
-## Performance Considerations
-
-- LSP communication should be efficient (avoid frequent requests)
-- Syntax highlighting should not cause lag on large files
-- Auto-completion should be responsive
-- Type checking should not block the UI
-
-## Future Enhancements
-
-- Inlay hints for type annotations
-- Rename support
-- Document formatting
-- Code actions and quick fixes
-- Signature help
-- Workspace symbol search
-- Code lens for references count
-- Integrated debugging support
-- Project management features
-- Build task integration
+Then install the generated VSIX in a clean Extension Development Host and verify diagnostics, scoped completion, cross-file definitions and references, reference CodeLens, inlay hints, hover, outline symbols, semantic highlighting, compile output, type checking, and AST inspection on representative `.rl` files.

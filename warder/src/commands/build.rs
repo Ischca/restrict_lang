@@ -1,4 +1,6 @@
-use super::{find_project_root, load_manifest, print_info, print_success, print_warning};
+use super::{
+    find_project_root, load_manifest, print_error, print_info, print_success, print_warning,
+};
 use crate::cage::Cage;
 use crate::component_artifact::{
     validate_staged_component_artifacts, write_staged_file, write_staged_manifest,
@@ -8,11 +10,12 @@ use crate::dependencies::{
     resolve_local_dependencies, snapshot_local_dependencies, validate_local_dependency_layout,
 };
 use crate::manifest::{
-    COMPONENT_SCHEMA_VERSION, COMPONENT_SCHEMA_VERSION_V2, WARDER_LOCK_FILENAME,
+    Manifest, COMPONENT_SCHEMA_VERSION, COMPONENT_SCHEMA_VERSION_V2, WARDER_LOCK_FILENAME,
     WARDER_MANIFEST_FILENAME,
 };
 use anyhow::{bail, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
+use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -39,6 +42,20 @@ pub async fn build_project(
     release: bool,
     watch: bool,
     component: bool,
+    core: bool,
+    verify: bool,
+    repro: bool,
+) -> Result<()> {
+    if watch {
+        return watch_project(release, component, core, verify, repro).await;
+    }
+    build_project_once(release, component, core, verify, repro).await
+}
+
+async fn build_project_once(
+    release: bool,
+    component: bool,
+    core: bool,
     verify: bool,
     repro: bool,
 ) -> Result<()> {
@@ -53,14 +70,18 @@ pub async fn build_project(
         Some(COMPONENT_SCHEMA_VERSION_V2) | None => None,
         Some(schema) => bail!("Unsupported component schema {schema}"),
     };
+    if component && core {
+        bail!("warder build cannot select both --component and --core");
+    }
     if component && component_contract.is_none() {
         bail!(
             "warder build --component requires an explicit [component] selection in {}",
             WARDER_MANIFEST_FILENAME
         );
     }
-    if component && watch {
-        bail!("warder build --component does not support --watch");
+    let build_component = component || (!core && component_contract.is_some());
+    if build_component && !component && !core {
+        print_info("Using the [component] selection from warder.toml; pass --core to force a Core Wasm build");
     }
     let root = std::fs::canonicalize(&root)
         .with_context(|| format!("Failed to canonicalize project root {}", root.display()))?;
@@ -72,13 +93,6 @@ pub async fn build_project(
         .parent()
         .context("package.entry must have a source directory")?
         .to_path_buf();
-
-    if watch {
-        print_warning(
-            "Watch mode is experimental and out-of-scope for v0.0.1; no watcher was started",
-        );
-        return Ok(());
-    }
 
     let _build_lock = acquire_project_build_lock(&root)?;
 
@@ -180,7 +194,7 @@ pub async fn build_project(
         );
     }
 
-    let published_build = if component {
+    let published_build = if build_component {
         progress.set_message("Compiling and validating Component...");
         let source =
             std::fs::read_to_string(&application_snapshot.entry_path).with_context(|| {
@@ -409,6 +423,154 @@ pub async fn build_project(
     }
 
     Ok(())
+}
+
+async fn watch_project(
+    release: bool,
+    component: bool,
+    core: bool,
+    verify: bool,
+    repro: bool,
+) -> Result<()> {
+    let root = std::fs::canonicalize(find_project_root()?)
+        .context("Failed to canonicalize project root for watch mode")?;
+    print_info(&format!(
+        "Watching {} and its local dependencies; press Ctrl-C to stop",
+        root.display()
+    ));
+
+    if let Err(error) = build_project_once(release, component, core, verify, repro).await {
+        print_error(&format!("Initial watch build failed: {error:#}"));
+    }
+
+    let (mut watcher, mut events) = create_build_watcher(&root)?;
+    loop {
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => {
+                signal.context("Failed to listen for Ctrl-C")?;
+                print_info("Stopped watch mode");
+                return Ok(());
+            }
+            event = events.recv() => {
+                let Some(event) = event else {
+                    bail!("Build watcher stopped unexpectedly");
+                };
+                match event {
+                    Ok(event) if event_affects_build(&event) => {}
+                    Ok(_) => continue,
+                    Err(error) => {
+                        print_warning(&format!("Watch event error: {error}"));
+                        continue;
+                    }
+                }
+
+                // Editors often publish one save as several rename/write events.
+                // Coalesce the burst before rebuilding.
+                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                while let Ok(event) = events.try_recv() {
+                    if let Err(error) = event {
+                        print_warning(&format!("Watch event error: {error}"));
+                    }
+                }
+
+                loop {
+                    print_info("Source change detected; rebuilding...");
+                    match build_project_once(release, component, core, verify, repro).await {
+                        Ok(()) => {}
+                        Err(error) => print_error(&format!("Watch rebuild failed: {error:#}")),
+                    }
+
+                    // Refresh dependency roots even after a compile failure. A
+                    // valid manifest may have introduced a new local package
+                    // whose source must be able to trigger the next retry.
+                    let refreshed = create_build_watcher(&root);
+                    let changed_during_build = take_pending_build_change(&mut events);
+                    match refreshed {
+                        Ok((new_watcher, new_events)) => {
+                            watcher = new_watcher;
+                            events = new_events;
+                        }
+                        Err(error) => print_warning(&format!(
+                            "Dependency watch roots could not be refreshed: {error:#}"
+                        )),
+                    }
+                    let _ = &watcher;
+
+                    if !changed_during_build {
+                        break;
+                    }
+                    print_info("Another source change arrived during the build; retrying...");
+                }
+            }
+        }
+    }
+}
+
+fn take_pending_build_change(
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<notify::Result<Event>>,
+) -> bool {
+    let mut changed = false;
+    while let Ok(event) = events.try_recv() {
+        match event {
+            Ok(event) => changed |= event_affects_build(&event),
+            Err(error) => print_warning(&format!("Watch event error: {error}")),
+        }
+    }
+    changed
+}
+
+type BuildWatcher = (
+    Box<dyn Watcher + Send>,
+    tokio::sync::mpsc::UnboundedReceiver<notify::Result<Event>>,
+);
+
+fn create_build_watcher(project_root: &Path) -> Result<BuildWatcher> {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let handler = move |event| {
+        let _ = sender.send(event);
+    };
+    #[cfg(not(test))]
+    let mut watcher: Box<dyn Watcher + Send> = Box::new(
+        notify::recommended_watcher(handler).context("Failed to create filesystem watcher")?,
+    );
+    // Native event backends can intentionally coalesce or defer notifications
+    // under test sandboxes. Polling keeps this contract test deterministic;
+    // release builds continue to use the platform-recommended backend above.
+    #[cfg(test)]
+    let mut watcher: Box<dyn Watcher + Send> = Box::new(
+        notify::PollWatcher::new(
+            handler,
+            notify::Config::default().with_poll_interval(std::time::Duration::from_millis(25)),
+        )
+        .context("Failed to create filesystem watcher")?,
+    );
+    watcher
+        .watch(project_root, RecursiveMode::Recursive)
+        .with_context(|| format!("Failed to watch project root {}", project_root.display()))?;
+
+    if let Ok(manifest) = Manifest::load(&project_root.join(WARDER_MANIFEST_FILENAME)) {
+        if let Ok((dependencies, _)) = resolve_local_dependencies(project_root, &manifest) {
+            for dependency in dependencies {
+                watcher
+                    .watch(&dependency.source_dir, RecursiveMode::Recursive)
+                    .with_context(|| {
+                        format!(
+                            "Failed to watch local dependency '{}' at {}",
+                            dependency.alias,
+                            dependency.source_dir.display()
+                        )
+                    })?;
+            }
+        }
+    }
+    Ok((watcher, receiver))
+}
+
+fn event_affects_build(event: &Event) -> bool {
+    event.paths.iter().any(|path| {
+        path.file_name().and_then(|name| name.to_str()) == Some(WARDER_MANIFEST_FILENAME)
+            || path.extension().and_then(|extension| extension.to_str()) == Some("rl")
+    })
 }
 
 struct ProjectBuildLock {
@@ -1397,6 +1559,61 @@ mod tests {
     #[test]
     fn package_output_identity_accepts_portable_names_and_semver() {
         validate_package_output_identity("local-utils", "1.2.3-beta.1+build.7").unwrap();
+    }
+
+    #[test]
+    fn watch_events_only_rebuild_for_manifest_or_restrict_sources() {
+        let restrict_source = Event {
+            paths: vec![PathBuf::from("src/main.rl")],
+            ..Event::default()
+        };
+        let manifest = Event {
+            paths: vec![PathBuf::from(WARDER_MANIFEST_FILENAME)],
+            ..Event::default()
+        };
+        let generated_wasm = Event {
+            paths: vec![PathBuf::from("dist/app.wasm")],
+            ..Event::default()
+        };
+
+        assert!(event_affects_build(&restrict_source));
+        assert!(event_affects_build(&manifest));
+        assert!(!event_affects_build(&generated_wasm));
+    }
+
+    #[test]
+    fn build_watcher_observes_restrict_source_changes() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let source = root.join("main.rl");
+        std::fs::write(&source, "fun main: () -> Int32 = { 0 }\n").unwrap();
+        let (_watcher, mut events) = create_build_watcher(&root).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut next_write = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        let mut revision = 0;
+        loop {
+            while let Ok(event) = events.try_recv() {
+                if matches!(event, Ok(event) if event_affects_build(&event)) {
+                    return;
+                }
+            }
+            let now = std::time::Instant::now();
+            assert!(
+                now < deadline,
+                "filesystem watcher did not report the Restrict source change"
+            );
+            if now >= next_write {
+                revision += 1;
+                std::fs::write(
+                    &source,
+                    format!("fun main: () -> Int32 = {{ {revision} }}\n"),
+                )
+                .unwrap();
+                next_write = now + std::time::Duration::from_millis(200);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
     }
 
     #[test]

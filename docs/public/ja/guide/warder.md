@@ -1,6 +1,6 @@
 # Warderパッケージマネージャー
 
-WarderはRestrict Languageのプロジェクト作成、依存関係管理、ビルド、実行、テストをまとめるツールです。v0.0.1で公開対象として扱うコマンドは、`new`、`init`、`add`、`remove`、`build`、`run`、`test`、`publish`、`wrap`、`unwrap`、`doctor`です。
+WarderはRestrict Languageのプロジェクト作成、依存関係管理、ビルド、実行、テストをまとめるツールです。v0.0.1で公開対象として扱うコマンドは、`new`、`init`、`add`、`remove`、`build`、`run`、`test`、`publish`、`wrap`、`unwrap`、`doctor`です。すべてのサブコマンドでグローバルオプション`--project <dir>`を使えます。たとえば`warder build --project ./services/checkout`は、呼び出し元の作業ディレクトリを変更せずに対象プロジェクトをビルドします。
 
 ## 主要概念
 
@@ -69,7 +69,7 @@ local_utils = { path = "../local-utils" }
 
 ## 依存関係の管理
 
-v0.0.1でビルドできる依存関係は、直接参照するローカルパス依存関係だけです。`[dependencies]`のキーがRestrictソースで使う名前空間になります。この別名は予約語ではない単一のRestrict識別子である必要があります。`local-utils`は暗黙に変換されないため、`local_utils`のように記述してください。`std`は予約済みです。
+v0.0.1でビルドできる依存関係は、直接参照するローカルパス依存関係だけです。`[dependencies]`のキーがRestrictソースで使う名前空間になります。この別名は予約語ではない単一のRestrict識別子である必要があります。`local-utils`は暗黙に変換されないため、`local_utils`のように記述してください。`std`と`project`は予約済みで、`project`はテストからルートpackageのsourceをimportするために使います。
 
 ローカル依存関係を追加します：
 
@@ -122,7 +122,7 @@ warder remove local_utils
 warder build
 ```
 
-既定の成果物は`dist/<name>-<version>.wat`、`dist/<name>-<version>.wasm`、`dist/<name>-<version>.rgc`です。
+`[component]`がないプロジェクトの既定成果物は`dist/<name>-<version>.wat`、`dist/<name>-<version>.wasm`、`dist/<name>-<version>.rgc`です。
 
 `build`は次のフラグを受け付けます：
 
@@ -130,11 +130,12 @@ warder build
 warder build --release
 warder build --watch
 warder build --component
+warder build --core
 warder build --verify
 warder build --repro
 ```
 
-v0.0.1では、`--release`の最適化、ウォッチモード、署名検証、再現可能ビルドは実験的な範囲です。`--component`はルート`warder.toml`にあるschema-v1またはschema-v2の明示的な`[component]`選択を検証し、WIT生成、Canonical ABI adapter生成、Component化、検証を行います。現行実装では`pub`と`export`のどちらも単独ではComponent ABIを公開せず、source-publicと`[component]`の二重gateが必要です。`pub`をpackage公開、`export`をComponent公開の意図として分離するsource-first方式は将来のeditionの計画です。ターゲットはルート設定の`[build]`で指定し、ビルドコマンド側のターゲット指定フラグはありません。
+`--watch`は初回ビルド後、ルート`warder.toml`、プロジェクトの`.rl`、直接ローカル依存関係の`.rl`を監視してフルビルドをやり直します。incremental compilerやnpm bundlerではありません。`[component]`があるプロジェクトでは、通常の`warder build`がComponent成果物を生成します。`--component`はComponent選択が存在することを明示的に要求し、`--core`はCore Wasm/Cageを強制します。現行実装では`pub`と`export`のどちらも単独ではComponent ABIを公開せず、source-publicと`[component]`の二重gateが必要です。`pub`をpackage公開、`export`をComponent公開の意図として分離するsource-first方式は将来のeditionの計画です。ターゲットはルート設定の`[build]`で指定します。
 
 Componentビルドは、ロック更新とともに次の一式を復旧可能なトランザクションで公開します：
 
@@ -158,7 +159,7 @@ warder run
 warder run -- arg1 arg2
 ```
 
-`warder run`は先にビルドを実行し、生成されたWASMを`wasmtime`または`wasmer`で実行します。
+`warder run`は先にビルドを実行し、生成されたWASMを`wasmtime`または`wasmer`で実行します。現時点ではCore Wasm用の実行コマンドなので、`[component]`がある場合はCoreビルドを強制することを表示します。
 
 ## テスト
 
@@ -166,10 +167,20 @@ warder run -- arg1 arg2
 warder test
 ```
 
-v0.0.1には専用のテスト宣言構文がないため、`warder test`は`tests/`以下の`.rl`ファイルを型チェック用のスモークテストとして扱います。`warder build`と同じ直接ローカル依存関係のルートを使用するため、テストからも同じパッケージをインポートできます。コンパイラのフォールバック解決はWarderを起動したサブディレクトリではなくプロジェクトルートに固定されます。ファイル名で絞り込む場合：
+`warder test`は`tests/`以下から、名前が`test_`で始まるか`_test`で終わるsource-public関数を探します。各関数は同期・非generic・引数なしで、戻り型を明示的に`Boolean`とします：
+
+```restrict
+import project.main.{calculate_bonus}
+
+pub fun test_bonus: () -> Boolean = {
+    (21, 4) calculate_bonus == 25
+}
+```
+
+WarderはテストファイルをWASI Preview 1 Core Wasmへコンパイルし、各exportを独立したinstanceで実行します。`true`なら成功し、`false`、trap、コンパイルエラー、export欠落は失敗します。`project`は`package.entry`を含むsource directory（既定では`src/`）へ対応し、`warder build`と同じ直接ローカル依存関係も利用できます。filterはファイル名ではなくテスト関数名に適用されます：
 
 ```bash
-warder test main
+warder test bonus
 ```
 
 ## 公開
@@ -179,7 +190,7 @@ warder publish
 warder publish --registry https://example.com
 ```
 
-v0.0.1の`publish`は事前ビルドとメタデータ検証を行います。レジストリへのアップロードは実験的で、このリリース範囲では実行されません。ローカル評価には生成された`.rgc`を使用します。
+v0.0.1の`publish`はCore Cageの事前ビルドとメタデータ検証を行います。`[component]`がある場合はCoreビルドを強制することを表示します。レジストリへのアップロードは実験的で、このリリース範囲では実行されません。
 
 ## 外部WASMのCage化
 
@@ -217,9 +228,9 @@ warder doctor
 | `warder init` | 現在のディレクトリを初期化 |
 | `warder add <alias> --path <dir>` | 直接ローカル依存関係を追加 |
 | `warder remove <name>` | 依存関係を削除 |
-| `warder build` | WAT、WASM、Cageを生成 |
+| `warder build` | プロジェクト設定に従ってCoreまたはComponent成果物を生成 |
 | `warder run` | ビルドして実行 |
-| `warder test [filter]` | `tests/`以下を型チェック |
+| `warder test [filter]` | `tests/`以下のBooleanテストを実行 |
 | `warder publish` | 事前ビルドとメタデータ検証 |
 | `warder wrap <wasm>` | 外部WASMをCage化 |
 | `warder unwrap <cage>` | Cageを展開 |

@@ -113,7 +113,7 @@ fun main: (flag: Boolean) -> Result<Int32, String> = {
         (42) Result::Ok
     } else {
         ("missing") Result::Err
-    }
+    };
     result
 }
 "#;

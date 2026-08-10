@@ -16,13 +16,22 @@ The v0.0.1 CLI exposes these subcommands:
 | `warder remove <name>` | Remove a dependency |
 | `warder build` | Build the package |
 | `warder run [args...]` | Build, then run the generated WASM |
-| `warder test [filter]` | Type-check `.rl` files under `tests/` |
+| `warder test [filter]` | Compile and execute Boolean tests under `tests/` |
 | `warder publish` | Run publish preflight checks |
 | `warder wrap <wasm>` | Wrap a WASM file into an experimental cage |
 | `warder unwrap <cage>` | Extract a cage |
 | `warder doctor` | Check project structure and tools |
 
 The table above is the complete v0.0.1 subcommand surface.
+
+Every subcommand accepts the global `--project <dir>` option. This makes it
+possible to build or test a project from a script without changing the caller's
+working directory:
+
+```bash
+warder build --project ./services/checkout
+warder test --project ./services/checkout
+```
 
 ## Projects
 
@@ -93,7 +102,8 @@ The dependency-table key is the source namespace used by `import`. In the
 current v0.0.1 buildable slice, every dependency must be a **direct local path
 dependency**. The alias must be one non-keyword Restrict identifier, so use
 `local_utils` rather than `local-utils`; Warder never converts hyphens
-implicitly. The alias `std` is reserved.
+implicitly. The aliases `std` and `project` are reserved; Warder maps
+`project` to the root package source directory while compiling tests.
 
 Registry versions, Git repositories, foreign WASM dependencies, and
 dependencies declared by a local dependency are not resolved yet. `warder
@@ -175,7 +185,8 @@ Build the project:
 warder build
 ```
 
-For a package named `my-project` at version `0.1.0`, the default outputs are:
+For a package named `my-project` at version `0.1.0` with no `[component]`
+selection, the default outputs are:
 
 ```text
 dist/my-project-0.1.0.wat
@@ -188,12 +199,21 @@ the root configuration's `build.output` field.
 
 The build target is read from `warder.toml`, not from a command-line flag.
 
+Use watch mode during local iteration:
+
+```bash
+warder build --watch
+```
+
+Warder performs an initial build, then rebuilds when `warder.toml`, project
+`.rl` files, or `.rl` files in a configured direct local dependency change.
+This is a full rebuild watcher, not an incremental compiler or an npm bundler.
+
 ### Component build
 
-An explicit Component build requires a schema-v1 or schema-v2 `[component]`
-selection in the root `warder.toml`. Ordinary `pub` and `export` declarations
-are not published implicitly. For example, schema v1 selects a public root
-function:
+A Component project requires a schema-v1 or schema-v2 `[component]` selection
+in the root `warder.toml`. Ordinary `pub` and `export` declarations are not
+published implicitly. For example, schema v1 selects a public root function:
 
 ```toml
 [component]
@@ -208,10 +228,14 @@ source = "run"
 name = "run"
 ```
 
-Build it with:
+Once `[component]` is present, plain `warder build` publishes the Component
+artifact set. `--component` is an explicit assertion that the project must have
+a Component selection, while `--core` overrides the project default:
 
 ```bash
+warder build
 warder build --component
+warder build --core
 ```
 
 Warder validates and transactionally publishes this set together with the lock
@@ -244,20 +268,36 @@ warder run -- arg1 arg2
 ```
 
 `warder run` builds first, then looks for the generated
-`dist/<name>-<version>.wasm`.
+`dist/<name>-<version>.wasm`. It is currently a Core Wasm program runner. In a
+Component project it reports that it is forcing a Core build; Component
+execution needs an explicit Component host.
 
 Run tests:
 
 ```bash
 warder test
-warder test main
+warder test bonus
 ```
 
-In v0.0.1, `warder test` type-checks `.rl` files under `tests/`. It resolves the
-same direct-local dependency roots as `warder build`, so test files can use the
-same package imports. Compiler fallback resolution is anchored at the project
-root, independent of the directory from which Warder was invoked. There is no
-dedicated test declaration syntax yet.
+Warder discovers source-public functions whose names begin with `test_` or end
+with `_test`. Each test must be synchronous, non-generic, take no arguments,
+and explicitly return `Boolean`:
+
+```restrict
+import project.main.{calculate_bonus}
+
+pub fun test_bonus: () -> Boolean = {
+    (21, 4) calculate_bonus == 25
+}
+```
+
+Warder compiles each test file to WASI Preview 1 Core Wasm and executes every matching export
+in an isolated Wasm instance. `true` passes; `false`, a trap, a compilation
+error, or a missing export fails. The optional filter matches function names.
+Tests resolve the same direct-local dependencies as `warder build`. This is a
+convention over ordinary functions, not a dedicated test declaration syntax.
+The reserved `project` namespace maps to the directory containing
+`package.entry`, which is `src/` by default.
 
 ## Publish Preflight
 
@@ -268,7 +308,9 @@ warder publish --registry https://example.com/registry
 
 For v0.0.1, `warder publish` performs a release-style preflight build and
 metadata validation. Registry upload, authentication, and signing remain
-experimental and no package is uploaded.
+experimental and no package is uploaded. This preflight currently validates
+the Core Cage profile and reports when it forces a Core build for a Component
+project.
 
 ## Cage Commands
 

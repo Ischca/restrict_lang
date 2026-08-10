@@ -205,6 +205,15 @@
         ],
         "description": "Array binding with expected type"
     },
+    "Anonymous Exact-Once Scope": {
+        "prefix": "scope",
+        "body": [
+            "${1:expression} { |${2:value}|",
+            "\t$0",
+            "}"
+        ],
+        "description": "Apply an exact-once unary scope to a completed value"
+    },
     "Record Spread Pattern": {
         "prefix": "spreadmatch",
         "body": [

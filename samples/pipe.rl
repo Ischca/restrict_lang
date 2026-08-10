@@ -19,7 +19,7 @@ fun main: () -> Int32 = {
     val a = 5 |> double       // => 10
 
     // Chaining with pipes: read left-to-right
-    val b = 10 |> double |> add_one  // 10 -> 20 -> 21
+    val b = 10 |> double |> add_one; // 10 -> 20 -> 21
 
     // Pipes compose naturally into a pipeline
     b + (5 |> double |> double)  // => 41

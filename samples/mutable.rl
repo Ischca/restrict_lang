@@ -10,6 +10,6 @@ fun main: () -> Int32 = {
     (i <= 20) while {
         total = total + i;
         i = i + 1
-    }
+    };
     total
 }

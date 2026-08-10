@@ -7,6 +7,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - No changes yet.
 
+## [0.1.0] - 2026-08-10
+
+### Language and compiler
+
+- Complete left-associative composition after finished blocks, matches, and
+  other values through direct OSV calls, pipes, and anonymous scopes while
+  retaining `;` as the explicit boundary before a callable-shaped expression.
+- Improve parse and type diagnostics with source lines, UTF-8-correct columns,
+  carets, and actionable non-callable-verb guidance.
+
+### Component interoperability
+
+- Promote the synchronous B1 Component contract validated in v0.1.0-rc.1 to
+  stable v0.1.0 without widening it to async or full WASI 0.2.
+- Keep the Rust-only producer/consumer conformance gate, Canonical ABI
+  lift/lower, normalized WIT, validated packaging, composition, resource
+  lifecycle, and compatibility classification as release requirements.
+
+### Warder and editor tooling
+
+- Make a root `[component]` selection the default `warder build` artifact,
+  retain `--component` as an assertion, and add `--core` as the explicit Core
+  Wasm override.
+- Implement source and local-dependency watch builds and execute public
+  zero-argument Boolean Warder tests as isolated Wasm instances.
+- Expand the language server with scoped completion, cross-file definitions
+  and references, semantic tokens, CodeLens, inlay hints, and LSP-backed
+  compiler commands.
+- Release the VS Code extension source as 0.1.0 with a bundled client,
+  reproducible VSIX packaging, safe CLI fallback, and a real-process LSP smoke
+  test. Marketplace publication remains separate from this GitHub release.
+- Record a stable v0.1.0 deterministic Core Wasm benchmark baseline while
+  preserving the RC and v0.0.1 baselines as historical evidence.
+
 ## [0.1.0-rc.1] - 2026-08-09
 
 ### Component interoperability
@@ -85,6 +119,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Warder registry publishing performs local validation only and uploads nothing
 - Homebrew and VS Code Marketplace distribution are not part of v0.0.1
 
-[Unreleased]: https://github.com/Ischca/restrict_lang/compare/v0.1.0-rc.1...HEAD
+[Unreleased]: https://github.com/Ischca/restrict_lang/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Ischca/restrict_lang/compare/v0.1.0-rc.1...v0.1.0
 [0.1.0-rc.1]: https://github.com/Ischca/restrict_lang/compare/v0.0.1...v0.1.0-rc.1
 [0.0.1]: https://github.com/Ischca/restrict_lang/releases/tag/v0.0.1

@@ -45,7 +45,7 @@ export const examples = [
         "file": "scoped_collections.rl",
         "kind": "run",
         "expectedOutput": "43\n",
-        "source": "// A verb can open a typed scope; the complete clause feeds the next value flow.\nfun main: () = {\n    // A lambda binder names the scoped value without a separate local declaration.\n    val shifted = [20, 21] map { |value|\n        value + 1\n    }\n    ((shifted, 0) fold { |total, value|\n        total + value\n    }) println\n}\n"
+        "source": "// A verb can open a typed scope; the complete clause feeds the next value flow.\nfun main: () = {\n    // A lambda binder names the scoped value without a separate local declaration.\n    val shifted = [20, 21] map { |value|\n        value + 1\n    };\n    ((shifted, 0) fold { |total, value|\n        total + value\n    }) println\n}\n"
     },
     {
         "id": "records",

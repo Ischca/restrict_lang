@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "restrict_lang"
-version = "0.1.0-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "colored",
@@ -3487,7 +3487,7 @@ dependencies = [
 
 [[package]]
 name = "warder"
-version = "0.1.0-rc.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3495,6 +3495,7 @@ dependencies = [
  "colored",
  "hex",
  "indicatif",
+ "notify",
  "oci-client",
  "predicates",
  "reqwest 0.12.28",
@@ -3508,6 +3509,7 @@ dependencies = [
  "toml",
  "url",
  "walkdir",
+ "wasmi",
  "wasmparser 0.252.0",
  "wat",
  "which",

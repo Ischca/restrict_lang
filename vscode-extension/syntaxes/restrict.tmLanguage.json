@@ -25,6 +25,9 @@
             "include": "#functions"
         },
         {
+            "include": "#qualifiedVariants"
+        },
+        {
             "include": "#types"
         },
         {
@@ -125,8 +128,8 @@
                     "match": "\\(\\)"
                 },
                 {
-                    "name": "constant.language.option.restrict",
-                    "match": "\\b(Some|None)\\b"
+                    "name": "constant.other.enum-member.restrict",
+                    "match": "\\b(Some|None|Ok|Err)\\b"
                 }
             ]
         },
@@ -155,6 +158,10 @@
                 {
                     "name": "keyword.operator.arrow.restrict",
                     "match": "=>|->"
+                },
+                {
+                    "name": "punctuation.accessor.namespace.restrict",
+                    "match": "::"
                 },
                 {
                     "name": "keyword.operator.comparison.restrict",
@@ -188,6 +195,25 @@
                 {
                     "name": "entity.name.function.call.restrict",
                     "match": "(?<=\\|>\\s)\\w+|(?<=\\)\\s)\\w+"
+                }
+            ]
+        },
+        "qualifiedVariants": {
+            "patterns": [
+                {
+                    "name": "meta.path.variant.restrict",
+                    "match": "\\b([A-Z]\\w*)(::)([A-Z]\\w*)\\b",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.type.restrict"
+                        },
+                        "2": {
+                            "name": "punctuation.accessor.namespace.restrict"
+                        },
+                        "3": {
+                            "name": "constant.other.enum-member.restrict"
+                        }
+                    }
                 }
             ]
         },

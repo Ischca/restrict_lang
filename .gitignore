@@ -10,6 +10,11 @@ output.txt
 .vscode/
 .idea/
 
+# Keep the VS Code extension's development-host configuration.
+!/vscode-extension/.vscode/
+!/vscode-extension/.vscode/launch.json
+!/vscode-extension/.vscode/tasks.json
+
 # OS files
 .DS_Store
 

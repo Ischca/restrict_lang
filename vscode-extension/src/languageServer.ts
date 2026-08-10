@@ -1,212 +1,189 @@
-import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, ErrorAction, CloseAction, ErrorHandlerResult, CloseHandlerResult, Message } from 'vscode-languageclient/node';
+import * as vscode from 'vscode';
+import {
+    CloseAction,
+    CloseHandlerResult,
+    ErrorAction,
+    ErrorHandlerResult,
+    LanguageClient,
+    LanguageClientOptions,
+    Message,
+    ServerOptions,
+    State
+} from 'vscode-languageclient/node';
 
-let client: LanguageClient;
+let client: LanguageClient | undefined;
+let clientReady = false;
+let outputChannel: vscode.OutputChannel | undefined;
+let fileWatcher: vscode.FileSystemWatcher | undefined;
 
-function getServerCommand(config: vscode.WorkspaceConfiguration): string {
+function executableName(): string {
+    return process.platform === 'win32' ? 'restrict_lang.exe' : 'restrict_lang';
+}
+
+function isPath(command: string): boolean {
+    return path.isAbsolute(command) || command.includes('/') || command.includes('\\');
+}
+
+function developmentServerPath(context: vscode.ExtensionContext): string | undefined {
+    const repositoryRoot = path.resolve(context.extensionPath, '..');
+    if (!fs.existsSync(path.join(repositoryRoot, 'Cargo.toml'))) {
+        return undefined;
+    }
+
+    const executable = executableName();
+    const candidates = [
+        path.join(repositoryRoot, 'target', 'debug', executable),
+        path.join(repositoryRoot, 'target', 'release', executable)
+    ];
+    return candidates.find(candidate => fs.existsSync(candidate));
+}
+
+export function resolveRestrictCommand(
+    context: vscode.ExtensionContext,
+    preferLanguageServerPath: boolean
+): string {
+    const config = vscode.workspace.getConfiguration('restrict');
     const languageServerPath = config.get<string>('languageServerPath', '').trim();
+    const compilerPath = config.get<string>('compilerPath', '').trim();
+
+    if (preferLanguageServerPath && languageServerPath) {
+        return languageServerPath;
+    }
+    if (compilerPath) {
+        return compilerPath;
+    }
     if (languageServerPath) {
         return languageServerPath;
     }
 
-    const compilerPath = config.get<string>('compilerPath', '').trim();
-    return compilerPath || 'restrict_lang';
+    return developmentServerPath(context) ?? 'restrict_lang';
 }
 
-function shouldCheckLocalPath(command: string): boolean {
-    return path.isAbsolute(command) || command.includes('/') || command.includes('\\');
+export function isLanguageServerReady(): boolean {
+    return clientReady;
 }
 
-export function activateLanguageServer(context: vscode.ExtensionContext) {
-    // Check if LSP is enabled in configuration
+export async function activateLanguageServer(context: vscode.ExtensionContext): Promise<boolean> {
     const config = vscode.workspace.getConfiguration('restrict');
-    const enableLSP = config.get('enableLSP', true);
-    
-    if (!enableLSP) {
-        console.log('Language Server Protocol is disabled in configuration');
-        return;
+    if (!config.get<boolean>('enableLSP', true)) {
+        return false;
+    }
+    if (clientReady) {
+        return true;
     }
 
-    const serverCommand = getServerCommand(config);
-
-    // Check configured filesystem paths, but allow bare commands to resolve from PATH.
-    if (shouldCheckLocalPath(serverCommand) && !fs.existsSync(serverCommand)) {
-        console.warn(`Language server binary not found at: ${serverCommand}`);
-        vscode.window.showWarningMessage(`Restrict Language Server not found at ${serverCommand}. LSP features will be unavailable.`);
-        return;
+    const serverCommand = resolveRestrictCommand(context, true);
+    if (isPath(serverCommand) && !fs.existsSync(serverCommand)) {
+        vscode.window.showWarningMessage(
+            `Restrict language server was not found at ${serverCommand}. ` +
+            'Set restrict.languageServerPath or build the compiler.'
+        );
+        return false;
     }
 
-    // Server options - how to start the language server
+    if (!outputChannel) {
+        outputChannel = vscode.window.createOutputChannel('Restrict Language Server');
+        context.subscriptions.push(outputChannel);
+    }
+    fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.rl');
+
+    const workspaceDirectory = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const serverOptions: ServerOptions = {
         command: serverCommand,
         args: ['--lsp'],
         options: {
-            env: {
-                ...process.env,
-                RUST_LOG: 'debug' // Enable debug logging for development
-            }
+            cwd: workspaceDirectory,
+            env: process.env
         }
     };
 
-    // Client options - language client configuration
     const clientOptions: LanguageClientOptions = {
-        // Register the server for Restrict Language documents
         documentSelector: [
             { scheme: 'file', language: 'restrict' },
             { scheme: 'untitled', language: 'restrict' }
         ],
-        
         synchronize: {
-            // Notify the server about file changes to .rl files in the workspace
-            fileEvents: vscode.workspace.createFileSystemWatcher('**/*.rl')
+            fileEvents: fileWatcher
         },
-
-        // Output channel for LSP communication debugging
-        outputChannel: vscode.window.createOutputChannel('Restrict Language Server'),
-        
-        // Disable automatic command registration to avoid conflicts
-        initializationOptions: {
-            registerCommands: false
-        },
-
-
-        // Error handling
+        outputChannel,
         errorHandler: {
-            error: (error: Error, message: Message | undefined, count: number | undefined): ErrorHandlerResult => {
-                console.error('Language server error:', error, message, count);
-                // Return ErrorAction based on the severity
-                if ((count || 0) < 3) {
-                    return { action: ErrorAction.Continue };
-                }
-                return { action: ErrorAction.Shutdown };
+            error: (
+                error: Error,
+                message: Message | undefined,
+                count: number | undefined
+            ): ErrorHandlerResult => {
+                outputChannel?.appendLine(
+                    `Language server error (${count ?? 1}): ${error.message}` +
+                    (message ? `; message: ${JSON.stringify(message)}` : '')
+                );
+                return { action: (count ?? 0) < 3 ? ErrorAction.Continue : ErrorAction.Shutdown };
             },
             closed: (): CloseHandlerResult => {
-                console.log('Language server connection closed');
-                return { action: CloseAction.DoNotRestart };
+                clientReady = false;
+                return { action: CloseAction.Restart };
             }
         }
     };
 
-    // Create the language client
     client = new LanguageClient(
         'restrictLanguageServer',
         'Restrict Language Server',
         serverOptions,
         clientOptions
     );
-
-    // Start the client (and server) first
-    client.start().then(() => {
-        // Register custom LSP commands after the client has started
-        registerLSPCommands(context);
-        console.log('Language Server started successfully');
-    }).catch(error => {
-        console.error('Failed to start language server:', error);
-        
-        // Check if it's a command registration conflict
-        if (error.message && error.message.includes('already exists')) {
-            console.warn('Command registration conflict detected - LSP may have conflicting commands');
-            // Don't show error to user, just log it
-            console.log('Continuing with existing command registrations');
-        } else {
-            vscode.window.showErrorMessage(`Failed to start Restrict Language Server: ${error.message}`);
-        }
+    const stateSubscription = client.onDidChangeState(event => {
+        clientReady = event.newState === State.Running;
     });
 
-    // Register for disposal
-    context.subscriptions.push(client);
+    try {
+        await client.start();
+        clientReady = true;
+        context.subscriptions.push(client, fileWatcher, stateSubscription);
+        outputChannel.appendLine(`Started ${serverCommand} --lsp`);
+        return true;
+    } catch (error) {
+        clientReady = false;
+        const message = error instanceof Error ? error.message : String(error);
+        outputChannel.appendLine(`Failed to start language server: ${message}`);
+        vscode.window.showWarningMessage(
+            `Restrict language server could not start: ${message}. Compiler commands will use the CLI fallback.`
+        );
+        client = undefined;
+        stateSubscription.dispose();
+        fileWatcher.dispose();
+        fileWatcher = undefined;
+        return false;
+    }
 }
 
-export function deactivateLanguageServer(): Thenable<void> | undefined {
-    if (!client) {
+export async function restartLanguageServer(context: vscode.ExtensionContext): Promise<boolean> {
+    await deactivateLanguageServer();
+    return activateLanguageServer(context);
+}
+
+export async function deactivateLanguageServer(): Promise<void> {
+    clientReady = false;
+    const activeClient = client;
+    client = undefined;
+    if (activeClient) {
+        await activeClient.stop();
+    }
+    fileWatcher?.dispose();
+    fileWatcher = undefined;
+}
+
+export async function executeLanguageServerCommand<T>(
+    command: string,
+    args: unknown[]
+): Promise<T | undefined> {
+    if (!client || !clientReady) {
         return undefined;
     }
-    return client.stop();
-}
 
-function registerLSPCommands(context: vscode.ExtensionContext) {
-    // These are additional LSP-specific commands that don't conflict with the main commands
-    // Go to definition
-    const gotoDefinition = vscode.commands.registerCommand('restrict.gotoDefinition', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        const position = editor.selection.active;
-        const locations = await vscode.commands.executeCommand<vscode.Location[]>(
-            'vscode.executeDefinitionProvider',
-            editor.document.uri,
-            position
-        );
-
-        if (locations && locations.length > 0) {
-            await vscode.window.showTextDocument(locations[0].uri, {
-                selection: locations[0].range
-            });
-        } else {
-            vscode.window.showInformationMessage('No definition found');
-        }
+    return client.sendRequest<T>('workspace/executeCommand', {
+        command,
+        arguments: args
     });
-
-    // Find all references
-    const findReferences = vscode.commands.registerCommand('restrict.findReferences', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        const position = editor.selection.active;
-        await vscode.commands.executeCommand(
-            'vscode.executeReferenceProvider',
-            editor.document.uri,
-            position
-        );
-    });
-
-    // Hover information
-    const showHover = vscode.commands.registerCommand('restrict.showHover', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        const position = editor.selection.active;
-        const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
-            'vscode.executeHoverProvider',
-            editor.document.uri,
-            position
-        );
-
-        if (hovers && hovers.length > 0) {
-            const hover = hovers[0];
-            if (hover.contents.length > 0) {
-                const content = hover.contents[0];
-                if (typeof content === 'string') {
-                    vscode.window.showInformationMessage(content);
-                } else if (content instanceof vscode.MarkdownString) {
-                    vscode.window.showInformationMessage(content.value);
-                }
-            }
-        }
-    });
-
-    // Document symbols (outline)
-    const showDocumentSymbols = vscode.commands.registerCommand('restrict.showDocumentSymbols', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document.languageId !== 'restrict') {
-            return;
-        }
-
-        await vscode.commands.executeCommand('workbench.action.gotoSymbol');
-    });
-
-    context.subscriptions.push(
-        gotoDefinition,
-        findReferences,
-        showHover,
-        showDocumentSymbols
-    );
 }

@@ -1026,7 +1026,7 @@ fun inc: (value: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val value = (1, 2) add
+    val value = (1, 2) add;
     value |> inc
 }
 "#,
@@ -1304,7 +1304,7 @@ fun inc: (value: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val value = (1, 2) add
+    val value = (1, 2) add;
     value |> inc
 }
 "#,
@@ -1446,7 +1446,7 @@ fun inc: (value: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val value = (1, 2) add
+    val value = (1, 2) add;
     value |> inc
 }
 "#,

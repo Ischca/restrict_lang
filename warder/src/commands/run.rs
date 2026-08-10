@@ -1,13 +1,19 @@
-use super::{find_project_root, load_manifest};
+use super::{find_project_root, load_manifest, print_info};
 use anyhow::{bail, Context, Result};
 use std::process::Command;
 
 pub async fn run_project(args: Vec<String>) -> Result<()> {
-    // First build the project
-    super::build::build_project(false, false, false, false, false).await?;
-
     let root = find_project_root()?;
     let manifest = load_manifest()?;
+    if manifest.compiler_component_contract()?.is_some() {
+        print_info(
+            "warder run currently executes the Core Wasm program profile; forcing a Core build instead of the project's Component artifact",
+        );
+    }
+
+    // The runtime command is intentionally Core-only until Warder has an
+    // explicit Component host selection surface.
+    super::build::build_project(false, false, false, true, false, false).await?;
 
     // Find the built WASM file
     let build_dir = root.join(&manifest.build.output);

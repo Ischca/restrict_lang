@@ -34,15 +34,19 @@ That generated or handwritten bridge is host glue, not a JavaScript code-
 generation backend.
 
 The ordinary v0.0.1 compiler pipeline remains `.rl -> WAT -> Core Wasm`. This
-branch also implements an explicit B1 Component path. A schema-v1 or schema-v2
-selection from the repository-root `warder.toml` is checked and monomorphized
+branch also implements an explicit B1 Component path. In a Warder project, a
+schema-v1 or schema-v2 selection from the repository-root `warder.toml` is the
+default artifact for `warder build`; `--component` asserts that selection and
+`--core` explicitly requests the Core Wasm/Cage artifact. The selection is
+checked and monomorphized
 into `ComponentInterfaceIr`,
 normalized WIT and stable ABI metadata, Canonical ABI adapters, and a validated
 WebAssembly Component. Warder publishes the resulting `.component.wasm`,
 `.component.wit`, and `.component.toml` files as one transactional artifact
-set. This explicit path does not change the default Core Wasm ABI, and the
-repository is versioned `0.1.0-rc.1` for its first release candidate; stable
-v0.1.0 has not been published.
+set. `warder run` and the current publish preflight are Core-only and report
+that they force the Core profile when `[component]` is present. This project
+default does not change the compiler's default Core Wasm ABI, and the
+repository is versioned and published as stable `0.1.0`.
 
 External standards and third-party contracts use the complementary WIT-first
 path. Rich synchronous guest imports are implemented and exercised by the
@@ -64,6 +68,24 @@ foreign-Wasm, and transitive dependency resolution currently fail closed, so a
 local-only build has no resolved package entries in that lock.
 `warder.lock` is generated rather than hand-authored and is committed when it
 exists.
+
+All Warder commands accept `--project DIR`, which selects a project without
+requiring the caller to change its shell working directory. `warder build
+--watch` performs an initial build, then rebuilds when the root
+`warder.toml`, root `.rl` sources, or `.rl` sources in a configured direct
+local dependency change. Watch mode does not add transitive dependency
+resolution, an incremental compiler, or a JavaScript package/bundler graph.
+
+`warder test` compiles test files under `tests/` to WASI Preview 1 Core Wasm and executes
+source-public, synchronous, non-generic, zero-argument Boolean functions whose
+names begin with `test_` or end with `_test`. A return value of `true` passes;
+`false`, a trap, an invalid Boolean representation, a compilation error, or a
+missing export fails. The optional filter matches function names. This is a
+Warder convention over ordinary Restrict functions, not a separate language
+declaration syntax. During test compilation, the reserved package namespace
+`project` maps to the directory containing `package.entry`, so a default
+project can import its implementation with `import project.main.{name}`.
+Dependency aliases may not use `project`.
 
 The generated `dist/*.component.toml` files are Component artifact metadata,
 not additional Warder configuration. Likewise, Cage-internal `manifest.toml`
@@ -112,8 +134,8 @@ arenas.
 
 The version boundary is:
 
-- **v0.1.0 / B1**: the synchronous Component Model implementation present in
-  the v0.1.0-rc.1 candidate: scalar and rich values (`String`, `List`, `Array`,
+- **v0.1.0 / B1**: the stable synchronous Component Model implementation:
+  scalar and rich values (`String`, `List`, `Array`,
   records, `Option`, `Result`, and user enums/variants), synchronous resources,
   value-capturing once-callable resources, and explicitly selected concrete
   generic function instances; generated and consumed WIT; Canonical ABI
@@ -580,11 +602,85 @@ Rules:
 - A scoped clause may execute its body zero, one, or many times according to
   the receiving function's contract. The braces express a lexical scope, not
   a guarantee of immediate or single execution.
+- For the compiler-provided containers, `Option` callbacks execute at most
+  once, while `List` callbacks used by `map`, `filter`, and `fold` may execute
+  many times. A many-execution inline callback may capture only immutable Copy
+  bindings. The checker rejects mutable or affine captures and retains that
+  rejection when the lambda is first stored in a local callable binding. A
+  callable parameter whose captures are opaque is also rejected in a repeated
+  callback position until its replay safety can be proven.
+- A repeated `while` condition or body likewise cannot consume an immutable
+  affine binding from outside the loop. Mutable loop state and immutable Copy
+  values remain reusable under their ordinary rules.
 
 This form extends clause-level OSV rather than weakening it: a value precedes
 the scope-opening verb, and the resulting complete clause precedes its next
 verb. It follows the same value-then-verb-then-scope shape as `value match {
 ... }` and `condition then { ... }`.
+
+#### Completed values and anonymous scopes
+
+Application does not stop merely because its object was produced by a block,
+`match`, `then`, `while`, or another completed clause. A completed value may
+continue through direct OSV, a pipe, a named scoped verb, or an anonymous
+scope:
+
+```rust
+positive match {
+    true => { incremented }
+    false => { 0 }
+} print
+
+positive match {
+    true => { incremented }
+    false => { 0 }
+} |> print
+
+positive match {
+    true => { incremented }
+    false => { 0 }
+} { |value|
+    value print
+}
+```
+
+An anonymous scope is the nameless, exact-once counterpart of a scoped verb
+clause. It elaborates to immediate application of a unary lambda:
+
+```rust
+value { it * it }
+// elaborates as:
+value |> (|it| { it * it })
+
+value { |number| number * number }
+// elaborates as:
+value |> (|number| { number * number })
+```
+
+Rules:
+
+- The object expression is evaluated exactly once, before the scope body.
+- The scope body is evaluated exactly once and its result is the result of the
+  complete expression. This form is result-producing, not an implicit `tap`.
+- An unheaded anonymous scope binds the object as `it`. An explicit anonymous
+  scope must declare exactly one binder. `{ || ... }` and
+  `{ |left, right| ... }` are rejected with an anonymous-scope arity
+  diagnostic in this position.
+- The scope is an ordinary lexical lambda scope. It does not extend a temporal,
+  arena, resource, or host-capability lifetime.
+- Exact-once application permits the same affine captures as an ordinary
+  immediate unary lambda call. The usual affine and temporal checks still
+  apply inside the body.
+- Application continuations associate left-to-right. For example,
+  `values map { it + 1 } { |mapped| mapped print }` first completes `map`, then
+  applies the anonymous scope to the mapped value.
+- Newlines remain ordinary whitespace. Use `;` when a following callable-shaped
+  expression must begin a separate expression rather than continue the current
+  application chain.
+
+The braces after a completed value denote an anonymous scope. Nominal record
+construction remains `UpperCamelName { fields... }`; it is parsed as a record
+literal before it can be considered a continuation target.
 
 ### 5.10 User-Defined Enum Construction
 
@@ -1323,6 +1419,9 @@ integration rather than implied core-language semantics.
 7. Logical AND: `&&`
 8. Logical OR: `||`
 9. Pipe: `|>` (left associative)
+10. Completed-value application continuation (left associative): direct OSV,
+    a following pipe, a named scoped verb, or an anonymous scope after a
+    complete `match`, `then`, `while`, block, or preceding clause
 
 Single-argument calls may use pipe form (`value |> f`) or direct OSV form
 (`value f`). Parentheses are optional for a single simple direct object, as in
@@ -1332,6 +1431,9 @@ otherwise change their meaning (`(1 + 2) double`). Pipe starts from a complete
 expression, so `1 + 2 |> double` is parsed as `(1 + 2) |> double`.
 Likewise, a scoped verb clause is complete before a following pipe:
 `values map { it + 1 } |> list_count` pipes the mapped collection.
+An anonymous scope also receives the complete expression to its left, so
+`1 + 2 { |value| value * value }` applies the scope to `1 + 2`, not only to
+`2`.
 
 ## 14. Standard Library Types
 

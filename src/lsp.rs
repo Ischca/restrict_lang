@@ -1,10 +1,13 @@
 use crate::ast::{Literal, Pattern};
-use crate::diagnostics::{format_lex_error, format_parse_error};
-use crate::module::resolve_program_imports_for_file;
+use crate::diagnostics::{
+    format_lex_error, format_parse_error, format_type_error, format_unparsed_input,
+};
+use crate::module::{resolve_module_file_for_source, resolve_program_imports_for_file};
 use crate::release_surface::check_v001_release_surface;
-use crate::type_checker::TypeError;
+use crate::type_checker::{format_typed_type, TypeError, TypedType};
 use crate::{lex, parse_program, TypeChecker};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -46,7 +49,12 @@ fn diagnostic_for_message(source: &str, message: String) -> Diagnostic {
 }
 
 fn diagnostic_for_type_error(source: &str, error: &TypeError) -> Diagnostic {
-    diagnostic_for_message(source, lsp_type_error_message(error))
+    let message = if matches!(error, TypeError::NonCallableVerb { .. }) {
+        format_type_error(source, error)
+    } else {
+        lsp_type_error_message(error)
+    };
+    diagnostic_for_message(source, message)
 }
 
 fn diagnostic_range_for_message(source: &str, message: &str) -> Range {
@@ -193,7 +201,7 @@ fn binding_name_range(source: &str, binding_name: &str) -> Option<Range> {
 
 fn single_character_range(source: &str, position: Position) -> Range {
     let line = source.lines().nth(position.line as usize).unwrap_or("");
-    let line_len = line.chars().count() as u32;
+    let line_len = line.encode_utf16().count() as u32;
     let start_character = position.character.min(line_len);
     let end_character = start_character.saturating_add(1).min(line_len.max(1));
 
@@ -204,7 +212,23 @@ fn single_character_range(source: &str, position: Position) -> Range {
 }
 
 fn byte_to_character(line: &str, byte_index: usize) -> usize {
-    line[..byte_index.min(line.len())].chars().count()
+    line[..byte_index.min(line.len())].encode_utf16().count()
+}
+
+fn utf16_character_to_byte(line: &str, character: usize) -> Option<usize> {
+    let mut utf16_offset = 0;
+    for (byte_offset, ch) in line.char_indices() {
+        if utf16_offset == character {
+            return Some(byte_offset);
+        }
+        let next_offset = utf16_offset + ch.len_utf16();
+        if character < next_offset {
+            return Some(byte_offset);
+        }
+        utf16_offset = next_offset;
+    }
+
+    (utf16_offset == character).then_some(line.len())
 }
 
 fn collect_diagnostics_for_source(uri: &Url, text: &str) -> Vec<Diagnostic> {
@@ -259,10 +283,7 @@ fn parse_and_resolve_program_for_lsp(
     let (remaining, ast) = parse_program(text).map_err(|e| format_parse_error(text, e))?;
 
     if !remaining.trim().is_empty() {
-        return Err(format!(
-            "Parser: unparsed input remaining: '{}'",
-            remaining.trim()
-        ));
+        return Err(format_unparsed_input(text, remaining));
     }
 
     if ast.imports.is_empty() {
@@ -386,12 +407,33 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
         CompletionItem::new_simple("while".to_string(), "While loop".to_string()),
         CompletionItem::new_simple("match".to_string(), "Pattern matching".to_string()),
         CompletionItem::new_simple("with".to_string(), "Context binding".to_string()),
+        CompletionItem::new_simple("pub".to_string(), "Source-public declaration".to_string()),
+        CompletionItem::new_simple("import".to_string(), "Dotted module import".to_string()),
+        CompletionItem::new_simple(
+            "impl".to_string(),
+            "Record implementation block".to_string(),
+        ),
+        CompletionItem::new_simple("context".to_string(), "Context declaration".to_string()),
         CompletionItem::new_simple("clone".to_string(), "Clone object".to_string()),
         CompletionItem::new_simple("freeze".to_string(), "Freeze object".to_string()),
         CompletionItem::new_simple("true".to_string(), "Boolean true".to_string()),
         CompletionItem::new_simple("false".to_string(), "Boolean false".to_string()),
-        CompletionItem::new_simple("Some".to_string(), "Optional value".to_string()),
-        CompletionItem::new_simple("None".to_string(), "No value".to_string()),
+        CompletionItem::new_simple(
+            "Option::Some".to_string(),
+            "Qualified OSV Option value constructor".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "Option::None".to_string(),
+            "Qualified OSV empty Option constructor".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "Result::Ok".to_string(),
+            "Qualified OSV Result success constructor".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "Result::Err".to_string(),
+            "Qualified OSV Result error constructor".to_string(),
+        ),
         CompletionItem::new_simple(
             "println".to_string(),
             "fun println: <T of Display>(value: T) -> ()".to_string(),
@@ -407,6 +449,18 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
         CompletionItem::new_simple(
             "print_int".to_string(),
             "fun print_int: (n: Int32) -> ()".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "print_float".to_string(),
+            "fun print_float: (value: Float64) -> ()".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "eprint".to_string(),
+            "fun eprint: (value: String) -> ()".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "eprintln".to_string(),
+            "fun eprintln: (value: String) -> ()".to_string(),
         ),
         CompletionItem::new_simple(
             "abs".to_string(),
@@ -433,6 +487,22 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
             "fun list_head: <T>(list: List<T>) -> Option<T>".to_string(),
         ),
         CompletionItem::new_simple(
+            "list_length".to_string(),
+            "fun list_length: <T>(list: List<T>) -> Int32".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "list_get".to_string(),
+            "fun list_get: <T>(list: List<T>, index: Int32) -> T".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "array_get".to_string(),
+            "fun array_get: <T>(array: Array<T, N>, index: Int32) -> T".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "array_set".to_string(),
+            "fun array_set: <T>(array: Array<T, N>, index: Int32, value: T) -> ()".to_string(),
+        ),
+        CompletionItem::new_simple(
             "list_tail".to_string(),
             "fun list_tail: <T>(list: List<T>) -> Option<List<T>>".to_string(),
         ),
@@ -443,6 +513,10 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
         CompletionItem::new_simple(
             "list_append".to_string(),
             "fun list_append: <T>(list: List<T>, item: T) -> List<T>".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "list_prepend".to_string(),
+            "fun list_prepend: <T>(list: List<T>, item: T) -> List<T>".to_string(),
         ),
         CompletionItem::new_simple(
             "list_concat".to_string(),
@@ -483,6 +557,18 @@ fn builtin_completion_items() -> Vec<CompletionItem> {
         CompletionItem::new_simple(
             "identity".to_string(),
             "fun identity: <T>(x: T) -> T".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "map".to_string(),
+            "fun map: <T, U>(values: List<T>, mapper: T -> U) -> List<U>".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "filter".to_string(),
+            "fun filter: <T>(values: List<T>, predicate: T -> Boolean) -> List<T>".to_string(),
+        ),
+        CompletionItem::new_simple(
+            "fold".to_string(),
+            "fun fold: <T, U>(values: List<T>, initial: U, reducer: (U, T) -> U) -> U".to_string(),
         ),
         CompletionItem::new_simple(
             "assert".to_string(),
@@ -762,11 +848,11 @@ fn qualified_enum_variant_at_word(
     word_start: usize,
     word_end: usize,
 ) -> Option<(String, String)> {
-    let chars = line.chars().collect::<Vec<_>>();
-    if word_end > chars.len()
+    let bytes = line.as_bytes();
+    if word_end > bytes.len()
         || word_start < 2
-        || chars[word_start - 2] != ':'
-        || chars[word_start - 1] != ':'
+        || bytes[word_start - 2] != b':'
+        || bytes[word_start - 1] != b':'
     {
         return None;
     }
@@ -774,7 +860,7 @@ fn qualified_enum_variant_at_word(
     let enum_end = word_start - 2;
     let mut enum_start = enum_end;
     while enum_start > 0
-        && (chars[enum_start - 1].is_alphanumeric() || chars[enum_start - 1] == '_')
+        && (bytes[enum_start - 1].is_ascii_alphanumeric() || bytes[enum_start - 1] == b'_')
     {
         enum_start -= 1;
     }
@@ -783,8 +869,8 @@ fn qualified_enum_variant_at_word(
     }
 
     Some((
-        chars[enum_start..enum_end].iter().collect(),
-        chars[word_start..word_end].iter().collect(),
+        line[enum_start..enum_end].to_string(),
+        line[word_start..word_end].to_string(),
     ))
 }
 
@@ -873,6 +959,1806 @@ fn source_range(text: &str, offset: usize, length: usize) -> Range {
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct IndexedSymbolKey {
+    uri: Url,
+    qualified_name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexedSymbolKind {
+    Function,
+    Record,
+    Enum,
+    EnumVariant,
+    Form,
+    Context,
+    Binding,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedDefinition {
+    key: IndexedSymbolKey,
+    name: String,
+    /// Name selected by an import. Enum variants belong to their enum API.
+    import_name: String,
+    range: Range,
+    kind: IndexedSymbolKind,
+    exported: bool,
+    detail: String,
+    params: Vec<(String, String)>,
+    return_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedImport {
+    uri: Url,
+    items: crate::ast::ImportItems,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedFile {
+    uri: Url,
+    text: String,
+    program: Option<crate::ast::Program>,
+    definitions: Vec<IndexedDefinition>,
+    imports: Vec<IndexedImport>,
+}
+
+#[derive(Debug, Default)]
+struct WorkspaceIndex {
+    files: HashMap<Url, IndexedFile>,
+}
+
+impl WorkspaceIndex {
+    fn build(root_uri: &Url, root_text: &str, open_documents: &HashMap<Url, String>) -> Self {
+        Self::build_with_workspace(root_uri, root_text, open_documents, true)
+    }
+
+    fn build_import_closure(
+        root_uri: &Url,
+        root_text: &str,
+        open_documents: &HashMap<Url, String>,
+    ) -> Self {
+        Self::build_with_workspace(root_uri, root_text, open_documents, false)
+    }
+
+    fn build_with_workspace(
+        root_uri: &Url,
+        root_text: &str,
+        open_documents: &HashMap<Url, String>,
+        include_workspace_sources: bool,
+    ) -> Self {
+        let Ok(root_path) = root_uri.to_file_path() else {
+            return Self::single_file(root_uri, root_text);
+        };
+
+        let mut index = Self::default();
+        let mut queue =
+            VecDeque::from([(root_uri.clone(), root_text.to_string(), root_path.clone())]);
+        if include_workspace_sources {
+            if let Some(workspace_root) = restrict_workspace_root(&root_path) {
+                for path in restrict_source_files(&workspace_root) {
+                    let Ok(uri) = Url::from_file_path(&path) else {
+                        continue;
+                    };
+                    if uri == *root_uri {
+                        continue;
+                    }
+                    let text = open_documents
+                        .get(&uri)
+                        .cloned()
+                        .or_else(|| fs::read_to_string(&path).ok());
+                    if let Some(text) = text {
+                        queue.push_back((uri, text, path));
+                    }
+                }
+            }
+        }
+        let mut seen = HashSet::new();
+
+        while let Some((uri, text, resolution_source)) = queue.pop_front() {
+            if !seen.insert(uri.clone()) {
+                continue;
+            }
+
+            let program = parse_complete_program(&text);
+            let import_decls = program
+                .as_ref()
+                .map(|program| program.imports.clone())
+                .unwrap_or_else(|| partial_imports(&text));
+            let definitions = program
+                .as_ref()
+                .map(|program| indexed_definitions(&uri, &text, program))
+                .unwrap_or_else(|| partial_indexed_definitions(&uri, &text));
+            let mut imports = Vec::new();
+
+            for import in import_decls {
+                let Ok(path) =
+                    resolve_module_file_for_source(&import.module_path, &resolution_source)
+                else {
+                    continue;
+                };
+                let Ok(import_uri) = Url::from_file_path(path) else {
+                    continue;
+                };
+                let import_text = open_documents.get(&import_uri).cloned().or_else(|| {
+                    import_uri
+                        .to_file_path()
+                        .ok()
+                        .and_then(|path| fs::read_to_string(path).ok())
+                });
+                imports.push(IndexedImport {
+                    uri: import_uri.clone(),
+                    items: import.items,
+                });
+                if let Some(import_text) = import_text {
+                    queue.push_back((import_uri, import_text, resolution_source.clone()));
+                }
+            }
+
+            index.files.insert(
+                uri.clone(),
+                IndexedFile {
+                    uri,
+                    text,
+                    program,
+                    definitions,
+                    imports,
+                },
+            );
+        }
+
+        index
+    }
+
+    fn single_file(uri: &Url, text: &str) -> Self {
+        let program = parse_complete_program(text);
+        let definitions = program
+            .as_ref()
+            .map(|program| indexed_definitions(uri, text, program))
+            .unwrap_or_else(|| partial_indexed_definitions(uri, text));
+        let file = IndexedFile {
+            uri: uri.clone(),
+            text: text.to_string(),
+            program,
+            definitions,
+            imports: Vec::new(),
+        };
+        Self {
+            files: HashMap::from([(uri.clone(), file)]),
+        }
+    }
+
+    fn visible_definitions<'a>(&'a self, file: &'a IndexedFile) -> Vec<&'a IndexedDefinition> {
+        let mut definitions = file.definitions.iter().collect::<Vec<_>>();
+        for import in &file.imports {
+            let Some(imported_file) = self.files.get(&import.uri) else {
+                continue;
+            };
+            definitions.extend(imported_file.definitions.iter().filter(|definition| {
+                definition.exported
+                    && match &import.items {
+                        crate::ast::ImportItems::All => true,
+                        crate::ast::ImportItems::Named(names) => {
+                            names.iter().any(|name| name == &definition.import_name)
+                        }
+                    }
+            }));
+        }
+        definitions
+    }
+
+    fn definition_at(&self, uri: &Url, position: Position) -> Option<&IndexedDefinition> {
+        let file = self.files.get(uri)?;
+        file.definitions
+            .iter()
+            .find(|definition| position_in_range(position, definition.range))
+    }
+
+    fn resolve_symbol_at(&self, uri: &Url, position: Position) -> Option<&IndexedDefinition> {
+        if let Some(definition) = self.definition_at(uri, position) {
+            return Some(definition);
+        }
+        let file = self.files.get(uri)?;
+        let line = file.text.lines().nth(position.line as usize)?;
+        let (start, end) =
+            RestrictLanguageServer::extract_word_at_position(line, position.character as usize)?;
+        let word = &line[start..end];
+        if scoped_bindings_at_cursor(&file.text, position)
+            .iter()
+            .any(|(binding, _)| binding == word)
+        {
+            return None;
+        }
+        let qualified = qualified_enum_variant_at_word(line, start, end)
+            .map(|(owner, variant)| format!("{owner}::{variant}"));
+
+        self.visible_definitions(file)
+            .into_iter()
+            .find(|definition| {
+                qualified
+                    .as_ref()
+                    .map_or(definition.name == word, |qualified| {
+                        definition.key.qualified_name == *qualified
+                    })
+            })
+    }
+
+    fn references_to(&self, key: &IndexedSymbolKey, include_declaration: bool) -> Vec<Location> {
+        let Some(target) = self.files.get(&key.uri).and_then(|file| {
+            file.definitions
+                .iter()
+                .find(|definition| &definition.key == key)
+        }) else {
+            return Vec::new();
+        };
+        let mut locations = Vec::new();
+        for file in self.files.values() {
+            let resolves_to_target = self
+                .visible_definitions(file)
+                .into_iter()
+                .find(|definition| {
+                    if target.kind == IndexedSymbolKind::EnumVariant {
+                        definition.key.qualified_name == target.key.qualified_name
+                    } else {
+                        definition.name == target.name
+                    }
+                })
+                .is_some_and(|definition| definition.key == *key);
+            if !resolves_to_target {
+                continue;
+            }
+
+            for token in source_tokens(&file.text) {
+                if token.text != target.name {
+                    continue;
+                }
+                let range = source_range(&file.text, token.offset, token.text.len());
+                if target.kind == IndexedSymbolKind::EnumVariant {
+                    let Some(line) = file.text.lines().nth(range.start.line as usize) else {
+                        continue;
+                    };
+                    let start = utf16_character_to_byte(line, range.start.character as usize)
+                        .unwrap_or_default();
+                    let end = utf16_character_to_byte(line, range.end.character as usize)
+                        .unwrap_or_default();
+                    if qualified_enum_variant_at_word(line, start, end)
+                        .map(|(owner, variant)| format!("{owner}::{variant}"))
+                        .as_deref()
+                        != Some(target.key.qualified_name.as_str())
+                        && !(file.uri == key.uri && range == target.range)
+                    {
+                        continue;
+                    }
+                }
+                let is_declaration = file
+                    .definitions
+                    .iter()
+                    .any(|definition| definition.key == *key && definition.range == range);
+                if !is_declaration
+                    && scoped_bindings_at_cursor(&file.text, range.start)
+                        .iter()
+                        .any(|(binding, _)| binding == token.text)
+                {
+                    continue;
+                }
+                if include_declaration || !is_declaration {
+                    locations.push(Location::new(file.uri.clone(), range));
+                }
+            }
+        }
+        locations.sort_by(|left, right| {
+            left.uri.as_str().cmp(right.uri.as_str()).then_with(|| {
+                (left.range.start.line, left.range.start.character)
+                    .cmp(&(right.range.start.line, right.range.start.character))
+            })
+        });
+        locations.dedup();
+        locations
+    }
+}
+
+fn restrict_workspace_root(source_file: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut directory = source_file.parent()?;
+    let mut fallback = directory.to_path_buf();
+    loop {
+        if directory.join("LANGUAGE_SPECIFICATION.md").is_file()
+            || directory.join("warder.toml").is_file()
+        {
+            return Some(directory.to_path_buf());
+        }
+        if directory.join("Cargo.toml").is_file() {
+            fallback = directory.to_path_buf();
+        }
+        let Some(parent) = directory.parent() else {
+            break;
+        };
+        directory = parent;
+    }
+    Some(fallback)
+}
+
+fn restrict_source_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fn visit(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if matches!(
+                    path.file_name().and_then(|name| name.to_str()),
+                    Some(".git" | "target" | "node_modules")
+                ) {
+                    continue;
+                }
+                visit(&path, files);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("rl") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    visit(root, &mut files);
+    files.sort();
+    files
+}
+
+fn position_in_range(position: Position, range: Range) -> bool {
+    (position.line > range.start.line
+        || (position.line == range.start.line && position.character >= range.start.character))
+        && (position.line < range.end.line
+            || (position.line == range.end.line && position.character <= range.end.character))
+}
+
+fn parse_complete_program(text: &str) -> Option<crate::ast::Program> {
+    let (remaining, program) = parse_program(text).ok()?;
+    remaining.trim().is_empty().then_some(program)
+}
+
+fn partial_imports(text: &str) -> Vec<crate::ast::ImportDecl> {
+    text.lines()
+        .filter_map(|line| {
+            let source = line.split("//").next()?.trim();
+            let source = source.strip_prefix("import ")?.trim().trim_end_matches(';');
+            let (module, items) = if let Some(module) = source.strip_suffix(".*") {
+                (module, crate::ast::ImportItems::All)
+            } else {
+                let open = source.find(".{")?;
+                let names = source[open + 2..].strip_suffix('}')?;
+                (
+                    &source[..open],
+                    crate::ast::ImportItems::Named(
+                        names
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_string)
+                            .collect(),
+                    ),
+                )
+            };
+            let module_path = module
+                .split('.')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            (!module_path.is_empty()).then_some(crate::ast::ImportDecl { module_path, items })
+        })
+        .collect()
+}
+
+fn indexed_definitions(
+    uri: &Url,
+    text: &str,
+    program: &crate::ast::Program,
+) -> Vec<IndexedDefinition> {
+    let mut definitions = Vec::new();
+    for declaration in &program.declarations {
+        indexed_top_decl(uri, text, declaration, false, &mut definitions);
+    }
+    definitions
+}
+
+fn partial_indexed_definitions(uri: &Url, text: &str) -> Vec<IndexedDefinition> {
+    let tokens = source_tokens(text);
+    let mut definitions = Vec::new();
+    let mut depth = 0i32;
+    let mut index = 0usize;
+    while index < tokens.len() {
+        match tokens[index].text {
+            "{" => {
+                depth += 1;
+                index += 1;
+                continue;
+            }
+            "}" => {
+                depth -= 1;
+                index += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth != 0 {
+            index += 1;
+            continue;
+        }
+
+        let exported = tokens[index].text == "pub";
+        let keyword_index = index + usize::from(exported);
+        let Some(keyword) = tokens.get(keyword_index).map(|token| token.text) else {
+            break;
+        };
+        let Some(name_token) = tokens.get(keyword_index + 1) else {
+            break;
+        };
+        let kind = match keyword {
+            "fun" => IndexedSymbolKind::Function,
+            "record" => IndexedSymbolKind::Record,
+            "enum" => IndexedSymbolKind::Enum,
+            "form" => IndexedSymbolKind::Form,
+            "context" => IndexedSymbolKind::Context,
+            _ => {
+                index += 1;
+                continue;
+            }
+        };
+        let name = name_token.text.to_string();
+        let end = tokens[keyword_index + 1..]
+            .iter()
+            .position(|token| token.text == "{")
+            .map(|relative| keyword_index + 1 + relative)
+            .unwrap_or(tokens.len());
+        let params = if kind == IndexedSymbolKind::Function {
+            parse_function_params_from_tokens(&tokens[keyword_index..end])
+                .into_iter()
+                .map(|(name, ty)| (name, ty.unwrap_or_else(|| "inferred".to_string())))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        definitions.push(IndexedDefinition {
+            key: IndexedSymbolKey {
+                uri: uri.clone(),
+                qualified_name: name.clone(),
+            },
+            name: name.clone(),
+            import_name: name.clone(),
+            range: source_range(text, name_token.offset, name_token.text.len()),
+            kind,
+            exported,
+            detail: format!("{keyword} {name}"),
+            params,
+            return_type: None,
+        });
+
+        if kind == IndexedSymbolKind::Enum && end < tokens.len() {
+            let mut variant_cursor = end + 1;
+            let mut enum_depth = 1i32;
+            let mut expect_variant = true;
+            while variant_cursor < tokens.len() && enum_depth > 0 {
+                match tokens[variant_cursor].text {
+                    "{" | "(" | "<" => enum_depth += 1,
+                    "}" | ")" | ">" => enum_depth -= 1,
+                    "," if enum_depth == 1 => expect_variant = true,
+                    variant if enum_depth == 1 && expect_variant => {
+                        definitions.push(IndexedDefinition {
+                            key: IndexedSymbolKey {
+                                uri: uri.clone(),
+                                qualified_name: format!("{name}::{variant}"),
+                            },
+                            name: variant.to_string(),
+                            import_name: name.clone(),
+                            range: source_range(text, tokens[variant_cursor].offset, variant.len()),
+                            kind: IndexedSymbolKind::EnumVariant,
+                            exported,
+                            detail: format!("{name}::{variant}"),
+                            params: Vec::new(),
+                            return_type: Some(name.clone()),
+                        });
+                        expect_variant = false;
+                    }
+                    _ => {}
+                }
+                variant_cursor += 1;
+            }
+        }
+
+        index = keyword_index + 2;
+    }
+    definitions
+}
+
+fn indexed_top_decl(
+    uri: &Url,
+    text: &str,
+    declaration: &crate::ast::TopDecl,
+    exported: bool,
+    definitions: &mut Vec<IndexedDefinition>,
+) {
+    use crate::ast::TopDecl;
+    if let TopDecl::Export(export) = declaration {
+        indexed_top_decl(uri, text, &export.item, true, definitions);
+        return;
+    }
+
+    let mut push = |name: &str,
+                    qualified_name: String,
+                    import_name: String,
+                    keyword: &str,
+                    kind: IndexedSymbolKind,
+                    detail: String,
+                    params: Vec<(String, String)>,
+                    return_type: Option<String>| {
+        let Some(range) = declaration_name_range(text, keyword, name) else {
+            return;
+        };
+        definitions.push(IndexedDefinition {
+            key: IndexedSymbolKey {
+                uri: uri.clone(),
+                qualified_name,
+            },
+            name: name.to_string(),
+            import_name,
+            range,
+            kind,
+            exported,
+            detail,
+            params,
+            return_type,
+        });
+    };
+
+    match declaration {
+        TopDecl::Function(function) => push(
+            &function.name,
+            function.name.clone(),
+            function.name.clone(),
+            "fun",
+            IndexedSymbolKind::Function,
+            format!("fun {}", function.name),
+            function
+                .params
+                .iter()
+                .map(|param| (param.name.clone(), param.ty.to_string()))
+                .collect(),
+            function.return_type.as_ref().map(ToString::to_string),
+        ),
+        TopDecl::Record(record) => push(
+            &record.name,
+            record.name.clone(),
+            record.name.clone(),
+            "record",
+            IndexedSymbolKind::Record,
+            format!("record {}", record.name),
+            Vec::new(),
+            None,
+        ),
+        TopDecl::Enum(enum_decl) => {
+            push(
+                &enum_decl.name,
+                enum_decl.name.clone(),
+                enum_decl.name.clone(),
+                "enum",
+                IndexedSymbolKind::Enum,
+                format!("enum {}", enum_decl.name),
+                Vec::new(),
+                None,
+            );
+            for variant in &enum_decl.variants {
+                let Some(range) =
+                    enum_variant_definition_range(text, &enum_decl.name, &variant.name)
+                else {
+                    continue;
+                };
+                definitions.push(IndexedDefinition {
+                    key: IndexedSymbolKey {
+                        uri: uri.clone(),
+                        qualified_name: format!("{}::{}", enum_decl.name, variant.name),
+                    },
+                    name: variant.name.clone(),
+                    import_name: enum_decl.name.clone(),
+                    range,
+                    kind: IndexedSymbolKind::EnumVariant,
+                    exported,
+                    detail: variant.payload.as_ref().map_or_else(
+                        || format!("{}::{}", enum_decl.name, variant.name),
+                        |payload| {
+                            format!(
+                                "{}::{}({payload}) -> {}",
+                                enum_decl.name, variant.name, enum_decl.name
+                            )
+                        },
+                    ),
+                    params: variant
+                        .payload
+                        .as_ref()
+                        .map(|payload| vec![("value".to_string(), payload.to_string())])
+                        .unwrap_or_default(),
+                    return_type: Some(enum_decl.name.clone()),
+                });
+            }
+        }
+        TopDecl::Form(form) => push(
+            &form.name,
+            form.name.clone(),
+            form.name.clone(),
+            "form",
+            IndexedSymbolKind::Form,
+            format!("form {}", form.name),
+            Vec::new(),
+            None,
+        ),
+        TopDecl::Context(context) => push(
+            &context.name,
+            context.name.clone(),
+            context.name.clone(),
+            "context",
+            IndexedSymbolKind::Context,
+            format!("context {}", context.name),
+            Vec::new(),
+            None,
+        ),
+        TopDecl::Binding(binding) => {
+            if let Pattern::Ident(name) = &binding.pattern {
+                let Some(range) = binding_name_range(text, name) else {
+                    return;
+                };
+                definitions.push(IndexedDefinition {
+                    key: IndexedSymbolKey {
+                        uri: uri.clone(),
+                        qualified_name: name.clone(),
+                    },
+                    name: name.clone(),
+                    import_name: name.clone(),
+                    range,
+                    kind: IndexedSymbolKind::Binding,
+                    exported,
+                    detail: "global binding".to_string(),
+                    params: Vec::new(),
+                    return_type: binding.type_annotation.as_ref().map(ToString::to_string),
+                });
+            }
+        }
+        TopDecl::Export(_) | TopDecl::Impl(_) | TopDecl::Takes(_) => {}
+    }
+}
+
+fn completion_item_for_definition(definition: &IndexedDefinition) -> CompletionItem {
+    let kind = match definition.kind {
+        IndexedSymbolKind::Function | IndexedSymbolKind::EnumVariant => {
+            Some(CompletionItemKind::FUNCTION)
+        }
+        IndexedSymbolKind::Record => Some(CompletionItemKind::STRUCT),
+        IndexedSymbolKind::Enum => Some(CompletionItemKind::ENUM),
+        IndexedSymbolKind::Form => Some(CompletionItemKind::INTERFACE),
+        IndexedSymbolKind::Context => Some(CompletionItemKind::CLASS),
+        IndexedSymbolKind::Binding => Some(CompletionItemKind::VARIABLE),
+    };
+    let detail = if definition.kind == IndexedSymbolKind::Function {
+        let params = definition
+            .params
+            .iter()
+            .map(|(name, ty)| format!("{name}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "fun {}: ({params}) -> {}",
+            definition.name,
+            definition.return_type.as_deref().unwrap_or("inferred")
+        )
+    } else {
+        definition.detail.clone()
+    };
+    CompletionItem {
+        label: definition.key.qualified_name.clone(),
+        kind,
+        detail: Some(detail),
+        ..CompletionItem::default()
+    }
+}
+
+fn keyword_completion_labels() -> &'static [&'static str] {
+    &[
+        "val", "mut val", "fun", "record", "enum", "form", "takes", "of", "then", "else", "while",
+        "match", "with", "pub", "import", "impl", "context", "clone", "freeze", "true", "false",
+    ]
+}
+
+fn cursor_offset(text: &str, position: Position) -> Option<usize> {
+    let mut offset = 0usize;
+    for (line_index, line) in text.split_inclusive('\n').enumerate() {
+        if line_index == position.line as usize {
+            let line = line.strip_suffix('\n').unwrap_or(line);
+            return utf16_character_to_byte(line, position.character as usize)
+                .map(|byte| offset + byte);
+        }
+        offset += line.len();
+    }
+    if position.line as usize == text.lines().count() {
+        Some(text.len())
+    } else {
+        None
+    }
+}
+
+fn identifier_prefix_before_cursor(text: &str, position: Position) -> Option<(String, String)> {
+    let offset = cursor_offset(text, position)?;
+    let prefix = &text[..offset];
+    let word_start = prefix
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| (!is_identifier_continue(ch)).then_some(index + ch.len_utf8()))
+        .unwrap_or(0);
+    let word = prefix[word_start..].to_string();
+    let before_word = &prefix[..word_start];
+    let owner_end = before_word.strip_suffix("::")?.len();
+    let owner_start = before_word[..owner_end]
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| (!is_identifier_continue(ch)).then_some(index + ch.len_utf8()))
+        .unwrap_or(0);
+    let owner = before_word[owner_start..owner_end].to_string();
+    (!owner.is_empty()).then_some((owner, word))
+}
+
+type ScopedBinding = (String, Option<String>);
+type EnclosingFunctionScope = (Vec<ScopedBinding>, usize);
+
+fn enclosing_function_scope(text: &str, position: Position) -> Option<EnclosingFunctionScope> {
+    let cursor = cursor_offset(text, position)?;
+    let tokens = source_tokens(text);
+    let mut candidate = None;
+
+    for (index, token) in tokens.iter().enumerate() {
+        if token.offset >= cursor || token.text != "fun" {
+            continue;
+        }
+        let Some(open_index) = tokens[index + 1..]
+            .iter()
+            .position(|token| token.text == "{")
+            .map(|relative| index + 1 + relative)
+        else {
+            continue;
+        };
+        if tokens[open_index].offset >= cursor {
+            continue;
+        }
+        let mut depth = 0i32;
+        for scope_token in tokens[open_index..]
+            .iter()
+            .take_while(|scope_token| scope_token.offset < cursor)
+        {
+            match scope_token.text {
+                "{" => depth += 1,
+                "}" => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth <= 0 {
+            continue;
+        }
+
+        let params = parse_function_params_from_tokens(&tokens[index..open_index]);
+        candidate = Some((params, tokens[open_index].offset));
+    }
+
+    candidate
+}
+
+fn parse_function_params_from_tokens(tokens: &[SourceToken<'_>]) -> Vec<(String, Option<String>)> {
+    let Some(open) = tokens.iter().position(|token| token.text == "(") else {
+        return Vec::new();
+    };
+    let mut params = Vec::new();
+    let mut cursor = open + 1;
+    let mut depth = 1i32;
+    while cursor < tokens.len() && depth > 0 {
+        match tokens[cursor].text {
+            "(" | "<" => depth += 1,
+            ")" | ">" => depth -= 1,
+            name if depth == 1 && tokens.get(cursor + 1).map(|token| token.text) == Some(":") => {
+                let mut type_parts = Vec::new();
+                let mut type_cursor = cursor + 2;
+                let mut type_depth = 0i32;
+                while type_cursor < tokens.len() {
+                    match tokens[type_cursor].text {
+                        "<" | "(" => type_depth += 1,
+                        ">" | ")" if type_depth > 0 => type_depth -= 1,
+                        "," | ")" if type_depth == 0 => break,
+                        part => type_parts.push(part),
+                    }
+                    type_cursor += 1;
+                }
+                params.push((name.to_string(), Some(type_parts.concat())));
+                cursor = type_cursor;
+                continue;
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    params
+}
+
+fn scoped_bindings_at_cursor(text: &str, position: Position) -> Vec<(String, Option<String>)> {
+    let Some((params, body_start)) = enclosing_function_scope(text, position) else {
+        return Vec::new();
+    };
+    let Some(cursor) = cursor_offset(text, position) else {
+        return Vec::new();
+    };
+    let tokens = source_tokens(text);
+    let mut scopes = vec![params];
+    let mut index = tokens
+        .iter()
+        .position(|token| token.offset == body_start)
+        .unwrap_or(0)
+        + 1;
+
+    while index < tokens.len() && tokens[index].offset < cursor {
+        match tokens[index].text {
+            "{" => scopes.push(Vec::new()),
+            "}" if scopes.len() > 1 => {
+                scopes.pop();
+            }
+            "val" => {
+                if let Some(name) = tokens.get(index + 1).filter(|token| {
+                    token
+                        .text
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+                }) {
+                    let binding_type = (tokens.get(index + 2).map(|token| token.text) == Some(":"))
+                        .then(|| {
+                            tokens[index + 3..]
+                                .iter()
+                                .take_while(|token| token.text != "=")
+                                .map(|token| token.text)
+                                .collect::<String>()
+                        })
+                        .or_else(|| infer_binding_type_from_tokens(&tokens, index));
+                    if let Some(scope) = scopes.last_mut() {
+                        scope.push((name.text.to_string(), binding_type));
+                    }
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    scopes.into_iter().flatten().collect()
+}
+
+fn infer_binding_type_from_tokens(tokens: &[SourceToken<'_>], val_index: usize) -> Option<String> {
+    let equals = tokens[val_index + 1..]
+        .iter()
+        .position(|token| token.text == "=")?
+        + val_index
+        + 1;
+    let first = tokens.get(equals + 1)?.text;
+    if first.starts_with('"') {
+        return Some("String".to_string());
+    }
+    if first.starts_with('\'') {
+        return Some("Char".to_string());
+    }
+    if matches!(first, "true" | "false") {
+        return Some("Boolean".to_string());
+    }
+    if first.chars().all(|character| character.is_ascii_digit()) {
+        return Some("Int32".to_string());
+    }
+    if first
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_uppercase())
+    {
+        return Some(first.to_string());
+    }
+    None
+}
+
+fn operator_member_context(
+    text: &str,
+    position: Position,
+    operator: &str,
+) -> Option<(String, String)> {
+    let offset = cursor_offset(text, position)?;
+    let prefix = &text[..offset];
+    let partial_start = prefix
+        .char_indices()
+        .rev()
+        .find_map(|(index, character)| {
+            (!is_identifier_continue(character)).then_some(index + character.len_utf8())
+        })
+        .unwrap_or(0);
+    let partial = prefix[partial_start..].to_string();
+    let before_partial = prefix[..partial_start].trim_end();
+    let before_operator = before_partial.strip_suffix(operator)?.trim_end();
+    let receiver_start = before_operator
+        .char_indices()
+        .rev()
+        .find_map(|(index, character)| {
+            (!is_identifier_continue(character) && !character.is_ascii_digit())
+                .then_some(index + character.len_utf8())
+        })
+        .unwrap_or(0);
+    let receiver = before_operator[receiver_start..].to_string();
+    (!receiver.is_empty()).then_some((receiver, partial))
+}
+
+fn receiver_type_at_cursor(text: &str, position: Position, receiver: &str) -> Option<String> {
+    if let Some((_, ty)) = scoped_bindings_at_cursor(text, position)
+        .into_iter()
+        .find(|(name, _)| name == receiver)
+    {
+        return ty;
+    }
+    if receiver.chars().all(|character| character.is_ascii_digit()) {
+        return Some("Int32".to_string());
+    }
+    if receiver.parse::<f64>().is_ok() && receiver.contains('.') {
+        return Some("Float64".to_string());
+    }
+    if matches!(receiver, "true" | "false") {
+        return Some("Boolean".to_string());
+    }
+    None
+}
+
+fn type_base_name(ty: &str) -> &str {
+    ty.split(['<', '(']).next().unwrap_or(ty).trim()
+}
+
+fn type_accepts(parameter: &str, receiver: &str) -> bool {
+    let parameter = parameter.replace(' ', "");
+    let receiver = receiver.replace(' ', "");
+    parameter == receiver
+        || (parameter.len() == 1
+            && parameter
+                .chars()
+                .all(|character| character.is_ascii_uppercase()))
+        || type_base_name(&parameter) == type_base_name(&receiver)
+}
+
+fn record_field_completions(
+    index: &WorkspaceIndex,
+    file: &IndexedFile,
+    receiver_type: &str,
+    prefix: &str,
+) -> Vec<CompletionItem> {
+    let record_name = type_base_name(receiver_type);
+    let Some(definition) = index
+        .visible_definitions(file)
+        .into_iter()
+        .find(|definition| {
+            definition.kind == IndexedSymbolKind::Record && definition.name == record_name
+        })
+    else {
+        return Vec::new();
+    };
+    let Some(record_file) = index.files.get(&definition.key.uri) else {
+        return Vec::new();
+    };
+    let Some(program) = &record_file.program else {
+        return Vec::new();
+    };
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let declaration = match declaration {
+                crate::ast::TopDecl::Export(export) => export.item.as_ref(),
+                other => other,
+            };
+            match declaration {
+                crate::ast::TopDecl::Record(record) if record.name == record_name => Some(record),
+                _ => None,
+            }
+        })
+        .flat_map(|record| record.fields.iter())
+        .filter(|field| field.name.starts_with(prefix))
+        .map(|field| CompletionItem {
+            label: field.name.clone(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(field.ty.to_string()),
+            ..CompletionItem::default()
+        })
+        .collect()
+}
+
+fn method_completions(
+    index: &WorkspaceIndex,
+    file: &IndexedFile,
+    receiver_type: &str,
+    prefix: &str,
+) -> Vec<CompletionItem> {
+    let receiver_name = type_base_name(receiver_type);
+    let visible_type_uris = index
+        .visible_definitions(file)
+        .into_iter()
+        .filter(|definition| {
+            matches!(
+                definition.kind,
+                IndexedSymbolKind::Record | IndexedSymbolKind::Enum
+            ) && definition.name == receiver_name
+        })
+        .map(|definition| definition.key.uri.clone())
+        .collect::<HashSet<_>>();
+    let mut items = Vec::new();
+    for uri in visible_type_uris {
+        let Some(program) = index.files.get(&uri).and_then(|file| file.program.as_ref()) else {
+            continue;
+        };
+        for declaration in &program.declarations {
+            let functions = match declaration {
+                crate::ast::TopDecl::Impl(implementation)
+                    if implementation.target == receiver_name =>
+                {
+                    &implementation.functions
+                }
+                crate::ast::TopDecl::Takes(takes) if takes.target == receiver_name => {
+                    &takes.functions
+                }
+                _ => continue,
+            };
+            items.extend(
+                functions
+                    .iter()
+                    .filter(|function| function.name.starts_with(prefix))
+                    .map(|function| CompletionItem {
+                        label: function.name.clone(),
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail: Some(format!(
+                            "{} method: ({}) -> {}",
+                            receiver_name,
+                            function
+                                .params
+                                .iter()
+                                .map(|parameter| format!("{}: {}", parameter.name, parameter.ty))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            function
+                                .return_type
+                                .as_ref()
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| "inferred".to_string())
+                        )),
+                        ..CompletionItem::default()
+                    }),
+            );
+        }
+    }
+    items
+}
+
+fn contextual_completions(
+    index: &WorkspaceIndex,
+    uri: &Url,
+    text: &str,
+    position: Position,
+) -> Vec<CompletionItem> {
+    let Some(file) = index.files.get(uri) else {
+        return builtin_completion_items();
+    };
+    let visible = index.visible_definitions(file);
+
+    if let Some((owner, prefix)) = identifier_prefix_before_cursor(text, position) {
+        return visible
+            .into_iter()
+            .filter(|definition| {
+                definition.kind == IndexedSymbolKind::EnumVariant
+                    && definition
+                        .key
+                        .qualified_name
+                        .starts_with(&format!("{owner}::"))
+                    && definition.name.starts_with(&prefix)
+            })
+            .map(completion_item_for_definition)
+            .collect();
+    }
+
+    if let Some((receiver, prefix)) = operator_member_context(text, position, ".") {
+        if let Some(receiver_type) = receiver_type_at_cursor(text, position, &receiver) {
+            return record_field_completions(index, file, &receiver_type, &prefix);
+        }
+    }
+
+    if let Some((receiver, prefix)) = operator_member_context(text, position, "|>") {
+        if let Some(receiver_type) = receiver_type_at_cursor(text, position, &receiver) {
+            let checker = TypeChecker::new();
+            let mut items = builtin_completion_items()
+                .into_iter()
+                .filter(|item| item.label.starts_with(&prefix))
+                .filter(|item| {
+                    checker
+                        .checked_function_signature(&item.label)
+                        .and_then(|signature| signature.params.first().cloned())
+                        .is_some_and(|(_, parameter)| {
+                            type_accepts(&format_typed_type(&parameter), &receiver_type)
+                        })
+                })
+                .collect::<Vec<_>>();
+            items.extend(
+                visible
+                    .iter()
+                    .filter(|definition| definition.name.starts_with(&prefix))
+                    .filter(|definition| {
+                        matches!(
+                            definition.kind,
+                            IndexedSymbolKind::Function | IndexedSymbolKind::EnumVariant
+                        ) && definition
+                            .params
+                            .first()
+                            .is_some_and(|(_, parameter)| type_accepts(parameter, &receiver_type))
+                    })
+                    .map(|definition| completion_item_for_definition(definition)),
+            );
+            items.extend(method_completions(index, file, &receiver_type, &prefix));
+            let mut seen = HashSet::new();
+            items.retain(|item| seen.insert(item.label.clone()));
+            return items;
+        }
+    }
+
+    let inside_function = enclosing_function_scope(text, position).is_some();
+    let mut items = builtin_completion_items()
+        .into_iter()
+        .filter(|item| {
+            let is_keyword = keyword_completion_labels().contains(&item.label.as_str());
+            !is_keyword
+                || if inside_function {
+                    matches!(
+                        item.label.as_str(),
+                        "val"
+                            | "mut val"
+                            | "then"
+                            | "else"
+                            | "while"
+                            | "match"
+                            | "with"
+                            | "clone"
+                            | "freeze"
+                            | "true"
+                            | "false"
+                    )
+                } else {
+                    matches!(
+                        item.label.as_str(),
+                        "pub"
+                            | "import"
+                            | "fun"
+                            | "record"
+                            | "enum"
+                            | "form"
+                            | "takes"
+                            | "impl"
+                            | "context"
+                            | "val"
+                            | "mut val"
+                    )
+                }
+        })
+        .collect::<Vec<_>>();
+
+    items.extend(visible.into_iter().map(completion_item_for_definition));
+    if inside_function {
+        items.extend(
+            scoped_bindings_at_cursor(text, position)
+                .into_iter()
+                .map(|(name, ty)| CompletionItem {
+                    label: name,
+                    kind: Some(CompletionItemKind::VARIABLE),
+                    detail: ty.map(|ty| format!("local: {ty}")),
+                    sort_text: Some("0-local".to_string()),
+                    ..CompletionItem::default()
+                }),
+        );
+    }
+
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.label.clone()));
+    items
+}
+
+fn inlay_hint(position: Position, label: String, kind: InlayHintKind) -> InlayHint {
+    InlayHint {
+        position,
+        label: InlayHintLabel::String(label),
+        kind: Some(kind),
+        text_edits: None,
+        tooltip: None,
+        padding_left: Some(true),
+        padding_right: Some(false),
+        data: None,
+    }
+}
+
+fn root_type_analysis(uri: &Url, text: &str) -> Option<(crate::ast::Program, TypeChecker, usize)> {
+    let raw = parse_complete_program(text)?;
+    let root_declaration_count = raw.declarations.len();
+    let resolved = parse_and_resolve_program_for_lsp(uri, text).ok()?;
+    let root_start = resolved
+        .declarations
+        .len()
+        .checked_sub(root_declaration_count)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&resolved).ok()?;
+    Some((resolved, checker, root_start))
+}
+
+fn collect_bindings_from_declarations(
+    declarations: &[crate::ast::TopDecl],
+) -> Vec<&crate::ast::BindDecl> {
+    let mut bindings = Vec::new();
+    for declaration in declarations {
+        collect_bindings_from_declaration(declaration, &mut bindings);
+    }
+    bindings
+}
+
+fn collect_bindings_from_declaration<'a>(
+    declaration: &'a crate::ast::TopDecl,
+    bindings: &mut Vec<&'a crate::ast::BindDecl>,
+) {
+    use crate::ast::TopDecl;
+    match declaration {
+        TopDecl::Function(function) => collect_bindings_from_block(&function.body, bindings),
+        TopDecl::Binding(binding) => {
+            bindings.push(binding);
+            collect_bindings_from_expr(&binding.value, bindings);
+        }
+        TopDecl::Impl(implementation) => {
+            for function in &implementation.functions {
+                collect_bindings_from_block(&function.body, bindings);
+            }
+        }
+        TopDecl::Takes(takes) => {
+            for function in &takes.functions {
+                collect_bindings_from_block(&function.body, bindings);
+            }
+        }
+        TopDecl::Export(export) => collect_bindings_from_declaration(&export.item, bindings),
+        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Form(_) | TopDecl::Context(_) => {}
+    }
+}
+
+fn collect_bindings_from_block<'a>(
+    block: &'a crate::ast::BlockExpr,
+    bindings: &mut Vec<&'a crate::ast::BindDecl>,
+) {
+    for statement in &block.statements {
+        match statement {
+            crate::ast::Stmt::Binding(binding) => {
+                bindings.push(binding);
+                collect_bindings_from_expr(&binding.value, bindings);
+            }
+            crate::ast::Stmt::Assignment(assignment) => {
+                collect_bindings_from_expr(&assignment.value, bindings)
+            }
+            crate::ast::Stmt::Expr(expr) => collect_bindings_from_expr(expr, bindings),
+        }
+    }
+    if let Some(expr) = &block.expr {
+        collect_bindings_from_expr(expr, bindings);
+    }
+}
+
+fn collect_bindings_from_fields<'a>(
+    fields: &'a [crate::ast::FieldInit],
+    bindings: &mut Vec<&'a crate::ast::BindDecl>,
+) {
+    for field in fields {
+        match field {
+            crate::ast::FieldInit::Field { value, .. } | crate::ast::FieldInit::Spread(value) => {
+                collect_bindings_from_expr(value, bindings)
+            }
+        }
+    }
+}
+
+fn collect_bindings_from_expr<'a>(
+    expr: &'a crate::ast::Expr,
+    bindings: &mut Vec<&'a crate::ast::BindDecl>,
+) {
+    use crate::ast::{ExprKind, PipeTarget};
+    match &expr.kind {
+        ExprKind::RecordLit(record) => collect_bindings_from_fields(&record.fields, bindings),
+        ExprKind::Clone(clone) => {
+            collect_bindings_from_expr(&clone.base, bindings);
+            collect_bindings_from_fields(&clone.updates.fields, bindings);
+        }
+        ExprKind::PrototypeClone(clone) => {
+            collect_bindings_from_fields(&clone.updates.fields, bindings)
+        }
+        ExprKind::Then(then_expr) => {
+            collect_bindings_from_expr(&then_expr.condition, bindings);
+            collect_bindings_from_block(&then_expr.then_block, bindings);
+            for (condition, block) in &then_expr.else_ifs {
+                collect_bindings_from_expr(condition, bindings);
+                collect_bindings_from_block(block, bindings);
+            }
+            if let Some(block) = &then_expr.else_block {
+                collect_bindings_from_block(block, bindings);
+            }
+        }
+        ExprKind::While(while_expr) => {
+            collect_bindings_from_expr(&while_expr.condition, bindings);
+            collect_bindings_from_block(&while_expr.body, bindings);
+        }
+        ExprKind::Match(match_expr) => {
+            collect_bindings_from_expr(&match_expr.expr, bindings);
+            for arm in &match_expr.arms {
+                collect_bindings_from_block(&arm.body, bindings);
+            }
+        }
+        ExprKind::Call(call) => {
+            collect_bindings_from_expr(&call.function, bindings);
+            for argument in &call.args {
+                collect_bindings_from_expr(argument, bindings);
+            }
+        }
+        ExprKind::Binary(binary) => {
+            collect_bindings_from_expr(&binary.left, bindings);
+            collect_bindings_from_expr(&binary.right, bindings);
+        }
+        ExprKind::Unary(unary) => collect_bindings_from_expr(&unary.expr, bindings),
+        ExprKind::Cast(cast) => collect_bindings_from_expr(&cast.expr, bindings),
+        ExprKind::Pipe(pipe) => {
+            collect_bindings_from_expr(&pipe.expr, bindings);
+            if let PipeTarget::Expr(target) = &pipe.target {
+                collect_bindings_from_expr(target, bindings);
+            }
+        }
+        ExprKind::With(with_expr) => {
+            collect_bindings_from_fields(&with_expr.bindings, bindings);
+            collect_bindings_from_block(&with_expr.body, bindings);
+        }
+        ExprKind::WithLifetime(with_lifetime) => {
+            collect_bindings_from_block(&with_lifetime.body, bindings)
+        }
+        ExprKind::Block(block) => collect_bindings_from_block(block, bindings),
+        ExprKind::FieldAccess(inner, _) => collect_bindings_from_expr(inner, bindings),
+        ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+            for item in items {
+                collect_bindings_from_expr(item, bindings);
+            }
+        }
+        ExprKind::RangeLit(range) => {
+            collect_bindings_from_expr(&range.start, bindings);
+            collect_bindings_from_expr(&range.end, bindings);
+        }
+        ExprKind::Freeze(inner)
+        | ExprKind::Await(inner)
+        | ExprKind::Spawn(inner)
+        | ExprKind::Lambda(crate::ast::LambdaExpr { body: inner, .. }) => {
+            collect_bindings_from_expr(inner, bindings)
+        }
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Unit
+        | ExprKind::Ident(_)
+        | ExprKind::VariantRef(_) => {}
+    }
+}
+
+fn collect_lambdas_from_declarations(
+    declarations: &[crate::ast::TopDecl],
+) -> Vec<&crate::ast::Expr> {
+    let mut lambdas = Vec::new();
+    for declaration in declarations {
+        collect_lambdas_from_declaration(declaration, &mut lambdas);
+    }
+    lambdas
+}
+
+fn collect_lambdas_from_declaration<'a>(
+    declaration: &'a crate::ast::TopDecl,
+    lambdas: &mut Vec<&'a crate::ast::Expr>,
+) {
+    use crate::ast::TopDecl;
+    match declaration {
+        TopDecl::Function(function) => collect_lambdas_from_block(&function.body, lambdas),
+        TopDecl::Binding(binding) => collect_lambdas_from_expr(&binding.value, lambdas),
+        TopDecl::Impl(implementation) => {
+            for function in &implementation.functions {
+                collect_lambdas_from_block(&function.body, lambdas);
+            }
+        }
+        TopDecl::Takes(takes) => {
+            for function in &takes.functions {
+                collect_lambdas_from_block(&function.body, lambdas);
+            }
+        }
+        TopDecl::Export(export) => collect_lambdas_from_declaration(&export.item, lambdas),
+        TopDecl::Record(_) | TopDecl::Enum(_) | TopDecl::Form(_) | TopDecl::Context(_) => {}
+    }
+}
+
+fn collect_lambdas_from_block<'a>(
+    block: &'a crate::ast::BlockExpr,
+    lambdas: &mut Vec<&'a crate::ast::Expr>,
+) {
+    for statement in &block.statements {
+        match statement {
+            crate::ast::Stmt::Binding(binding) => {
+                collect_lambdas_from_expr(&binding.value, lambdas)
+            }
+            crate::ast::Stmt::Assignment(assignment) => {
+                collect_lambdas_from_expr(&assignment.value, lambdas)
+            }
+            crate::ast::Stmt::Expr(expr) => collect_lambdas_from_expr(expr, lambdas),
+        }
+    }
+    if let Some(expr) = &block.expr {
+        collect_lambdas_from_expr(expr, lambdas);
+    }
+}
+
+fn collect_lambdas_from_fields<'a>(
+    fields: &'a [crate::ast::FieldInit],
+    lambdas: &mut Vec<&'a crate::ast::Expr>,
+) {
+    for field in fields {
+        match field {
+            crate::ast::FieldInit::Field { value, .. } | crate::ast::FieldInit::Spread(value) => {
+                collect_lambdas_from_expr(value, lambdas)
+            }
+        }
+    }
+}
+
+fn collect_lambdas_from_expr<'a>(
+    expr: &'a crate::ast::Expr,
+    lambdas: &mut Vec<&'a crate::ast::Expr>,
+) {
+    use crate::ast::{ExprKind, PipeTarget};
+    if matches!(&expr.kind, ExprKind::Lambda(lambda) if !lambda.implicit_focus) {
+        lambdas.push(expr);
+    }
+    match &expr.kind {
+        ExprKind::RecordLit(record) => collect_lambdas_from_fields(&record.fields, lambdas),
+        ExprKind::Clone(clone) => {
+            collect_lambdas_from_expr(&clone.base, lambdas);
+            collect_lambdas_from_fields(&clone.updates.fields, lambdas);
+        }
+        ExprKind::PrototypeClone(clone) => {
+            collect_lambdas_from_fields(&clone.updates.fields, lambdas)
+        }
+        ExprKind::Then(then_expr) => {
+            collect_lambdas_from_expr(&then_expr.condition, lambdas);
+            collect_lambdas_from_block(&then_expr.then_block, lambdas);
+            for (condition, block) in &then_expr.else_ifs {
+                collect_lambdas_from_expr(condition, lambdas);
+                collect_lambdas_from_block(block, lambdas);
+            }
+            if let Some(block) = &then_expr.else_block {
+                collect_lambdas_from_block(block, lambdas);
+            }
+        }
+        ExprKind::While(while_expr) => {
+            collect_lambdas_from_expr(&while_expr.condition, lambdas);
+            collect_lambdas_from_block(&while_expr.body, lambdas);
+        }
+        ExprKind::Match(match_expr) => {
+            collect_lambdas_from_expr(&match_expr.expr, lambdas);
+            for arm in &match_expr.arms {
+                collect_lambdas_from_block(&arm.body, lambdas);
+            }
+        }
+        ExprKind::Call(call) => {
+            collect_lambdas_from_expr(&call.function, lambdas);
+            for argument in &call.args {
+                collect_lambdas_from_expr(argument, lambdas);
+            }
+        }
+        ExprKind::Binary(binary) => {
+            collect_lambdas_from_expr(&binary.left, lambdas);
+            collect_lambdas_from_expr(&binary.right, lambdas);
+        }
+        ExprKind::Unary(unary) => collect_lambdas_from_expr(&unary.expr, lambdas),
+        ExprKind::Cast(cast) => collect_lambdas_from_expr(&cast.expr, lambdas),
+        ExprKind::Pipe(pipe) => {
+            collect_lambdas_from_expr(&pipe.expr, lambdas);
+            if let PipeTarget::Expr(target) = &pipe.target {
+                collect_lambdas_from_expr(target, lambdas);
+            }
+        }
+        ExprKind::With(with_expr) => {
+            collect_lambdas_from_fields(&with_expr.bindings, lambdas);
+            collect_lambdas_from_block(&with_expr.body, lambdas);
+        }
+        ExprKind::WithLifetime(with_lifetime) => {
+            collect_lambdas_from_block(&with_lifetime.body, lambdas)
+        }
+        ExprKind::Block(block) => collect_lambdas_from_block(block, lambdas),
+        ExprKind::FieldAccess(inner, _) => collect_lambdas_from_expr(inner, lambdas),
+        ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+            for item in items {
+                collect_lambdas_from_expr(item, lambdas);
+            }
+        }
+        ExprKind::RangeLit(range) => {
+            collect_lambdas_from_expr(&range.start, lambdas);
+            collect_lambdas_from_expr(&range.end, lambdas);
+        }
+        ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
+            collect_lambdas_from_expr(inner, lambdas)
+        }
+        ExprKind::Lambda(lambda) => collect_lambdas_from_expr(&lambda.body, lambdas),
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Unit
+        | ExprKind::Ident(_)
+        | ExprKind::VariantRef(_) => {}
+    }
+}
+
+fn explicit_lambda_parameter_positions(text: &str) -> Vec<Vec<(String, Position)>> {
+    let tokens = source_tokens(text);
+    let mut lambdas = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < tokens.len() {
+        if tokens[cursor].text != "|" || tokens.get(cursor + 1).map(|token| token.text) == Some(">")
+        {
+            cursor += 1;
+            continue;
+        }
+        let mut params = Vec::new();
+        let mut scan = cursor + 1;
+        let mut expect_name = true;
+        let mut valid = false;
+        while scan < tokens.len() {
+            match tokens[scan].text {
+                "|" => {
+                    valid = !params.is_empty();
+                    break;
+                }
+                "," if !expect_name => expect_name = true,
+                name if expect_name
+                    && name
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_') =>
+                {
+                    params.push((
+                        name.to_string(),
+                        source_range(text, tokens[scan].offset, name.len()).end,
+                    ));
+                    expect_name = false;
+                    if tokens.get(scan + 1).map(|token| token.text) == Some(":") {
+                        scan += 2;
+                        while scan + 1 < tokens.len() && !matches!(tokens[scan + 1].text, "," | "|")
+                        {
+                            scan += 1;
+                        }
+                    }
+                }
+                _ => break,
+            }
+            scan += 1;
+        }
+        if valid {
+            lambdas.push(params);
+            cursor = scan + 1;
+        } else {
+            cursor += 1;
+        }
+    }
+    lambdas
+}
+
+fn lambda_parameter_hints(
+    text: &str,
+    declarations: &[crate::ast::TopDecl],
+    checker: &TypeChecker,
+) -> Vec<InlayHint> {
+    let lambda_exprs = collect_lambdas_from_declarations(declarations);
+    let source_params = explicit_lambda_parameter_positions(text);
+    let mut hints = Vec::new();
+    for (expr, positions) in lambda_exprs.into_iter().zip(source_params) {
+        let crate::ast::ExprKind::Lambda(lambda) = &expr.kind else {
+            continue;
+        };
+        let Some(TypedType::Function { params, .. }) = checker.checked_expr_type(expr) else {
+            continue;
+        };
+        for ((parameter, position), (ast_parameter, ty)) in positions
+            .into_iter()
+            .zip(lambda.params.iter().zip(params.iter()))
+        {
+            if parameter == ast_parameter.name && ast_parameter.type_annotation.is_none() {
+                hints.push(inlay_hint(
+                    position,
+                    format!(": {}", format_typed_type(ty)),
+                    InlayHintKind::TYPE,
+                ));
+            }
+        }
+    }
+    hints
+}
+
+fn binding_hint_positions(text: &str) -> Vec<(String, Position)> {
+    let tokens = source_tokens(text);
+    let mut positions = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if token.text != "val" {
+            continue;
+        }
+        let Some(name) = tokens.get(index + 1) else {
+            continue;
+        };
+        if !name
+            .text
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        {
+            continue;
+        }
+        if tokens.get(index + 2).map(|token| token.text) == Some(":") {
+            continue;
+        }
+        let range = source_range(text, name.offset, name.text.len());
+        positions.push((name.text.to_string(), range.end));
+    }
+    positions
+}
+
+fn function_return_hints(
+    text: &str,
+    declarations: &[crate::ast::TopDecl],
+    checker: &TypeChecker,
+) -> Vec<InlayHint> {
+    let mut hints = Vec::new();
+    for declaration in declarations {
+        let declaration = match declaration {
+            crate::ast::TopDecl::Export(export) => export.item.as_ref(),
+            other => other,
+        };
+        let crate::ast::TopDecl::Function(function) = declaration else {
+            continue;
+        };
+        if function.return_type.is_some() {
+            continue;
+        }
+        let Some(return_type) = checker.checked_function_return_type(&function.name) else {
+            continue;
+        };
+        let Some(name_range) = declaration_name_range(text, "fun", &function.name) else {
+            continue;
+        };
+        let Some(line) = text.lines().nth(name_range.start.line as usize) else {
+            continue;
+        };
+        let Some(equals) = line.find('=') else {
+            continue;
+        };
+        hints.push(inlay_hint(
+            Position::new(
+                name_range.start.line,
+                byte_to_character(line, equals) as u32,
+            ),
+            format!("-> {}", format_typed_type(&return_type)),
+            InlayHintKind::TYPE,
+        ));
+    }
+    hints
+}
+
+fn call_parameter_hints(text: &str, checker: &TypeChecker) -> Vec<InlayHint> {
+    let tokens = source_tokens(text);
+    let mut hints = Vec::new();
+    let mut stack = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        match token.text {
+            "(" => stack.push(index),
+            ")" => {
+                let Some(open) = stack.pop() else {
+                    continue;
+                };
+                let Some(function_token) = tokens.get(index + 1) else {
+                    continue;
+                };
+                if !function_token
+                    .text
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+                {
+                    continue;
+                }
+                let Some(signature) = checker.checked_function_signature(function_token.text)
+                else {
+                    continue;
+                };
+                let mut argument_starts = Vec::new();
+                let mut depth = 0i32;
+                let mut expect_argument = true;
+                for argument in &tokens[open + 1..index] {
+                    match argument.text {
+                        "(" | "[" | "{" => depth += 1,
+                        ")" | "]" | "}" => depth -= 1,
+                        "," if depth == 0 => expect_argument = true,
+                        _ if expect_argument && depth == 0 => {
+                            argument_starts.push(argument.offset);
+                            expect_argument = false;
+                        }
+                        _ => {}
+                    }
+                }
+                for (offset, (parameter, _)) in
+                    argument_starts.into_iter().zip(signature.params.iter())
+                {
+                    hints.push(inlay_hint(
+                        source_range(text, offset, 0).start,
+                        format!("{parameter}:"),
+                        InlayHintKind::PARAMETER,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    hints
+}
+
+fn compute_inlay_hints(uri: &Url, text: &str, requested_range: Range) -> Vec<InlayHint> {
+    let Some((program, checker, root_start)) = root_type_analysis(uri, text) else {
+        return Vec::new();
+    };
+    let root_declarations = &program.declarations[root_start..];
+    let bindings = collect_bindings_from_declarations(root_declarations);
+    let positions = binding_hint_positions(text);
+    let mut hints = Vec::new();
+    let mut position_cursor = 0usize;
+
+    for binding in bindings {
+        if binding.type_annotation.is_some() {
+            continue;
+        }
+        let Pattern::Ident(name) = &binding.pattern else {
+            continue;
+        };
+        let Some(relative) = positions[position_cursor..]
+            .iter()
+            .position(|(candidate, _)| candidate == name)
+        else {
+            continue;
+        };
+        position_cursor += relative + 1;
+        let position = positions[position_cursor - 1].1;
+        let Some(ty) = checker.checked_expr_type(&binding.value) else {
+            continue;
+        };
+        hints.push(inlay_hint(
+            position,
+            format!(": {}", format_typed_type(&ty)),
+            InlayHintKind::TYPE,
+        ));
+    }
+
+    hints.extend(function_return_hints(text, root_declarations, &checker));
+    hints.extend(lambda_parameter_hints(text, root_declarations, &checker));
+    hints.extend(call_parameter_hints(text, &checker));
+    hints.retain(|hint| position_in_range(hint.position, requested_range));
+    hints.sort_by_key(|hint| (hint.position.line, hint.position.character));
+    hints
+}
+
 fn enum_variant_definition_range(text: &str, enum_name: &str, variant_name: &str) -> Option<Range> {
     let tokens = source_tokens(text);
     let mut cursor = 0;
@@ -934,14 +2820,16 @@ fn enum_variant_symbol_at_position(
         let enum_decl = enum_decl_from_top_decl(decl)?;
         enum_decl.variants.iter().find_map(|variant| {
             let range = enum_variant_definition_range(text, &enum_decl.name, &variant.name)?;
+            let word_character = byte_to_character(line, word_start) as u32;
             (range.start.line as usize == line_index
-                && (word_start as u32) >= range.start.character
-                && (word_start as u32) < range.end.character)
+                && word_character >= range.start.character
+                && word_character < range.end.character)
                 .then(|| (enum_decl.name.clone(), variant.name.clone()))
         })
     })
 }
 
+#[allow(dead_code)]
 fn qualified_enum_variant_reference_ranges(
     text: &str,
     enum_name: &str,
@@ -1042,6 +2930,8 @@ const SEMANTIC_TOKEN_KEYWORD: u32 = 15;
 const SEMANTIC_TOKEN_STRING: u32 = 18;
 const SEMANTIC_TOKEN_NUMBER: u32 = 19;
 const SEMANTIC_TOKEN_OPERATOR: u32 = 21;
+const SEMANTIC_TOKEN_TYPE: u32 = 1;
+const SEMANTIC_TOKEN_ENUM_MEMBER: u32 = 10;
 
 fn restrict_server_capabilities() -> ServerCapabilities {
     let token_types = vec![
@@ -1090,7 +2980,7 @@ fn restrict_server_capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(false),
-            trigger_characters: Some(vec![".".to_string()]),
+            trigger_characters: Some(vec![".".to_string(), ":".to_string(), "|".to_string()]),
             work_done_progress_options: Default::default(),
             all_commit_characters: None,
             completion_item: None,
@@ -1101,7 +2991,9 @@ fn restrict_server_capabilities() -> ServerCapabilities {
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: None,
         code_action_provider: None,
-        code_lens_provider: None,
+        code_lens_provider: Some(CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
         document_formatting_provider: None,
         document_range_formatting_provider: None,
         document_on_type_formatting_provider: None,
@@ -1129,11 +3021,18 @@ fn restrict_server_capabilities() -> ServerCapabilities {
             SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
                 SemanticTokensRegistrationOptions {
                     text_document_registration_options: TextDocumentRegistrationOptions {
-                        document_selector: Some(vec![DocumentFilter {
-                            language: Some("restrict".to_string()),
-                            scheme: Some("file".to_string()),
-                            pattern: None,
-                        }]),
+                        document_selector: Some(vec![
+                            DocumentFilter {
+                                language: Some("restrict".to_string()),
+                                scheme: Some("file".to_string()),
+                                pattern: None,
+                            },
+                            DocumentFilter {
+                                language: Some("restrict".to_string()),
+                                scheme: Some("untitled".to_string()),
+                                pattern: None,
+                            },
+                        ]),
                     },
                     semantic_tokens_options: SemanticTokensOptions {
                         work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -1159,6 +3058,7 @@ fn restrict_server_capabilities() -> ServerCapabilities {
                 },
             ),
         ),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         ..ServerCapabilities::default()
     }
 }
@@ -1183,6 +3083,7 @@ impl RestrictLanguageServer {
         parse_and_resolve_program_for_lsp(uri, text)
     }
 
+    #[allow(dead_code)]
     fn find_definition_at_position(
         uri: &Url,
         ast: &crate::ast::Program,
@@ -1198,14 +3099,10 @@ impl RestrictLanguageServer {
         }
 
         let target_line = lines[target_line_idx];
-        let char_idx = position.character as usize;
-
-        if char_idx >= target_line.len() {
-            return None;
-        }
 
         // Extract word at cursor position
-        let (start, end) = Self::extract_word_at_position(target_line, char_idx)?;
+        let (start, end) =
+            Self::extract_word_at_position(target_line, position.character as usize)?;
         let word = &target_line[start..end];
 
         if let Some((enum_name, variant_name)) =
@@ -1241,8 +3138,11 @@ impl RestrictLanguageServer {
                     return Some(Location::new(
                         uri.clone(),
                         Range::new(
-                            Position::new(line_idx as u32, pos as u32),
-                            Position::new(line_idx as u32, (pos + word.len()) as u32),
+                            Position::new(line_idx as u32, byte_to_character(line, pos) as u32),
+                            Position::new(
+                                line_idx as u32,
+                                byte_to_character(line, pos + word.len()) as u32,
+                            ),
                         ),
                     ));
                 }
@@ -1266,14 +3166,11 @@ impl RestrictLanguageServer {
         }
 
         let target_line = lines[target_line_idx];
-        let char_idx = position.character as usize;
-
-        if char_idx >= target_line.len() {
-            return None;
-        }
 
         // Extract word at cursor position
-        if let Some((start, end)) = Self::extract_word_at_position(target_line, char_idx) {
+        if let Some((start, end)) =
+            Self::extract_word_at_position(target_line, position.character as usize)
+        {
             let word = &target_line[start..end];
             let enum_variant = enum_variant_symbol_at_position(
                 ast,
@@ -1379,13 +3276,17 @@ impl RestrictLanguageServer {
                             SymbolKind::ENUM,
                             Range::new(
                                 Position::new(line_idx as u32, 0),
-                                Position::new(line_idx as u32, line.len() as u32),
+                                Position::new(line_idx as u32, line.encode_utf16().count() as u32),
                             ),
                             Range::new(
-                                Position::new(line_idx as u32, start_pos as u32),
                                 Position::new(
                                     line_idx as u32,
-                                    (start_pos + enum_decl.name.len()) as u32,
+                                    byte_to_character(line, start_pos) as u32,
+                                ),
+                                Position::new(
+                                    line_idx as u32,
+                                    byte_to_character(line, start_pos + enum_decl.name.len())
+                                        as u32,
                                 ),
                             ),
                         ));
@@ -1414,13 +3315,19 @@ impl RestrictLanguageServer {
                                 SymbolKind::FUNCTION,
                                 Range::new(
                                     Position::new(line_idx as u32, 0),
-                                    Position::new(line_idx as u32, line.len() as u32),
-                                ),
-                                Range::new(
-                                    Position::new(line_idx as u32, start_pos as u32),
                                     Position::new(
                                         line_idx as u32,
-                                        (start_pos + func.name.len()) as u32,
+                                        line.encode_utf16().count() as u32,
+                                    ),
+                                ),
+                                Range::new(
+                                    Position::new(
+                                        line_idx as u32,
+                                        byte_to_character(line, start_pos) as u32,
+                                    ),
+                                    Position::new(
+                                        line_idx as u32,
+                                        byte_to_character(line, start_pos + func.name.len()) as u32,
                                     ),
                                 ),
                             ));
@@ -1438,13 +3345,20 @@ impl RestrictLanguageServer {
                                 SymbolKind::STRUCT,
                                 Range::new(
                                     Position::new(line_idx as u32, 0),
-                                    Position::new(line_idx as u32, line.len() as u32),
-                                ),
-                                Range::new(
-                                    Position::new(line_idx as u32, start_pos as u32),
                                     Position::new(
                                         line_idx as u32,
-                                        (start_pos + record.name.len()) as u32,
+                                        line.encode_utf16().count() as u32,
+                                    ),
+                                ),
+                                Range::new(
+                                    Position::new(
+                                        line_idx as u32,
+                                        byte_to_character(line, start_pos) as u32,
+                                    ),
+                                    Position::new(
+                                        line_idx as u32,
+                                        byte_to_character(line, start_pos + record.name.len())
+                                            as u32,
                                     ),
                                 ),
                             ));
@@ -1467,11 +3381,20 @@ impl RestrictLanguageServer {
                                 SymbolKind::VARIABLE,
                                 Range::new(
                                     Position::new(line_idx as u32, 0),
-                                    Position::new(line_idx as u32, line.len() as u32),
+                                    Position::new(
+                                        line_idx as u32,
+                                        line.encode_utf16().count() as u32,
+                                    ),
                                 ),
                                 Range::new(
-                                    Position::new(line_idx as u32, start_pos as u32),
-                                    Position::new(line_idx as u32, end_pos as u32),
+                                    Position::new(
+                                        line_idx as u32,
+                                        byte_to_character(line, start_pos) as u32,
+                                    ),
+                                    Position::new(
+                                        line_idx as u32,
+                                        byte_to_character(line, end_pos) as u32,
+                                    ),
                                 ),
                             ));
                             break;
@@ -1485,25 +3408,23 @@ impl RestrictLanguageServer {
         symbols
     }
 
-    fn extract_word_at_position(line: &str, char_idx: usize) -> Option<(usize, usize)> {
-        let chars: Vec<char> = line.chars().collect();
+    fn extract_word_at_position(line: &str, character: usize) -> Option<(usize, usize)> {
+        let byte_idx = utf16_character_to_byte(line, character)?;
+        let mut start = byte_idx;
+        let mut end = byte_idx;
 
-        if char_idx >= chars.len() {
-            return None;
+        while let Some(ch) = line[..start].chars().next_back() {
+            if !is_identifier_continue(ch) {
+                break;
+            }
+            start -= ch.len_utf8();
         }
 
-        // Find word boundaries
-        let mut start = char_idx;
-        let mut end = char_idx;
-
-        // Expand backwards
-        while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
-            start -= 1;
-        }
-
-        // Expand forwards
-        while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
-            end += 1;
+        while let Some(ch) = line[end..].chars().next() {
+            if !is_identifier_continue(ch) {
+                break;
+            }
+            end += ch.len_utf8();
         }
 
         if start == end {
@@ -1513,6 +3434,7 @@ impl RestrictLanguageServer {
         Some((start, end))
     }
 
+    #[allow(dead_code)]
     fn find_references_at_position(
         uri: &Url,
         ast: &crate::ast::Program,
@@ -1529,14 +3451,11 @@ impl RestrictLanguageServer {
         }
 
         let target_line = lines[target_line_idx];
-        let char_idx = position.character as usize;
-
-        if char_idx >= target_line.len() {
-            return references;
-        }
 
         // Extract word at cursor position
-        if let Some((start, end)) = Self::extract_word_at_position(target_line, char_idx) {
+        if let Some((start, end)) =
+            Self::extract_word_at_position(target_line, position.character as usize)
+        {
             let word = &target_line[start..end];
 
             if let Some((enum_name, variant_name)) =
@@ -1569,17 +3488,15 @@ impl RestrictLanguageServer {
 
                     // Check if this is a whole word match
                     let is_word_boundary = (actual_pos == 0
-                        || !line
+                        || line[..actual_pos]
                             .chars()
-                            .nth(actual_pos - 1)
-                            .unwrap_or(' ')
-                            .is_alphanumeric())
+                            .next_back()
+                            .is_none_or(|ch| !is_identifier_continue(ch)))
                         && (actual_pos + word.len() >= line.len()
-                            || !line
+                            || line[actual_pos + word.len()..]
                                 .chars()
-                                .nth(actual_pos + word.len())
-                                .unwrap_or(' ')
-                                .is_alphanumeric());
+                                .next()
+                                .is_none_or(|ch| !is_identifier_continue(ch)));
 
                     if is_word_boundary {
                         // Skip the original position if not including declaration
@@ -1594,8 +3511,14 @@ impl RestrictLanguageServer {
                         references.push(Location::new(
                             uri.clone(),
                             Range::new(
-                                Position::new(line_idx as u32, actual_pos as u32),
-                                Position::new(line_idx as u32, (actual_pos + word.len()) as u32),
+                                Position::new(
+                                    line_idx as u32,
+                                    byte_to_character(line, actual_pos) as u32,
+                                ),
+                                Position::new(
+                                    line_idx as u32,
+                                    byte_to_character(line, actual_pos + word.len()) as u32,
+                                ),
                             ),
                         ));
                     }
@@ -1612,30 +3535,51 @@ impl RestrictLanguageServer {
         let mut tokens = Vec::new();
         let lines: Vec<&str> = text.lines().collect();
         let mut previous_position: Option<(usize, usize)> = None;
+        let mut in_block_comment = false;
 
         for (line_idx, line) in lines.iter().enumerate() {
-            let mut char_idx = 0;
-            let chars: Vec<char> = line.chars().collect();
+            let mut byte_idx = 0;
 
-            while char_idx < chars.len() {
-                // Skip whitespace
-                if chars[char_idx].is_whitespace() {
-                    char_idx += 1;
+            while byte_idx < line.len() {
+                let remaining = &line[byte_idx..];
+                if in_block_comment {
+                    if let Some(end) = remaining.find("*/") {
+                        byte_idx += end + 2;
+                        in_block_comment = false;
+                        continue;
+                    }
+                    break;
+                }
+                if remaining.starts_with("//") {
+                    break;
+                }
+                if remaining.starts_with("/*") {
+                    byte_idx += 2;
+                    in_block_comment = true;
                     continue;
                 }
 
-                // Check for keywords
-                if let Some((token_length, token_type)) =
-                    Self::classify_token_at_position(line, char_idx)
+                let current = remaining.chars().next().expect("non-empty remainder");
+                if current.is_whitespace() {
+                    byte_idx += current.len_utf8();
+                    continue;
+                }
+
+                if let Some((token_byte_length, token_type)) =
+                    Self::classify_token_at_position(line, byte_idx)
                 {
+                    let token_start = line[..byte_idx].encode_utf16().count();
+                    let token_length = line[byte_idx..byte_idx + token_byte_length]
+                        .encode_utf16()
+                        .count();
                     let (delta_line, delta_start) = match previous_position {
                         Some((previous_line, previous_start)) if previous_line == line_idx => {
-                            (0, char_idx.saturating_sub(previous_start) as u32)
+                            (0, token_start.saturating_sub(previous_start) as u32)
                         }
                         Some((previous_line, _)) => {
-                            ((line_idx - previous_line) as u32, char_idx as u32)
+                            ((line_idx - previous_line) as u32, token_start as u32)
                         }
-                        None => (line_idx as u32, char_idx as u32),
+                        None => (line_idx as u32, token_start as u32),
                     };
 
                     tokens.push(SemanticToken {
@@ -1645,10 +3589,10 @@ impl RestrictLanguageServer {
                         token_type,
                         token_modifiers_bitset: 0,
                     });
-                    previous_position = Some((line_idx, char_idx));
-                    char_idx += token_length;
+                    previous_position = Some((line_idx, token_start));
+                    byte_idx += token_byte_length;
                 } else {
-                    char_idx += 1;
+                    byte_idx += current.len_utf8();
                 }
             }
         }
@@ -1656,8 +3600,13 @@ impl RestrictLanguageServer {
         tokens
     }
 
-    fn classify_token_at_position(line: &str, char_idx: usize) -> Option<(usize, u32)> {
-        let remaining = &line[char_idx..];
+    fn classify_token_at_position(line: &str, byte_idx: usize) -> Option<(usize, u32)> {
+        let remaining = line.get(byte_idx..)?;
+        let has_identifier_prefix = byte_idx > 0
+            && line[..byte_idx]
+                .chars()
+                .next_back()
+                .is_some_and(is_identifier_continue);
 
         // Keywords
         let keywords = [
@@ -1676,57 +3625,149 @@ impl RestrictLanguageServer {
             ("form", SEMANTIC_TOKEN_KEYWORD),
             ("takes", SEMANTIC_TOKEN_KEYWORD),
             ("of", SEMANTIC_TOKEN_KEYWORD),
+            ("pub", SEMANTIC_TOKEN_KEYWORD),
+            ("import", SEMANTIC_TOKEN_KEYWORD),
+            ("export", SEMANTIC_TOKEN_KEYWORD),
+            ("impl", SEMANTIC_TOKEN_KEYWORD),
+            ("context", SEMANTIC_TOKEN_KEYWORD),
+            ("temporal", SEMANTIC_TOKEN_KEYWORD),
+            ("within", SEMANTIC_TOKEN_KEYWORD),
+            ("where", SEMANTIC_TOKEN_KEYWORD),
+            ("as", SEMANTIC_TOKEN_KEYWORD),
+            ("fatal", SEMANTIC_TOKEN_KEYWORD),
+            ("lifetime", SEMANTIC_TOKEN_KEYWORD),
+            ("await", SEMANTIC_TOKEN_KEYWORD),
+            ("spawn", SEMANTIC_TOKEN_KEYWORD),
             ("true", SEMANTIC_TOKEN_KEYWORD),
             ("false", SEMANTIC_TOKEN_KEYWORD),
-            ("Some", SEMANTIC_TOKEN_KEYWORD),
-            ("None", SEMANTIC_TOKEN_KEYWORD),
         ];
 
-        for (keyword, token_type) in keywords {
-            if let Some(suffix) = remaining.strip_prefix(keyword) {
+        if !has_identifier_prefix {
+            for (keyword, token_type) in keywords {
+                if let Some(suffix) = remaining.strip_prefix(keyword) {
+                    if suffix
+                        .chars()
+                        .next()
+                        .is_none_or(|ch| !is_identifier_continue(ch))
+                    {
+                        return Some((keyword.len(), token_type));
+                    }
+                }
+            }
+
+            for name in [
+                "Int32", "Int64", "Float64", "String", "Char", "Boolean", "List", "Array",
+                "Option", "Result", "Range", "Self",
+            ] {
+                if let Some(suffix) = remaining.strip_prefix(name) {
+                    if suffix
+                        .chars()
+                        .next()
+                        .is_none_or(|ch| !is_identifier_continue(ch))
+                    {
+                        return Some((name.len(), SEMANTIC_TOKEN_TYPE));
+                    }
+                }
+            }
+
+            for variant in ["Some", "None", "Ok", "Err"] {
+                let Some(suffix) = remaining.strip_prefix(variant) else {
+                    continue;
+                };
                 // Check word boundary
                 if suffix
                     .chars()
                     .next()
                     .is_none_or(|ch| !is_identifier_continue(ch))
                 {
-                    return Some((keyword.len(), token_type));
+                    return Some((variant.len(), SEMANTIC_TOKEN_ENUM_MEMBER));
                 }
             }
         }
 
         // Numbers
-        if remaining.chars().next().unwrap_or(' ').is_ascii_digit() {
-            let mut length = 0;
-            for ch in remaining.chars() {
-                if ch.is_ascii_digit() || ch == '.' {
-                    length += 1;
-                } else {
-                    break;
-                }
+        if !has_identifier_prefix && remaining.starts_with("0x") {
+            let length = remaining[2..]
+                .chars()
+                .take_while(|ch| ch.is_ascii_hexdigit() || *ch == '_')
+                .map(char::len_utf8)
+                .sum::<usize>();
+            if length > 0 {
+                return Some((length + 2, SEMANTIC_TOKEN_NUMBER));
             }
+        } else if !has_identifier_prefix
+            && remaining
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_digit())
+        {
+            let length = numeric_token_length(remaining);
             return Some((length, SEMANTIC_TOKEN_NUMBER));
         }
 
-        // Strings
-        if let Some(stripped) = remaining.strip_prefix('"') {
-            let mut length = 1;
+        // Strings and characters
+        if remaining.starts_with('"') || remaining.starts_with('\'') {
+            let delimiter = remaining.chars().next().expect("checked delimiter");
+            let mut length = delimiter.len_utf8();
             let mut escaped = false;
-            for ch in stripped.chars() {
-                length += 1;
+            for ch in remaining[delimiter.len_utf8()..].chars() {
+                length += ch.len_utf8();
                 if escaped {
                     escaped = false;
                 } else if ch == '\\' {
                     escaped = true;
-                } else if ch == '"' {
+                } else if ch == delimiter {
                     break;
                 }
             }
             return Some((length, SEMANTIC_TOKEN_STRING));
         }
 
+        for operator in [
+            "...", "|>", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "::", "..", "+", "-", "*",
+            "/", "%", "<", ">", "!", "~", "=", ".",
+        ] {
+            if remaining.starts_with(operator) {
+                return Some((operator.len(), SEMANTIC_TOKEN_OPERATOR));
+            }
+        }
+
         None
     }
+}
+
+fn numeric_token_length(remaining: &str) -> usize {
+    let bytes = remaining.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+        index += 1;
+    }
+    if index < bytes.len()
+        && bytes[index] == b'.'
+        && bytes.get(index + 1).is_some_and(u8::is_ascii_digit)
+    {
+        index += 1;
+        while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+            index += 1;
+        }
+    }
+    if index < bytes.len() && matches!(bytes[index], b'e' | b'E') {
+        let exponent_start = index;
+        index += 1;
+        if index < bytes.len() && matches!(bytes[index], b'+' | b'-') {
+            index += 1;
+        }
+        let digits_start = index;
+        while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+            index += 1;
+        }
+        if index == digits_start {
+            index = exponent_start;
+        }
+    }
+
+    index
 }
 
 #[cfg(test)]
@@ -1800,6 +3841,22 @@ mod tests {
         assert!(diagnostic.message.contains("binding 'items'"));
         assert_eq!(diagnostic.range.start, Position::new(1, 8));
         assert_eq!(diagnostic.range.end, Position::new(1, 13));
+    }
+
+    #[test]
+    fn non_callable_osv_verb_diagnostic_points_to_statement_continuation() {
+        let source = "fun main: () -> Int32 = {\n    val first = 1;\n    val second = 2;\n    first\n    second\n}\n";
+        let diagnostic = diagnostic_for_type_error(
+            source,
+            &TypeError::NonCallableVerb {
+                name: "second".to_string(),
+                found: "Int32".to_string(),
+            },
+        );
+
+        assert!(diagnostic.message.contains("insert `;` before it"));
+        assert_eq!(diagnostic.range.start, Position::new(4, 4));
+        assert_eq!(diagnostic.range.end, Position::new(4, 5));
     }
 
     #[test]
@@ -2030,6 +4087,12 @@ fun main: () -> Int32 = {
         assert!(items.iter().any(|item| item.label == "form"));
         assert!(items.iter().any(|item| item.label == "takes"));
         assert!(items.iter().any(|item| item.label == "of"));
+        assert!(items.iter().any(|item| item.label == "Option::Some"));
+        assert!(items.iter().any(|item| item.label == "Option::None"));
+        assert!(items.iter().any(|item| item.label == "Result::Ok"));
+        assert!(items.iter().any(|item| item.label == "Result::Err"));
+        assert!(!items.iter().any(|item| item.label == "Some"));
+        assert!(!items.iter().any(|item| item.label == "None"));
 
         for item in &items {
             assert_ne!(item.label, "let");
@@ -2341,7 +4404,32 @@ fun current: () -> Status = { () Status::Ready }
     }
 
     #[test]
-    fn v001_capabilities_do_not_advertise_noop_release_features() {
+    fn definition_and_reference_positions_use_utf16_coordinates() {
+        let text = "fun consume: (value: String) -> () = { () }\n\
+fun main: () -> () = {\n\
+    \"🦀\" |> consume\n\
+}\n";
+        let ast = parse_lsp_test_program(text);
+        let uri = Url::parse("file:///tmp/restrict/unicode.rl").unwrap();
+        let use_line = text.lines().nth(2).expect("use line");
+        let use_byte = use_line.find("consume").expect("consume use");
+        let use_character = byte_to_character(use_line, use_byte) as u32;
+        let position = Position::new(2, use_character);
+
+        let definition =
+            RestrictLanguageServer::find_definition_at_position(&uri, &ast, text, &position)
+                .expect("definition should be found");
+        assert_eq!(definition.range.start, Position::new(0, 4));
+
+        let references =
+            RestrictLanguageServer::find_references_at_position(&uri, &ast, text, &position, true);
+        assert!(references
+            .iter()
+            .any(|location| location.range.start == Position::new(2, use_character)));
+    }
+
+    #[test]
+    fn v001_capabilities_advertise_only_implemented_language_features() {
         let capabilities = restrict_server_capabilities();
 
         assert!(capabilities.definition_provider.is_some());
@@ -2354,7 +4442,8 @@ fun current: () -> Status = { () Status::Ready }
         assert!(capabilities.document_highlight_provider.is_none());
         assert!(capabilities.workspace_symbol_provider.is_none());
         assert!(capabilities.code_action_provider.is_none());
-        assert!(capabilities.code_lens_provider.is_none());
+        assert!(capabilities.code_lens_provider.is_some());
+        assert!(capabilities.inlay_hint_provider.is_some());
         assert!(capabilities.document_formatting_provider.is_none());
         assert!(capabilities.document_range_formatting_provider.is_none());
         assert!(capabilities.document_on_type_formatting_provider.is_none());
@@ -2371,6 +4460,193 @@ fun current: () -> Status = { () Status::Ready }
             semantic_options.legend.token_types[SEMANTIC_TOKEN_KEYWORD as usize],
             SemanticTokenType::KEYWORD
         );
+    }
+
+    #[test]
+    fn workspace_index_resolves_imported_definitions_and_references() {
+        let directory = std::env::temp_dir().join(format!(
+            "restrict-lsp-workspace-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("index")
+        ));
+        std::fs::create_dir_all(&directory).expect("create LSP workspace");
+        let release_path = directory.join("release.rl");
+        let main_path = directory.join("main.rl");
+        let release = "pub fun score: (value: Int32) -> Int32 = { value }\n\
+pub enum Status { Ready, Failed(String) }\n";
+        let main = "import release.{score, Status}\n\
+fun main: () -> Int32 = {\n\
+    41 |> score\n\
+}\n";
+        std::fs::write(&release_path, release).expect("write imported module");
+        std::fs::write(&main_path, main).expect("write root module");
+        let main_uri = Url::from_file_path(&main_path).expect("main URI");
+        let release_uri = Url::from_file_path(
+            std::fs::canonicalize(&release_path).expect("canonical release path"),
+        )
+        .expect("release URI");
+        let documents = HashMap::from([(main_uri.clone(), main.to_string())]);
+        let index = WorkspaceIndex::build(&main_uri, main, &documents);
+
+        let use_position = position_of_word(main, "score", 1);
+        let definition = index
+            .resolve_symbol_at(&main_uri, use_position)
+            .expect("imported score should resolve");
+        assert_eq!(definition.key.uri, release_uri);
+        assert_eq!(definition.range.start, Position::new(0, 8));
+
+        let references = index.references_to(&definition.key, false);
+        assert!(references.iter().any(|location| {
+            location.uri == main_uri && location.range.start == position_of_word(main, "score", 0)
+        }));
+        assert!(references.iter().any(|location| {
+            location.uri == main_uri && location.range.start == position_of_word(main, "score", 1)
+        }));
+
+        std::fs::remove_dir_all(directory).expect("remove LSP workspace");
+    }
+
+    #[test]
+    fn completion_survives_incomplete_input_and_only_exposes_imported_api() {
+        let directory =
+            std::env::temp_dir().join(format!("restrict-lsp-completion-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create completion workspace");
+        let release_path = directory.join("release.rl");
+        let main_path = directory.join("main.rl");
+        let release = "pub enum Status { Ready, Failed(String) }\n\
+enum Internal { Hidden }\n";
+        let main = "import release.{Status}\n\
+fun main: () -> Status = {\n\
+    Status::\n\
+}\n";
+        std::fs::write(&release_path, release).expect("write completion module");
+        std::fs::write(&main_path, main).expect("write completion root");
+        let uri = Url::from_file_path(&main_path).expect("main URI");
+        let documents = HashMap::from([(uri.clone(), main.to_string())]);
+        let index = WorkspaceIndex::build(&uri, main, &documents);
+        let position = Position::new(
+            2,
+            main.lines().nth(2).unwrap().encode_utf16().count() as u32,
+        );
+        assert_eq!(
+            identifier_prefix_before_cursor(main, position),
+            Some(("Status".to_string(), String::new()))
+        );
+        let labels = contextual_completions(&index, &uri, main, position)
+            .into_iter()
+            .map(|item| item.label)
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, vec!["Status::Ready", "Status::Failed"]);
+        assert!(!labels.iter().any(|label| label.contains("Hidden")));
+
+        std::fs::remove_dir_all(directory).expect("remove completion workspace");
+    }
+
+    #[test]
+    fn completion_tracks_lexical_bindings_at_the_cursor() {
+        let source = "fun main: () -> Int32 = {\n\
+    val visible: Int32 = 1\n\
+    { val expired: Int32 = 2; expired }\n\
+    vis\n\
+}\n";
+        let uri = Url::parse("untitled:scope.rl").expect("untitled URI");
+        let index = WorkspaceIndex::single_file(&uri, source);
+        let position = Position::new(
+            3,
+            source.lines().nth(3).unwrap().encode_utf16().count() as u32,
+        );
+        assert!(
+            enclosing_function_scope(source, position).is_some(),
+            "scope: {:?}, offset: {:?}",
+            enclosing_function_scope(source, position),
+            cursor_offset(source, position)
+        );
+        let labels = contextual_completions(&index, &uri, source, position)
+            .into_iter()
+            .map(|item| item.label)
+            .collect::<HashSet<_>>();
+
+        assert!(labels.contains("visible"));
+        assert!(!labels.contains("expired"));
+        assert!(
+            !labels.contains("record"),
+            "body completion must hide top-level APIs"
+        );
+    }
+
+    #[test]
+    fn completion_filters_fields_and_pipe_apis_by_receiver_type() {
+        let source = "record Point { x: Int32, label: String }\n\
+fun increment: (value: Int32) -> Int32 = { value + 1 }\n\
+fun uppercase: (value: String) -> String = { value }\n\
+fun point_x: (point: Point) -> Int32 = { point.x }\n\
+fun main: (value: Int32) -> Int32 = { value |> increment }\n";
+        let uri = Url::parse("untitled:typed-completion.rl").expect("untitled URI");
+        let index = WorkspaceIndex::single_file(&uri, source);
+
+        let field_line = source.lines().nth(3).expect("field line");
+        let dot = field_line.find("point.x").expect("field access") + "point.".len();
+        let fields = contextual_completions(
+            &index,
+            &uri,
+            source,
+            Position::new(3, byte_to_character(field_line, dot) as u32),
+        )
+        .into_iter()
+        .map(|item| item.label)
+        .collect::<HashSet<_>>();
+        assert_eq!(
+            fields,
+            HashSet::from(["x".to_string(), "label".to_string()])
+        );
+
+        let pipe_line = source.lines().nth(4).expect("pipe line");
+        let verb = pipe_line.find("increment").expect("pipe verb");
+        let apis = contextual_completions(
+            &index,
+            &uri,
+            source,
+            Position::new(4, byte_to_character(pipe_line, verb) as u32),
+        )
+        .into_iter()
+        .map(|item| item.label)
+        .collect::<HashSet<_>>();
+        assert!(apis.contains("increment"));
+        assert!(apis.contains("abs"));
+        assert!(!apis.contains("uppercase"));
+        assert!(!apis.contains("record"));
+    }
+
+    #[test]
+    fn inlay_hints_cover_bindings_returns_and_call_parameters() {
+        let source = "fun add: (left: Int32, right: Int32) -> Int32 = { left + right }\n\
+fun apply: (value: Int32, transform: Int32 -> Int32) -> Int32 = { value |> transform }\n\
+fun main: () = {\n\
+    val total = (1, 2) add\n\
+    (total, |item| item + 1) apply\n\
+}\n";
+        let uri = Url::parse("file:///tmp/restrict/inlay.rl").expect("file URI");
+        let hints = compute_inlay_hints(
+            &uri,
+            source,
+            Range::new(Position::new(0, 0), Position::new(10, 0)),
+        );
+        let labels = hints
+            .iter()
+            .map(|hint| match &hint.label {
+                InlayHintLabel::String(label) => label.as_str(),
+                InlayHintLabel::LabelParts(_) => "parts",
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            labels.iter().filter(|label| **label == ": Int32").count() >= 2,
+            "binding and inferred lambda parameter types should both be hinted: {labels:?}"
+        );
+        assert!(labels.contains(&"-> Int32"));
+        assert!(labels.contains(&"left:"));
+        assert!(labels.contains(&"right:"));
     }
 
     #[test]
@@ -2413,6 +4689,35 @@ fun current: () -> Status = { () Status::Ready }
     }
 
     #[test]
+    fn semantic_tokens_ignore_keywords_inside_comments() {
+        let text = "// fun val form\n/* takes\nof */\nval answer = 42\n";
+        let ast = parse_lsp_test_program(text);
+
+        let tokens = RestrictLanguageServer::generate_semantic_tokens(&ast, text);
+        let decoded = decode_semantic_tokens(&tokens);
+
+        assert_eq!(
+            decoded
+                .iter()
+                .filter(|(_, _, _, token_type)| *token_type == SEMANTIC_TOKEN_KEYWORD)
+                .collect::<Vec<_>>(),
+            vec![&(3, 0, 3, SEMANTIC_TOKEN_KEYWORD)]
+        );
+    }
+
+    #[test]
+    fn semantic_tokens_use_utf16_columns_and_lengths() {
+        let text = "val greeting = \"🦀\"\nval answer = 1.5e2\n";
+        let ast = parse_lsp_test_program(text);
+
+        let tokens = RestrictLanguageServer::generate_semantic_tokens(&ast, text);
+        let decoded = decode_semantic_tokens(&tokens);
+
+        assert!(decoded.contains(&(0, 15, 4, SEMANTIC_TOKEN_STRING)));
+        assert!(decoded.contains(&(1, 13, 5, SEMANTIC_TOKEN_NUMBER)));
+    }
+
+    #[test]
     fn form_surface_words_are_semantic_keywords_with_identifier_boundaries() {
         assert_eq!(
             RestrictLanguageServer::classify_token_at_position("form Showable", 0),
@@ -2430,6 +4735,42 @@ fun current: () -> Status = { () Status::Ready }
             RestrictLanguageServer::classify_token_at_position("of_form", 0),
             None
         );
+        assert_eq!(
+            RestrictLanguageServer::classify_token_at_position("not_of", 4),
+            None
+        );
+        assert_eq!(
+            RestrictLanguageServer::classify_token_at_position("value42", 5),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn hover_remains_available_while_the_document_has_type_errors() {
+        let source = "fun main: () -> Int32 = { \"wrong\" }\n";
+        let uri = Url::parse("untitled:type-error.rl").expect("valid URI");
+        let (service, _socket) = LspService::new(RestrictLanguageServer::new);
+        service
+            .inner()
+            .documents
+            .write()
+            .unwrap()
+            .insert(uri.clone(), source.to_string());
+
+        let hover = service
+            .inner()
+            .hover(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri },
+                    position: Position::new(0, 1),
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            })
+            .await
+            .expect("hover request should succeed")
+            .expect("fun keyword should have hover content");
+
+        assert!(matches!(hover.contents, HoverContents::Markup(_)));
     }
 
     fn assert_no_legacy_public_syntax(text: &str) {
@@ -2620,6 +4961,9 @@ impl LanguageServer for RestrictLanguageServer {
             let mut documents = self.documents.write().unwrap();
             documents.remove(&params.text_document.uri);
         }
+        self.client
+            .publish_diagnostics(params.text_document.uri, Vec::new(), None)
+            .await;
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -2628,21 +4972,17 @@ impl LanguageServer for RestrictLanguageServer {
 
         let documents = self.documents.read().unwrap();
         if let Some(text) = documents.get(uri) {
-            // Parse the document and get type information
+            // Hover descriptions are syntax and declaration based, so keep
+            // them available even when the document currently has type errors.
             if let Ok(ast) = self.parse_and_resolve_program(uri, text) {
-                let mut type_checker = TypeChecker::new();
-                if type_checker.check_program(&ast).is_ok() {
-                    if let Some(hover_info) = self.get_hover_info(&ast, text, position) {
-                        return Ok(Some(Hover {
-                            contents: HoverContents::Scalar(MarkedString::LanguageString(
-                                LanguageString {
-                                    language: "restrict".to_string(),
-                                    value: hover_info,
-                                },
-                            )),
-                            range: None,
-                        }));
-                    }
+                if let Some(hover_info) = self.get_hover_info(&ast, text, position) {
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: hover_info,
+                        }),
+                        range: None,
+                    }));
                 }
             }
         }
@@ -2651,77 +4991,16 @@ impl LanguageServer for RestrictLanguageServer {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let mut completions = builtin_completion_items();
-
-        // Context-sensitive completions
         let uri = &params.text_document_position.text_document.uri;
-        let documents = self.documents.read().unwrap();
-        if let Some(text) = documents.get(uri) {
-            if let Ok(ast) = self.parse_and_resolve_program(uri, text) {
-                // Add symbols from current document
-                for decl in &ast.declarations {
-                    if let Some(enum_decl) = enum_decl_from_top_decl(decl) {
-                        if crate::module::is_internal_module_name(&enum_decl.name) {
-                            continue;
-                        }
-                        completions.push(CompletionItem::new_simple(
-                            enum_decl.name.clone(),
-                            format!("Closed enum with {} variants", enum_decl.variants.len()),
-                        ));
-                        for variant in &enum_decl.variants {
-                            let qualified = format!("{}::{}", enum_decl.name, variant.name);
-                            let detail = match &variant.payload {
-                                Some(payload) => {
-                                    format!("Enum constructor: {} -> {}", payload, enum_decl.name)
-                                }
-                                None => format!("Payload-free {} constructor", enum_decl.name),
-                            };
-                            completions.push(CompletionItem::new_simple(qualified, detail));
-                        }
-                        continue;
-                    }
-
-                    if let Some(form) = form_decl_from_top_decl(decl) {
-                        if crate::module::is_internal_module_name(&form.name) {
-                            continue;
-                        }
-                        completions.push(CompletionItem::new_simple(
-                            form.name.clone(),
-                            format!(
-                                "Form with {} required method{}",
-                                form.methods.len(),
-                                if form.methods.len() == 1 { "" } else { "s" }
-                            ),
-                        ));
-                        continue;
-                    }
-
-                    match decl {
-                        crate::ast::TopDecl::Function(func) => {
-                            if crate::module::is_internal_module_name(&func.name) {
-                                continue;
-                            }
-                            completions.push(CompletionItem::new_simple(
-                                func.name.clone(),
-                                format!("User function with {} parameters", func.params.len()),
-                            ));
-                        }
-                        crate::ast::TopDecl::Record(record) => {
-                            if crate::module::is_internal_module_name(&record.name) {
-                                continue;
-                            }
-                            completions.push(CompletionItem::new_simple(
-                                record.name.clone(),
-                                format!("Record type with {} fields", record.fields.len()),
-                            ));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        Ok(Some(CompletionResponse::Array(completions)))
+        let position = params.text_document_position.position;
+        let documents = self.documents.read().unwrap().clone();
+        let Some(text) = documents.get(uri) else {
+            return Ok(Some(CompletionResponse::Array(builtin_completion_items())));
+        };
+        let index = WorkspaceIndex::build_import_closure(uri, text, &documents);
+        Ok(Some(CompletionResponse::Array(contextual_completions(
+            &index, uri, text, position,
+        ))))
     }
 
     async fn goto_definition(
@@ -2731,14 +5010,14 @@ impl LanguageServer for RestrictLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = &params.text_document_position_params.position;
 
-        let documents = self.documents.read().unwrap();
+        let documents = self.documents.read().unwrap().clone();
         if let Some(text) = documents.get(uri) {
-            // Parse the document to get AST and find symbol at position
-            if let Ok(ast) = self.parse_and_resolve_program(uri, text) {
-                if let Some(location) = Self::find_definition_at_position(uri, &ast, text, position)
-                {
-                    return Ok(Some(GotoDefinitionResponse::Scalar(location)));
-                }
+            let index = WorkspaceIndex::build_import_closure(uri, text, &documents);
+            if let Some(definition) = index.resolve_symbol_at(uri, *position) {
+                return Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
+                    definition.key.uri.clone(),
+                    definition.range,
+                ))));
             }
         }
 
@@ -2749,19 +5028,13 @@ impl LanguageServer for RestrictLanguageServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = &params.text_document_position.position;
 
-        let documents = self.documents.read().unwrap();
+        let documents = self.documents.read().unwrap().clone();
         if let Some(text) = documents.get(uri) {
-            if let Ok(ast) = self.parse_and_resolve_program(uri, text) {
-                let references = Self::find_references_at_position(
-                    uri,
-                    &ast,
-                    text,
-                    position,
-                    params.context.include_declaration,
-                );
-                if !references.is_empty() {
-                    return Ok(Some(references));
-                }
+            let index = WorkspaceIndex::build(uri, text, &documents);
+            if let Some(definition) = index.resolve_symbol_at(uri, *position) {
+                let references =
+                    index.references_to(&definition.key, params.context.include_declaration);
+                return Ok((!references.is_empty()).then_some(references));
             }
         }
 
@@ -2802,8 +5075,52 @@ impl LanguageServer for RestrictLanguageServer {
         Ok(None)
     }
 
-    async fn code_lens(&self, _: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
-        Ok(None)
+    async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
+        let uri = &params.text_document.uri;
+        let documents = self.documents.read().unwrap().clone();
+        let Some(text) = documents.get(uri) else {
+            return Ok(None);
+        };
+        let index = WorkspaceIndex::build(uri, text, &documents);
+        let Some(file) = index.files.get(uri) else {
+            return Ok(None);
+        };
+        let lenses = file
+            .definitions
+            .iter()
+            .filter(|definition| definition.kind != IndexedSymbolKind::EnumVariant)
+            .map(|definition| {
+                let references = index.references_to(&definition.key, false);
+                let title = match references.len() {
+                    1 => "1 reference".to_string(),
+                    count => format!("{count} references"),
+                };
+                CodeLens {
+                    range: definition.range,
+                    command: Some(Command {
+                        title,
+                        command: "editor.action.showReferences".to_string(),
+                        arguments: Some(vec![
+                            serde_json::json!(definition.key.uri),
+                            serde_json::json!(definition.range.start),
+                            serde_json::json!(references),
+                        ]),
+                    }),
+                    data: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok((!lenses.is_empty()).then_some(lenses))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+        let documents = self.documents.read().unwrap();
+        let Some(text) = documents.get(uri) else {
+            return Ok(None);
+        };
+        let hints = compute_inlay_hints(uri, text, params.range);
+        Ok((!hints.is_empty()).then_some(hints))
     }
 
     async fn formatting(&self, _: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {

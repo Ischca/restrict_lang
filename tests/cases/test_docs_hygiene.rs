@@ -891,8 +891,8 @@ fn v010_component_scope_matches_implemented_b1_and_v02_boundary() {
 
     for required in [
         "B1 implementation complete",
-        "`0.1.0-rc.1` release candidate",
-        "release candidate distinct from stable v0.1.0",
+        "stable `0.1.0`",
+        "implemented and released for\nB1",
         "ordinary v0.0.1\ncompatibility boundary remains the default scalar Core host ABI",
         "v0.1.0",
         "v0.2.0",
@@ -1331,7 +1331,7 @@ fn unqualified_builtin_value_constructor_failures(source: &str) -> Vec<String> {
             after += 1;
         }
         let statement_start = code[..start]
-            .rfind(|character| matches!(character, '\n' | ';' | '{'))
+            .rfind(['\n', ';', '{'])
             .map_or(0, |position| position + 1);
         let binding_pattern = code[statement_start..start].trim() == "val";
 

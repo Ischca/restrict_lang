@@ -82,8 +82,9 @@ dist/hello-world-0.1.0.rgc
 ```
 
 `warder run` builds first, then runs the generated `.wasm` with Wasmtime or
-Wasmer when one is installed. `warder test` type-checks `.rl` files under
-`tests/`; v0.0.1 does not include a dedicated test declaration syntax.
+Wasmer when one is installed. `warder test` compiles and executes public
+zero-argument Boolean functions under `tests/`; v0.0.1 does not add a separate
+test declaration syntax.
 
 ## Add A Small Pipeline
 

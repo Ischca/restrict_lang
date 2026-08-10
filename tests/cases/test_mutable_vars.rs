@@ -71,7 +71,7 @@ fn test_while_with_mutable() {
     (x < 10) while {
         sum = sum + x;
         x = x + 1
-    }
+    };
     sum
 }"#;
     let wat = compile(input).unwrap();

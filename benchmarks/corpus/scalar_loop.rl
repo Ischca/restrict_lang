@@ -4,6 +4,6 @@ pub fun benchmark: (iterations: Int32) -> Int32 = {
     (index < iterations) while {
         checksum = checksum + (index * 3 + 1);
         index = index + 1
-    }
+    };
     checksum
 }

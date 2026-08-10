@@ -7,9 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- No changes yet.
+
+## [0.1.0] - 2026-08-10
+
 ### Added
 - Syntax highlighting for `form`, `takes`, and `of`
 - Snippets for form declarations, Display adoptions, and form-bounded functions
+- Reproducible VSIX packaging with a locked `@vscode/vsce` dependency
+- A bundled extension client that avoids shipping the full dependency tree
+- A real-process JSON-RPC smoke test for the native language server
+- Automatic discovery of repository debug and release compiler builds
+- A command to restart the language server after configuration changes
+- Cross-file definitions and workspace references for imported public declarations and enum variants
+- Reference-count CodeLens links on source definitions
+- Inlay hints for inferred bindings, function returns, lambda parameters, and OSV call parameter names
+
+### Changed
+- Route diagnostics and semantic tokens through the LSP when it is active, avoiding duplicate providers
+- Use safe argument-based compiler execution for CLI fallbacks
+- Complete qualified `Option` and `Result` constructors instead of removed unqualified value syntax
+- Highlight the current keyword, type, qualified-variant, numeric, string, and operator surface with UTF-16-correct semantic positions
+- Clear server diagnostics when a document closes and render hover content as Markdown
+- Restrict completion to APIs available at the cursor, including lexical scope, import visibility, enum namespaces, record fields, and receiver-compatible pipe verbs
 
 ## [0.0.1] - 2026-08-04
 

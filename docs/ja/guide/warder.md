@@ -89,7 +89,7 @@ warder remove local_utils
 warder build
 ```
 
-既定の成果物は`dist/<name>-<version>.wat`、`dist/<name>-<version>.wasm`、`dist/<name>-<version>.rgc`です。
+`[component]`がない場合の既定成果物は`dist/<name>-<version>.wat`、`dist/<name>-<version>.wasm`、`dist/<name>-<version>.rgc`です。すべてのコマンドで`--project <dir>`を指定できます。
 
 `build`は次のフラグを受け付けます：
 
@@ -97,11 +97,12 @@ warder build
 warder build --release
 warder build --watch
 warder build --component
+warder build --core
 warder build --verify
 warder build --repro
 ```
 
-v0.0.1では、`--release`の最適化、ウォッチモード、署名検証、再現可能ビルドは実験的な範囲です。`--component`はルート`warder.toml`にあるschema-v1またはschema-v2の明示的な`[component]`選択を検証し、WIT生成、Canonical ABI adapter生成、Component化、検証を行います。現行実装では`pub`と`export`のどちらも単独ではComponent ABIを公開せず、source-publicと`[component]`の二重gateが必要です。両者を分離するsource-first方式は将来のeditionです。ターゲットはルート設定の`[build]`で指定し、ビルドコマンド側のターゲット指定フラグはありません。
+`--watch`はルート設定、プロジェクトの`.rl`、直接ローカル依存関係の`.rl`を監視してフルビルドします。`[component]`がある場合、通常の`warder build`はComponent成果物を生成します。`--component`はその選択を要求し、`--core`はCore成果物を強制します。現行実装ではsource-publicと`[component]`の二重gateが必要です。
 
 Componentビルドは、ロック更新とともに次の一式を復旧可能なトランザクションで公開します：
 
@@ -133,7 +134,7 @@ warder run -- arg1 arg2
 warder test
 ```
 
-v0.0.1には専用のテスト宣言構文がないため、`warder test`は`tests/`以下の`.rl`ファイルを型チェック用のスモークテストとして扱います。ファイル名で絞り込む場合：
+`warder test`は、名前が`test_`で始まるか`_test`で終わるpublicな`() -> Boolean`関数をWASI Preview 1 Core Wasmへコンパイルして実行します。`true`は成功、`false`やtrapは失敗です。filterは関数名に適用されます：
 
 ```bash
 warder test main
@@ -186,7 +187,7 @@ warder doctor
 | `warder remove <name>` | 依存関係を削除 |
 | `warder build` | WAT、WASM、Cageを生成 |
 | `warder run` | ビルドして実行 |
-| `warder test [filter]` | `tests/`以下を型チェック |
+| `warder test [filter]` | `tests/`以下のBooleanテストを実行 |
 | `warder publish` | 事前ビルドとメタデータ検証 |
 | `warder wrap <wasm>` | 外部WASMをCage化 |
 | `warder unwrap <cage>` | Cageを展開 |

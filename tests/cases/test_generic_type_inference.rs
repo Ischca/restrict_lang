@@ -54,7 +54,7 @@ fun apply_once: (f: Int32 -> Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val chosen = (|x: Int32| x + 1, |y: Int32| y) choose_first
+    val chosen = (|x: Int32| x + 1, |y: Int32| y) choose_first;
     chosen |> apply_once
 }
 "#;
@@ -71,7 +71,7 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> Int32 = {
-    val chosen = (|x| x + 1, |y| y) choose_first
+    val chosen = (|x| x + 1, |y| y) choose_first;
     41 |> chosen
 }
 "#;
@@ -87,7 +87,7 @@ fun choose_first: <T>(value: T, fallback: T) -> T = {
 }
 
 fun main: () -> Int32 = {
-    val chosen = ((|x| x + 1) Option::Some, (|y| y) Option::Some) choose_first
+    val chosen = ((|x| x + 1) Option::Some, (|y| y) Option::Some) choose_first;
     chosen match {
         Some(mapper) => { 41 |> mapper }
         None => { 0 }
@@ -204,6 +204,188 @@ fun main: () -> List<Int32> = {
 "#;
 
     type_check(input).expect("each completed scoped clause should feed the next verb");
+}
+
+#[test]
+fn completed_match_result_supports_all_application_spellings() {
+    let input = r#"
+fun squared: (value: Int32) -> Int32 = {
+    value * value
+}
+
+fun direct: (positive: Boolean) -> Int32 = {
+    positive match {
+        true => { 6 }
+        false => { 2 }
+    } squared
+}
+
+fun piped: (positive: Boolean) -> Int32 = {
+    positive match {
+        true => { 6 }
+        false => { 2 }
+    } |> squared
+}
+
+fun scoped: (positive: Boolean) -> Int32 = {
+    positive match {
+        true => { 6 }
+        false => { 2 }
+    } { |value|
+        value * value
+    }
+}
+"#;
+
+    type_check(input).expect("a completed match value should remain composable");
+}
+
+#[test]
+fn anonymous_scope_is_an_exact_once_affine_application() {
+    let input = r#"
+fun main: () -> String = {
+    val greeting = "hello";
+    1 { |value|
+        value print;
+        greeting
+    }
+}
+"#;
+
+    type_check(input).expect("an exact-once anonymous scope may consume one affine capture");
+}
+
+#[test]
+fn anonymous_scope_requires_exactly_one_binder() {
+    let zero = r#"
+fun main: () -> Int32 = {
+    1 { || 2 }
+}
+"#;
+    let err = type_check(zero).expect_err("an anonymous scope cannot omit its value binder");
+    assert!(
+        err.contains("anonymous exact-once scopes require exactly one value binder"),
+        "zero-binder diagnostic should explain the anonymous-scope contract, got: {err}"
+    );
+
+    let multiple = r#"
+fun main: () -> Int32 = {
+    1 { |left, right| left + right }
+}
+"#;
+    let err =
+        type_check(multiple).expect_err("an anonymous scope cannot bind the value more than once");
+    assert!(
+        err.contains("anonymous exact-once scopes require exactly one value binder"),
+        "multi-binder diagnostic should explain the anonymous-scope contract, got: {err}"
+    );
+}
+
+#[test]
+fn repeated_list_scope_rejects_affine_and_mutable_captures() {
+    let affine = r#"
+fun main: () -> List<String> = {
+    val values = [1, 2];
+    val label = "captured";
+    values map { |value|
+        value print;
+        label
+    }
+}
+"#;
+    let err = type_check(affine).expect_err("a List callback cannot replay an affine capture");
+    assert!(
+        err.contains("Binding label")
+            && err.contains("map callback")
+            && err.contains("immutable Copy values"),
+        "diagnostic should identify the repeated affine capture, got: {err}"
+    );
+
+    let mutable = r#"
+fun main: () -> List<Int32> = {
+    val values = [1, 2];
+    mut val offset = 1;
+    values map { |value| value + offset }
+}
+"#;
+    let err = type_check(mutable).expect_err("a repeated callback cannot capture mutable state");
+    assert!(
+        err.contains("Binding offset")
+            && err.contains("mutable type Int32")
+            && err.contains("map callback"),
+        "diagnostic should identify the repeated mutable capture, got: {err}"
+    );
+
+    let aliased = r#"
+fun main: () -> List<String> = {
+    val values = [1, 2];
+    val label = "captured";
+    val mapper: Int32 -> String = |value| {
+        value print;
+        label
+    };
+    (values, mapper) map
+}
+"#;
+    let err = type_check(aliased)
+        .expect_err("moving an unsafe closure into a name must retain capture safety facts");
+    assert!(
+        err.contains("Binding label") && err.contains("map callback"),
+        "diagnostic should survive a local callable binding, got: {err}"
+    );
+}
+
+#[test]
+fn repeated_list_operation_rejects_an_opaque_callback_parameter() {
+    let input = r#"
+fun replay: (values: List<Int32>, callback: Int32 -> Int32) -> List<Int32> = {
+    (values, callback) map
+}
+"#;
+
+    let err = type_check(input)
+        .expect_err("a repeated operation must not accept a callback with unknown captures");
+    assert!(
+        err.contains("Callable callback")
+            && err.contains("map callback")
+            && err.contains("captures are not known")
+            && err.contains("immutable Copy values"),
+        "diagnostic should explain why opaque callbacks cannot be repeated, got: {err}"
+    );
+}
+
+#[test]
+fn option_scope_may_consume_one_affine_capture() {
+    let input = r#"
+fun main: () -> Option<String> = {
+    val value: Option<Int32> = 1 Option::Some;
+    val label = "captured";
+    value map { |number|
+        number print;
+        label
+    }
+}
+"#;
+
+    type_check(input).expect("an Option callback runs at most once and may consume one capture");
+}
+
+#[test]
+fn while_loop_rejects_affine_outer_consumption() {
+    let input = r#"
+fun main: () = {
+    val label = "captured";
+    true while {
+        label print
+    }
+}
+"#;
+
+    let err = type_check(input).expect_err("a repeated loop body cannot replay an affine value");
+    assert!(
+        err.contains("Binding label") && err.contains("while loop"),
+        "diagnostic should identify the loop capture, got: {err}"
+    );
 }
 
 #[test]

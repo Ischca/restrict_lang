@@ -225,7 +225,7 @@ warder build
 # テストの実行
 warder test
 
-# 特定モジュールのテスト
+# 関数名でテストを絞り込み
 warder test math
 
 # リリースビルド

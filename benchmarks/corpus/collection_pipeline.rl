@@ -8,11 +8,11 @@ pub fun benchmark: (iterations: Int32) -> Int32 = {
         }
         val kept = shifted filter { |value|
             value % 2 == 0
-        }
+        };
         checksum = (kept, checksum) fold { |total, value|
             total + value
         };
         index = index + 1
-    }
+    };
     checksum
 }

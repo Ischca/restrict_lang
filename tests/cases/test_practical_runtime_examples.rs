@@ -352,7 +352,7 @@ export fun change_review_gate_score: () -> Int32 = {
     val accepted_score = accepted match {
         true => { 1 }
         false => { 0 }
-    }
+    };
     change_id + score + escalation_score + accepted_score
 }
 "#,
@@ -389,7 +389,7 @@ export fun service_monitor_score: () -> Int32 = {
         Some(owner) => { owner }
         None => { 0 }
     }
-    val evidence_score = (evidence, 0, |total, code| total + code) fold
+    val evidence_score = (evidence, 0, |total, code| total + code) fold;
     severity + page_score + owner_score + evidence_score
 }
 "#,
@@ -430,7 +430,7 @@ export fun support_queue_score: () -> Int32 = {
         None => { 0 }
     }
     val routed_score = (routed_scores, 0, |total, score| total + score) fold
-    val escalation_score = (escalation_codes, 0, |total, code| total + code) fold
+    val escalation_score = (escalation_codes, 0, |total, code| total + code) fold;
     total_score + overdue_count + unowned_score + routed_count + routed_score + escalation_score
 }
 "#,
@@ -481,7 +481,7 @@ export fun sprint_planner_score: () -> Int32 = {
         None => { 0 }
     }
     val escalation_score = (escalation_codes, 0, |total, code| total + code) fold
-    val candidate_score = (candidate_scores, 0, |total, score| total + score) fold
+    val candidate_score = (candidate_scores, 0, |total, score| total + score) fold;
     score + ready_effort + blocked_count + unowned_score + escalation_score + candidate_score
 }
 "#,
@@ -514,7 +514,7 @@ export fun deploy_gate_score: () -> Int32 = {
     val review_score = needs_review match {
         Some(score) => { score }
         None => { 0 }
-    }
+    };
     release_score + blocker_count + review_score
 }
 "#,
@@ -555,7 +555,7 @@ export fun fulfillment_batch_score: () -> Int32 = {
         None => { 0 }
     }
     val manual_score = (manual_scores, 0, |total, score| total + score) fold
-    val audit_score = (audit_codes, 0, |total, code| total + code) fold
+    val audit_score = (audit_codes, 0, |total, code| total + code) fold;
     priority_total + fragile_count + unassigned_score + manual_count + manual_score + audit_score
 }
 "#,
@@ -651,7 +651,7 @@ export fun experiment_scorecard_score: () -> Float64 = {
     val bonus_score = fallback_bonus match {
         Some(bonus) => { bonus }
         None => { 0.0 }
-    }
+    };
     preview_score + passing_total + bonus_score
 }
 "#,
@@ -687,7 +687,7 @@ export fun release_decision_engine_score: () -> Float64 = {
         first_blocker,
         audit_scores
     } = decision
-    val audit_total = (audit_scores, 0.0, |total, score| total + score) fold
+    val audit_total = (audit_scores, 0.0, |total, score| total + score) fold;
     risk + audit_total
 }
 "#,

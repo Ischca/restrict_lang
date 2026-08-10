@@ -11,7 +11,7 @@ fun add_one: (x: Int32) -> Int32 = {
 
 // Function composition
 fun add_two: (x: Int32) -> Int32 = {
-    val once = x |> add_one
+    val once = x |> add_one;
     once |> add_one
 }
 
@@ -40,7 +40,7 @@ fun age_bonus: (self: Person) -> Int32 = {
 
 fun greeting_for_alice: () -> String = {
     val alice = Person { name: "Alice", age: 30 }
-    val greeting = alice |> greet
+    val greeting = alice |> greet;
     greeting
 }
 
@@ -50,7 +50,7 @@ fun main: () -> Int32 = {
     val transformed = doubled |> add_two
 
     val alice = Person { name: "Alice", age: 30 }
-    val bonus = alice |> age_bonus
+    val bonus = alice |> age_bonus;
 
     transformed + bonus
 }

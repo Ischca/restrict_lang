@@ -31,7 +31,7 @@ fun owner_or: (owner: Option<Int32>, fallback: Int32) -> Int32 = {
 impl ServiceSignal {
     fun risk: (self: ServiceSignal, fallback_owner: Int32) = {
         val ServiceSignal { failures, latency_ms, owner } = self
-        val owner_score = (owner, fallback_owner) owner_or
+        val owner_score = (owner, fallback_owner) owner_or;
 
         failures * 20 + latency_ms + owner_score
     }
@@ -40,7 +40,7 @@ impl ServiceSignal {
 impl RolloutSignal {
     fun risk: (self: RolloutSignal, fallback_owner: Int32) = {
         val RolloutSignal { canary_failures, exposure_percent, owner } = self
-        val owner_score = (owner, fallback_owner) owner_or
+        val owner_score = (owner, fallback_owner) owner_or;
 
         canary_failures * 30 + exposure_percent + owner_score
     }
@@ -67,7 +67,7 @@ export fun impl_dispatch_inference_score: () -> Int32 = {
     val kept_score = kept match {
         Some(score) => { score }
         None => { 0 }
-    }
+    };
 
     service_total + rollout_total + kept_score
 }

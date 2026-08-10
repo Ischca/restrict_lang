@@ -18,5 +18,9 @@ fun main: () -> Int32 = {
     positive match {
         true => { incremented }
         false => { 0 }
+    } { |v|
+      v print
     }
+
+    0
 }

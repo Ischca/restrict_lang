@@ -783,6 +783,28 @@ pub fn resolve_program_imports_for_file(program: Program, source_file: &Path) ->
     resolve_program_imports_for_file_with_package_roots(program, source_file, &[])
 }
 
+/// Resolve a source import to the same canonical file path used by the module
+/// loader, without parsing or splicing the imported module.
+///
+/// Language-server features need the original source file so definitions and
+/// references keep their real locations. Compilation still goes through
+/// [`resolve_program_imports_for_file`], which owns import validation and AST
+/// rewriting.
+pub fn resolve_module_file_for_source(
+    module_path: &[String],
+    source_file: &Path,
+) -> Result<PathBuf> {
+    let base_dir = source_file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let mut resolver = ModuleResolver::new();
+    if let Some(base_dir) = base_dir {
+        resolver.add_search_path(base_dir.to_path_buf())?;
+    }
+
+    resolver.find_module_file(module_path)
+}
+
 pub fn resolve_program_imports_for_file_with_package_roots(
     program: Program,
     source_file: &Path,
@@ -908,6 +930,7 @@ fn mangle_module_name(module_path: &[String], name: &str) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub(crate) fn is_internal_module_name(name: &str) -> bool {
     name.starts_with(INTERNAL_MODULE_NAME_PREFIX)
 }

@@ -1,7 +1,7 @@
 # Testing
 
 Restrict has two practical testing layers today: repository tests for compiler
-development and Warder smoke tests for user projects.
+development and executable Warder tests for user projects.
 
 ## Repository Tests
 
@@ -44,7 +44,7 @@ such as `let`, `fn`, function-first calls, stale record initializers, and
 unsupported import forms. That test is intentionally part of the docs workflow:
 examples should not drift away from the language specification.
 
-## Warder Project Smoke Tests
+## Warder Project Tests
 
 A Warder project normally contains `.rl` files under `tests/`:
 
@@ -60,19 +60,27 @@ Run:
 warder test
 ```
 
-For v0.0.1, Warder test files are type-checking smoke files. They use ordinary
-Restrict functions rather than a dedicated test declaration syntax:
+Warder uses ordinary functions rather than a dedicated test declaration
+syntax. Tests are public, synchronous, non-generic, take no arguments, return
+`Boolean`, and begin with `test_` or end with `_test`:
 
 ```restrict
-fun test_math_smoke: () -> Boolean = {
+import project.main.{increment}
+
+pub fun test_math: () -> Boolean = {
     2 + 2 == 4
 }
 
-fun test_pipeline_smoke: () -> Int32 = {
-    val value = 41
-    value + 1
+pub fun pipeline_test: () -> Boolean = {
+    (41) increment == 42
 }
 ```
+
+Each matching export runs in a fresh WASI Preview 1 Core Wasm instance. `true` passes;
+`false`, a trap, a compilation error, an invalid Boolean, or a missing export
+fails. `warder test pipeline` filters by function name.
+The reserved `project` namespace points to the directory containing
+`package.entry`, so tests can import the application implementation.
 
 ## Runtime Examples
 

@@ -935,6 +935,7 @@ fn component_implementation_subset(interfaces: &[ComponentInterfaceDeclIr]) -> &
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn first_rich_boundary(ir: &ComponentInterfaceIr) -> Option<(&str, &str)> {
     ir.interfaces.iter().find_map(|interface| {
         interface.functions.iter().find_map(|function| {

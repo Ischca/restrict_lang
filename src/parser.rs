@@ -27,7 +27,7 @@ use crate::ast::*;
 use crate::lexer::{lex_token, skip, Token};
 use nom::{
     branch::alt,
-    combinator::{map, opt, value},
+    combinator::{cut, map, opt, value},
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, preceded, tuple},
     IResult,
@@ -68,6 +68,8 @@ const STALE_UNIT_ERROR: &str =
     "stale syntax `Unit` is not valid Restrict; use `()` for the unit value or unit type";
 const STALE_FUNCTION_DECL_ERROR: &str =
     "stale function declaration syntax is not valid Restrict; write `fun name: (param: Type, ...) = { ... }` and use `()` for no parameters";
+const ANONYMOUS_SCOPE_ARITY_ERROR: &str =
+    "anonymous exact-once scopes require exactly one value binder; use `{ it ... }` or `{ |value| ... }`";
 
 /// Expects a specific token and consumes it.
 ///
@@ -502,6 +504,16 @@ fn fun_decl(input: &str) -> ParseResult<'_, FunDecl> {
     let is_async = is_async.is_some();
 
     let (input, _) = expect_token(Token::Fun)(input)?;
+    let result = cut(|input| fun_decl_after_keyword(input, is_async))(input);
+    result
+}
+
+/// Parse a function after the `fun` keyword has committed the declaration.
+///
+/// Without this cut point, an error deep inside a function body backtracks to
+/// the beginning of the declaration and the CLI highlights `fun` instead of
+/// the expression that actually failed.
+fn fun_decl_after_keyword(input: &str, is_async: bool) -> ParseResult<'_, FunDecl> {
     let (input, name) = ident(input)?;
 
     if matches!(lex_token(input), Ok((_, Token::Assign))) {
@@ -714,8 +726,23 @@ fn record_lit(input: &str) -> ParseResult<'_, RecordLit> {
         |input| {
             let (input, name) = ident(input)?;
             let (input, _) = expect_token(Token::LBrace)(input)?;
-            let (input, fields) = separated_list0(expect_token(Token::Comma), field_init)(input)?;
-            let (input, _) = expect_token(Token::RBrace)(input)?;
+            let parse_fields = |input| {
+                let (input, fields) =
+                    separated_list0(expect_token(Token::Comma), field_init)(input)?;
+                let (input, _) = expect_token(Token::RBrace)(input)?;
+                Ok((input, fields))
+            };
+            // Upper-camel identifiers are nominal type constructors in the
+            // documented source style. Once their opening brace is present,
+            // keep an invalid field at that location instead of backtracking
+            // into `Identifier` followed by an unrelated block expression.
+            // Lowercase verbs must retain backtracking for scoped clauses such
+            // as `values map { it + 1 }`.
+            let (input, fields) = if name.chars().next().is_some_and(char::is_uppercase) {
+                cut(parse_fields)(input)?
+            } else {
+                parse_fields(input)?
+            };
             Ok((input, RecordLit { name, fields }))
         },
         // Parse anonymous record literal: { ... }
@@ -1419,14 +1446,7 @@ fn binary_expr_min_precedence(input: &str, min_precedence: u8) -> ParseResult<'_
 
 fn pipe_expr(input: &str) -> ParseResult<'_, Expr> {
     let (input, first) = binary_expr(input)?;
-    let (input, pipes) = many0(tuple((
-        pipe_op,
-        alt((
-            map(variant_ref_expr, |expr| PipeTarget::Expr(Box::new(expr))),
-            map(ident, PipeTarget::Ident),
-            map(binary_expr, |e| PipeTarget::Expr(Box::new(e))),
-        )),
-    )))(input)?;
+    let (input, pipes) = many0(tuple((pipe_op, pipe_target)))(input)?;
 
     let expr = pipes.into_iter().fold(first, |acc, (op, target)| {
         Expr::new(ExprKind::Pipe(PipeExpr {
@@ -1436,6 +1456,14 @@ fn pipe_expr(input: &str) -> ParseResult<'_, Expr> {
         }))
     });
     Ok((input, expr))
+}
+
+fn pipe_target(input: &str) -> ParseResult<'_, PipeTarget> {
+    alt((
+        map(variant_ref_expr, |expr| PipeTarget::Expr(Box::new(expr))),
+        map(ident, PipeTarget::Ident),
+        map(binary_expr, |expr| PipeTarget::Expr(Box::new(expr))),
+    ))(input)
 }
 
 fn is_scoped_verb_target(expr: &Expr) -> bool {
@@ -1678,7 +1706,63 @@ enum PostfixOp {
 }
 
 fn expression(input: &str) -> ParseResult<'_, Expr> {
-    then_expr(input)
+    let (input, expr) = then_expr(input)?;
+    application_suffixes(input, expr)
+}
+
+/// Continue applying a completed value expression.
+///
+/// The lower precedence layers already handle application whose object is a
+/// simple expression. This common suffix layer exists for completed control
+/// expressions (`match`, `then`, and `while`) and for the result of a preceding
+/// anonymous scope. It keeps all four application spellings composable:
+/// direct OSV, pipe, named scoped verbs, and an anonymous exact-once scope.
+fn application_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult<'a, Expr> {
+    loop {
+        if let Ok((after_op, op)) = pipe_op(input) {
+            let (after_target, target) = pipe_target(after_op)?;
+            expr = Expr::new(ExprKind::Pipe(PipeExpr {
+                expr: Box::new(expr),
+                op,
+                target,
+            }));
+            input = after_target;
+            continue;
+        }
+
+        if matches!(lex_token(input), Ok((_, Token::LBrace))) {
+            let (after_scope, scope) = scoped_lambda_block(input)?;
+            let ExprKind::Lambda(lambda) = &scope.kind else {
+                unreachable!("scoped lambda parser must produce a lambda expression")
+            };
+            if lambda.params.len() != 1 {
+                return user_syntax_failure(ANONYMOUS_SCOPE_ARITY_ERROR);
+            }
+            expr = Expr::new(ExprKind::Call(CallExpr {
+                function: Box::new(scope),
+                args: vec![Box::new(expr)],
+            }));
+            input = after_scope;
+            continue;
+        }
+
+        let Ok((after_target, target)) = simple_expr(input) else {
+            break;
+        };
+        if !can_be_direct_osv_verb(&target) {
+            break;
+        }
+
+        let call = Expr::new(ExprKind::Call(CallExpr {
+            function: Box::new(target),
+            args: vec![Box::new(expr)],
+        }));
+        let (after_suffixes, completed) = scoped_clause_suffixes(after_target, call)?;
+        expr = completed;
+        input = after_suffixes;
+    }
+
+    Ok((input, expr))
 }
 
 #[allow(dead_code)]
@@ -2291,6 +2375,102 @@ mod tests {
             if matches!(map_call.function.kind, ExprKind::Ident(ref name) if name == "map"))
         );
         assert!(matches!(filter_call.args[1].kind, ExprKind::Lambda(_)));
+    }
+
+    #[test]
+    fn test_completed_match_result_continues_with_direct_osv_and_pipe() {
+        let source = "ready match { true => { 1 } false => { 0 } } print";
+        let (remaining, direct) = expression(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(call) = direct.kind else {
+            panic!("expected the completed match result to become the call object");
+        };
+        assert!(matches!(call.function.kind, ExprKind::Ident(ref name) if name == "print"));
+        assert!(matches!(call.args[0].kind, ExprKind::Match(_)));
+
+        let source = "ready match { true => { 1 } false => { 0 } } |> print";
+        let (remaining, piped) = expression(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Pipe(pipe) = piped.kind else {
+            panic!("expected the completed match result to become the pipe object");
+        };
+        assert!(matches!(pipe.expr.kind, ExprKind::Match(_)));
+        assert!(matches!(pipe.target, PipeTarget::Ident(ref name) if name == "print"));
+
+        let source = "ready match { true => { values } false => { fallback } } map { it + 1 }";
+        let (remaining, scoped) = expression(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(map_call) = scoped.kind else {
+            panic!("expected the completed match result to feed a named scoped verb");
+        };
+        assert!(matches!(map_call.function.kind, ExprKind::Ident(ref name) if name == "map"));
+        assert!(matches!(map_call.args[0].kind, ExprKind::Match(_)));
+        assert!(matches!(map_call.args[1].kind, ExprKind::Lambda(_)));
+    }
+
+    #[test]
+    fn test_completed_match_result_continues_with_anonymous_scope() {
+        let source = "ready match { true => { 1 } false => { 0 } } { it + 1 }";
+        let (remaining, implicit) = expression(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(call) = implicit.kind else {
+            panic!("expected anonymous scope to elaborate to an immediate lambda call");
+        };
+        assert!(matches!(call.args[0].kind, ExprKind::Match(_)));
+        let ExprKind::Lambda(lambda) = &call.function.kind else {
+            panic!("expected anonymous scope to be the call function");
+        };
+        assert!(lambda.implicit_focus);
+        assert_eq!(lambda.params[0].name, "it");
+
+        let source = "ready match { true => { 1 } false => { 0 } } { |value| value + 1 }";
+        let (remaining, explicit) = expression(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let ExprKind::Call(call) = explicit.kind else {
+            panic!("expected explicit anonymous scope to elaborate to a call");
+        };
+        let ExprKind::Lambda(lambda) = &call.function.kind else {
+            panic!("expected explicit anonymous scope to be the call function");
+        };
+        assert!(!lambda.implicit_focus);
+        assert_eq!(lambda.params[0].name, "value");
+    }
+
+    #[test]
+    fn test_completed_block_result_continues_with_anonymous_scope() {
+        let source = "{ 41 } { |value| value + 1 }";
+        let (remaining, expr) = expression(source).unwrap();
+        assert!(remaining.trim().is_empty());
+
+        let ExprKind::Call(call) = expr.kind else {
+            panic!("expected a completed block to feed an anonymous scope");
+        };
+        assert!(matches!(call.function.kind, ExprKind::Lambda(_)));
+        assert!(matches!(call.args[0].kind, ExprKind::Block(_)));
+    }
+
+    #[test]
+    fn test_named_and_anonymous_scope_results_compose_left_associatively() {
+        let source = "values map { it + 1 } { |mapped| mapped print }";
+        let (remaining, expr) = expression(source).unwrap();
+        assert!(remaining.trim().is_empty());
+
+        let ExprKind::Call(anonymous_call) = expr.kind else {
+            panic!("expected an outer anonymous-scope call");
+        };
+        assert!(matches!(anonymous_call.function.kind, ExprKind::Lambda(_)));
+        assert!(
+            matches!(anonymous_call.args[0].kind, ExprKind::Call(ref map_call)
+            if matches!(map_call.function.kind, ExprKind::Ident(ref name) if name == "map"))
+        );
+    }
+
+    #[test]
+    fn test_semicolon_ends_completed_value_application_chain() {
+        let source = "ready match { true => { 1 } false => { 0 } }; print";
+        let (remaining, expr) = expression(source).unwrap();
+        assert!(matches!(expr.kind, ExprKind::Match(_)));
+        assert!(remaining.trim_start().starts_with(';'));
     }
 
     #[test]

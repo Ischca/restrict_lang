@@ -55,9 +55,9 @@ implemented features from reserved or experimental design space:
   generic/conditional/enum adoptions, and dynamic dispatch marked as future
   work; do not describe the implemented explicit Component ABI as a Core ABI
 
-Public interoperability sections may describe the B1 synchronous Component
-implementation while stating that `0.1.0-rc.1` is a release candidate, stable
-v0.1.0 is not yet published, and the ordinary Core ABI remains scalar-only.
+Public interoperability sections may describe the stable v0.1.0 B1 synchronous
+Component implementation while stating that the ordinary Core ABI remains
+scalar-only.
 They must remain aligned with `docs/V010_SYNCHRONOUS_COMPONENT_ABI.md`, keep
 v0.2 async separate, avoid links outside the public book, and not publish
 unsupported syntax examples.
@@ -68,8 +68,10 @@ Every B1 summary must preserve these guardrails:
   schema-v2 path produces checked `ComponentInterfaceIr`, normalized WIT,
   Canonical ABI adapters, and validated Component bytes without changing the
   default Core ABI;
-- Warder `build --component` transactionally publishes `.component.wasm`,
-  `.component.wit`, and `.component.toml`; `wrap --wit` only attaches
+- a Warder project with `[component]` uses Component output for plain `build`;
+  `build --component` asserts that choice and `build --core` overrides it.
+  Component builds transactionally publish `.component.wasm`, `.component.wit`,
+  and `.component.toml`; `wrap --wit` only attaches
   caller-supplied text to a Core module cage and does not validate or
   componentize it;
 - interface authority follows API ownership rather than import/export

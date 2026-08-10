@@ -9967,8 +9967,17 @@ impl WasmCodeGen {
             self.set_local_type(name, *ty);
         }
 
-        // Generate lambda body
+        // Generate lambda body. Closure ABIs currently materialize source Unit
+        // as an i32 zero so every indirect callable has a concrete result slot.
+        // Direct Unit-producing operations such as `print` leave no Wasm value,
+        // so complete the closure ABI explicitly in that case.
         let body_result = self.generate_expr(&lambda.body);
+        if body_result.is_ok()
+            && Self::is_unit_source_type(&abi.source_result)
+            && !self.expr_leaves_value(&lambda.body)
+        {
+            self.output.push_str("    i32.const 0\n");
+        }
 
         self.pop_scope();
 
@@ -16346,6 +16355,17 @@ impl WasmCodeGen {
                     }
                 } else {
                     true
+                }
+            }
+            ExprKind::Block(block) => {
+                if let Some(expr) = &block.expr {
+                    self.expr_leaves_value(expr)
+                } else {
+                    match block.statements.last() {
+                        Some(Stmt::Expr(expr)) => self.expr_leaves_value(expr),
+                        Some(Stmt::Binding(_) | Stmt::Assignment(_)) => false,
+                        None => true,
+                    }
                 }
             }
             // Most other expressions leave values

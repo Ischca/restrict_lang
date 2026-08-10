@@ -160,6 +160,12 @@ fun main: () -> Int32 = {
         fallback_owner: 404,
         page_threshold: 20
     };
+    val SloPolicy {
+        latency_budget,
+        error_budget,
+        fallback_owner,
+        page_threshold
+    } = policy;
     val signals = [
         ServiceSignal {
             service_id: 11,
@@ -183,7 +189,12 @@ fun main: () -> Int32 = {
             owner: (9) Option::Some
         }
     ];
-    val candidates = (signals, |signal| (signal, policy) candidate_for) map;
+    val candidates = (signals, |signal| (signal, SloPolicy {
+        latency_budget: latency_budget,
+        error_budget: error_budget,
+        fallback_owner: fallback_owner,
+        page_threshold: page_threshold
+    }) candidate_for) map;
     val paged = (candidates, |candidate| candidate |> is_paged) filter;
     val routed_risks = (paged, |candidate| candidate |> routed_risk) map;
     val total_risk = (routed_risks, 0, |total, risk| total + risk) fold;

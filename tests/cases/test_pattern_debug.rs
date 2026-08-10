@@ -13,7 +13,7 @@ fn test_debug_pattern() {
         fun main: () -> Int32 = {
             val some_score = (42) Option::Some |> test_option
             val none_val: Option<Int32> = () Option::None
-            val none_score = none_val |> test_option
+            val none_score = none_val |> test_option;
             some_score + none_score
         }
     "#;

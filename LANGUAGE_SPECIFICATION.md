@@ -580,11 +580,85 @@ Rules:
 - A scoped clause may execute its body zero, one, or many times according to
   the receiving function's contract. The braces express a lexical scope, not
   a guarantee of immediate or single execution.
+- For the compiler-provided containers, `Option` callbacks execute at most
+  once, while `List` callbacks used by `map`, `filter`, and `fold` may execute
+  many times. A many-execution inline callback may capture only immutable Copy
+  bindings. The checker rejects mutable or affine captures and retains that
+  rejection when the lambda is first stored in a local callable binding. A
+  callable parameter whose captures are opaque is also rejected in a repeated
+  callback position until its replay safety can be proven.
+- A repeated `while` condition or body likewise cannot consume an immutable
+  affine binding from outside the loop. Mutable loop state and immutable Copy
+  values remain reusable under their ordinary rules.
 
 This form extends clause-level OSV rather than weakening it: a value precedes
 the scope-opening verb, and the resulting complete clause precedes its next
 verb. It follows the same value-then-verb-then-scope shape as `value match {
 ... }` and `condition then { ... }`.
+
+#### Completed values and anonymous scopes
+
+Application does not stop merely because its object was produced by a block,
+`match`, `then`, `while`, or another completed clause. A completed value may
+continue through direct OSV, a pipe, a named scoped verb, or an anonymous
+scope:
+
+```rust
+positive match {
+    true => { incremented }
+    false => { 0 }
+} print
+
+positive match {
+    true => { incremented }
+    false => { 0 }
+} |> print
+
+positive match {
+    true => { incremented }
+    false => { 0 }
+} { |value|
+    value print
+}
+```
+
+An anonymous scope is the nameless, exact-once counterpart of a scoped verb
+clause. It elaborates to immediate application of a unary lambda:
+
+```rust
+value { it * it }
+// elaborates as:
+value |> (|it| { it * it })
+
+value { |number| number * number }
+// elaborates as:
+value |> (|number| { number * number })
+```
+
+Rules:
+
+- The object expression is evaluated exactly once, before the scope body.
+- The scope body is evaluated exactly once and its result is the result of the
+  complete expression. This form is result-producing, not an implicit `tap`.
+- An unheaded anonymous scope binds the object as `it`. An explicit anonymous
+  scope must declare exactly one binder. `{ || ... }` and
+  `{ |left, right| ... }` are rejected with an anonymous-scope arity
+  diagnostic in this position.
+- The scope is an ordinary lexical lambda scope. It does not extend a temporal,
+  arena, resource, or host-capability lifetime.
+- Exact-once application permits the same affine captures as an ordinary
+  immediate unary lambda call. The usual affine and temporal checks still
+  apply inside the body.
+- Application continuations associate left-to-right. For example,
+  `values map { it + 1 } { |mapped| mapped print }` first completes `map`, then
+  applies the anonymous scope to the mapped value.
+- Newlines remain ordinary whitespace. Use `;` when a following callable-shaped
+  expression must begin a separate expression rather than continue the current
+  application chain.
+
+The braces after a completed value denote an anonymous scope. Nominal record
+construction remains `UpperCamelName { fields... }`; it is parsed as a record
+literal before it can be considered a continuation target.
 
 ### 5.10 User-Defined Enum Construction
 
@@ -1323,6 +1397,9 @@ integration rather than implied core-language semantics.
 7. Logical AND: `&&`
 8. Logical OR: `||`
 9. Pipe: `|>` (left associative)
+10. Completed-value application continuation (left associative): direct OSV,
+    a following pipe, a named scoped verb, or an anonymous scope after a
+    complete `match`, `then`, `while`, block, or preceding clause
 
 Single-argument calls may use pipe form (`value |> f`) or direct OSV form
 (`value f`). Parentheses are optional for a single simple direct object, as in
@@ -1332,6 +1409,9 @@ otherwise change their meaning (`(1 + 2) double`). Pipe starts from a complete
 expression, so `1 + 2 |> double` is parsed as `(1 + 2) |> double`.
 Likewise, a scoped verb clause is complete before a following pipe:
 `values map { it + 1 } |> list_count` pipes the mapped collection.
+An anonymous scope also receives the complete expression to its left, so
+`1 + 2 { |value| value * value }` applies the scope to `1 + 2`, not only to
+`2`.
 
 ## 14. Standard Library Types
 

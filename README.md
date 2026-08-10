@@ -321,6 +321,25 @@ An unheaded unary scope receives the contextual `it` binding. Use an explicit
 lambda-style header such as `{ |value| ... }` when naming the focus or handling
 multiple parameters.
 
+A completed value can keep flowing through direct OSV, a pipe, or an
+anonymous exact-once scope. This applies equally to values produced by
+`match`, `then`, blocks, and earlier scoped clauses:
+
+```restrict
+positive match {
+    true => { 6 }
+    false => { 2 }
+} { |value|
+    value * value
+}
+```
+
+The anonymous form is an immediate unary lambda application: it evaluates the
+left value once, evaluates the body once, and returns the body result. Use `;`
+when a following callable-shaped expression should start a separate expression.
+By contrast, `List` callbacks may run many times, so their inline scopes may
+capture only immutable Copy values; `Option` callbacks run at most once.
+
 ### Pattern Matching
 
 ```restrict

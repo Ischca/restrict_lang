@@ -66,6 +66,21 @@ pub enum TypeError {
     /// Attempt to use a value that has already been consumed
     AffineViolation(String),
 
+    /// A callback or loop may execute more than once but captures state that
+    /// cannot be replayed safely.
+    RepeatedCapture {
+        binding: String,
+        context: String,
+        found: String,
+    },
+
+    /// A callback may execute more than once, but the checker cannot prove
+    /// that its hidden captures are replay-safe.
+    UnprovenRepeatedCallable {
+        callable: String,
+        context: String,
+    },
+
     /// Attempt to mutate an immutable binding
     ImmutableReassignment(String),
 
@@ -95,6 +110,12 @@ pub enum TypeError {
 
     /// Function not found
     UndefinedFunction(String),
+
+    /// A lexical value appeared in verb position but is not callable.
+    NonCallableVerb {
+        name: String,
+        found: String,
+    },
 
     /// Method not found for record type
     UndefinedMethod {
@@ -196,6 +217,18 @@ impl fmt::Display for TypeError {
                     "Variable {name} has already been used (affine type violation)"
                 )
             }
+            TypeError::RepeatedCapture {
+                binding,
+                context,
+                found,
+            } => write!(
+                f,
+                "Binding {binding} has {found} and cannot be captured by {context}, which may execute more than once; repeated regions may capture only immutable Copy values"
+            ),
+            TypeError::UnprovenRepeatedCallable { callable, context } => write!(
+                f,
+                "Callable {callable} cannot be passed to {context}, which may execute more than once, because its captures are not known; repeated callbacks must be proven to capture only immutable Copy values"
+            ),
             TypeError::ImmutableReassignment(name) => {
                 write!(f, "Cannot reassign to immutable variable {name}")
             }
@@ -210,6 +243,11 @@ impl fmt::Display for TypeError {
             TypeError::FreezeAlreadyFrozen => write!(f, "Cannot freeze an already frozen record"),
             TypeError::UndefinedRecord(name) => write!(f, "Record {name} is not defined"),
             TypeError::UndefinedFunction(name) => write!(f, "Function {name} is not defined"),
+            TypeError::NonCallableVerb { name, found } => write!(
+                f,
+                "Value {name} has type {} and cannot be used as an OSV verb; if `{name}` starts a new expression after a local binding, insert `;` before it",
+                sanitize_diagnostic_text(found)
+            ),
             TypeError::UndefinedMethod {
                 method,
                 record_type,
@@ -648,12 +686,21 @@ impl TypeSubstitution {
 struct Variable {
     ty: TypedType,
     mutable: bool,
+    callable_parameter: bool,
     used: bool, // For affine type checking
     pending_inference_uses: usize,
     deferred: Option<DeferredBinding>,
     deferred_alias_group_id: Option<u64>,
     was_deferred_callable: bool,
     flexible_collection_literal: bool,
+    repeated_callable_safety: Option<RepeatedCallableSafety>,
+}
+
+#[derive(Debug, Clone)]
+enum RepeatedCallableSafety {
+    Safe,
+    Unsafe { binding: String, found: String },
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -3085,6 +3132,36 @@ impl TypeChecker {
             .is_some_and(|var| var.was_deferred_callable)
     }
 
+    fn peek_repeated_callable_safety(&self, name: &str) -> Option<RepeatedCallableSafety> {
+        self.var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .and_then(|var| var.repeated_callable_safety.clone())
+    }
+
+    fn is_callable_parameter(&self, name: &str) -> bool {
+        self.var_env
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .is_some_and(|var| var.callable_parameter)
+    }
+
+    fn set_repeated_callable_safety(
+        &mut self,
+        name: &str,
+        safety: RepeatedCallableSafety,
+    ) -> Result<(), TypeError> {
+        for scope in self.var_env.iter_mut().rev() {
+            if let Some(var) = scope.get_mut(name) {
+                var.repeated_callable_safety = Some(safety);
+                return Ok(());
+            }
+        }
+        Err(TypeError::UndefinedVariable(name.to_string()))
+    }
+
     fn mark_var_as_deferred_origin(&mut self, name: &str) -> Result<(), TypeError> {
         for scope in self.var_env.iter_mut().rev() {
             if let Some(var) = scope.get_mut(name) {
@@ -3867,6 +3944,17 @@ impl TypeChecker {
         self.bind_var_with_deferred(name, ty, mutable, None, None)
     }
 
+    fn bind_parameter(&mut self, name: String, ty: TypedType) -> Result<(), TypeError> {
+        self.bind_var(name.clone(), ty, false)?;
+        for scope in self.var_env.iter_mut().rev() {
+            if let Some(var) = scope.get_mut(&name) {
+                var.callable_parameter = matches!(var.ty, TypedType::Function { .. });
+                return Ok(());
+            }
+        }
+        Err(TypeError::UndefinedVariable(name))
+    }
+
     fn bind_var_with_deferred(
         &mut self,
         name: String,
@@ -3889,8 +3977,11 @@ impl TypeChecker {
         current_scope.insert(
             name,
             Variable {
+                repeated_callable_safety: matches!(&ty, TypedType::Function { .. })
+                    .then_some(RepeatedCallableSafety::Unknown),
                 ty,
                 mutable,
+                callable_parameter: false,
                 used: false,
                 pending_inference_uses: 0,
                 deferred,
@@ -6222,7 +6313,7 @@ impl TypeChecker {
         for param in &func.params {
             let ty = self.convert_type(&param.ty)?;
             param_types.push((param.name.clone(), ty.clone()));
-            self.bind_var(param.name.clone(), ty, false)?;
+            self.bind_parameter(param.name.clone(), ty)?;
         }
 
         let expected_return_type = func
@@ -6353,6 +6444,9 @@ impl TypeChecker {
         }
 
         self.check_pattern(&bind.pattern, &ty)?;
+        let repeated_callable_safety = matches!(&ty, TypedType::Function { .. }).then(|| {
+            self.repeated_callable_safety_for_binding_value(&bind.value, deferred_binding.as_ref())
+        });
 
         // Handle pattern binding
         if let (Pattern::Ident(name), Some(deferred)) = (&bind.pattern, deferred_binding) {
@@ -6369,6 +6463,9 @@ impl TypeChecker {
         if let (true, Pattern::Ident(name)) = (inherits_deferred_origin, &bind.pattern) {
             self.mark_var_as_deferred_origin(name)?;
         }
+        if let (Pattern::Ident(name), Some(safety)) = (&bind.pattern, repeated_callable_safety) {
+            self.set_repeated_callable_safety(name, safety)?;
+        }
 
         if annotated_ty.is_none()
             && contextual_expected_ty.is_none()
@@ -6382,6 +6479,61 @@ impl TypeChecker {
             }
         }
         Ok(())
+    }
+
+    fn repeated_callable_safety_for_binding_value(
+        &self,
+        value: &Expr,
+        deferred: Option<&DeferredBinding>,
+    ) -> RepeatedCallableSafety {
+        if let Some(deferred) = deferred {
+            return self.repeated_callable_safety_for_deferred(deferred);
+        }
+
+        match &value.kind {
+            ExprKind::Lambda(lambda) => self.repeated_lambda_capture_safety(lambda),
+            ExprKind::Ident(name) => self
+                .peek_repeated_callable_safety(name)
+                .or_else(|| {
+                    self.functions
+                        .contains_key(name)
+                        .then_some(RepeatedCallableSafety::Safe)
+                })
+                .unwrap_or(RepeatedCallableSafety::Unknown),
+            _ => RepeatedCallableSafety::Unknown,
+        }
+    }
+
+    fn repeated_callable_safety_for_deferred(
+        &self,
+        deferred: &DeferredBinding,
+    ) -> RepeatedCallableSafety {
+        match deferred {
+            DeferredBinding::Lambda(lambda) => self.repeated_lambda_capture_safety(lambda),
+            DeferredBinding::GenericFunction { .. } => RepeatedCallableSafety::Safe,
+            DeferredBinding::BranchCallable(callable) => {
+                let mut has_unknown_candidate = false;
+                for candidate in &callable.candidates {
+                    let DeferredCallableCandidate::Lambda(candidate) = candidate else {
+                        has_unknown_candidate = true;
+                        continue;
+                    };
+                    for (binding, ty) in &candidate.captures {
+                        if !self.is_copyable(ty) {
+                            return RepeatedCallableSafety::Unsafe {
+                                binding: binding.clone(),
+                                found: format!("affine type {}", format_typed_type(ty)),
+                            };
+                        }
+                    }
+                }
+                if has_unknown_candidate {
+                    RepeatedCallableSafety::Unknown
+                } else {
+                    RepeatedCallableSafety::Safe
+                }
+            }
+        }
     }
 
     fn check_deferred_callable_binding(
@@ -7430,7 +7582,7 @@ impl TypeChecker {
 
             let param_types = self.impl_method_param_types(&target, func)?;
             for (param_name, ty) in &param_types {
-                self.bind_var(param_name.clone(), ty.clone(), false)?;
+                self.bind_parameter(param_name.clone(), ty.clone())?;
             }
 
             let expected_return_type = func
@@ -8485,9 +8637,17 @@ impl TypeChecker {
         // context collected from sibling arguments can flow into their bodies.
         for (i, arg) in args.iter().enumerate() {
             let param_type = substitution.apply(&param_types[i])?;
+            let callback_may_repeat =
+                self.inline_callback_may_repeat(func_name, i, &checked_arg_types);
+            if callback_may_repeat && !matches!(&arg.kind, ExprKind::Lambda(_)) {
+                self.reject_unsafe_repeated_callable_argument(arg, func_name)?;
+            }
             let actual_ty = if let Some(actual_ty) = checked_arg_types[i].clone() {
                 actual_ty
             } else if let ExprKind::Lambda(lambda) = &arg.kind {
+                if callback_may_repeat {
+                    self.reject_unsafe_repeated_lambda_captures(lambda, func_name)?;
+                }
                 self.check_generic_lambda_arg(lambda, &param_type, substitution)?
             } else {
                 self.check_expr_with_expected(arg, Some(&param_type))?
@@ -8517,6 +8677,101 @@ impl TypeChecker {
                 })
             })
             .collect()
+    }
+
+    fn inline_callback_may_repeat(
+        &self,
+        func_name: &str,
+        arg_index: usize,
+        checked_arg_types: &[Option<TypedType>],
+    ) -> bool {
+        match (func_name, arg_index) {
+            ("map" | "filter", 1) => matches!(
+                checked_arg_types.first().and_then(Option::as_ref),
+                Some(TypedType::List(_))
+            ),
+            ("fold", 2) => true,
+            _ => false,
+        }
+    }
+
+    fn reject_unsafe_repeated_lambda_captures(
+        &self,
+        lambda: &LambdaExpr,
+        context: &str,
+    ) -> Result<(), TypeError> {
+        if let RepeatedCallableSafety::Unsafe { binding, found } =
+            self.repeated_lambda_capture_safety(lambda)
+        {
+            return Err(TypeError::RepeatedCapture {
+                binding,
+                context: format!("{context} callback"),
+                found,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn reject_unsafe_repeated_callable_argument(
+        &self,
+        argument: &Expr,
+        context: &str,
+    ) -> Result<(), TypeError> {
+        let ExprKind::Ident(name) = &argument.kind else {
+            return Ok(());
+        };
+        match self.peek_repeated_callable_safety(name) {
+            Some(RepeatedCallableSafety::Unsafe { binding, found }) => {
+                Err(TypeError::RepeatedCapture {
+                    binding,
+                    context: format!("{context} callback"),
+                    found,
+                })
+            }
+            Some(RepeatedCallableSafety::Unknown) if self.is_callable_parameter(name) => {
+                Err(TypeError::UnprovenRepeatedCallable {
+                    callable: name.clone(),
+                    context: format!("{context} callback"),
+                })
+            }
+            Some(RepeatedCallableSafety::Unknown) => Ok(()),
+            Some(RepeatedCallableSafety::Safe) | None => Ok(()),
+        }
+    }
+
+    fn repeated_lambda_capture_safety(&self, lambda: &LambdaExpr) -> RepeatedCallableSafety {
+        let bound_vars = lambda
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect::<HashSet<_>>();
+        let mut captures = self
+            .collect_free_variables(&lambda.body, &bound_vars)
+            .into_iter()
+            .collect::<Vec<_>>();
+        captures.sort();
+
+        for binding in captures {
+            let Some(var) = self
+                .var_env
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(&binding))
+            else {
+                continue;
+            };
+            if var.mutable || !self.is_copyable(&var.ty) {
+                let found = if var.mutable {
+                    format!("mutable type {}", format_typed_type(&var.ty))
+                } else {
+                    format!("affine type {}", format_typed_type(&var.ty))
+                };
+                return RepeatedCallableSafety::Unsafe { binding, found };
+            }
+        }
+
+        RepeatedCallableSafety::Safe
     }
 
     fn solve_apply_argument_constraint(
@@ -8994,6 +9249,12 @@ impl TypeChecker {
                 // First check if it's a variable that holds a function
                 match self.lookup_var(name) {
                     Ok(var_ty) => {
+                        if !matches!(var_ty, TypedType::Function { .. }) {
+                            return Err(TypeError::NonCallableVerb {
+                                name: name.clone(),
+                                found: format_typed_type(&var_ty),
+                            });
+                        }
                         return self.check_function_value_call_with_expected(
                             Some(name),
                             var_ty,
@@ -10933,6 +11194,8 @@ impl TypeChecker {
     }
 
     fn check_while_expr(&mut self, while_expr: &WhileExpr) -> Result<TypedType, TypeError> {
+        let repeated_region_base = self.var_env.clone();
+
         // Check condition is boolean
         let cond_type = self.check_expr(&while_expr.condition)?;
         if cond_type != TypedType::Boolean {
@@ -10941,11 +11204,46 @@ impl TypeChecker {
 
         // Check body in new scope
         self.push_scope();
-        self.check_block_expr(&while_expr.body)?;
+        let body_result = self.check_block_expr(&while_expr.body);
         self.pop_scope();
+        body_result?;
+
+        self.reject_repeated_region_consumption(&repeated_region_base, "while loop")?;
 
         // While loops always return Unit
         Ok(TypedType::Unit)
+    }
+
+    fn reject_repeated_region_consumption(
+        &self,
+        before: &[HashMap<String, Variable>],
+        context: &str,
+    ) -> Result<(), TypeError> {
+        for (scope_index, before_scope) in before.iter().enumerate() {
+            let Some(after_scope) = self.var_env.get(scope_index) else {
+                continue;
+            };
+            let mut names = before_scope.keys().collect::<Vec<_>>();
+            names.sort();
+
+            for name in names {
+                let before_var = &before_scope[name];
+                let Some(after_var) = after_scope.get(name) else {
+                    continue;
+                };
+                let consumed = (!before_var.used && after_var.used)
+                    || after_var.pending_inference_uses > before_var.pending_inference_uses;
+                if consumed && !after_var.mutable && !self.is_copyable(&after_var.ty) {
+                    return Err(TypeError::RepeatedCapture {
+                        binding: name.clone(),
+                        context: context.to_string(),
+                        found: format!("affine type {}", format_typed_type(&after_var.ty)),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn check_match_expr_with_expected(

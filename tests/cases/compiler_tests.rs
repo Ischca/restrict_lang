@@ -218,7 +218,7 @@ fn test_multiple_parameters() {
         }
 
         fun main: () = {
-            val result = (10, 20, 30) add3
+            val result = (10, 20, 30) add3;
             result
         }
     "#;

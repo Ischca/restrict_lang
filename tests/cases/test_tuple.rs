@@ -60,7 +60,7 @@ fn test_tuple_in_binding() {
         }
 
         fun main: () -> Int32 = {
-            val result = (10, 20) add
+            val result = (10, 20) add;
             result
         }
     "#;

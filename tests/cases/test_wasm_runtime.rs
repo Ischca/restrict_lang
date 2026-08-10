@@ -62,6 +62,45 @@ export fun public_score: (value: Int32) -> Int32 = {
 }
 
 #[test]
+fn completed_match_anonymous_scope_executes() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+export fun scoped_square: (positive: Boolean) -> Int32 = {
+    positive match {
+        true => { 6 }
+        false => { 2 }
+    } { |value|
+        value * value
+    }
+}
+"#;
+
+    let (mut store, instance) = instantiate(source)?;
+    let scoped_square = instance.get_typed_func::<i32, i32>(&store, "scoped_square")?;
+
+    assert_eq!(scoped_square.call(&mut store, 1)?, 36);
+    assert_eq!(scoped_square.call(&mut store, 0)?, 4);
+    Ok(())
+}
+
+#[test]
+fn unit_anonymous_scope_executes_as_a_statement() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+export fun scoped_print: (value: Int32) -> Int32 = {
+    value { |item|
+        item print
+    };
+    value + 1
+}
+"#;
+
+    let (mut store, instance) = instantiate(source)?;
+    let scoped_print = instance.get_typed_func::<i32, i32>(&store, "scoped_print")?;
+
+    assert_eq!(scoped_print.call(&mut store, 41)?, 42);
+    Ok(())
+}
+
+#[test]
 fn exported_char_function_executes() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 export fun echo_delimiter: (value: Char) -> Char = {

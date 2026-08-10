@@ -111,7 +111,7 @@ fn complex_receiver_probe_does_not_claim_a_new_pipe_binding() {
 record Item { value: Int32 }
 
 fun select: (choose_left: Boolean, left: Item, right: Item) -> Item = {
-    (choose_left then { left } else { right }) |> selected
+    (choose_left then { left } else { right }) |> selected;
     selected
 }
 "#,

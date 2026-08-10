@@ -14,6 +14,6 @@ pub fun benchmark: (iterations: Int32) -> Int32 = {
         val pair = Pair { left: index, right: index + 1 };
         checksum = checksum + (pair pair_score);
         index = index + 1
-    }
+    };
     checksum
 }

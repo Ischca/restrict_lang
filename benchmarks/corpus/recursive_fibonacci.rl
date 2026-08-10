@@ -3,7 +3,7 @@ fun fibonacci: (value: Int32) -> Int32 = {
         value
     } else {
         val first = (value - 1) fibonacci
-        val second = (value - 2) fibonacci
+        val second = (value - 2) fibonacci;
         first + second
     }
 }

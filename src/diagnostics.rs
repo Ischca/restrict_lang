@@ -57,6 +57,7 @@ pub fn format_type_error(source: &str, error: &TypeError) -> String {
 
 fn find_osv_verb<'a>(source: &'a str, name: &str) -> Option<(usize, usize, &'a str)> {
     let mut previous_significant_line: Option<&str> = None;
+    let mut candidate = None;
     for (line_index, line) in source.lines().enumerate() {
         for (byte_index, _) in line.match_indices(name) {
             let before_boundary = line[..byte_index]
@@ -80,12 +81,12 @@ fn find_osv_verb<'a>(source: &'a str, name: &str) -> Option<(usize, usize, &'a s
             let same_line_object = !before.is_empty();
             let continued_object = before.is_empty()
                 && previous_significant_line
-                    .is_some_and(|previous| !previous.ends_with(['{', '}', '=', ';', ',']));
+                    .is_some_and(|previous| !previous.ends_with(['{', '=', ';', ',']));
             let followed_by_another_identifier =
                 after.chars().next().is_some_and(is_identifier_continue);
             if (same_line_object || continued_object) && !followed_by_another_identifier {
                 let column = line[..byte_index].chars().count().saturating_add(1);
-                return Some((line_index + 1, column, line));
+                candidate = Some((line_index + 1, column, line));
             }
         }
 
@@ -94,7 +95,7 @@ fn find_osv_verb<'a>(source: &'a str, name: &str) -> Option<(usize, usize, &'a s
             previous_significant_line = Some(significant);
         }
     }
-    None
+    candidate
 }
 
 fn is_identifier_continue(ch: char) -> bool {
@@ -261,6 +262,28 @@ fun make_quote: () -> Quote = {
 
         assert!(message.contains("at line 5, column 5"), "{message}");
         assert!(message.contains("^ non-callable OSV verb"), "{message}");
+    }
+
+    #[test]
+    fn non_callable_verb_after_a_completed_block_wins_over_rhs_uses() {
+        let source = r#"fun benchmark: (iterations: Int32) -> Int32 = {
+    mut val index = 0;
+    mut val checksum = 0;
+    (index < iterations) while {
+        checksum = checksum + 1;
+        index = index + 1
+    }
+    checksum
+}
+"#;
+        let error = TypeError::NonCallableVerb {
+            name: "checksum".to_string(),
+            found: "Int32".to_string(),
+        };
+        let message = format_type_error(source, &error);
+
+        assert!(message.contains("at line 8, column 5"), "{message}");
+        assert!(message.contains("    checksum"), "{message}");
     }
 
     #[test]

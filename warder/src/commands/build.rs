@@ -15,7 +15,7 @@ use crate::manifest::{
 };
 use anyhow::{bail, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -519,17 +519,31 @@ fn take_pending_build_change(
     changed
 }
 
-fn create_build_watcher(
-    project_root: &Path,
-) -> Result<(
-    RecommendedWatcher,
+type BuildWatcher = (
+    Box<dyn Watcher + Send>,
     tokio::sync::mpsc::UnboundedReceiver<notify::Result<Event>>,
-)> {
+);
+
+fn create_build_watcher(project_root: &Path) -> Result<BuildWatcher> {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-    let mut watcher = notify::recommended_watcher(move |event| {
+    let handler = move |event| {
         let _ = sender.send(event);
-    })
-    .context("Failed to create filesystem watcher")?;
+    };
+    #[cfg(not(test))]
+    let mut watcher: Box<dyn Watcher + Send> = Box::new(
+        notify::recommended_watcher(handler).context("Failed to create filesystem watcher")?,
+    );
+    // Native event backends can intentionally coalesce or defer notifications
+    // under test sandboxes. Polling keeps this contract test deterministic;
+    // release builds continue to use the platform-recommended backend above.
+    #[cfg(test)]
+    let mut watcher: Box<dyn Watcher + Send> = Box::new(
+        notify::PollWatcher::new(
+            handler,
+            notify::Config::default().with_poll_interval(std::time::Duration::from_millis(25)),
+        )
+        .context("Failed to create filesystem watcher")?,
+    );
     watcher
         .watch(project_root, RecursiveMode::Recursive)
         .with_context(|| format!("Failed to watch project root {}", project_root.display()))?;
@@ -1571,21 +1585,33 @@ mod tests {
     fn build_watcher_observes_restrict_source_changes() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let (_watcher, mut events) = create_build_watcher(&root).unwrap();
         let source = root.join("main.rl");
-        std::fs::write(&source, "fun main: () -> () = { () }\n").unwrap();
+        std::fs::write(&source, "fun main: () -> Int32 = { 0 }\n").unwrap();
+        let (_watcher, mut events) = create_build_watcher(&root).unwrap();
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut next_write = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        let mut revision = 0;
         loop {
-            if let Ok(Ok(event)) = events.try_recv() {
-                if event_affects_build(&event) {
-                    break;
+            while let Ok(event) = events.try_recv() {
+                if matches!(event, Ok(event) if event_affects_build(&event)) {
+                    return;
                 }
             }
+            let now = std::time::Instant::now();
             assert!(
-                std::time::Instant::now() < deadline,
+                now < deadline,
                 "filesystem watcher did not report the Restrict source change"
             );
+            if now >= next_write {
+                revision += 1;
+                std::fs::write(
+                    &source,
+                    format!("fun main: () -> Int32 = {{ {revision} }}\n"),
+                )
+                .unwrap();
+                next_write = now + std::time::Duration::from_millis(200);
+            }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
     }

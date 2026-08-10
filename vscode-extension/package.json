@@ -16,6 +16,16 @@
     "engines": {
         "vscode": "^1.74.0"
     },
+    "extensionKind": [
+        "workspace"
+    ],
+    "capabilities": {
+        "untrustedWorkspaces": {
+            "supported": false,
+            "description": "The extension starts the configured Restrict compiler from the workspace extension host."
+        },
+        "virtualWorkspaces": false
+    },
     "categories": [
         "Programming Languages",
         "Syntax Highlighting"
@@ -30,7 +40,12 @@
         "onLanguage:restrict",
         "onCommand:restrict.compile",
         "onCommand:restrict.typeCheck",
-        "onCommand:restrict.showAST"
+        "onCommand:restrict.showAST",
+        "onCommand:restrict.gotoDefinition",
+        "onCommand:restrict.findReferences",
+        "onCommand:restrict.showHover",
+        "onCommand:restrict.showDocumentSymbols",
+        "onCommand:restrict.restartLanguageServer"
     ],
     "main": "./out/extension.js",
     "contributes": {
@@ -94,6 +109,11 @@
             {
                 "command": "restrict.showDocumentSymbols",
                 "title": "Show Document Symbols",
+                "category": "Restrict"
+            },
+            {
+                "command": "restrict.restartLanguageServer",
+                "title": "Restart Language Server",
                 "category": "Restrict"
             }
         ],
@@ -164,35 +184,35 @@
                 "restrict.compilerPath": {
                     "type": "string",
                     "default": "",
-                    "description": "Path to the Restrict Language compiler (leave empty to use 'restrict_lang' from PATH)"
+                    "scope": "machine-overridable",
+                    "description": "Path to the Restrict compiler used by CLI fallbacks and, when no server path is set, by the language client. Leave empty to use a development build or 'restrict_lang' from PATH."
                 },
                 "restrict.enableTypeChecking": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable automatic type checking"
-                },
-                "restrict.showWarnings": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show compiler warnings"
+                    "description": "Run a CLI type check on save when the language server is disabled or unavailable. The language server publishes live diagnostics independently."
                 },
                 "restrict.languageServerPath": {
                     "type": "string",
                     "default": "",
-                    "description": "Path to the Restrict Language Server (if different from compiler)"
+                    "scope": "machine-overridable",
+                    "description": "Path to the Restrict compiler executable used as the language server. The extension starts it with --lsp."
                 },
                 "restrict.enableLSP": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable Language Server Protocol features"
+                    "description": "Enable live diagnostics, scoped completion, hover, cross-file definitions and references, reference CodeLens, inlay hints, document symbols, and semantic highlighting. Reload or run Restart Language Server after changing this setting."
                 }
             }
         }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
-        "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./",
+        "check-types": "tsc -p ./ --noEmit",
+        "bundle": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --target=node16 --sourcemap --minify",
+        "compile": "npm run check-types && npm run bundle",
+        "watch": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --target=node16 --sourcemap --watch",
+        "test:lsp": "node ./scripts/smoke-lsp.mjs",
         "package": "vsce package",
         "publish": "vsce publish"
     },
@@ -201,7 +221,9 @@
     },
     "devDependencies": {
         "@types/node": "16.x",
-        "@types/vscode": "^1.74.0",
+        "@types/vscode": "1.74.0",
+        "@vscode/vsce": "^3.9.2",
+        "esbuild": "^0.28.1",
         "typescript": "^4.9.4"
     }
 }

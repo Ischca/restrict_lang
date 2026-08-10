@@ -74,12 +74,14 @@ for the accepted architecture direction.
   capability adapters, and cleanup across suspension. Complete network/HTTP
   profiles are follow-on host integration.
 
-The ordinary artifact path is still `.rl -> WAT -> Core Wasm`. With an explicit
-schema-v1 or schema-v2 `[component]` selection in the repository-root
-`warder.toml`, the compiler instead lowers checked `ComponentInterfaceIr`
-through normalized WIT, stable metadata, and Canonical ABI adapters. `warder
-build --component` publishes the validated
+The compiler's ordinary artifact path is still `.rl -> WAT -> Core Wasm`. A
+Warder project with an explicit schema-v1 or schema-v2 `[component]` selection
+uses that selection as its default `warder build` artifact. Warder lowers
+checked `ComponentInterfaceIr` through normalized WIT, stable metadata, and
+Canonical ABI adapters; `warder build` (or the explicit assertion `warder
+build --component`) publishes the validated
 `.component.wasm`, `.component.wit`, and `.component.toml` set transactionally.
+Use `warder build --core` to request the Core Wasm/Cage artifact explicitly.
 `wrap --wit` remains unverified caller-supplied text attached to a Core module
 cage and is not Component generation.
 

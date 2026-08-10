@@ -1331,7 +1331,7 @@ fn unqualified_builtin_value_constructor_failures(source: &str) -> Vec<String> {
             after += 1;
         }
         let statement_start = code[..start]
-            .rfind(|character| matches!(character, '\n' | ';' | '{'))
+            .rfind(['\n', ';', '{'])
             .map_or(0, |position| position + 1);
         let binding_pattern = code[statement_start..start].trim() == "val";
 

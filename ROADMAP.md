@@ -307,7 +307,7 @@ length validation are therefore normative B1 rules.
 - [ ] Introduce a future edition's source-first Component ergonomics by
   distinguishing package-visible `pub` from Component-intent `export`; until
   then retain the implemented source-public plus `[component]` double gate
-- [ ] Let Warder build an explicit project directory without changing the
+- [x] Let Warder build an explicit project directory without changing the
   caller's working directory (follow-on CLI ergonomics; not a B1 ABI gate)
 - [x] Emit deterministic normalized WIT, validated Component Wasm, and
   machine-readable artifact metadata from the explicit Component build path
@@ -316,7 +316,9 @@ length validation are therefore normative B1 rules.
 - [x] Separate the normalized semantic interface hash from exact artifact
   content hashes
 - [x] Preserve Restrict source identities in component diagnostics
-- [ ] Add optional watch/incremental and reference-bundler integration without
+- [x] Add optional watch rebuilds for the project root and direct local source
+  dependencies without making Warder an npm dependency resolver
+- [ ] Add incremental compilation and reference-bundler integration without
   making Warder an npm dependency resolver
 - [x] Run the compiler, Warder publication, Rust Component host, and
   compatibility tests through the repository test commands

@@ -109,17 +109,25 @@ fn checked_in_warder_fixture_sources_use_current_v001_syntax() {
 }
 
 #[test]
-fn warder_test_uses_current_cli_check_mode() {
+fn warder_test_executes_public_boolean_wasm_exports() {
     let source = read_workspace_file("warder/src/commands/test.rs");
 
-    assert!(
-        source.contains(".arg(\"--check\")"),
-        "`warder test` should use the current compiler type-check mode"
-    );
     assert!(
         !source.contains(".arg(\"--test\")"),
         "`warder test` should not call the unsupported compiler --test flag"
     );
+    for marker in [
+        ".args([\"--target\", \"wasip1\"])",
+        "pub fun test_name: () -> Boolean",
+        "wasmparser::Validator::new()",
+        "get_typed_func::<(), i32>",
+        "Store::new(&engine, TestIo::default())",
+    ] {
+        assert!(
+            source.contains(marker),
+            "`warder test` should compile and independently execute each public Boolean Wasm export; missing `{marker}`"
+        );
+    }
 }
 
 #[test]
@@ -132,12 +140,20 @@ fn warder_build_release_component_and_experimental_modes_are_scoped() {
         "Warder release builds should request the compiler release pass"
     );
 
-    for anchor in [
-        "Watch mode",
-        "Deterministic build mode",
-        "Signature verification",
-    ] {
+    for anchor in ["Deterministic build mode", "Signature verification"] {
         assert_release_readiness_message(&source, anchor);
+    }
+
+    for marker in [
+        "watch_project(",
+        "create_build_watcher(",
+        "event_affects_build(",
+        "Source change detected; rebuilding",
+    ] {
+        assert!(
+            source.contains(marker),
+            "Warder watch mode should retain production implementation marker `{marker}`"
+        );
     }
 
     for marker in [

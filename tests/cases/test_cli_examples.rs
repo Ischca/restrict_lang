@@ -892,6 +892,40 @@ fn cli_array_type_boundary_reports_public_length_syntax() {
 }
 
 #[test]
+fn cli_non_callable_osv_verb_suggests_the_statement_boundary() {
+    let (source_path, output) = run_check_temp_source(
+        "non_callable_osv_verb",
+        r#"fun main: () -> Int32 = {
+    val first = 1;
+    val second = 2;
+    first
+    second
+}
+"#,
+    );
+
+    assert!(
+        !output.status.success(),
+        "non-callable verb check should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Value second has type Int32 and cannot be used as an OSV verb"),
+        "stderr should identify the non-callable verb and its type, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("insert `;` before it"),
+        "stderr should explain the explicit statement boundary, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("at line 5, column 5") && stderr.contains("^ non-callable OSV verb"),
+        "stderr should point to the callable-shaped continuation, got: {stderr}"
+    );
+
+    let _ = fs::remove_file(source_path);
+}
+
+#[test]
 fn cli_v001_release_surface_error_hides_internal_diagnostic_terms() {
     let (source_path, output) = run_check_temp_source(
         "v001_release_surface_composite_export",

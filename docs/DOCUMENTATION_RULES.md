@@ -68,8 +68,10 @@ Every B1 summary must preserve these guardrails:
   schema-v2 path produces checked `ComponentInterfaceIr`, normalized WIT,
   Canonical ABI adapters, and validated Component bytes without changing the
   default Core ABI;
-- Warder `build --component` transactionally publishes `.component.wasm`,
-  `.component.wit`, and `.component.toml`; `wrap --wit` only attaches
+- a Warder project with `[component]` uses Component output for plain `build`;
+  `build --component` asserts that choice and `build --core` overrides it.
+  Component builds transactionally publish `.component.wasm`, `.component.wit`,
+  and `.component.toml`; `wrap --wit` only attaches
   caller-supplied text to a Core module cage and does not validate or
   componentize it;
 - interface authority follows API ownership rather than import/export

@@ -1,257 +1,108 @@
-# Restrict Language Extension for Visual Studio Code
+# Restrict Language for Visual Studio Code
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/restrict-lang/restrict_lang/master/vscode-extension/images/icon.png" alt="Restrict Language Logo" width="128" height="128">
-</div>
-
-This extension provides rich language support for Restrict Language (.rl files) in Visual Studio Code.
+This extension provides language support for Restrict Language (`.rl`) files. It uses the compiler's native `--lsp` mode and falls back to direct compiler commands when the language server is disabled or unavailable.
 
 ## Features
 
-### ✨ Syntax Highlighting
-- Full syntax highlighting for Restrict Language constructs
-- Support for keywords, operators, types, and comments
-- Special highlighting for lambda expressions and pattern matching
-- Dark and light theme variants
+- Live lexer, parser, type, affine-use, import, and release-surface diagnostics
+- Cursor-aware completion limited to lexical bindings, imported public APIs, qualified enum constructors, record fields, and receiver-compatible OSV verbs
+- Hover information, cross-file go to definition, workspace references, and document symbols
+- Reference CodeLens links on definitions and inferred type, return, lambda-parameter, and call-parameter inlay hints
+- Semantic highlighting with UTF-16-correct positions plus a TextMate fallback grammar
+- Current Restrict syntax snippets, including OSV calls, forms, adoptions, and dotted imports
+- Commands to compile the current document to WAT, type check it, inspect its AST, and restart the language server
+- Bracket matching, comment toggling, indentation, folding, file icons, and optional dark/light themes
 
-### 🔧 Language Features
-- **Auto-completion** with code snippets
-- **Bracket matching** and auto-closing pairs
-- **Comment toggling** (Ctrl+/ for line, Shift+Alt+A for block)
-- **Code folding** support
-- **Indentation rules** for editor layout
-
-### 🚀 Compiler Integration
-- **Compile command** (Ctrl+Shift+B) to generate WebAssembly
-- **Type checking** (Ctrl+Shift+T) with error diagnostics
-- **AST viewer** to inspect parsed syntax trees
-- **Automatic type checking** on file save
-
-### 📝 Code Snippets
-Quick insertion of common Restrict Language patterns:
-- `fun` - Function definition
-- `lambda` - Lambda expression
-- `val` - Variable binding
-- `import` - Named dotted import
-- `record` - Record definition
-- `form` - Method-only form declaration
-- `takes-display` - Display adoption for a concrete record
-- `fun-of` - Function with a static form bound
-- `match` - Pattern matching
-- `then` - Conditional expression
-- `call` - OSV multi-argument function call
-- And many more!
-
-## Installation
-
-### From VSIX (Recommended)
-1. Download the latest `.vsix` file from the releases
-2. Open VS Code
-3. Go to Extensions (Ctrl+Shift+X)
-4. Click the "..." menu and select "Install from VSIX..."
-5. Select the downloaded `.vsix` file
-
-### From Source
-1. Clone the repository
-2. Navigate to the `vscode-extension` directory
-3. Run `npm install` to install dependencies
-4. Run `npm run compile` to build the extension
-5. Press F5 to launch a new VS Code window with the extension loaded
+The server intentionally does not advertise rename, formatting, workspace symbols, code actions, signature help, or semantic-token range requests until those operations have real implementations.
+Cross-file navigation follows saved source imports and their public export lists. Unsaved edits in open imported files take precedence over disk content.
 
 ## Requirements
 
-- **Restrict Language Compiler**: The `restrict_lang` compiler must be installed and available in your system PATH
-  - You can verify this by running: `restrict_lang --version`
-  - If not in PATH, configure the compiler path in VS Code settings (see Configuration section)
-- **Node.js**: Required for extension development (if building from source)
-- **TypeScript**: Required for extension development (if building from source)
+The extension does not bundle a native compiler. Install or build `restrict_lang`, then either put it on `PATH` or configure its path in VS Code.
 
-## Configuration
-
-The extension can be configured through VS Code settings:
-
-```json
-{
-    "restrict.compilerPath": "restrict_lang",
-    "restrict.enableTypeChecking": true,
-    "restrict.showWarnings": true
-}
+```bash
+mise exec -- cargo build --bin restrict_lang
+./target/debug/restrict_lang --version
 ```
 
-### Settings
+When the extension is launched from this repository, it automatically finds `target/debug/restrict_lang` or `target/release/restrict_lang`.
 
-- `restrict.compilerPath`: Path to the Restrict Language compiler (default: empty, uses "restrict_lang" from PATH)
-  - Leave empty to use `restrict_lang` from system PATH
-  - Set to full path if compiler is not in PATH (e.g., "/usr/local/bin/restrict_lang")
-- `restrict.enableTypeChecking`: Enable automatic type checking on save (default: true)
-- `restrict.showWarnings`: Show compiler warnings in problems panel (default: true)
+## Build and install a VSIX
 
-## Usage
-
-### Creating a New File
-1. Create a new file with `.rl` extension
-2. Start typing - you'll get syntax highlighting and auto-completion
-3. Use snippets for quick code generation
-
-### Compiling Code
-1. Open a `.rl` file
-2. Press `Ctrl+Shift+B` or use Command Palette → "Restrict: Compile Restrict File"
-3. The compiled WebAssembly will be saved as `.wat` file
-
-### Type Checking
-1. Open a `.rl` file
-2. Press `Ctrl+Shift+T` or use Command Palette → "Restrict: Type Check Restrict File"
-3. Errors will appear in the Problems panel and as red underlines
-
-### Viewing AST
-1. Open a `.rl` file
-2. Use Command Palette → "Restrict: Show AST"
-3. A new document will open showing the parsed syntax tree
-
-### Import Syntax
-Current v0.0.1 imports use dotted module paths:
-
-```restrict
-import release.policy.{score}
-import release.policy.*
-import release.policy
-```
-
-String import paths and import aliases are not supported in v0.0.1.
-
-### Forms and Display
-
-The current post-v0.0.1 compiler supports method-only `form` declarations,
-concrete record `takes` adoptions, and `<T of Form>` bounds. Dispatch is static;
-associated types, generic or conditional adoptions, default methods, enum
-adoptions, and dynamic dispatch are not part of this slice.
-
-## Example Code
-
-```restrict
-fun add: (x: Int32, y: Int32) -> Int32 = {
-    x + y
-}
-
-fun clamp_positive: (value: Int32) -> Int32 = {
-    value < 0 then { 0 } else { value }
-}
-
-// Record with OSV helper functions
-record User {
-    name: String
-    age: Int32
-}
-
-fun age_bonus: (self: User) -> Int32 = {
-    self.age >= 18 then { 10 } else { 0 }
-}
-
-fun main: () -> Int32 = {
-    val raw_score = (12, 30) add
-    val score = raw_score |> clamp_positive
-
-    val user = User { name: "Alice", age: 25 }
-    val bonus = user |> age_bonus
-
-    score + bonus
-}
-```
-
-## Color Themes
-
-The extension includes two custom color themes optimized for Restrict Language:
-
-- **Restrict Dark**: Dark theme with syntax-aware colors
-- **Restrict Light**: Light theme variant
-
-To use these themes:
-1. Go to File → Preferences → Color Theme
-2. Select "Restrict Dark" or "Restrict Light"
-
-## Keyboard Shortcuts
-
-| Shortcut | Command | Description |
-|----------|---------|-------------|
-| `Ctrl+Shift+B` | `restrict.compile` | Compile current file |
-| `Ctrl+Shift+T` | `restrict.typeCheck` | Type check current file |
-| `Ctrl+/` | `editor.action.commentLine` | Toggle line comment |
-| `Shift+Alt+A` | `editor.action.blockComment` | Toggle block comment |
-
-## Syntax Highlighting
-
-The extension provides comprehensive syntax highlighting for:
-
-- **Keywords**: `fun`, `val`, `record`, `match`, etc.
-- **Types**: `Int32`, `String`, `Boolean`, `Option`, `List`
-- **Operators**: `|>`, `=>`, `->`, `&&`, `||`, `!`, `..`, `...`, comparison and arithmetic operators
-- **Lambda expressions**: Special highlighting for `|param|`
-- **Comments**: Both single-line `//` and multi-line `/* */`
-- **Literals**: Numbers, strings, booleans
-- **Pattern matching**: Wildcards and destructuring
-
-## Error Diagnostics
-
-The extension integrates with the Restrict Language compiler to provide:
-
-- **Real-time error checking** on file save
-- **Inline error messages** with red underlines
-- **Problems panel integration** showing all errors and warnings
-- **Type mismatch detection** with helpful error messages
-- **Affine type violation** warnings
-
-## Contributing
-
-We welcome contributions! To contribute to the VS Code extension:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes in the `vscode-extension` directory
-4. Test the extension by pressing F5 in VS Code
-5. Submit a pull request
-
-### Development Setup
+Node.js 22 or later is required by the packaged VSCE development tool.
 
 ```bash
 cd vscode-extension
-npm install
+npm ci
 npm run compile
+npm run test:lsp
+npm run package
+code --install-extension restrict-language-0.0.1.vsix
 ```
 
-Press F5 in VS Code to launch the Extension Development Host.
+For extension development, open `vscode-extension` in VS Code and press F5. The included launch configuration compiles the TypeScript and opens an Extension Development Host.
+
+## Configuration
+
+```json
+{
+    "restrict.compilerPath": "/absolute/path/to/restrict_lang",
+    "restrict.languageServerPath": "",
+    "restrict.enableLSP": true,
+    "restrict.enableTypeChecking": true
+}
+```
+
+- `restrict.compilerPath`: Compiler used by CLI fallbacks and, when no dedicated server path is set, by the LSP client.
+- `restrict.languageServerPath`: Optional compiler executable used only for `--lsp` mode.
+- `restrict.enableLSP`: Enables live language features. Run **Restrict: Restart Language Server** after changing paths or this setting.
+- `restrict.enableTypeChecking`: Runs a CLI check on save only when the LSP is disabled or unavailable. The LSP publishes live diagnostics independently.
+
+If neither path is configured, the extension checks for a repository development build and then resolves `restrict_lang` from `PATH`.
+
+## Commands
+
+| Command | Default shortcut | Result |
+| --- | --- | --- |
+| Restrict: Compile Restrict File | `Ctrl+Shift+B` | Writes a sibling `.wat` file |
+| Restrict: Type Check Restrict File | `Ctrl+Shift+T` | Publishes diagnostics without code generation |
+| Restrict: Show AST | — | Opens the compiler AST in a temporary editor |
+| Restrict: Go to Definition | `F12` | Uses the LSP definition provider |
+| Restrict: Find All References | `Shift+F12` | Uses the LSP reference provider |
+| Restrict: Restart Language Server | — | Applies updated executable settings |
+
+## Current syntax examples
+
+```restrict
+import release.policy.{score}
+
+pub enum ParseError {
+    Empty
+    Message(String)
+}
+
+fun double: (value: Int32) -> Int32 = {
+    value * 2
+}
+
+fun main: () -> () = {
+    val answer = 21 |> double
+    answer |> println
+
+    val error = "invalid" |> ParseError::Message
+    val maybe: Option<Int32> = () Option::None
+}
+```
+
+Restrict uses `val`, OSV call order, qualified value constructors such as `Option::Some`, and `condition then { ... } else { ... }`. The language specification in the repository root is authoritative.
 
 ## Troubleshooting
 
-### Compiler Not Found
-If you get "Compiler not found" errors:
-1. Make sure the Restrict Language compiler is installed
-2. Check that `restrict_lang` is in your PATH
-3. Or set the full path in settings: `"restrict.compilerPath": "/path/to/restrict_lang"`
-
-### Syntax Highlighting Not Working
-1. Make sure the file has `.rl` extension
-2. Check that the language mode is set to "Restrict Language"
-3. Reload the VS Code window (Ctrl+Shift+P → "Developer: Reload Window")
-
-### Extension Not Loading
-1. Check VS Code's output panel for error messages
-2. Make sure you have a compatible VS Code version (1.74.0+)
-3. Try disabling other extensions to check for conflicts
-
-## Release Notes
-
-### 0.0.1
-- Preview release for local VSIX installation
-- Basic syntax highlighting
-- Compiler integration
-- Code snippets
-- Error diagnostics
-- Custom themes
+- Open **Output → Restrict Language Server** to see the resolved command and protocol failures.
+- Run `restrict_lang --lsp` manually to verify the configured executable accepts LSP stdio mode.
+- Imported modules require a saved `file:` document so their paths can be resolved. Unsaved documents without imports still receive LSP features.
+- Syntax highlighting remains available if the native server cannot start; compile, type-check, and AST commands use the CLI fallback.
 
 ## License
 
-This extension is licensed under the MIT License - see the LICENSE file for details.
-
----
-
-**Enjoy coding with Restrict Language!** 🚀
+MIT. See [LICENSE](LICENSE).

@@ -37,17 +37,23 @@ pub fn new_project(name: &str) -> Result<()> {
     // Create main.rl
     let main_content = r#"// Welcome to Restrict Language!
 
+pub fun answer: () -> Int32 = {
+    42
+}
+
 fun main: () -> () = {
     "Hello, World!" |> println
 }
 "#;
     fs::write(project_path.join("src/main.rl"), main_content)?;
 
-    // Create test file. Warder currently type-checks test sources.
-    let test_content = r#"// Example type-check smoke test
+    // Create an executable Boolean test exported to Warder's Wasm runner.
+    let test_content = r#"// Example executable test
 
-fun test_example: () -> Boolean = {
-    1 + 1 == 2
+import project.main.{answer}
+
+pub fun test_example: () -> Boolean = {
+    () answer == 42
 }
 "#;
     fs::write(project_path.join("tests/main_test.rl"), test_content)?;
@@ -81,7 +87,7 @@ warder run
 
 ## Testing
 
-`warder test` type-checks each `.rl` file under `tests/`.
+`warder test` compiles and executes public `() -> Boolean` test functions under `tests/`.
 
 ```bash
 warder test

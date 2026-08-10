@@ -5,9 +5,10 @@ boundary remains intentionally scalar. The explicit B1 path adds synchronous
 rich Component producer and consumer interoperability without exposing the
 compiler's arena layout.
 
-The ordinary artifact path is `.rl -> WAT -> Core Wasm`. With schema-v1 or
-schema-v2 `[component]` selection in the repository-root `warder.toml`,
-`warder build --component` transactionally
+The compiler's ordinary artifact path is `.rl -> WAT -> Core Wasm`. With a
+schema-v1 or schema-v2 `[component]` selection in the repository-root
+`warder.toml`, `warder build` (or the explicit `--component` assertion)
+transactionally
 publishes `.component.wit`, validated `.component.wasm`, and `.component.toml`
 metadata. `wrap --wit` only attaches caller-supplied text to a Core module cage
 and is not Component generation.
@@ -82,7 +83,8 @@ normal scalar ABI. Keep rich values internal or convert them to scalar
 summaries on this path.
 
 For rich interoperability, explicitly select the public function under
-`[component]` in the root `warder.toml` and run `warder build --component`.
+`[component]` in the root `warder.toml` and run `warder build` (or
+`warder build --component` when the selection must be asserted).
 Ordinary `pub` or `export` alone never publishes a Component ABI. A future
 edition may distinguish package-visible `pub` from Component-intent `export`,
 but that source-first surface is not implemented. Schema v2 is root-only and adds resources,

@@ -197,15 +197,15 @@ fun main: () -> Int = { 5 double }  // → 10
 ### 5.3 ビルドシステム ⚠️ PARTIAL
 - [x] `warder build` - 基本ビルド
 - [x] `warder run` - wasmtime/wasmer で実行
-- [ ] `warder build --watch` - ファイル監視 (未実装)
+- [x] `warder build --watch` - ルートと直接ローカル依存のファイル監視
 - [x] `warder build --component` - schema-v1/v2の明示的な`[component]`
   selectionを検証し、WIT、Canonical ABI adapter、検証済みComponent、
   metadataをtransactionalに公開
 
-### 5.4 テスト ⚠️ PARTIAL
+### 5.4 テスト ✅
 - [x] `warder test` - テストファイル検出
-- [x] 直接ローカル依存関係を`warder build`と同じルートで型チェック
-- [ ] テストランナー実装 (スケルトンのみ)
+- [x] 直接ローカル依存関係を`warder build`と同じルートでコンパイル
+- [x] publicな`() -> Boolean`テストをCore Wasmで実行
 
 ### 5.5 依存関係管理 ⚠️ PARTIAL
 - [x] `warder add <alias> --path <dir>` - 直接ローカル依存関係を追加

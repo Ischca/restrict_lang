@@ -1,5 +1,7 @@
 //! User-facing diagnostic formatting helpers.
 
+use crate::type_checker::TypeError;
+
 pub type NomError<'a> = nom::Err<nom::error::Error<&'a str>>;
 
 pub fn format_lex_error(source: &str, error: NomError<'_>) -> String {
@@ -8,6 +10,95 @@ pub fn format_lex_error(source: &str, error: NomError<'_>) -> String {
 
 pub fn format_parse_error(source: &str, error: NomError<'_>) -> String {
     format_nom_error("Parsing", source, error)
+}
+
+pub fn format_unparsed_input(source: &str, remaining: &str) -> String {
+    if !is_slice_from_source(source, remaining) {
+        return format!(
+            "Parsing error: unparsed input near `{}`",
+            truncate_for_diagnostic(remaining.trim(), 48)
+        );
+    }
+
+    let leading_whitespace = remaining.len().saturating_sub(remaining.trim_start().len());
+    let offset = source
+        .len()
+        .saturating_sub(remaining.len())
+        .saturating_add(leading_whitespace);
+    let (line, column) = line_column(source, offset);
+    let near = remaining.trim_start().lines().next().unwrap_or("");
+    let mut message = format!(
+        "Parsing error at line {line}, column {column}: unparsed input near `{}`",
+        truncate_for_diagnostic(near, 48)
+    );
+    if let Some((source_line, caret_column)) = source_line_at(source, offset) {
+        message.push_str(&format!(
+            "\n  {source_line}\n  {}^ parsing stopped here",
+            " ".repeat(caret_column.saturating_sub(1))
+        ));
+    }
+    message
+}
+
+pub fn format_type_error(source: &str, error: &TypeError) -> String {
+    let mut message = format!("Type error: {error}");
+    let TypeError::NonCallableVerb { name, .. } = error else {
+        return message;
+    };
+    let Some((line, column, source_line)) = find_osv_verb(source, name) else {
+        return message;
+    };
+    message.push_str(&format!(
+        "\n  at line {line}, column {column}\n  {source_line}\n  {}^ non-callable OSV verb",
+        " ".repeat(column.saturating_sub(1))
+    ));
+    message
+}
+
+fn find_osv_verb<'a>(source: &'a str, name: &str) -> Option<(usize, usize, &'a str)> {
+    let mut previous_significant_line: Option<&str> = None;
+    for (line_index, line) in source.lines().enumerate() {
+        for (byte_index, _) in line.match_indices(name) {
+            let before_boundary = line[..byte_index]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_identifier_continue(ch));
+            let after_index = byte_index + name.len();
+            let after_boundary = line[after_index..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_identifier_continue(ch));
+            if !before_boundary || !after_boundary {
+                continue;
+            }
+
+            let before = line[..byte_index].trim();
+            let after = line[after_index..].trim_start();
+            if after.starts_with('=') || after.starts_with(':') {
+                continue;
+            }
+            let same_line_object = !before.is_empty();
+            let continued_object = before.is_empty()
+                && previous_significant_line
+                    .is_some_and(|previous| !previous.ends_with(['{', '}', '=', ';', ',']));
+            let followed_by_another_identifier =
+                after.chars().next().is_some_and(is_identifier_continue);
+            if (same_line_object || continued_object) && !followed_by_another_identifier {
+                let column = line[..byte_index].chars().count().saturating_add(1);
+                return Some((line_index + 1, column, line));
+            }
+        }
+
+        let significant = line.split("//").next().unwrap_or("").trim();
+        if !significant.is_empty() {
+            previous_significant_line = Some(significant);
+        }
+    }
+    None
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 fn format_nom_error(phase: &str, source: &str, error: NomError<'_>) -> String {
@@ -26,14 +117,36 @@ fn format_nom_error(phase: &str, source: &str, error: NomError<'_>) -> String {
             if near.is_empty() {
                 format!("{phase} error at line {line}, column {column}: unexpected end of input")
             } else {
-                format!(
+                let mut message = format!(
                     "{phase} error at line {line}, column {column}: unexpected input near `{}`",
                     truncate_for_diagnostic(near, 48)
-                )
+                );
+                if let Some((source_line, caret_column)) = source_line_at(source, offset) {
+                    message.push_str(&format!(
+                        "\n  {source_line}\n  {}^ parsing stopped here",
+                        " ".repeat(caret_column.saturating_sub(1))
+                    ));
+                }
+                message
             }
         }
         nom::Err::Incomplete(_) => format!("{phase} error: incomplete input"),
     }
+}
+
+fn source_line_at(source: &str, offset: usize) -> Option<(&str, usize)> {
+    let offset = offset.min(source.len());
+    let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let line_end = source[offset..]
+        .find('\n')
+        .map_or(source.len(), |index| offset + index);
+    let source_line = source.get(line_start..line_end)?;
+    let caret_column = source
+        .get(line_start..offset)?
+        .chars()
+        .count()
+        .saturating_add(1);
+    Some((source_line, caret_column))
 }
 
 fn is_slice_from_source(source: &str, input: &str) -> bool {
@@ -60,7 +173,10 @@ fn line_column(source: &str, offset: usize) -> (usize, usize) {
         }
     }
 
-    (line, offset.saturating_sub(line_start) + 1)
+    let column = source
+        .get(line_start..offset)
+        .map_or(1, |prefix| prefix.chars().count().saturating_add(1));
+    (line, column)
 }
 
 fn truncate_for_diagnostic(input: &str, max_chars: usize) -> String {
@@ -94,6 +210,57 @@ mod tests {
         assert!(!message.contains("Error("));
         assert!(!message.contains("ErrorKind"));
         assert!(!message.contains("nom"));
+        assert!(message.contains("val answer ="));
+        assert!(message.contains("^ parsing stopped here"));
+    }
+
+    #[test]
+    fn function_body_error_points_inside_the_body_instead_of_at_fun() {
+        let source = r#"record Quote {
+    total: Int32
+}
+
+fun make_quote: () -> Quote = {
+    val total = 42;
+    Quote { total }
+}
+"#;
+        let err = parse_program(source).expect_err("record shorthand is not supported");
+        let message = format_parse_error(source, err);
+
+        assert!(message.contains("line 7"), "{message}");
+        assert!(message.contains("Quote { total }"), "{message}");
+        assert!(!message.contains("line 5, column 1"), "{message}");
+    }
+
+    #[test]
+    fn unparsed_input_uses_character_columns_and_a_source_caret() {
+        let source = "fun main: () -> () = {\n    \"日本語\"\n    ???\n}\n";
+        let offset = source.find("???").unwrap();
+        let message = format_unparsed_input(source, &source[offset..]);
+
+        assert!(message.contains("line 3, column 5"), "{message}");
+        assert!(message.contains("    ???"), "{message}");
+        assert!(message.contains("    ^ parsing stopped here"), "{message}");
+    }
+
+    #[test]
+    fn non_callable_verb_diagnostic_points_to_the_ambiguous_continuation() {
+        let source = r#"fun main: () -> Int32 = {
+    val first = 1;
+    val second = 2;
+    first
+    second
+}
+"#;
+        let error = TypeError::NonCallableVerb {
+            name: "second".to_string(),
+            found: "Int32".to_string(),
+        };
+        let message = format_type_error(source, &error);
+
+        assert!(message.contains("at line 5, column 5"), "{message}");
+        assert!(message.contains("^ non-callable OSV verb"), "{message}");
     }
 
     #[test]

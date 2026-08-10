@@ -16,13 +16,16 @@ The v0.0.1 CLI exposes these subcommands:
 | `warder remove <name>` | Remove a dependency |
 | `warder build` | Build the package |
 | `warder run [args...]` | Build, then run the generated WASM |
-| `warder test [filter]` | Type-check `.rl` files under `tests/` |
+| `warder test [filter]` | Compile and execute Boolean tests under `tests/` |
 | `warder publish` | Run publish preflight checks |
 | `warder wrap <wasm>` | Wrap a WASM file into an experimental cage |
 | `warder unwrap <cage>` | Extract a cage |
 | `warder doctor` | Check project structure and tools |
 
 The table above is the complete v0.0.1 subcommand surface.
+
+Every subcommand accepts `--project <dir>`, so scripts can select a project
+without changing the caller's working directory.
 
 ## Projects
 
@@ -89,6 +92,9 @@ foreign-Wasm, and transitive resolution fail closed. Future multi-publish
 workspace support will extend the same root file, and public identity will
 remain independent of directory placement.
 
+Dependency aliases `std` and `project` are reserved. During test compilation,
+`project` maps to the directory containing `package.entry` (`src/` by default).
+
 An explicit `build` table controls the target name, whether optimization is
 requested, and the output directory when the defaults are overridden.
 
@@ -120,7 +126,8 @@ Build the project:
 warder build
 ```
 
-For a package named `my-project` at version `0.1.0`, the default outputs are:
+For a package named `my-project` at version `0.1.0` without `[component]`, the
+default outputs are:
 
 ```text
 dist/my-project-0.1.0.wat
@@ -133,12 +140,15 @@ the root configuration's `build.output` field.
 
 The build target is read from `warder.toml`, not from a command-line flag.
 
+`warder build --watch` performs an initial build and then rebuilds for changes
+to `warder.toml`, project `.rl` files, and `.rl` files in direct local source
+dependencies. It is a full rebuild watcher, not an incremental compiler.
+
 ### Component build
 
-An explicit Component build requires a schema-v1 or schema-v2 `[component]`
-selection in the root `warder.toml`. Ordinary `pub` and `export` declarations
-are not published implicitly. For example, schema v1 selects a public root
-function:
+A Component project requires a schema-v1 or schema-v2 `[component]` selection
+in the root `warder.toml`. Ordinary `pub` and `export` declarations are not
+published implicitly. For example, schema v1 selects a public root function:
 
 ```toml
 [component]
@@ -153,10 +163,13 @@ source = "run"
 name = "run"
 ```
 
-Build it with:
+With `[component]` present, plain `warder build` publishes the Component set.
+`--component` asserts that choice and `--core` overrides it:
 
 ```bash
+warder build
 warder build --component
+warder build --core
 ```
 
 Warder validates and transactionally publishes this set together with the lock
@@ -188,17 +201,23 @@ warder run -- arg1 arg2
 ```
 
 `warder run` builds first, then looks for the generated
-`dist/<name>-<version>.wasm`.
+`dist/<name>-<version>.wasm`. It currently forces the Core profile when the
+project declares `[component]`.
 
 Run tests:
 
 ```bash
 warder test
-warder test main
+warder test bonus
 ```
 
-In v0.0.1, `warder test` type-checks `.rl` files under `tests/`. There is no
-dedicated test declaration syntax yet.
+Warder compiles and executes source-public, synchronous, non-generic,
+zero-argument functions whose names begin with `test_` or end with `_test` and
+whose explicit result type is `Boolean`. `true` passes; `false`, a trap, a
+compile error, or a missing export fails. The optional filter matches function
+names. This is a convention over ordinary functions, not a dedicated test
+declaration syntax. Tests can import application modules through the reserved
+namespace, for example `import project.main.{calculate_bonus}`.
 
 ## Publish Preflight
 
@@ -209,7 +228,8 @@ warder publish --registry https://example.com/registry
 
 For v0.0.1, `warder publish` performs a release-style preflight build and
 metadata validation. Registry upload, authentication, and signing remain
-experimental and no package is uploaded.
+experimental and no package is uploaded. The current preflight validates the
+Core Cage profile.
 
 ## Cage Commands
 

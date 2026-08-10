@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 
 const LOCAL_SOURCE_HASH_VERSION: &[u8] = b"warder.local-source.v2";
+pub(crate) const PROJECT_SOURCE_NAMESPACE: &str = "project";
 const FORBIDDEN_LOCAL_PACKAGE_METADATA: [&str; 4] = [
     "warder.toml",
     "package.rl.toml",
@@ -45,6 +46,12 @@ pub(crate) fn validate_dependency_alias(alias: &str) -> Result<()> {
     }
     if alias == "std" {
         bail!("Dependency alias 'std' is reserved for the standard library");
+    }
+    if alias == PROJECT_SOURCE_NAMESPACE {
+        bail!(
+            "Dependency alias '{}' is reserved for the Warder project source namespace used by tests",
+            PROJECT_SOURCE_NAMESPACE
+        );
     }
     Ok(())
 }
@@ -611,6 +618,14 @@ mod tests {
             },
         );
         manifest
+    }
+
+    #[test]
+    fn project_dependency_alias_is_reserved_for_test_imports() {
+        let error = validate_dependency_alias(PROJECT_SOURCE_NAMESPACE)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("project source namespace"), "{error}");
     }
 
     #[test]

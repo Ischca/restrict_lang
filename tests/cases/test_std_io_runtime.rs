@@ -173,6 +173,7 @@ export fun scoped_collection_total: () -> Int32 = {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn display_formats_all_builtin_scalar_adoptions() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 export fun emit_i32: (value: Int32) -> () = { value |> println }

@@ -27,7 +27,7 @@ use crate::ast::*;
 use crate::lexer::{lex_token, skip, Token};
 use nom::{
     branch::alt,
-    combinator::{map, opt, value},
+    combinator::{cut, map, opt, value},
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, preceded, tuple},
     IResult,
@@ -504,6 +504,16 @@ fn fun_decl(input: &str) -> ParseResult<'_, FunDecl> {
     let is_async = is_async.is_some();
 
     let (input, _) = expect_token(Token::Fun)(input)?;
+    let result = cut(|input| fun_decl_after_keyword(input, is_async))(input);
+    result
+}
+
+/// Parse a function after the `fun` keyword has committed the declaration.
+///
+/// Without this cut point, an error deep inside a function body backtracks to
+/// the beginning of the declaration and the CLI highlights `fun` instead of
+/// the expression that actually failed.
+fn fun_decl_after_keyword(input: &str, is_async: bool) -> ParseResult<'_, FunDecl> {
     let (input, name) = ident(input)?;
 
     if matches!(lex_token(input), Ok((_, Token::Assign))) {
@@ -716,8 +726,23 @@ fn record_lit(input: &str) -> ParseResult<'_, RecordLit> {
         |input| {
             let (input, name) = ident(input)?;
             let (input, _) = expect_token(Token::LBrace)(input)?;
-            let (input, fields) = separated_list0(expect_token(Token::Comma), field_init)(input)?;
-            let (input, _) = expect_token(Token::RBrace)(input)?;
+            let parse_fields = |input| {
+                let (input, fields) =
+                    separated_list0(expect_token(Token::Comma), field_init)(input)?;
+                let (input, _) = expect_token(Token::RBrace)(input)?;
+                Ok((input, fields))
+            };
+            // Upper-camel identifiers are nominal type constructors in the
+            // documented source style. Once their opening brace is present,
+            // keep an invalid field at that location instead of backtracking
+            // into `Identifier` followed by an unrelated block expression.
+            // Lowercase verbs must retain backtracking for scoped clauses such
+            // as `values map { it + 1 }`.
+            let (input, fields) = if name.chars().next().is_some_and(char::is_uppercase) {
+                cut(parse_fields)(input)?
+            } else {
+                parse_fields(input)?
+            };
             Ok((input, RecordLit { name, fields }))
         },
         // Parse anonymous record literal: { ... }

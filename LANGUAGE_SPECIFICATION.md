@@ -34,13 +34,18 @@ That generated or handwritten bridge is host glue, not a JavaScript code-
 generation backend.
 
 The ordinary v0.0.1 compiler pipeline remains `.rl -> WAT -> Core Wasm`. This
-branch also implements an explicit B1 Component path. A schema-v1 or schema-v2
-selection from the repository-root `warder.toml` is checked and monomorphized
+branch also implements an explicit B1 Component path. In a Warder project, a
+schema-v1 or schema-v2 selection from the repository-root `warder.toml` is the
+default artifact for `warder build`; `--component` asserts that selection and
+`--core` explicitly requests the Core Wasm/Cage artifact. The selection is
+checked and monomorphized
 into `ComponentInterfaceIr`,
 normalized WIT and stable ABI metadata, Canonical ABI adapters, and a validated
 WebAssembly Component. Warder publishes the resulting `.component.wasm`,
 `.component.wit`, and `.component.toml` files as one transactional artifact
-set. This explicit path does not change the default Core Wasm ABI, and the
+set. `warder run` and the current publish preflight are Core-only and report
+that they force the Core profile when `[component]` is present. This project
+default does not change the compiler's default Core Wasm ABI, and the
 repository is versioned `0.1.0-rc.1` for its first release candidate; stable
 v0.1.0 has not been published.
 
@@ -64,6 +69,24 @@ foreign-Wasm, and transitive dependency resolution currently fail closed, so a
 local-only build has no resolved package entries in that lock.
 `warder.lock` is generated rather than hand-authored and is committed when it
 exists.
+
+All Warder commands accept `--project DIR`, which selects a project without
+requiring the caller to change its shell working directory. `warder build
+--watch` performs an initial build, then rebuilds when the root
+`warder.toml`, root `.rl` sources, or `.rl` sources in a configured direct
+local dependency change. Watch mode does not add transitive dependency
+resolution, an incremental compiler, or a JavaScript package/bundler graph.
+
+`warder test` compiles test files under `tests/` to WASI Preview 1 Core Wasm and executes
+source-public, synchronous, non-generic, zero-argument Boolean functions whose
+names begin with `test_` or end with `_test`. A return value of `true` passes;
+`false`, a trap, an invalid Boolean representation, a compilation error, or a
+missing export fails. The optional filter matches function names. This is a
+Warder convention over ordinary Restrict functions, not a separate language
+declaration syntax. During test compilation, the reserved package namespace
+`project` maps to the directory containing `package.entry`, so a default
+project can import its implementation with `import project.main.{name}`.
+Dependency aliases may not use `project`.
 
 The generated `dist/*.component.toml` files are Component artifact metadata,
 not additional Warder configuration. Likewise, Cage-internal `manifest.toml`

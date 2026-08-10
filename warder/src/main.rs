@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 mod cage;
 mod commands;
@@ -16,6 +17,10 @@ use commands::*;
 #[command(about = "The official build tool and package manager for Restrict Language", long_about = None)]
 #[command(version)]
 struct Cli {
+    /// Run the command against this project directory
+    #[arg(long, global = true, value_name = "DIR")]
+    project: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -64,8 +69,11 @@ enum Commands {
         #[arg(long)]
         watch: bool,
         /// Build as WASM Component
-        #[arg(long)]
+        #[arg(long, conflicts_with = "core")]
         component: bool,
+        /// Force a Core Wasm build even when warder.toml declares [component]
+        #[arg(long, conflicts_with = "component")]
+        core: bool,
         /// Verify signatures of dependencies
         #[arg(long)]
         verify: bool,
@@ -130,6 +138,14 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(project) = &cli.project {
+        std::env::set_current_dir(project).with_context(|| {
+            format!(
+                "Failed to use Warder project directory {}",
+                project.display()
+            )
+        })?;
+    }
 
     match cli.command {
         Commands::New { name } => {
@@ -154,10 +170,11 @@ async fn main() -> Result<()> {
             release,
             watch,
             component,
+            core,
             verify,
             repro,
         } => {
-            build_project(release, watch, component, verify, repro).await?;
+            build_project(release, watch, component, core, verify, repro).await?;
         }
         Commands::Run { args } => {
             run_project(args).await?;

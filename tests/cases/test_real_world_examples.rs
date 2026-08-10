@@ -1069,7 +1069,7 @@ fn main() {
         "CLI should reject unparsed trailing input"
     );
     assert!(
-        stderr.contains("Unparsed input remaining"),
+        stderr.contains("unparsed input"),
         "stderr should explain the unparsed tail, got: {}",
         stderr
     );

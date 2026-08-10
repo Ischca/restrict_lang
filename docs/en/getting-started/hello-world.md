@@ -108,11 +108,9 @@ warder run
 Warder test files use ordinary Restrict functions. Edit `tests/main_test.rl`:
 
 ```restrict
-fun add_bonus: (base: Int32, bonus: Int32) -> Int32 = {
-    base + bonus
-}
+import project.main.{add_bonus}
 
-fun test_add_bonus: () -> Boolean = {
+pub fun test_add_bonus: () -> Boolean = {
     (21, 4) add_bonus == 25
 }
 ```
@@ -123,8 +121,8 @@ Run:
 warder test
 ```
 
-For v0.0.1, this is a type-checking smoke-test path. There is no separate
-`test "name" { ... }` declaration syntax.
+Warder compiles and executes this public zero-argument Boolean function. There
+is no separate `test "name" { ... }` declaration syntax.
 
 ## Add A Record
 

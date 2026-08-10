@@ -16,12 +16,12 @@ fn write_app(root: &Path, dependencies: &str) {
     let (main_source, test_source) = if dependencies.trim().is_empty() {
         (
             "pub fun app_score: () -> Int32 = { 42 }\n",
-            "fun dependency_test: () -> Int32 = { 42 }\n",
+            "import project.main.{app_score}\n\npub fun dependency_test: () -> Boolean = { () app_score == 42 }\n",
         )
     } else {
         (
             "import local_utils.{score}\n\npub fun app_score: () -> Int32 = { () score }\n",
-            "import local_utils.{score}\n\nfun dependency_test: () -> Int32 = { () score }\n",
+            "import local_utils.{score}\n\npub fun dependency_test: () -> Boolean = { () score == 42 }\n",
         )
     };
     fs::write(root.join("src/main.rl"), main_source).unwrap();
@@ -231,8 +231,9 @@ fn main() {
         return;
     }
     let output = arguments.last().expect("compiler output path is required");
-    let wat = std::env::var("WARDER_FAKE_WAT")
-        .unwrap_or_else(|_| "(module (func (export \"main\")))\n".to_string());
+    let wat = std::env::var("WARDER_FAKE_WAT").unwrap_or_else(|_| {
+        "(module\n  (func (export \"main\"))\n  (func (export \"dependency_test\") (result i32) i32.const 1)\n  (func (export \"test_example\") (result i32) i32.const 1)\n)\n".to_string()
+    });
     std::fs::write(output, wat)
         .expect("fake WAT should be written");
 }
@@ -323,24 +324,53 @@ fn component_build_requires_an_explicit_selection_without_creating_dist() {
 }
 
 #[test]
-fn component_watch_fails_instead_of_reporting_success_without_an_artifact() {
+fn component_manifest_makes_plain_build_publish_the_component_set() {
     let temp = TempDir::new().unwrap();
     let app = temp.path().join("app");
     write_component_app(&app);
 
     let output = Command::new(env!("CARGO_BIN_EXE_warder"))
         .current_dir(&app)
-        .args(["build", "--component", "--watch"])
+        .arg("build")
         .output()
         .expect("warder should run");
 
-    assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("does not support --watch"),
-        "{}",
+        output.status.success(),
+        "plain build should honor [component]: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!app.join("dist").exists());
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Using the [component] selection"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(app.join("dist/app-0.1.0.component.wasm").is_file());
+    assert!(!app.join("dist/app-0.1.0.rgc").exists());
+}
+
+#[test]
+fn core_flag_overrides_component_manifest_for_an_explicit_core_build() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_component_app(&app);
+    let (compiler, captured_args) = fake_compiler(&temp);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &compiler)
+        .env("WARDER_CAPTURE_ARGS", &captured_args)
+        .args(["build", "--core"])
+        .output()
+        .expect("warder should run");
+
+    assert!(
+        output.status.success(),
+        "explicit Core build should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(app.join("dist/app-0.1.0.rgc").is_file());
+    assert!(!app.join("dist/app-0.1.0.component.wasm").exists());
 }
 
 #[test]
@@ -723,10 +753,19 @@ fn build_and_test_mount_leafless_local_dependency_and_write_external_only_lock()
         String::from_utf8_lossy(&test.stderr)
     );
     let all_args = fs::read_to_string(&captured_args).unwrap();
-    assert!(all_args.contains("--check"), "{all_args}");
+    assert!(all_args.contains("--target"), "{all_args}");
+    assert!(all_args.contains("wasip1"), "{all_args}");
+    assert!(!all_args.contains("--check"), "{all_args}");
     assert!(
         all_args.matches("--module-root").count() >= 2,
         "build and test should each mount the dependency: {all_args}"
+    );
+    assert!(
+        all_args
+            .replace('\\', "/")
+            .lines()
+            .any(|argument| argument.starts_with("project=") && argument.ends_with("/app/src")),
+        "warder test must expose the root package as the project namespace: {all_args}"
     );
     let canonical_app = app.canonicalize().unwrap();
     let expected_test_cwd = format!("cwd={}", canonical_app.display()).replace('\\', "/");
@@ -734,6 +773,61 @@ fn build_and_test_mount_leafless_local_dependency_and_write_external_only_lock()
         all_args.replace('\\', "/").contains(&expected_test_cwd),
         "warder test must anchor compiler fallback resolution at the project root: {all_args}"
     );
+}
+
+#[test]
+fn project_flag_builds_a_project_without_changing_the_callers_directory() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    let caller = temp.path().join("caller");
+    fs::create_dir(&caller).unwrap();
+    write_app(&app, "");
+    let (compiler, captured_args) = fake_compiler(&temp);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&caller)
+        .env("RESTRICT_LANG_BIN", &compiler)
+        .env("WARDER_CAPTURE_ARGS", &captured_args)
+        .arg("build")
+        .arg("--project")
+        .arg(&app)
+        .output()
+        .expect("warder should run");
+
+    assert!(
+        output.status.success(),
+        "--project build should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(app.join("dist/app-0.1.0.rgc").is_file());
+    assert!(!caller.join("dist").exists());
+}
+
+#[test]
+fn warder_test_executes_boolean_exports_and_fails_on_false() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_app(&app, "");
+    let (compiler, captured_args) = fake_compiler(&temp);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &compiler)
+        .env("WARDER_CAPTURE_ARGS", &captured_args)
+        .env(
+            "WARDER_FAKE_WAT",
+            "(module (func (export \"dependency_test\") (result i32) i32.const 0))\n",
+        )
+        .arg("test")
+        .output()
+        .expect("warder should run");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("dependency_test ... FAILED"), "{stdout}");
+    assert!(stderr.contains("returned false"), "{stderr}");
+    assert!(stderr.contains("0 passed, 1 failed"), "{stderr}");
 }
 
 #[test]

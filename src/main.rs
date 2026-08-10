@@ -1,4 +1,6 @@
-use restrict_lang::diagnostics::{format_lex_error, format_parse_error};
+use restrict_lang::diagnostics::{
+    format_lex_error, format_parse_error, format_type_error, format_unparsed_input,
+};
 use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::module::resolve_program_imports_for_file_with_package_roots;
 use restrict_lang::{
@@ -263,25 +265,7 @@ async fn main() {
     let ast = match parse_program(&source) {
         Ok((remaining, ast)) => {
             if !remaining.trim().is_empty() {
-                eprintln!(
-                    "Error: Unparsed input remaining at position {}",
-                    source.len() - remaining.len()
-                );
-
-                // Show context around the unparsed position
-                let pos = source.len() - remaining.len();
-                let start = pos.saturating_sub(40);
-                let end = (pos + 40).min(source.len());
-
-                eprintln!("Context:");
-                eprintln!("  {}", &source[start..pos]);
-                eprintln!("  {}^--- Parsing stopped here", " ".repeat(pos - start));
-                eprintln!("  {}", &source[pos..end]);
-
-                // If AST is empty, this is likely a complete parse failure
-                if ast.declarations.is_empty() && ast.imports.is_empty() {
-                    eprintln!("\nError: Failed to parse any declarations. Check syntax around the indicated position.");
-                }
+                eprintln!("{}", format_unparsed_input(&source, remaining));
                 std::process::exit(1);
             }
             if show_ast {
@@ -331,7 +315,7 @@ async fn main() {
             }
         }
         Err(e) => {
-            eprintln!("Type error: {}", e);
+            eprintln!("{}", format_type_error(&source, &e));
             std::process::exit(1);
         }
     }

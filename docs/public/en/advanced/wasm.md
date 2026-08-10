@@ -91,7 +91,8 @@ dist/<package-name>-<package-version>.wasm
 dist/<package-name>-<package-version>.rgc
 ```
 
-With an explicit `[component]` selection:
+With an explicit `[component]` selection, plain `warder build` uses Component
+output. `--component` can be used as an explicit assertion:
 
 ```bash
 warder build --component
@@ -212,8 +213,9 @@ Neither version boundary makes Restrict's arena representation public. The
 repository's v0.1 scope document records the implemented contract and its
 intentional limits; this page summarizes the public boundary.
 
-The ordinary artifact path remains `.rl -> WAT -> Core Wasm`. With an explicit
-schema-v1/schema-v2 selection, `warder build --component` transactionally
+The compiler's ordinary artifact path remains `.rl -> WAT -> Core Wasm`. With
+an explicit schema-v1/schema-v2 selection, `warder build` (or the explicit
+`warder build --component` assertion) transactionally
 publishes validated `.component.wasm`, normalized `.component.wit`, and
 `.component.toml` metadata. `wrap --wit` only attaches unverified
 caller-supplied WIT to a Core module cage and is not Component generation.

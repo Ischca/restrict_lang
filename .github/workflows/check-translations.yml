@@ -57,7 +57,7 @@ jobs:
       
       - name: Comment on PR
         if: github.event_name == 'pull_request' && steps.check.outputs.status == 'warning'
-        uses: actions/github-script@v6
+        uses: actions/github-script@v9
         with:
           script: |
             const missing = ${{ steps.check.outputs.missing }};

@@ -528,6 +528,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - **[Release Surface](docs/public/en/reference/release-surface.md)** - Current v0.0.1 language and host ABI boundaries
 - **[v0.1 Component ABI Scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md)** - Implemented B1 boundary, intentional limits, and v0.2 async split
 - **[Examples](examples/)** - Sample programs and use cases
+- **[Next.js Component demo](demos/next-component/)** - Server-rendered React and a form calling Restrict pricing rules through the synchronous Component ABI
 
 ## 🏗️ Implementation Status
 

@@ -3,6 +3,7 @@
     "displayName": "Restrict Language",
     "description": "Language support for Restrict Language - A functional programming language with affine types for WebAssembly",
     "version": "0.1.0",
+    "packageManager": "pnpm@11.2.1",
     "publisher": "restrict-lang",
     "icon": "images/icon.png",
     "repository": {
@@ -207,14 +208,13 @@
         }
     },
     "scripts": {
-        "vscode:prepublish": "npm run compile",
         "check-types": "tsc -p ./ --noEmit",
         "bundle": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --target=node16 --sourcemap --minify",
-        "compile": "npm run check-types && npm run bundle",
+        "compile": "pnpm check-types && pnpm bundle",
         "watch": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --target=node16 --sourcemap --watch",
         "test:lsp": "node ./scripts/smoke-lsp.mjs",
-        "package": "vsce package",
-        "publish": "vsce publish"
+        "package": "pnpm compile && vsce package --no-dependencies",
+        "publish": "pnpm compile && vsce publish --no-dependencies"
     },
     "dependencies": {
         "vscode-languageclient": "^8.1.0"

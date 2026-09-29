@@ -41,7 +41,7 @@ chmod +x build.sh
 python -m http.server 8000
 
 # Using Node.js
-npx serve .
+pnpm dlx serve . -l 8000
 
 # Using any other HTTP server
 ```

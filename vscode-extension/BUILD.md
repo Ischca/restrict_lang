@@ -2,12 +2,14 @@
 
 ## Prerequisites
 
-- Node.js 22 or later
-- npm
+- Node.js 22.13 or later
+- pnpm 11.2.1 (`mise install pnpm` from the repository root)
 - Visual Studio Code 1.74 or later
 - A native Restrict compiler built from this repository
 
 The VSCE packaging command is a locked development dependency; no global `vsce` installation is needed.
+The local `pnpm-workspace.yaml` explicitly allows the pinned native installers
+for esbuild, VSCE signing, and credential storage.
 
 ## Build
 
@@ -16,8 +18,8 @@ From the repository root:
 ```bash
 mise exec -- cargo build --bin restrict_lang
 cd vscode-extension
-npm ci
-npm run compile
+pnpm install --frozen-lockfile
+pnpm compile
 ```
 
 Open `vscode-extension` as the VS Code workspace and press F5 to start the included Extension Development Host configuration.
@@ -26,10 +28,10 @@ Open `vscode-extension` as the VS Code workspace and press F5 to start the inclu
 
 ```bash
 # TypeScript client
-npm run compile
+pnpm compile
 
 # Real JSON-RPC exchange with target/debug/restrict_lang --lsp
-npm run test:lsp
+pnpm test:lsp
 
 # Rust LSP unit and protocol-service tests (from the repository root)
 mise exec -- cargo test lsp --lib
@@ -44,11 +46,11 @@ node scripts/smoke-lsp.mjs /absolute/path/to/restrict_lang
 ## Package
 
 ```bash
-npm run package
+pnpm package
 code --install-extension restrict-language-0.1.0.vsix
 ```
 
-The VSIX includes the bundled extension client, TextMate grammar, snippets, themes, and icons. `esbuild` bundles the production JavaScript dependencies into `out/extension.js`; the package deliberately does not include `node_modules` or a platform-specific Restrict compiler binary.
+The VSIX includes the bundled extension client, TextMate grammar, snippets, themes, and icons. `esbuild` bundles the production JavaScript dependencies into `out/extension.js`; the package deliberately does not include `node_modules` or a platform-specific Restrict compiler binary. The `package` and `publish` scripts compile first and pass `--no-dependencies` to VSCE, so packaging does not traverse pnpm's symlinked dependency tree.
 
 ## Server resolution
 
@@ -84,10 +86,10 @@ Definitions keep their original module URI and range in a source index separate 
 ```bash
 mise exec -- cargo test lsp --lib
 cd vscode-extension
-npm ci
-npm run compile
-npm run test:lsp
-npm run package
+pnpm install --frozen-lockfile
+pnpm compile
+pnpm test:lsp
+pnpm package
 ```
 
 Then install the generated VSIX in a clean Extension Development Host and verify diagnostics, scoped completion, cross-file definitions and references, reference CodeLens, inlay hints, hover, outline symbols, semantic highlighting, compile output, type checking, and AST inspection on representative `.rl` files.

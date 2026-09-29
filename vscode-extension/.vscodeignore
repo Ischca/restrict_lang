@@ -2,11 +2,13 @@
 .vscode-test/**
 src/**
 .gitignore
-.yarnrc
+pnpm-lock.yaml
+pnpm-workspace.yaml
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/.eslintrc.json
 **/*.map
+**/*.wat
 **/*.ts
 node_modules/**
 out/languageServer.js

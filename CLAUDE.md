@@ -151,3 +151,23 @@ All 8 WAT generation tests were failing due to parser not handling
 function declarations correctly. Fixed by supporting both complex
 and simple syntax styles.
 ```
+
+## パッケージマネージャ
+
+このプロジェクトでは **pnpm** を使う。`npm` / `yarn` は使わない。
+
+- インストール: `pnpm install`
+- 依存の追加: `pnpm add <pkg>`
+- スクリプト実行: `pnpm <script>`
+
+### npm から移行する場合
+
+1. `pnpm import` で `package-lock.json` から `pnpm-lock.yaml` を生成する
+2. `pnpm install` して、ビルドと起動が通ることを確認する
+3. 通ったら `package-lock.json` を削除する（ロックファイルを2つ残すと解決結果が不定になる）
+
+pnpm は依存解決が厳格なため、`package.json` に書いていない依存を暗黙に使っている箇所で落ちることがある。
+その場合は該当パッケージを明示的に `pnpm add` する。
+
+理由: pnpm はグローバルストアから hardlink / clonefile を張るため、同じ依存を持つ複数プロジェクトで
+ディスク使用量が大幅に減る。npm のフラットな node_modules は複製されるためディスクを食う。

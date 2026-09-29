@@ -5,6 +5,7 @@ WASM_PACK_VERSION = "0.15.0"
 
 [tools]
 rust = "1.94.1"
+pnpm = "11.2.1"
 
 [tasks.test]
 description = "Run compiler tests with serial test execution"
@@ -234,12 +235,12 @@ run = "wasm-pack build --target web --out-dir web/pkg"
 
 [tasks.build-extension]
 description = "Build VS Code extension"
-run = ["cd vscode-extension", "npm install", "npm run compile"]
+run = "pnpm --dir vscode-extension install --frozen-lockfile && pnpm --dir vscode-extension compile"
 
 [tasks.package-extension]
 description = "Package VS Code extension"
 depends = ["build-extension"]
-run = ["cd vscode-extension", "npm run package"]
+run = "pnpm --dir vscode-extension package"
 
 # Cross-platform builds
 [tasks.build-linux]

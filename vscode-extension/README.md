@@ -29,14 +29,15 @@ When the extension is launched from this repository, it automatically finds `tar
 
 ## Build and install a VSIX
 
-Node.js 22 or later is required by the packaged VSCE development tool.
+Node.js 22.13 or later and pnpm 11.2.1 are required. Run `mise install pnpm`
+from the repository root to install the pinned package manager.
 
 ```bash
 cd vscode-extension
-npm ci
-npm run compile
-npm run test:lsp
-npm run package
+pnpm install --frozen-lockfile
+pnpm compile
+pnpm test:lsp
+pnpm package
 code --install-extension restrict-language-0.1.0.vsix
 ```
 

@@ -26,7 +26,7 @@ if [ $? -eq 0 ]; then
     echo "To serve locally, you can use:"
     echo "  cd web && python -m http.server 8000"
     echo "  or"
-    echo "  cd web && npx serve ."
+    echo "  cd web && pnpm dlx serve . -l 8000"
     echo ""
     echo "Then open http://localhost:8000 in your browser"
 else

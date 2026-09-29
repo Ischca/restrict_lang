@@ -119,7 +119,8 @@ cd ..
 if [[ -d "vscode-extension" ]]; then
     echo -e "${YELLOW}📦 Installing VS Code extension dependencies...${NC}"
     cd vscode-extension
-    npm install
+    mise install pnpm
+    mise exec -- pnpm install --frozen-lockfile
     cd ..
 fi
 

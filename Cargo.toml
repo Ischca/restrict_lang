@@ -82,7 +82,7 @@ quickcheck = "1.0"
 tempfile = "3.8"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-wasmtime = { version = "=47.0.3", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime = { version = "=48.0.7", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -1,10 +1,8 @@
-// Standard Library: HTTP reference surface
+// Standard Library: HTTP capability profile
 //
-// This file is not the runtime implementation. The current compiler has no
-// compiler-registered HTTP surface in v0.0.1.
-// Keep this file as a canonical, source-adjacent index for readers and tests.
+// This file is a planned capability-profile specification and is not an active
+// pure-Restrict module in this release.
+// Importing `std.http` fails with an explicit capability-profile diagnostic.
 //
-// Current compiler-registered surface:
-// - none
-//
-// HTTP capabilities are outside the compiler-registered v0.0.1 surface.
+// Outbound requests, responses, and server handlers require explicit host HTTP
+// capabilities outside the default pure-Restrict surface.

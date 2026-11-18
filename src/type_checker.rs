@@ -1790,6 +1790,23 @@ impl TypeChecker {
                     ("value".to_string(), TypedType::TypeParam("T".to_string())),
                 ],
                 return_type: TypedType::Unit,
+                type_params: vec![element_type_param.clone()],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // array_length function
+        self.functions.insert(
+            "array_length".to_string(),
+            FunctionDef {
+                params: vec![(
+                    "array".to_string(),
+                    TypedType::Array(
+                        Box::new(TypedType::TypeParam("T".to_string())),
+                        ArrayLength::AnyInternal,
+                    ),
+                )],
+                return_type: TypedType::Int32,
                 type_params: vec![element_type_param],
                 temporal_constraints: vec![],
             },
@@ -1820,6 +1837,9 @@ impl TypeChecker {
         self.register_std_math();
         self.register_std_list();
         self.register_std_option();
+        self.register_std_string();
+        self.register_std_char();
+        self.register_std_range();
         self.register_std_io();
         self.register_std_forms();
         self.register_std_prelude();
@@ -1929,6 +1949,18 @@ impl TypeChecker {
                 temporal_constraints: vec![],
             },
         );
+
+        for name in ["sqrt", "floor", "ceil", "round", "trunc"] {
+            self.functions.insert(
+                name.to_string(),
+                FunctionDef {
+                    params: vec![("x".to_string(), TypedType::Float64)],
+                    return_type: TypedType::Float64,
+                    type_params: vec![],
+                    temporal_constraints: vec![],
+                },
+            );
+        }
     }
 
     fn register_std_list(&mut self) {
@@ -2122,6 +2154,145 @@ impl TypeChecker {
         );
     }
 
+    fn register_std_string(&mut self) {
+        let mut insert_fn = |name: &str, params: Vec<(&str, TypedType)>, return_type: TypedType| {
+            self.functions.insert(
+                name.to_string(),
+                FunctionDef {
+                    params: params
+                        .into_iter()
+                        .map(|(param, ty)| (param.to_string(), ty))
+                        .collect(),
+                    return_type,
+                    type_params: vec![],
+                    temporal_constraints: vec![],
+                },
+            );
+        };
+
+        insert_fn("string_length", vec![("s", TypedType::String)], TypedType::Int32);
+        insert_fn(
+            "string_byte_length",
+            vec![("s", TypedType::String)],
+            TypedType::Int32,
+        );
+        insert_fn(
+            "string_byte_at",
+            vec![("s", TypedType::String), ("index", TypedType::Int32)],
+            TypedType::Option(Box::new(TypedType::Int32)),
+        );
+        insert_fn(
+            "string_slice",
+            vec![
+                ("s", TypedType::String),
+                ("start", TypedType::Int32),
+                ("end", TypedType::Int32),
+            ],
+            TypedType::Option(Box::new(TypedType::String)),
+        );
+        insert_fn(
+            "string_index_of",
+            vec![("haystack", TypedType::String), ("needle", TypedType::String)],
+            TypedType::Option(Box::new(TypedType::Int32)),
+        );
+        insert_fn(
+            "string_contains",
+            vec![("haystack", TypedType::String), ("needle", TypedType::String)],
+            TypedType::Boolean,
+        );
+        insert_fn(
+            "string_starts_with",
+            vec![("s", TypedType::String), ("prefix", TypedType::String)],
+            TypedType::Boolean,
+        );
+        insert_fn(
+            "string_ends_with",
+            vec![("s", TypedType::String), ("suffix", TypedType::String)],
+            TypedType::Boolean,
+        );
+        insert_fn("string_trim", vec![("s", TypedType::String)], TypedType::String);
+        insert_fn(
+            "string_split",
+            vec![("text", TypedType::String), ("sep", TypedType::String)],
+            TypedType::List(Box::new(TypedType::String)),
+        );
+        insert_fn(
+            "string_join",
+            vec![
+                ("parts", TypedType::List(Box::new(TypedType::String))),
+                ("sep", TypedType::String),
+            ],
+            TypedType::String,
+        );
+        insert_fn(
+            "string_parse_int",
+            vec![("s", TypedType::String)],
+            TypedType::Option(Box::new(TypedType::Int32)),
+        );
+        insert_fn(
+            "string_parse_int64",
+            vec![("s", TypedType::String)],
+            TypedType::Option(Box::new(TypedType::Int64)),
+        );
+        insert_fn(
+            "string_parse_float",
+            vec![("s", TypedType::String)],
+            TypedType::Option(Box::new(TypedType::Float64)),
+        );
+    }
+
+    fn register_std_char(&mut self) {
+        self.functions.insert(
+            "char_code".to_string(),
+            FunctionDef {
+                params: vec![("c".to_string(), TypedType::Char)],
+                return_type: TypedType::Int32,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+        self.functions.insert(
+            "char_from_code".to_string(),
+            FunctionDef {
+                params: vec![("code".to_string(), TypedType::Int32)],
+                return_type: TypedType::Option(Box::new(TypedType::Char)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+    }
+
+    fn register_std_range(&mut self) {
+        let range_ty = Self::range_int32_type();
+        self.functions.insert(
+            "range_start".to_string(),
+            FunctionDef {
+                params: vec![("range".to_string(), range_ty.clone())],
+                return_type: TypedType::Int32,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+        self.functions.insert(
+            "range_end".to_string(),
+            FunctionDef {
+                params: vec![("range".to_string(), range_ty.clone())],
+                return_type: TypedType::Int32,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+        self.functions.insert(
+            "range_to_list".to_string(),
+            FunctionDef {
+                params: vec![("range".to_string(), range_ty)],
+                return_type: TypedType::List(Box::new(TypedType::Int32)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+    }
+
     fn register_std_io(&mut self) {
         // Display-polymorphic print function.
         self.functions.insert(
@@ -2184,6 +2355,50 @@ impl TypeChecker {
             FunctionDef {
                 params: vec![("s".to_string(), TypedType::String)],
                 return_type: TypedType::Unit,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // exit function (WasiP1)
+        self.functions.insert(
+            "exit".to_string(),
+            FunctionDef {
+                params: vec![("code".to_string(), TypedType::Int32)],
+                return_type: TypedType::Unit,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // cli_args function (WasiP1, on-demand)
+        self.functions.insert(
+            "cli_args".to_string(),
+            FunctionDef {
+                params: vec![],
+                return_type: TypedType::List(Box::new(TypedType::String)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // env_get function (WasiP1, on-demand)
+        self.functions.insert(
+            "env_get".to_string(),
+            FunctionDef {
+                params: vec![("key".to_string(), TypedType::String)],
+                return_type: TypedType::Option(Box::new(TypedType::String)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // stdin_read_all function (WasiP1, on-demand)
+        self.functions.insert(
+            "stdin_read_all".to_string(),
+            FunctionDef {
+                params: vec![],
+                return_type: TypedType::String,
                 type_params: vec![],
                 temporal_constraints: vec![],
             },

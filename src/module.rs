@@ -11,8 +11,20 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const UNSUPPORTED_STD_SOURCE_IMPORT_ERROR: &str =
-    "standard-library source imports are unsupported in v0.0.1; std helpers are compiler-registered and available without importing std aggregators";
+const EMBEDDED_STD_MODULES: &[(&str, &str)] = &[
+    ("lib", include_str!("../std/lib.rl")),
+    ("prelude", include_str!("../std/prelude.rl")),
+    ("char", include_str!("../std/char.rl")),
+    ("math", include_str!("../std/math.rl")),
+    ("option", include_str!("../std/option.rl")),
+    ("result", include_str!("../std/result.rl")),
+    ("list", include_str!("../std/list.rl")),
+    ("map", include_str!("../std/map.rl")),
+    ("string", include_str!("../std/string.rl")),
+    ("io", include_str!("../std/io.rl")),
+];
+
+const PLANNED_STD_MODULES: &[&str] = &["filesystem", "http", "database"];
 
 type ModuleSymbol = (Vec<String>, String);
 const INTERNAL_MODULE_NAME_PREFIX: &str = "__rl$mod";
@@ -159,9 +171,10 @@ impl ModuleResolver {
     }
 
     pub fn add_module_source(&mut self, module_path: Vec<String>, source: String) {
-        if module_path
-            .first()
-            .is_some_and(|namespace| self.package_roots.contains_key(namespace))
+        if is_reserved_std_module_path(&module_path)
+            || module_path
+                .first()
+                .is_some_and(|namespace| self.package_roots.contains_key(namespace))
         {
             self.module_source_conflicts.insert(module_path);
             return;
@@ -183,6 +196,12 @@ impl ModuleResolver {
         module_path: Vec<String>,
         source: String,
     ) -> Result<()> {
+        if is_reserved_std_module_path(&module_path) {
+            bail!(
+                "Virtual module {} conflicts with the reserved 'std' standard library namespace",
+                module_path.join(".")
+            );
+        }
         if module_path
             .first()
             .is_some_and(|namespace| self.package_roots.contains_key(namespace))
@@ -225,10 +244,6 @@ impl ModuleResolver {
         visiting: &mut Vec<Vec<String>>,
         staged_modules: &mut HashMap<Vec<String>, Module>,
     ) -> Result<()> {
-        if is_reserved_std_module_path(module_path) {
-            bail!("{UNSUPPORTED_STD_SOURCE_IMPORT_ERROR}");
-        }
-
         if self.module_source_conflicts.contains(module_path) {
             bail!(
                 "Duplicate module source for canonical module {}",
@@ -353,6 +368,11 @@ impl ModuleResolver {
     }
 
     fn load_module_source(&self, module_path: &[String]) -> Result<(PathBuf, String)> {
+        if is_reserved_std_module_path(module_path) {
+            let source = resolve_embedded_std_module(module_path)?;
+            return Ok((virtual_std_module_path(module_path), source.to_string()));
+        }
+
         if let Some(source) = self.module_sources.get(module_path) {
             return Ok((virtual_module_path(module_path), source.clone()));
         }
@@ -444,6 +464,14 @@ impl ModuleResolver {
     }
 
     fn find_module_file(&self, module_path: &[String]) -> Result<PathBuf> {
+        if is_reserved_std_module_path(module_path) {
+            let _ = resolve_embedded_std_module(module_path)?;
+            bail!(
+                "Standard library module {} is embedded in the compiler and has no standalone filesystem path",
+                module_path.join(".")
+            );
+        }
+
         if let Some((namespace, source_root)) = module_path
             .first()
             .and_then(|namespace| self.package_roots.get_key_value(namespace))
@@ -882,8 +910,55 @@ fn virtual_module_path(module_path: &[String]) -> PathBuf {
     PathBuf::from(format!("<module:{}>", module_path.join(".")))
 }
 
+fn virtual_std_module_path(module_path: &[String]) -> PathBuf {
+    PathBuf::from(format!("<std:{}>", module_path.join(".")))
+}
+
 fn is_reserved_std_module_path(module_path: &[String]) -> bool {
     module_path.first().is_some_and(|part| part == "std")
+}
+
+fn available_std_module_names() -> String {
+    EMBEDDED_STD_MODULES
+        .iter()
+        .map(|(name, _)| format!("std.{name}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn resolve_embedded_std_module(module_path: &[String]) -> Result<&'static str> {
+    match module_path {
+        [root] if root == "std" => {
+            bail!(
+                "Standard library root 'std' cannot be imported directly; import a specific module ({})",
+                available_std_module_names()
+            );
+        }
+        [root, name] if root == "std" => {
+            if let Some((_, source)) = EMBEDDED_STD_MODULES
+                .iter()
+                .find(|(module_name, _)| *module_name == name)
+            {
+                return Ok(source);
+            }
+            if PLANNED_STD_MODULES.contains(&name.as_str()) {
+                bail!(
+                    "Standard library module 'std.{name}' is a planned capability profile and is not available in this release"
+                );
+            }
+            bail!(
+                "Unknown standard library module 'std.{name}'; available modules: {}",
+                available_std_module_names()
+            );
+        }
+        _ => {
+            bail!(
+                "Unknown standard library module '{}'; available modules: {}",
+                module_path.join("."),
+                available_std_module_names()
+            );
+        }
+    }
 }
 
 fn insert_rename(

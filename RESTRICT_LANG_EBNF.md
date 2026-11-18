@@ -23,7 +23,8 @@ identifier      = ident_start { ident_continue } ;
 
 keyword         = "fun" | "val" | "mut" | "record" | "context" | "enum" | "impl"
                 | "form" | "takes" | "of"
-                | "match" | "then" | "else" | "temporal" | "where" | "within"
+                | "match" | "then" | "else" | "while" | "break" | "continue"
+                | "return" | "temporal" | "where" | "within"
                 | "spawn" | "await" | "clone" | "freeze" | "pub" | "import"
                 | "export" | "as" | "fatal" | "true" | "false" | "Some" | "None"
                 | "with" | "lifetime" ;
@@ -39,7 +40,7 @@ float_literal   = decimal_digit { decimal_digit | "_" } "." decimal_digit { deci
                   [ ("e" | "E") [ "+" | "-" ] decimal_digit { decimal_digit } ] ;
 
 (* String and Character Literals *)
-escape_seq      = "\\" ( "n" | "r" | "t" | "\\" | "\"" | "'" ) ;
+escape_seq      = "\\" ( "n" | "r" | "t" | "\\" | "\"" | "'" | "0" | "x" hex_digit hex_digit ) ;
 string_literal  = "\"" { any_char ^ "\"" ^ "\\" | escape_seq } "\"" ;
 char_literal    = "'"  ( any_char ^ "'" ^ "\\" | escape_seq ) "'" ;
 
@@ -126,6 +127,10 @@ primary_expr        = literal
                     | block_expr
                     | match_expr
                     | then_else_expr
+                    | while_expr
+                    | break_expr
+                    | continue_expr
+                    | return_expr
                     | record_literal
                     | scope_expr ;
 
@@ -148,9 +153,13 @@ param               = identifier [ ":" type ] ;
 block_expr          = "{" { statement } [ expression ] "}" ;
                       (* implicit Unit if no final expression *)
 
-(* Conditional Expression *)
+(* Conditional, Loop, and Return Expressions *)
 then_else_expr      = expression lexeme_gap "then" lexeme_gap block_expr
                       lexeme_gap "else" lexeme_gap block_expr ;
+while_expr          = expression lexeme_gap "while" lexeme_gap block_expr ;
+break_expr          = "break" ;
+continue_expr       = "continue" ;
+return_expr         = "return" [ expression ] ;
 
 (* Match Expression *)
 match_expr          = expression "match" "{" match_arm { match_arm } "}" ;
@@ -262,8 +271,9 @@ form_method_decl    = "fun" identifier ":" "("
                       "self" ":" "Self" { "," param_def } ")"
                       "->" type [ "," ] ;
 
-(* An adoption targets a concrete, non-generic record. The implementation
-   repeats each complete signature, replacing Self with the target record. *)
+(* An adoption targets a concrete, non-generic record or closed user-defined enum.
+   The implementation repeats each complete signature, replacing Self with the
+   target type. *)
 takes_decl          = identifier "takes" identifier "{"
                       takes_method_decl { takes_method_decl } "}" ;
 
@@ -324,7 +334,7 @@ restrict_program    = program ;
 - `type`: Type aliases
 
 Source-level associated form types, generic forms, generic or conditional
-`takes`, default form methods, enum adoptions, and dynamic dispatch are also
+`takes`, default form methods, and dynamic dispatch are also
 reserved for future extensions.
 
 ### Edge Cases and Clarifications

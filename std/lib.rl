@@ -2,6 +2,7 @@
 //
 // Bundled pure-Restrict standard library modules:
 // - std.prelude: identity_val, boolean and comparison helpers
+// - std.char: ASCII classification, case conversion, and digit values
 // - std.math: clamp, signum, gcd, lcm, parity, Int64 and Float64 helpers
 // - std.option: option_or, option_unwrap_or_else, option_and_then, option_ok_or,
 //   option_flatten, option_zip_with
@@ -11,8 +12,11 @@
 // - std.list: IndexedInt, list_any, list_all, list_find, list_take, list_drop,
 //   list_range, list_sum, list_sum_i64, list_sum_f, list_product,
 //   list_enumerate_from, list_zip_with
+// - std.map: StringMap<V> and IntMap<V> associative containers
 // - std.string: string_is_empty, string_non_empty, string_repeat,
-//   string_pad_left, string_join_simple
+//   string_join_simple, string_lines, string_words, string_replace,
+//   string_pad_left, string_pad_right, string_to_upper_ascii,
+//   string_to_lower_ascii
 // - std.io: format_kv, println_kv, eprintln_labeled
 //
 // Host capability modules outside the pure-Restrict v0.1.0 default surface:

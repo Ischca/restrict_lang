@@ -14,10 +14,12 @@ use std::path::{Path, PathBuf};
 const EMBEDDED_STD_MODULES: &[(&str, &str)] = &[
     ("lib", include_str!("../std/lib.rl")),
     ("prelude", include_str!("../std/prelude.rl")),
+    ("char", include_str!("../std/char.rl")),
     ("math", include_str!("../std/math.rl")),
     ("option", include_str!("../std/option.rl")),
     ("result", include_str!("../std/result.rl")),
     ("list", include_str!("../std/list.rl")),
+    ("map", include_str!("../std/map.rl")),
     ("string", include_str!("../std/string.rl")),
     ("io", include_str!("../std/io.rl")),
 ];

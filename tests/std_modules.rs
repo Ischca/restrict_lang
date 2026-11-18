@@ -405,7 +405,7 @@ export fun main: () -> Int32 = {
     val empty_ok = "" |> string_is_empty;
     val non_empty_ok = "ok" |> string_non_empty;
     val rep = ("ab", 3) string_repeat;
-    mut val padded = ("x", "0", 3) string_pad_left;
+    mut val padded = ("x", 4, "0") string_pad_left;
     mut val joined = (["a", "b", "c"], "-") string_join_simple;
 
     ("joined", joined) println_kv;
@@ -657,4 +657,135 @@ export fun main: () -> Int32 = {
         .expect("main should be exported");
     // 1 + 5 + 11 + 0 + 2 + 0 + 0 + 13 + 17 + 19 + 23 + 29 + 37 + 41 + 43 + 47 + 31 + 53 + 59 = 431
     assert_eq!(main_fn.call(&mut store, ()).expect("main should run"), 431);
+}
+
+#[test]
+fn std_char_module_executes_in_wasm() {
+    let result = run_main_i32(
+        r#"
+import std.char.*
+
+export fun main: () -> Int32 = {
+    val d = ('7' |> is_ascii_digit) && (('a' |> is_ascii_digit) |> not);
+    val a = ('Z' |> is_ascii_alpha) && ('m' |> is_ascii_alpha) && (('9' |> is_ascii_alpha) |> not);
+    val alnum = ('9' |> is_ascii_alphanumeric) && ('q' |> is_ascii_alphanumeric) && (('!' |> is_ascii_alphanumeric) |> not);
+    val ws = (' ' |> is_ascii_whitespace) && ('\t' |> is_ascii_whitespace) && ('\n' |> is_ascii_whitespace) && ('\r' |> is_ascii_whitespace) && (('x' |> is_ascii_whitespace) |> not);
+    val cases = ('A' |> is_ascii_upper) && ('z' |> is_ascii_lower) && (('a' |> is_ascii_upper) |> not) && (('Z' |> is_ascii_lower) |> not);
+    val conv = (('m' |> to_ascii_upper) == 'M') && (('M' |> to_ascii_upper) == 'M') && (('Q' |> to_ascii_lower) == 'q') && (('q' |> to_ascii_lower) == 'q');
+    val dv_hit = ('8' |> char_digit_value, -1) option_unwrap_or;
+    val dv_miss = ('x' |> char_digit_value, 100) option_unwrap_or;
+    val flags = (d && a && alnum && ws && cases && conv) then { 1 } else { 0 };
+    flags + dv_hit + dv_miss
+}
+"#,
+    );
+    // 1 + 8 + 100 = 109
+    assert_eq!(result, 109);
+}
+
+#[test]
+fn std_map_module_executes_in_wasm() {
+    let result = run_main_i32(
+        r#"
+import std.map.*
+
+export fun main: () -> Int32 = {
+    val m0: StringMap<Int32> = () smap_empty;
+    val m1 = (m0, "alpha", 10) smap_put;
+    val m2 = (m1, "beta", 20) smap_put;
+    val m3 = (m2, "gamma", 30) smap_put;
+    // Overwrite middle and head entries
+    val m4 = (m3, "beta", 25) smap_put;
+    val m4b = (m4, "gamma", 35) smap_put;
+    val m4c = (m4b, "nonexistent") smap_remove;
+    mut val m5 = (m4c, "alpha", 15) smap_put;
+
+    val len_ok = (m5 |> smap_len) == 3;
+    val has_beta = (m5, "beta") smap_contains;
+    val missing_delta = ((m5, "delta") smap_contains) |> not;
+    val beta_val = ((m5, "beta") smap_get, 0) option_unwrap_or;
+    val alpha_val = ((m5, "alpha") smap_get, 0) option_unwrap_or;
+    val miss_val = ((m5, "delta") smap_get, 7) option_unwrap_or;
+
+    val keys_len = (m5 |> smap_keys) |> list_length;
+    val vals_sum = (m5 |> smap_values, 0, |acc, x| acc + x) fold;
+
+    val m6 = (m5, "beta") smap_remove;
+    val m7 = (m6, "alpha") smap_remove;
+    mut val m8 = (m7, "gamma") smap_remove;
+    val emptied = ((m8 |> smap_len) == 0) && (((m8, "alpha") smap_contains) |> not);
+
+    // Non-Copy String values in StringMap<String> and IntMap<String>
+    val sm0: StringMap<String> = () smap_empty;
+    val sm1 = (sm0, "host", "localhost") smap_put;
+    val sm2 = (sm1, "port", "8080") smap_put;
+    val sm3 = (sm2, "host", "127.0.0.1") smap_put;
+    val host_val = ((sm3, "host") smap_get, "") option_unwrap_or;
+    val sm_ok = host_val == "127.0.0.1";
+
+    // IntMap<Int32>
+    val im0: IntMap<Int32> = () imap_empty;
+    val im1 = (im0, 100, 3) imap_put;
+    val im2 = (im1, 200, 4) imap_put;
+    mut val im3 = (im2, 100, 9) imap_put;
+    val im_hit = ((im3, 100) imap_get, 0) option_unwrap_or;
+    val im_miss = ((im3, 999) imap_get, 2) option_unwrap_or;
+    mut val im4 = (im3, 200) imap_remove;
+    val im_ok = ((im4 |> imap_len) == 1) && ((im4, 100) imap_contains) && (((im4, 200) imap_contains) |> not);
+    val im_keys_len = (im4 |> imap_keys) |> list_length;
+    val im_vals_len = (im4 |> imap_values) |> list_length;
+
+    val ok = len_ok && has_beta && missing_delta && emptied && sm_ok && im_ok;
+    val bonus = ok then { 1000 } else { 0 };
+    bonus + beta_val + alpha_val + miss_val + keys_len + vals_sum + im_hit + im_miss + im_keys_len + im_vals_len
+}
+"#,
+    );
+    // 1000 + 25 + 15 + 7 + 3 + (15+25+35=75) + 9 + 2 + 1 + 1 = 1138
+    assert_eq!(result, 1138);
+}
+
+#[test]
+fn std_string_upgraded_helpers_execute_in_wasm() {
+    let result = run_main_i32(
+        r#"
+import std.string.*
+
+export fun main: () -> Int32 = {
+    mut val lines_unix = "one\ntwo\n" |> string_lines;
+    mut val lines_crlf = "a\r\nb\r\nc" |> string_lines;
+    val lines_empty = "" |> string_lines;
+    val lines_ok = ((lines_unix |> list_length) == 2)
+        && (((lines_unix, 1) list_get) == "two")
+        && ((lines_crlf |> list_length) == 3)
+        && (((lines_crlf, 0) list_get) == "a")
+        && (((lines_crlf, 2) list_get) == "c")
+        && ((lines_empty |> list_length) == 0);
+
+    mut val words = "  hello\tworld \n restrict  " |> string_words;
+    val words_empty = "   \t\n " |> string_words;
+    val words_ok = ((words |> list_length) == 3)
+        && (((words, 0) list_get) == "hello")
+        && (((words, 1) list_get) == "world")
+        && (((words, 2) list_get) == "restrict")
+        && ((words_empty |> list_length) == 0);
+
+    val rep_sub = ("foo-bar-foo", "foo", "baz") string_replace;
+    val rep_noop = ("abc", "", "x") string_replace;
+    val rep_ok = (rep_sub == "baz-bar-baz") && (rep_noop == "abc");
+
+    val pl = ("42", 5, "0") string_pad_left;
+    val pl_multi = ("x", 4, "ab") string_pad_left;
+    val pl_wide = ("hello", 3, "0") string_pad_left;
+    val pr = ("ok", 5, ".") string_pad_right;
+    val pad_ok = (pl == "00042") && (pl_multi == "abax") && (pl_wide == "hello") && (pr == "ok...");
+
+    val up = ("Hello, Rust-123 日本語!" |> string_to_upper_ascii) == "HELLO, RUST-123 日本語!";
+    val lo = ("HeLLo, RUST-123 日本語!" |> string_to_lower_ascii) == "hello, rust-123 日本語!";
+
+    (lines_ok && words_ok && rep_ok && pad_ok && up && lo) then { 1 } else { 0 }
+}
+"#,
+    );
+    assert_eq!(result, 1);
 }

@@ -7,7 +7,7 @@ use restrict_lang::{
 };
 
 const SHIPPED_STD_MODULES: &[&str] = &[
-    "lib", "prelude", "math", "option", "result", "list", "string", "io",
+    "lib", "prelude", "char", "math", "option", "result", "list", "map", "string", "io",
 ];
 
 const PLANNED_CAPABILITY_PROFILES: &[&str] =

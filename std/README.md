@@ -12,8 +12,14 @@
 - `(left, right) bool_xor` / `(cond, consequent) bool_implies` / `flag |> bool_to_int`
 - `(left, right) eq_int` / `(left, right) ne_int` / `(left, right) cmp_int` / `cmp_int64` / `cmp_float`
 
+### `std.char` (`char.rl`)
+組み込みの `char_code`、`char_from_code` に加え、ASCII 文字判定・変換ヘルパーを提供します。
+- `c |> is_ascii_digit` / `is_ascii_alpha` / `is_ascii_alphanumeric` / `is_ascii_whitespace`
+- `c |> is_ascii_upper` / `is_ascii_lower` / `to_ascii_upper` / `to_ascii_lower`
+- `c |> char_digit_value`
+
 ### `std.math` (`math.rl`)
-組み込みの `abs`、`max`、`min`、`pow`、`factorial`、`abs_f`、`max_f`、`min_f` に加え、
+組み込みの `abs`、`max`、`min`、`pow`、`factorial`、`abs_f`、`max_f`、`min_f`、`sqrt`、`floor`、`ceil`、`round`、`trunc` に加え、
 以下のヘルパーを提供します。
 - `(value, low, high) clamp` / `value |> signum` / `value |> is_even` / `value |> is_odd`
 - `(a, b) gcd` / `(a, b) lcm`
@@ -40,10 +46,20 @@
 - `items |> list_sum` / `list_sum_i64` / `list_sum_f` / `list_product`
 - `(items, start) list_enumerate_from` / `(left, right, combine) list_zip_with`
 
+### `std.map` (`map.rl`)
+ジェネリック連想コンテナ `StringMap<V>` と `IntMap<V>` を提供します。
+- `() smap_empty` / `(m, key, value) smap_put` / `(m, key) smap_get`
+- `(m, key) smap_contains` / `(m, key) smap_remove`
+- `m |> smap_keys` / `m |> smap_values` / `m |> smap_len`
+- `imap_empty` / `imap_put` / `imap_get` / `imap_contains` / `imap_remove` / `imap_keys` / `imap_values` / `imap_len`
+
 ### `std.string` (`string.rl`)
+組み込みの文字列プリミティブ (`string_length`, `string_byte_at`, `string_slice`, `string_index_of`, `string_split`, `string_join` など) に加え、以下を提供します。
 - `s |> string_is_empty` / `s |> string_non_empty`
-- `(s, count) string_repeat` / `(s, pad, count) string_pad_left`
-- `(parts, sep) string_join_simple`
+- `(s, count) string_repeat` / `(parts, sep) string_join_simple`
+- `s |> string_lines` / `s |> string_words` / `(s, target, replacement) string_replace`
+- `(s, width, pad) string_pad_left` / `(s, width, pad) string_pad_right`
+- `s |> string_to_upper_ascii` / `s |> string_to_lower_ascii`
 
 ### `std.io` (`io.rl`)
 - `(key, value) format_kv`

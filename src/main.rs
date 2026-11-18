@@ -2,8 +2,10 @@ use restrict_lang::ast::{
     BlockExpr, Expr, ExprKind, FunDecl, Pattern, PipeTarget, Program, Stmt, TopDecl,
 };
 use restrict_lang::diagnostics::{
-    format_lex_error, format_parse_error, format_type_error, format_unparsed_input,
+    format_lex_error, format_parse_error, format_release_surface_error, format_type_error,
+    format_unparsed_input,
 };
+use restrict_lang::formatter::format_source;
 use restrict_lang::ir::builder::build_checked_ir;
 use restrict_lang::module::{resolve_program_imports_for_file_with_package_roots, ModuleResolver};
 use restrict_lang::{
@@ -42,6 +44,7 @@ Options:
   --module-root <ALIAS=DIR>
                 Mount a package src directory under a source import namespace; repeatable
   --ast         Show AST only (no compilation)
+  --fmt         Format source file(s) in-place (combine with --check to verify formatting)
   --verbose     Show lexing, parsing, and codegen progress details
   --lsp         Start Language Server Protocol mode
   --help        Show this help message
@@ -80,6 +83,7 @@ async fn main() {
 
     // Parse command line arguments
     let mut check_only = false;
+    let mut fmt_mode = false;
     let mut show_ast = false;
     let mut lsp_mode = false;
     let mut verbose = false;
@@ -91,6 +95,7 @@ async fn main() {
     let mut instrument_memory = false;
     let mut package_roots = Vec::new();
     let mut source_file = String::new();
+    let mut extra_source_files = Vec::new();
     let mut output_file = None;
 
     let mut i = 1;
@@ -194,6 +199,7 @@ async fn main() {
                 i += 1;
             }
             "--ast" => show_ast = true,
+            "--fmt" => fmt_mode = true,
             "--verbose" => verbose = true,
             "--lsp" => lsp_mode = true,
             "--help" => {
@@ -203,6 +209,8 @@ async fn main() {
             arg => {
                 if source_file.is_empty() {
                     source_file = arg.to_string();
+                } else if fmt_mode {
+                    extra_source_files.push(arg.to_string());
                 } else if output_file.is_none() {
                     output_file = Some(arg.to_string());
                 } else {
@@ -212,6 +220,18 @@ async fn main() {
             }
         }
         i += 1;
+    }
+
+    if fmt_mode {
+        if source_file.is_empty() {
+            eprintln!("No source file specified");
+            std::process::exit(1);
+        }
+        let mut files = Vec::with_capacity(1 + extra_source_files.len());
+        files.push(source_file);
+        files.extend(extra_source_files);
+        run_fmt_cli(&files, check_only);
+        return;
     }
 
     if lsp_mode {
@@ -303,7 +323,7 @@ async fn main() {
     match type_checker.check_program(&ast) {
         Ok(()) => {
             if let Err(e) = check_release_surface(&ast, &type_checker, host_abi_profile) {
-                eprintln!("Release surface error: {}", e);
+                eprintln!("{}", format_release_surface_error(&source, &e));
                 std::process::exit(1);
             }
             if let Err(e) = validate_target_profile(&ast, target_profile) {
@@ -791,10 +811,53 @@ fn collect_pattern_bindings(pattern: &Pattern, bound: &mut HashSet<String>) {
     }
 }
 
+fn run_fmt_cli(files: &[String], check_only: bool) {
+    let mut needs_formatting = false;
+    for path in files {
+        let source = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Error reading file {}: {}", path, e);
+                std::process::exit(1);
+            }
+        };
+        let formatted = match format_source(&source) {
+            Ok(formatted) => formatted,
+            Err(e) => {
+                eprintln!("Formatting error in {}: {}", path, e);
+                std::process::exit(1);
+            }
+        };
+        if formatted != source {
+            if check_only {
+                eprintln!("Would reformat {}", path);
+                needs_formatting = true;
+            } else if let Err(e) = fs::write(path, formatted) {
+                eprintln!("Error writing file {}: {}", path, e);
+                std::process::exit(1);
+            } else {
+                println!("Formatted {}", path);
+            }
+        }
+    }
+    if check_only && needs_formatting {
+        std::process::exit(1);
+    }
+}
+
 fn reject_if_host_io_builtin(name: &str, scopes: &[HashSet<String>]) -> Result<(), String> {
     let is_host_io = matches!(
         name,
-        "println" | "print" | "eprint" | "eprintln" | "print_int" | "print_float"
+        "println"
+            | "print"
+            | "eprint"
+            | "eprintln"
+            | "print_int"
+            | "print_float"
+            | "cli_args"
+            | "env_get"
+            | "stdin_read_all"
+            | "exit"
     );
     if is_host_io && !scopes.iter().any(|scope| scope.contains(name)) {
         return Err(format!(
@@ -802,4 +865,27 @@ fn reject_if_host_io_builtin(name: &str, scopes: &[HashSet<String>]) -> Result<(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wasm_core_validation_rejects_new_wasi_builtins() {
+        for (name, call_expr) in [
+            ("cli_args", "() cli_args"),
+            ("env_get", "\"HOME\" |> env_get"),
+            ("stdin_read_all", "() stdin_read_all"),
+            ("exit", "1 |> exit"),
+        ] {
+            let source = format!("fun main: () -> () = {{ val _v = {call_expr}; () }}\n");
+            let (rem, program) = parse_program(&source).expect("source should parse");
+            assert!(rem.trim().is_empty());
+            let err = validate_target_profile(&program, WasmTargetProfile::WasmCore)
+                .expect_err("wasm-core must reject WASI builtin");
+            assert!(err.contains(name), "{err}");
+            assert!(err.contains("wasip1"), "{err}");
+        }
+    }
 }

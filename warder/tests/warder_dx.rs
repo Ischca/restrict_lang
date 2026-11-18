@@ -467,3 +467,59 @@ fn warder_doctor_reports_no_warnings_on_clean_project_with_discovered_compiler()
     assert!(!stdout.contains("No WASM runtime found"), "{stdout}");
     assert!(!stdout.contains("Warnings"), "{stdout}");
 }
+
+#[test]
+fn warder_fmt_formats_src_and_tests_and_supports_check_mode() {
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("app");
+    write_basic_app(&app, "");
+    fs::write(
+        app.join("src/main.rl"),
+        "pub fun answer: () -> Int32 = {\n42\n}\n\nfun main: () -> () = {\n\"hi\"|>println\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("tests/main_test.rl"),
+        "import project.main.{ answer }\n\npub fun test_answer: () -> Boolean = {\n() answer==42\n}\n",
+    )
+    .unwrap();
+
+    let check_before = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .args(["fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(!check_before.status.success());
+    let check_stderr = String::from_utf8_lossy(&check_before.stderr);
+    assert!(check_stderr.contains("Needs formatting"), "{check_stderr}");
+
+    let fmt_run = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .arg("fmt")
+        .output()
+        .unwrap();
+    assert!(
+        fmt_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fmt_run.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(app.join("src/main.rl")).unwrap(),
+        "pub fun answer: () -> Int32 = {\n    42\n}\n\nfun main: () -> () = {\n    \"hi\" |> println\n}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(app.join("tests/main_test.rl")).unwrap(),
+        "import project.main.{answer}\n\npub fun test_answer: () -> Boolean = {\n    () answer == 42\n}\n"
+    );
+
+    let check_after = Command::new(env!("CARGO_BIN_EXE_warder"))
+        .current_dir(&app)
+        .args(["fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        check_after.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check_after.stderr)
+    );
+}

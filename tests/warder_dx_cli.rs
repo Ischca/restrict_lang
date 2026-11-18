@@ -141,3 +141,85 @@ fn cli_parse_error_displays_untruncated_message_with_line_and_column() {
     assert!(stderr.contains("at line 2, column 5"), "{stderr}");
     assert!(stderr.contains("    Ok(42)"), "{stderr}");
 }
+
+#[test]
+fn cli_fmt_formats_and_checks_files_preserving_tokens() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("messy.rl");
+    fs::write(
+        &file,
+        "// header\nfun main: () -> Int32 = {\nval x=1+2;\nx\n}\n",
+    )
+    .unwrap();
+
+    let check_before = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .args(["--fmt", "--check"])
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(!check_before.status.success());
+    assert!(
+        String::from_utf8_lossy(&check_before.stderr).contains("Would reformat"),
+        "{}",
+        String::from_utf8_lossy(&check_before.stderr)
+    );
+
+    let format_run = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--fmt")
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(
+        format_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&format_run.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "// header\nfun main: () -> Int32 = {\n    val x = 1 + 2;\n    x\n}\n"
+    );
+
+    let check_after = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .args(["--fmt", "--check"])
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(check_after.status.success());
+}
+
+#[test]
+fn cli_reports_located_affine_and_release_surface_errors() {
+    let temp = TempDir::new().unwrap();
+    let affine_file = temp.path().join("affine.rl");
+    fs::write(
+        &affine_file,
+        "fun main: () -> String = {\n    val text = \"hi\";\n    val a = text;\n    text\n}\n",
+    )
+    .unwrap();
+
+    let affine_out = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--check")
+        .arg(&affine_file)
+        .output()
+        .unwrap();
+    assert!(!affine_out.status.success());
+    let affine_err = String::from_utf8_lossy(&affine_out.stderr);
+    assert!(affine_err.contains("at line 4, column 5 (second use)"), "{affine_err}");
+    assert!(affine_err.contains("first used at line 3, column 13"), "{affine_err}");
+
+    let release_file = temp.path().join("release.rl");
+    fs::write(
+        &release_file,
+        "pub fun greet: () -> String = {\n    \"hi\"\n}\n",
+    )
+    .unwrap();
+    let release_out = Command::new(env!("CARGO_BIN_EXE_restrict_lang"))
+        .arg("--check")
+        .arg(&release_file)
+        .output()
+        .unwrap();
+    assert!(!release_out.status.success());
+    let release_err = String::from_utf8_lossy(&release_out.stderr);
+    assert!(release_err.contains("Release surface error:"), "{release_err}");
+    assert!(release_err.contains("at line 1, column 9"), "{release_err}");
+}

@@ -86,6 +86,13 @@ enum Commands {
     /// Check the project sources without producing build artifacts
     Check,
 
+    /// Format Restrict source files in the project
+    Fmt {
+        /// Check whether files are formatted without modifying them
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Remove build output and temporary Warder staging files
     Clean,
 
@@ -186,6 +193,9 @@ async fn main() -> Result<()> {
         }
         Commands::Check => {
             check_project().await?;
+        }
+        Commands::Fmt { check } => {
+            fmt_project(check).await?;
         }
         Commands::Clean => {
             clean_project().await?;

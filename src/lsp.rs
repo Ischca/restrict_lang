@@ -1,7 +1,9 @@
 use crate::ast::{Literal, Pattern};
 use crate::diagnostics::{
-    format_lex_error, format_parse_error, format_type_error, format_unparsed_input,
+    format_lex_error, format_parse_error, format_release_surface_error, format_type_error,
+    format_unparsed_input,
 };
+use crate::formatter::format_source;
 use crate::module::{resolve_module_file_for_source, resolve_program_imports_for_file};
 use crate::release_surface::check_v001_release_surface;
 use crate::type_checker::{format_typed_type, TypeError, TypedType};
@@ -38,10 +40,35 @@ fn document_symbol(
     }
 }
 
+#[cfg(test)]
 fn lsp_type_error_message(error: &TypeError) -> String {
     let message = sanitize_lsp_diagnostic_text(&error.to_string());
-
     format!("Type error: {message}")
+}
+
+fn format_document_edits(text: &str) -> Option<Vec<TextEdit>> {
+    let formatted = format_source(text).ok()?;
+    if formatted == text {
+        return Some(Vec::new());
+    }
+    let end = full_document_end_position(text);
+    Some(vec![TextEdit {
+        range: Range::new(Position::new(0, 0), end),
+        new_text: formatted,
+    }])
+}
+
+fn full_document_end_position(text: &str) -> Position {
+    let mut line = 0u32;
+    let mut last_line_start = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            line += 1;
+            last_line_start = idx + 1;
+        }
+    }
+    let col = text[last_line_start..].encode_utf16().count() as u32;
+    Position::new(line, col)
 }
 
 fn diagnostic_for_message(source: &str, message: String) -> Diagnostic {
@@ -49,15 +76,24 @@ fn diagnostic_for_message(source: &str, message: String) -> Diagnostic {
 }
 
 fn diagnostic_for_type_error(source: &str, error: &TypeError) -> Diagnostic {
-    let message = if matches!(error, TypeError::NonCallableVerb { .. }) {
-        format_type_error(source, error)
-    } else {
-        lsp_type_error_message(error)
-    };
+    let message = sanitize_lsp_diagnostic_text(&format_type_error(source, error));
     diagnostic_for_message(source, message)
 }
 
 fn diagnostic_range_for_message(source: &str, message: &str) -> Range {
+    if message.starts_with("Release surface error") {
+        if let Some(function_name) = quoted_name_from_message(message, "function '") {
+            if let Some(range) = declaration_name_range(source, "fun", function_name) {
+                return range;
+            }
+        }
+        if let Some(binding_name) = quoted_name_from_message(message, "binding '") {
+            if let Some(range) = declaration_name_range(source, "val", binding_name) {
+                return range;
+            }
+        }
+    }
+
     if let Some(position) = line_column_from_message(message) {
         return single_character_range(source, position);
     }
@@ -269,7 +305,7 @@ fn collect_diagnostics_for_source(uri: &Url, text: &str) -> Vec<Diagnostic> {
     if let Err(e) = check_v001_release_surface(&ast, &type_checker) {
         diagnostics.push(diagnostic_for_message(
             text,
-            format!("Release surface error: {}", e),
+            format_release_surface_error(text, &e),
         ));
     }
 
@@ -2994,7 +3030,7 @@ fn restrict_server_capabilities() -> ServerCapabilities {
         code_lens_provider: Some(CodeLensOptions {
             resolve_provider: Some(false),
         }),
-        document_formatting_provider: None,
+        document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: None,
         document_on_type_formatting_provider: None,
         rename_provider: None,
@@ -4444,7 +4480,7 @@ fun main: () -> () = {\n\
         assert!(capabilities.code_action_provider.is_none());
         assert!(capabilities.code_lens_provider.is_some());
         assert!(capabilities.inlay_hint_provider.is_some());
-        assert!(capabilities.document_formatting_provider.is_none());
+        assert!(capabilities.document_formatting_provider.is_some());
         assert!(capabilities.document_range_formatting_provider.is_none());
         assert!(capabilities.document_on_type_formatting_provider.is_none());
         assert!(capabilities.rename_provider.is_none());
@@ -4460,6 +4496,39 @@ fun main: () -> () = {\n\
             semantic_options.legend.token_types[SEMANTIC_TOKEN_KEYWORD as usize],
             SemanticTokenType::KEYWORD
         );
+    }
+
+    #[test]
+    fn lsp_formatting_produces_canonical_full_document_edit() {
+        let messy = "fun main: () -> Int32 = {\nval x=1+2;\nx\n}\n";
+        let edits = format_document_edits(messy).expect("valid source should format");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].range.start, Position::new(0, 0));
+        assert_eq!(edits[0].range.end, Position::new(4, 0));
+        assert_eq!(
+            edits[0].new_text,
+            "fun main: () -> Int32 = {\n    val x = 1 + 2;\n    x\n}\n"
+        );
+
+        let clean_edits =
+            format_document_edits(&edits[0].new_text).expect("clean source should succeed");
+        assert!(clean_edits.is_empty());
+    }
+
+    #[test]
+    fn lsp_diagnostics_locate_affine_and_undefined_variable_errors() {
+        let source = "fun main: () -> String = {\n    val raw = \"abc\";\n    val a = raw;\n    raw\n}\n";
+        let uri = Url::parse("file:///tmp/affine.rl").unwrap();
+        let diagnostics = collect_diagnostics_for_source(&uri, source);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("first used at line 3"));
+        assert_eq!(diagnostics[0].range.start, Position::new(3, 4));
+
+        let undef_source = "fun main: () -> Int32 = {\n    missing_var\n}\n";
+        let undef_uri = Url::parse("file:///tmp/undef.rl").unwrap();
+        let undef_diags = collect_diagnostics_for_source(&undef_uri, undef_source);
+        assert_eq!(undef_diags.len(), 1);
+        assert_eq!(undef_diags[0].range.start, Position::new(1, 4));
     }
 
     #[test]
@@ -5123,8 +5192,16 @@ impl LanguageServer for RestrictLanguageServer {
         Ok((!hints.is_empty()).then_some(hints))
     }
 
-    async fn formatting(&self, _: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        Ok(None)
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+        let text = {
+            let documents = self.documents.read().unwrap();
+            documents.get(uri).cloned()
+        };
+        let Some(text) = text else {
+            return Ok(None);
+        };
+        Ok(format_document_edits(&text))
     }
 
     async fn range_formatting(
@@ -5198,7 +5275,7 @@ impl LanguageServer for RestrictLanguageServer {
                                         if let Err(e) = type_checker.check_program(&ast) {
                                             return Ok(Some(serde_json::json!({
                                                 "success": false,
-                                                "message": lsp_type_error_message(&e)
+                                                "message": sanitize_lsp_diagnostic_text(&format_type_error(&text, &e))
                                             })));
                                         }
                                         if let Err(e) =
@@ -5206,7 +5283,7 @@ impl LanguageServer for RestrictLanguageServer {
                                         {
                                             return Ok(Some(serde_json::json!({
                                                 "success": false,
-                                                "message": format!("Release surface error: {}", e)
+                                                "message": format_release_surface_error(&text, &e)
                                             })));
                                         }
 

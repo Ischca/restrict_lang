@@ -2340,12 +2340,16 @@ fn collect_bindings_from_expr<'a>(
         | ExprKind::Lambda(crate::ast::LambdaExpr { body: inner, .. }) => {
             collect_bindings_from_expr(inner, bindings)
         }
+        ExprKind::Return(Some(inner)) => collect_bindings_from_expr(inner, bindings),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
         | ExprKind::StringLit(_)
         | ExprKind::CharLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
+        | ExprKind::Break
+        | ExprKind::Continue
+        | ExprKind::Return(None)
         | ExprKind::Ident(_)
         | ExprKind::VariantRef(_) => {}
     }
@@ -2494,6 +2498,7 @@ fn collect_lambdas_from_expr<'a>(
         ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
             collect_lambdas_from_expr(inner, lambdas)
         }
+        ExprKind::Return(Some(inner)) => collect_lambdas_from_expr(inner, lambdas),
         ExprKind::Lambda(lambda) => collect_lambdas_from_expr(&lambda.body, lambdas),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
@@ -2501,6 +2506,9 @@ fn collect_lambdas_from_expr<'a>(
         | ExprKind::CharLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
+        | ExprKind::Break
+        | ExprKind::Continue
+        | ExprKind::Return(None)
         | ExprKind::Ident(_)
         | ExprKind::VariantRef(_) => {}
     }

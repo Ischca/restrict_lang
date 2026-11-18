@@ -794,6 +794,10 @@ fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
     alt((
         literal,
         unit_expr,
+        map(expect_token(Token::Break), |_| Expr::new(ExprKind::Break)),
+        map(expect_token(Token::Continue), |_| {
+            Expr::new(ExprKind::Continue)
+        }),
         lambda_expr, // Try lambda before other expressions that use |
         stale_option_value_expr,
         list_lit, // Try list literal before record
@@ -1705,7 +1709,22 @@ enum PostfixOp {
     Freeze,
 }
 
+fn return_expr(input: &str) -> ParseResult<'_, Expr> {
+    let (input, _) = expect_token(Token::Return)(input)?;
+    if matches!(
+        lex_token(input),
+        Ok((_, Token::RBrace | Token::Semicolon | Token::Eof))
+    ) {
+        return Ok((input, Expr::new(ExprKind::Return(None))));
+    }
+    let (input, value) = expression(input)?;
+    Ok((input, Expr::new(ExprKind::Return(Some(Box::new(value))))))
+}
+
 fn expression(input: &str) -> ParseResult<'_, Expr> {
+    if matches!(lex_token(input), Ok((_, Token::Return))) {
+        return return_expr(input);
+    }
     let (input, expr) = then_expr(input)?;
     application_suffixes(input, expr)
 }

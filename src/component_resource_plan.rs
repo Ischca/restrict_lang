@@ -924,6 +924,7 @@ fn borrow_receiver_expr_is_safe(expr: &Expr, receiver: &str, field_base: bool) -
         // Until checked capture effects are attached to this plan, lambdas in
         // a borrow method are rejected conservatively: an immediate-looking
         // lambda can still be returned through a branch or alias.
+        ExprKind::Return(Some(inner)) => borrow_receiver_expr_is_safe(inner, receiver, false),
         ExprKind::Lambda(_) => false,
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
@@ -931,6 +932,9 @@ fn borrow_receiver_expr_is_safe(expr: &Expr, receiver: &str, field_base: bool) -
         | ExprKind::CharLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
+        | ExprKind::Break
+        | ExprKind::Continue
+        | ExprKind::Return(None)
         | ExprKind::VariantRef(_) => true,
     }
 }

@@ -228,6 +228,7 @@ enum AssociatedTypeResolver {
 enum TypeConstructor {
     List,
     Option,
+    Range,
 }
 
 const LIST_CONTAINER_ASSOCIATED_TYPES: &[AssociatedTypeImplementation] = &[
@@ -278,6 +279,11 @@ impl FormEnvironment {
             TypeConstructor::Option,
             "Container",
             OPTION_CONTAINER_ASSOCIATED_TYPES,
+        )?;
+        self.adopt_type_constructor(
+            TypeConstructor::Range,
+            "Container",
+            LIST_CONTAINER_ASSOCIATED_TYPES,
         )?;
         Ok(())
     }
@@ -422,6 +428,7 @@ impl TypeConstructor {
         match self {
             TypeConstructor::List => "List",
             TypeConstructor::Option => "Option",
+            TypeConstructor::Range => "Range",
         }
     }
 
@@ -429,13 +436,18 @@ impl TypeConstructor {
         match (self, ty) {
             (TypeConstructor::List, TypedType::List(item))
             | (TypeConstructor::Option, TypedType::Option(item)) => (**item).clone(),
+            (TypeConstructor::Range, TypedType::Record { name, type_args, .. })
+                if name == "Range" =>
+            {
+                type_args.first().cloned().unwrap_or(TypedType::Int32)
+            }
             _ => unreachable!("type constructor must match adopted type"),
         }
     }
 
     fn with_item_type(self, item: TypedType) -> TypedType {
         match self {
-            TypeConstructor::List => TypedType::List(Box::new(item)),
+            TypeConstructor::List | TypeConstructor::Range => TypedType::List(Box::new(item)),
             TypeConstructor::Option => TypedType::Option(Box::new(item)),
         }
     }
@@ -647,6 +659,7 @@ fn type_constructor_of(ty: &TypedType) -> Option<TypeConstructor> {
     match ty {
         TypedType::List(_) => Some(TypeConstructor::List),
         TypedType::Option(_) => Some(TypeConstructor::Option),
+        TypedType::Record { name, .. } if name == "Range" => Some(TypeConstructor::Range),
         _ => None,
     }
 }

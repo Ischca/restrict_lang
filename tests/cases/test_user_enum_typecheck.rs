@@ -294,22 +294,38 @@ enum Good { Payload(Box<Int32>) }
 }
 
 #[test]
-fn enum_equality_is_rejected_until_structural_semantics_exist() {
-    let error = check_source(
+fn enum_equality_is_allowed_for_payload_free_and_rejected_for_payload_enums() {
+    check_source(
         r#"
-enum State { Ready }
+enum State { Ready, Busy }
 
 fun same: () -> Boolean = {
     val left = () State::Ready;
     val right = () State::Ready;
+    (left == right) && (left != () State::Busy)
+}
+"#,
+    )
+    .expect("payload-free enum equality should be supported");
+
+    let error = check_source(
+        r#"
+enum State {
+    Ready
+    Busy(Int32)
+}
+
+fun same: () -> Boolean = {
+    val left = 1 |> State::Busy;
+    val right = 1 |> State::Busy;
     left == right
 }
 "#,
     )
-    .expect_err("enum equality must not fall back to pointer equality");
+    .expect_err("payload-carrying enum equality must not fall back to pointer equality");
 
     assert!(
-        matches!(error, TypeError::UnsupportedFeature(message) if message.contains("user-defined enum equality is not supported"))
+        matches!(error, TypeError::UnsupportedFeature(message) if message.contains("user-defined enum equality is only supported for payload-free enums"))
     );
 }
 

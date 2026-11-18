@@ -316,12 +316,16 @@ pub struct WasmCodeGen {
     cleanup_functions: HashMap<String, String>,
     /// Current nesting depth for record literal temporaries.
     record_literal_depth: usize,
-    /// Current nesting depth for record-pattern scratch temporaries.
-    record_pattern_depth: usize,
     /// Number of record scratch temporaries declared in the current function.
     record_tmp_count: usize,
+    /// Current nesting depth for list/array/range literal temporaries.
+    list_literal_depth: usize,
+    /// Number of list scratch temporaries declared in the current function.
+    list_tmp_count: usize,
     /// Current nesting depth for `with Arena` restore temporaries.
     with_arena_depth: usize,
+    /// `arena_stack` length upon entering each active enclosing `while` loop.
+    loop_arena_depths: Vec<usize>,
     /// Expected ABI for the lambda currently being generated.
     lambda_abi_stack: Vec<LambdaAbiContext>,
 }
@@ -363,6 +367,7 @@ struct LambdaAbiContext {
 enum IterationInputKind {
     List,
     Option,
+    Range,
     Unknown,
 }
 
@@ -449,9 +454,11 @@ impl WasmCodeGen {
             temporal_scope_stack: Vec::new(),
             cleanup_functions: HashMap::new(),
             record_literal_depth: 0,
-            record_pattern_depth: 0,
             record_tmp_count: RECORD_TMP_MIN_COUNT,
+            list_literal_depth: 0,
+            list_tmp_count: 1,
             with_arena_depth: 0,
+            loop_arena_depths: Vec::new(),
             lambda_abi_stack: Vec::new(),
         }
     }
@@ -5678,6 +5685,9 @@ impl WasmCodeGen {
             ExprKind::Lambda(lambda) => {
                 self.collect_strings_from_expr(&lambda.body)?;
             }
+            ExprKind::Return(Some(inner)) => {
+                self.collect_strings_from_expr(inner)?;
+            }
             _ => {}
         }
         Ok(())
@@ -5954,9 +5964,145 @@ impl WasmCodeGen {
             .collect();
         self.push_signature_source_scope(parameter_bindings);
 
-        let result = self.infer_block_source_type_for_signature(&func.body);
+        let result = self
+            .infer_block_source_type_for_signature(&func.body)
+            .or_else(|| self.infer_return_source_type_in_block_for_signature(&func.body));
         self.pop_signature_source_scope();
         result
+    }
+
+    fn infer_return_source_type_in_block_for_signature(
+        &mut self,
+        block: &BlockExpr,
+    ) -> Option<Type> {
+        let mut ty = None;
+        for stmt in &block.statements {
+            match stmt {
+                Stmt::Binding(bind) => {
+                    let value_ty = bind
+                        .type_annotation
+                        .clone()
+                        .or_else(|| self.infer_expr_source_type_for_signature(&bind.value));
+                    ty = Self::merge_source_types(
+                        ty,
+                        self.infer_return_source_type_in_expr_for_signature(&bind.value),
+                    );
+                    self.bind_pattern_source_types_for_signature(&bind.pattern, value_ty.as_ref());
+                    let mut names = HashSet::new();
+                    self.collect_pattern_bindings_for_codegen(&bind.pattern, &mut names);
+                    if let Some(active) = self.active_local_bindings.last_mut() {
+                        active.extend(names);
+                    }
+                }
+                Stmt::Assignment(assign) => {
+                    ty = Self::merge_source_types(
+                        ty,
+                        self.infer_return_source_type_in_expr_for_signature(&assign.value),
+                    );
+                }
+                Stmt::Expr(expr) => {
+                    ty = Self::merge_source_types(
+                        ty,
+                        self.infer_return_source_type_in_expr_for_signature(expr),
+                    );
+                }
+            }
+        }
+        if let Some(expr) = &block.expr {
+            ty = Self::merge_source_types(
+                ty,
+                self.infer_return_source_type_in_expr_for_signature(expr),
+            );
+        }
+        ty
+    }
+
+    fn infer_return_source_type_in_expr_for_signature(&mut self, expr: &Expr) -> Option<Type> {
+        match &expr.kind {
+            ExprKind::Return(Some(inner)) => self.infer_expr_source_type_for_signature(inner),
+            ExprKind::Return(None) => Some(Type::Named("Unit".to_string())),
+            ExprKind::Block(block) => {
+                self.push_signature_source_scope(HashMap::new());
+                let ty = self.infer_return_source_type_in_block_for_signature(block);
+                self.pop_signature_source_scope();
+                ty
+            }
+            ExprKind::Then(then) => {
+                let mut ty = self.infer_return_source_type_in_expr_for_signature(&then.condition);
+                self.push_signature_source_scope(HashMap::new());
+                ty = Self::merge_source_types(
+                    ty,
+                    self.infer_return_source_type_in_block_for_signature(&then.then_block),
+                );
+                self.pop_signature_source_scope();
+                for (cond, block) in &then.else_ifs {
+                    ty = Self::merge_source_types(
+                        ty,
+                        self.infer_return_source_type_in_expr_for_signature(cond),
+                    );
+                    self.push_signature_source_scope(HashMap::new());
+                    ty = Self::merge_source_types(
+                        ty,
+                        self.infer_return_source_type_in_block_for_signature(block),
+                    );
+                    self.pop_signature_source_scope();
+                }
+                if let Some(block) = &then.else_block {
+                    self.push_signature_source_scope(HashMap::new());
+                    ty = Self::merge_source_types(
+                        ty,
+                        self.infer_return_source_type_in_block_for_signature(block),
+                    );
+                    self.pop_signature_source_scope();
+                }
+                ty
+            }
+            ExprKind::Match(match_expr) => {
+                let scrutinee_ty = self.infer_expr_source_type_for_signature(&match_expr.expr);
+                let mut ty = self.infer_return_source_type_in_expr_for_signature(&match_expr.expr);
+                for arm in &match_expr.arms {
+                    self.push_signature_source_scope(HashMap::new());
+                    self.bind_pattern_source_types_for_signature(
+                        &arm.pattern,
+                        scrutinee_ty.as_ref(),
+                    );
+                    let mut names = HashSet::new();
+                    self.collect_pattern_bindings_for_codegen(&arm.pattern, &mut names);
+                    if let Some(active) = self.active_local_bindings.last_mut() {
+                        active.extend(names);
+                    }
+                    ty = Self::merge_source_types(
+                        ty,
+                        self.infer_return_source_type_in_block_for_signature(&arm.body),
+                    );
+                    self.pop_signature_source_scope();
+                }
+                ty
+            }
+            ExprKind::While(while_expr) => {
+                let cond_ty =
+                    self.infer_return_source_type_in_expr_for_signature(&while_expr.condition);
+                self.push_signature_source_scope(HashMap::new());
+                let body_ty =
+                    self.infer_return_source_type_in_block_for_signature(&while_expr.body);
+                self.pop_signature_source_scope();
+                Self::merge_source_types(cond_ty, body_ty)
+            }
+            ExprKind::With(with) => {
+                let bindings = self.context_source_bindings(with, &HashMap::new());
+                self.push_signature_source_scope(bindings);
+                let ty = self.infer_return_source_type_in_block_for_signature(&with.body);
+                self.pop_signature_source_scope();
+                ty
+            }
+            ExprKind::WithLifetime(wl) => {
+                self.push_signature_source_scope(HashMap::new());
+                let ty = self.infer_return_source_type_in_block_for_signature(&wl.body);
+                self.pop_signature_source_scope();
+                ty
+            }
+            _ => None,
+        }
     }
 
     fn push_signature_source_scope(&mut self, bindings: HashMap<String, Type>) {
@@ -5971,6 +6117,9 @@ impl WasmCodeGen {
     }
 
     fn infer_block_source_type_for_signature(&mut self, block: &BlockExpr) -> Option<Type> {
+        if Self::block_diverges_codegen(block) {
+            return None;
+        }
         for stmt in &block.statements {
             if let Stmt::Binding(bind) = stmt {
                 let value_ty = bind
@@ -6329,9 +6478,11 @@ impl WasmCodeGen {
                     .to_string(),
             ));
         }
-        if self.contexts.contains(&takes.target) || !self.records.contains_key(&takes.target) {
+        if self.contexts.contains(&takes.target)
+            || (!self.records.contains_key(&takes.target) && !self.enums.contains_key(&takes.target))
+        {
             return Err(CodeGenError::UnsupportedType(format!(
-                "takes target '{}' is not a concrete, non-generic record",
+                "takes target '{}' is not a concrete, non-generic record or enum",
                 takes.target
             )));
         }
@@ -7274,15 +7425,6 @@ impl WasmCodeGen {
         }
     }
 
-    fn match_temp_local(&self, ty: WasmType) -> &'static str {
-        match ty {
-            WasmType::I32 => "match_tmp",
-            WasmType::I64 => "match_tmp_i64",
-            WasmType::F32 => "match_tmp_f32",
-            WasmType::F64 => "match_tmp_f64",
-        }
-    }
-
     fn variant_payload_load_code(
         &self,
         source_local: &str,
@@ -7422,13 +7564,19 @@ impl WasmCodeGen {
 
         let outer_default_arena = self.default_arena;
         let outer_record_tmp_count = self.record_tmp_count;
-        self.binding_local_aliases.clear();
-        self.match_local_ids.clear();
-        self.collected_local_types.clear();
-        self.local_alias_counter = 0;
+        let outer_list_literal_depth = std::mem::replace(&mut self.list_literal_depth, 0);
+        let outer_list_tmp_count = self.list_tmp_count;
+        let outer_loop_arena_depths = std::mem::take(&mut self.loop_arena_depths);
+        let outer_arena_stack = std::mem::take(&mut self.arena_stack);
+        let outer_with_arena_depth = std::mem::replace(&mut self.with_arena_depth, 0);
+        let outer_binding_local_aliases = std::mem::take(&mut self.binding_local_aliases);
+        let outer_match_local_ids = std::mem::take(&mut self.match_local_ids);
+        let outer_collected_local_types = std::mem::take(&mut self.collected_local_types);
+        let outer_local_alias_counter = std::mem::replace(&mut self.local_alias_counter, 0);
+        let outer_current_function = self.current_function.replace(func.name.clone());
         self.record_tmp_count =
             RECORD_TMP_MIN_COUNT.max(Self::max_record_tmp_depth_in_block(&func.body));
-        self.current_function = Some(func.name.clone());
+        self.list_tmp_count = 1.max(Self::max_list_tmp_depth_in_block(&func.body));
         let is_host_entry = self.component_internal_exports.is_none()
             && self.exported_functions.contains(&func.name)
             && !self.function_requires_flat_record_adapter(&func.name);
@@ -7526,10 +7674,18 @@ impl WasmCodeGen {
 
         // Add temporary variable for match expressions
         // TODO: Only add when needed
-        // Add temporary variable for list literals
+        // Add temporary variables for list/array/range literals
         self.output.push_str("    (local $list_tmp i32)\n");
         self.add_local("list_tmp", next_idx);
         next_idx += 1;
+        for depth in 1..self.list_tmp_count {
+            let name = format!("list_tmp_{}", depth);
+            self.output
+                .push_str(&format!("    (local ${} i32)\n", name));
+            self.add_local(&name, next_idx);
+            self.set_local_type(&name, WasmType::I32);
+            next_idx += 1;
+        }
 
         // Add temporary variables for match expressions
         self.output.push_str("    (local $match_tmp i32)\n");
@@ -7742,7 +7898,16 @@ impl WasmCodeGen {
         self.pop_scope();
         self.default_arena = outer_default_arena;
         self.record_tmp_count = outer_record_tmp_count;
-        self.current_function = None;
+        self.list_literal_depth = outer_list_literal_depth;
+        self.list_tmp_count = outer_list_tmp_count;
+        self.loop_arena_depths = outer_loop_arena_depths;
+        self.arena_stack = outer_arena_stack;
+        self.with_arena_depth = outer_with_arena_depth;
+        self.binding_local_aliases = outer_binding_local_aliases;
+        self.match_local_ids = outer_match_local_ids;
+        self.collected_local_types = outer_collected_local_types;
+        self.local_alias_counter = outer_local_alias_counter;
+        self.current_function = outer_current_function;
         Ok(())
     }
 
@@ -7836,11 +8001,15 @@ impl WasmCodeGen {
                 self.generate_expr(expr)?;
             }
         } else if as_expression {
+            let final_stmt_diverges = matches!(
+                block.statements.last(),
+                Some(Stmt::Expr(expr)) if Self::expr_diverges_codegen(expr)
+            );
             let final_stmt_leaves_value = matches!(
                 block.statements.last(),
                 Some(Stmt::Expr(expr)) if self.expr_leaves_value(expr)
             );
-            if !final_stmt_leaves_value {
+            if !final_stmt_leaves_value && !final_stmt_diverges {
                 self.output.push_str("    i32.const 0\n");
             }
         } else if block.statements.is_empty() && !as_expression {
@@ -8456,7 +8625,13 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
-            | ExprKind::VariantRef(_) => None,
+            | ExprKind::VariantRef(_)
+            | ExprKind::Break
+            | ExprKind::Continue
+            | ExprKind::Return(None) => None,
+            ExprKind::Return(Some(inner)) => {
+                self.infer_ident_source_type_from_expr_usage(name, inner)
+            }
         }
     }
 
@@ -9064,9 +9239,6 @@ impl WasmCodeGen {
                     .binding_local_aliases
                     .get(&Self::binding_id(bind))
                     .cloned();
-                if let Some(local_name) = &local_name {
-                    self.set_local_alias(name, local_name.clone());
-                }
                 let storage_name = local_name.as_deref().unwrap_or(name);
                 let binding_source_ty = bind
                     .type_annotation
@@ -9148,6 +9320,7 @@ impl WasmCodeGen {
                 }
                 self.output
                     .push_str(&format!("    local.set ${}\n", storage_name));
+                self.set_local_alias(name, storage_name.to_string());
                 self.activate_local_binding(name);
             }
             Pattern::Record(_, _)
@@ -9179,12 +9352,14 @@ impl WasmCodeGen {
             .type_annotation
             .clone()
             .or_else(|| self.infer_expr_source_type(&bind.value));
-        let wasm_ty = if let Some(source_ty) = &source_ty {
+        let _wasm_ty = if let Some(source_ty) = &source_ty {
             self.convert_type(source_ty)?
         } else {
             self.infer_expr_type(&bind.value)?
         };
-        let match_local = self.match_temp_local(wasm_ty);
+        let bind_id = self.alloc_node_id(Self::ast_node_key(bind.value.id, 3));
+        let scrutinee_local = format!("__pat_bind_scrutinee_{}", bind_id);
+        let prefix = format!("__pb{}", bind_id);
 
         if let Some(source_ty) = &source_ty {
             self.generate_expr_with_expected_source(&bind.value, source_ty)?;
@@ -9192,11 +9367,17 @@ impl WasmCodeGen {
             self.generate_expr(&bind.value)?;
         }
         self.output
-            .push_str(&format!("    local.set ${}\n", match_local));
+            .push_str(&format!("    local.set ${}\n", scrutinee_local));
         self.output
-            .push_str(&format!("    local.get ${}\n", match_local));
-        let bindings =
-            self.generate_pattern_match(&bind.pattern, source_ty.as_ref(), match_local)?;
+            .push_str(&format!("    local.get ${}\n", scrutinee_local));
+        let mut step = 0usize;
+        let bindings = self.generate_pattern_match(
+            &bind.pattern,
+            source_ty.as_ref(),
+            &scrutinee_local,
+            &prefix,
+            &mut step,
+        )?;
 
         self.output.push_str("    (if\n");
         self.output.push_str("      (then\n");
@@ -9204,6 +9385,7 @@ impl WasmCodeGen {
             self.output.push_str(&load_code);
             self.output
                 .push_str(&format!("        local.set ${}\n", name));
+            self.set_local_alias(&name, name.clone());
         }
         self.output.push_str("      )\n");
         self.output.push_str("      (else\n");
@@ -9318,6 +9500,7 @@ impl WasmCodeGen {
         source_ty: Option<&Type>,
         fields: &[(String, Pattern)],
         source_local: &str,
+        clone_tmp_local: &str,
         indent: &str,
     ) -> Result<(String, String), CodeGenError> {
         let residual_name = self.ensure_residual_record_definition(record_name, fields)?;
@@ -9339,7 +9522,7 @@ impl WasmCodeGen {
             residual_size
         ));
         code.push_str(&format!("{indent}call $allocate\n"));
-        code.push_str(&format!("{indent}local.set $clone_tmp\n"));
+        code.push_str(&format!("{indent}local.set ${clone_tmp_local}\n"));
 
         for (field_name, field_ty) in residual_fields {
             let source_offset =
@@ -9350,7 +9533,7 @@ impl WasmCodeGen {
                     field_name, residual_name
                 ))
             })?;
-            code.push_str(&format!("{indent}local.get $clone_tmp\n"));
+            code.push_str(&format!("{indent}local.get ${clone_tmp_local}\n"));
             code.push_str(&format!("{indent}i32.const {}\n", residual_offset));
             code.push_str(&format!("{indent}i32.add\n"));
             code.push_str(&format!("{indent}local.get ${}\n", source_local));
@@ -9368,7 +9551,7 @@ impl WasmCodeGen {
             ));
         }
 
-        code.push_str(&format!("{indent}local.get $clone_tmp\n"));
+        code.push_str(&format!("{indent}local.get ${clone_tmp_local}\n"));
         Ok((residual_name, code))
     }
 
@@ -9391,8 +9574,14 @@ impl WasmCodeGen {
             return Err(CodeGenError::UndefinedVariable(rest_name.clone()));
         }
 
-        let (residual_name, load_code) =
-            self.record_rest_load_code(record_name, None, fields, source_local, "    ")?;
+        let (residual_name, load_code) = self.record_rest_load_code(
+            record_name,
+            None,
+            fields,
+            source_local,
+            "clone_tmp",
+            "    ",
+        )?;
         self.output.push_str(&load_code);
         self.output
             .push_str(&format!("    local.set ${}\n", rest_name));
@@ -9707,13 +9896,24 @@ impl WasmCodeGen {
                 self.generate_array_literal(items)?;
             }
             ExprKind::Match(match_expr) => {
-                self.generate_match_expr(match_expr)?;
+                self.generate_match_expr(expr.id, match_expr)?;
             }
             ExprKind::Then(then) => {
                 self.generate_then_expr(then)?;
             }
             ExprKind::While(while_expr) => {
                 self.generate_while_expr(while_expr)?;
+            }
+            ExprKind::Break => {
+                self.unwind_loop_arenas();
+                self.output.push_str("    br $while_break\n");
+            }
+            ExprKind::Continue => {
+                self.unwind_loop_arenas();
+                self.output.push_str("    br $while_loop\n");
+            }
+            ExprKind::Return(value) => {
+                self.generate_return_expr(value.as_deref())?;
             }
             ExprKind::With(with_expr) => {
                 self.generate_with_expr(with_expr)?;
@@ -9728,7 +9928,7 @@ impl WasmCodeGen {
                 ));
             }
             ExprKind::Clone(clone) => {
-                self.generate_clone_expr(clone)?;
+                self.generate_clone_expr(expr.id, clone)?;
             }
             ExprKind::Freeze(expr) => {
                 self.generate_freeze_expr(expr)?;
@@ -9740,6 +9940,128 @@ impl WasmCodeGen {
                 self.generate_prototype_clone_expr(proto_clone)?;
             }
         }
+        Ok(())
+    }
+
+    fn alloc_node_id(&mut self, key: usize) -> usize {
+        let next = self.match_local_ids.len();
+        *self.match_local_ids.entry(key).or_insert(next)
+    }
+
+    fn ast_node_key(id: NodeId, kind: usize) -> usize {
+        ((id.0 as usize) << 2) | (kind & 0b11)
+    }
+
+    fn expr_diverges_codegen(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => true,
+            ExprKind::Block(block) => Self::block_diverges_codegen(block),
+            ExprKind::Then(then) => Self::then_all_branches_diverge_codegen(then),
+            ExprKind::Match(match_expr) => {
+                !match_expr.arms.is_empty()
+                    && match_expr
+                        .arms
+                        .iter()
+                        .all(|arm| Self::block_diverges_codegen(&arm.body))
+            }
+            ExprKind::With(with) => Self::block_diverges_codegen(&with.body),
+            ExprKind::WithLifetime(wl) => Self::block_diverges_codegen(&wl.body),
+            _ => false,
+        }
+    }
+
+    fn block_diverges_codegen(block: &BlockExpr) -> bool {
+        if let Some(expr) = &block.expr {
+            return Self::expr_diverges_codegen(expr);
+        }
+        block.statements.iter().any(|stmt| match stmt {
+            Stmt::Binding(bind) => Self::expr_diverges_codegen(&bind.value),
+            Stmt::Assignment(assign) => Self::expr_diverges_codegen(&assign.value),
+            Stmt::Expr(expr) => Self::expr_diverges_codegen(expr),
+        })
+    }
+
+    fn then_all_branches_diverge_codegen(then: &ThenExpr) -> bool {
+        let Some(else_block) = &then.else_block else {
+            return false;
+        };
+        Self::block_diverges_codegen(&then.then_block)
+            && then
+                .else_ifs
+                .iter()
+                .all(|(_, block)| Self::block_diverges_codegen(block))
+            && Self::block_diverges_codegen(else_block)
+    }
+
+    fn unwind_loop_arenas(&mut self) {
+        let loop_depth = self
+            .loop_arena_depths
+            .last()
+            .copied()
+            .unwrap_or(self.arena_stack.len());
+        for (depth, arena_addr) in self.arena_stack.iter().enumerate().skip(loop_depth).rev() {
+            self.output
+                .push_str("    ;; Reset with Arena scope before loop jump\n");
+            self.output
+                .push_str(&format!("    i32.const {}\n", arena_addr));
+            self.output.push_str("    call $arena_reset\n");
+            self.output
+                .push_str(&format!("    local.get $with_prev_arena_{}\n", depth));
+            self.output.push_str("    global.set $current_arena\n");
+        }
+    }
+
+    fn generate_return_expr(&mut self, value: Option<&Expr>) -> Result<(), CodeGenError> {
+        let expected_wasm_result = self
+            .current_function
+            .as_ref()
+            .and_then(|name| self.functions.get(name))
+            .and_then(|sig| sig.result);
+        let expected_source_result = self
+            .current_function
+            .as_ref()
+            .and_then(|name| self.function_source_sigs.get(name))
+            .and_then(|sig| sig.result.clone());
+
+        if let Some(expr) = value {
+            if expected_wasm_result.is_some() {
+                if let Some(expected_source) = expected_source_result.as_ref() {
+                    self.generate_expr_with_expected_source(expr, expected_source)?;
+                } else {
+                    self.generate_expr(expr)?;
+                }
+            } else {
+                self.generate_expr(expr)?;
+                if self.expr_leaves_value(expr) {
+                    self.output.push_str("    drop\n");
+                }
+            }
+        } else if let Some(wasm_ty) = expected_wasm_result {
+            self.emit_zero_value(wasm_ty, "    ");
+        }
+
+        for (depth, arena_addr) in self.arena_stack.iter().enumerate().rev() {
+            self.output
+                .push_str("    ;; Reset with Arena scope before return\n");
+            self.output
+                .push_str(&format!("    i32.const {}\n", arena_addr));
+            self.output.push_str("    call $arena_reset\n");
+            self.output
+                .push_str(&format!("    local.get $with_prev_arena_{}\n", depth));
+            self.output.push_str("    global.set $current_arena\n");
+        }
+
+        if let Some(default_arena) = self.default_arena {
+            self.output
+                .push_str("    ;; Reset default arena before return\n");
+            self.output
+                .push_str(&format!("    i32.const {}\n", default_arena));
+            self.output.push_str("    call $arena_reset\n");
+            self.output.push_str("    local.get $entry_prev_arena\n");
+            self.output.push_str("    global.set $current_arena\n");
+        }
+
+        self.output.push_str("    return\n");
         Ok(())
     }
 
@@ -9786,6 +10108,7 @@ impl WasmCodeGen {
         let lambda_locals = self.collect_lambda_locals(lambda)?;
         let lambda_record_tmp_count =
             RECORD_TMP_MIN_COUNT.max(Self::max_record_tmp_depth_in_expr(&lambda.body));
+        let lambda_list_tmp_count = 1.max(Self::max_list_tmp_depth_in_expr(&lambda.body));
 
         // Closure layout: [function_index, byte_size, captured_var1, ...].
         // The size header lets a callable-resource destructor invalidate the
@@ -9852,6 +10175,9 @@ impl WasmCodeGen {
 
         lambda_code.push_str("    (local $closure_tmp i32)\n");
         lambda_code.push_str("    (local $list_tmp i32)\n");
+        for depth in 1..lambda_list_tmp_count {
+            lambda_code.push_str(&format!("    (local $list_tmp_{} i32)\n", depth));
+        }
         lambda_code.push_str("    (local $match_tmp i32)\n");
         lambda_code.push_str("    (local $match_tmp_i64 i64)\n");
         lambda_code.push_str("    (local $match_tmp_f32 f32)\n");
@@ -9932,14 +10258,39 @@ impl WasmCodeGen {
         // Generate lambda body with captured variable context
         let old_in_lambda = self.in_lambda_with_captures;
         let old_captured_vars = self.captured_vars.clone();
+        let old_current_function = self.current_function.clone();
+        let old_default_arena = self.default_arena;
 
         self.in_lambda_with_captures = !free_vars.is_empty();
         self.captured_vars = free_vars.iter().map(|(name, _)| name.clone()).collect();
+        self.current_function = Some(lambda_name.clone());
+        self.default_arena = None;
+        self.functions.insert(
+            lambda_name.clone(),
+            FunctionSig {
+                _params: abi.params.clone(),
+                result: Some(abi.result),
+            },
+        );
+        self.function_source_sigs.insert(
+            lambda_name.clone(),
+            FunctionSourceSig {
+                type_params: Vec::new(),
+                params: abi.source_params.clone(),
+                result: Some(abi.source_result.clone()),
+            },
+        );
         let old_record_literal_depth = self.record_literal_depth;
         let old_record_tmp_count = self.record_tmp_count;
+        let old_list_literal_depth = self.list_literal_depth;
+        let old_list_tmp_count = self.list_tmp_count;
         let old_with_arena_depth = self.with_arena_depth;
+        let old_arena_stack = std::mem::take(&mut self.arena_stack);
+        let old_loop_arena_depths = std::mem::take(&mut self.loop_arena_depths);
         self.record_literal_depth = 0;
         self.record_tmp_count = lambda_record_tmp_count;
+        self.list_literal_depth = 0;
+        self.list_tmp_count = lambda_list_tmp_count;
         self.with_arena_depth = 0;
 
         // Save current output and switch to lambda code
@@ -9953,6 +10304,7 @@ impl WasmCodeGen {
             if let Some(source_ty) = abi.source_params.get(i) {
                 self.set_local_source_type(&param.name, source_ty.clone());
             }
+            self.set_local_alias(&param.name, param.name.clone());
             self.activate_local_binding(&param.name);
         }
         self.add_local("closure", lambda.params.len() as u32);
@@ -9962,6 +10314,7 @@ impl WasmCodeGen {
             if let Some(source_ty) = free_var_sources.get(name) {
                 self.set_local_source_type(name, source_ty.clone());
             }
+            self.set_local_alias(name, format!("{}_captured", name));
             self.activate_local_binding(name);
         }
 
@@ -9978,6 +10331,7 @@ impl WasmCodeGen {
         if body_result.is_ok()
             && Self::is_unit_source_type(&abi.source_result)
             && !self.expr_leaves_value(&lambda.body)
+            && !Self::expr_diverges_codegen(&lambda.body)
         {
             self.output.push_str("    i32.const 0\n");
         }
@@ -9989,9 +10343,15 @@ impl WasmCodeGen {
 
         self.in_lambda_with_captures = old_in_lambda;
         self.captured_vars = old_captured_vars;
+        self.current_function = old_current_function;
+        self.default_arena = old_default_arena;
         self.record_literal_depth = old_record_literal_depth;
         self.record_tmp_count = old_record_tmp_count;
+        self.list_literal_depth = old_list_literal_depth;
+        self.list_tmp_count = old_list_tmp_count;
         self.with_arena_depth = old_with_arena_depth;
+        self.arena_stack = old_arena_stack;
+        self.loop_arena_depths = old_loop_arena_depths;
 
         body_result?;
 
@@ -10044,6 +10404,7 @@ impl WasmCodeGen {
             if let Some(source_ty) = abi.source_params.get(idx) {
                 self.set_local_source_type(&param.name, source_ty.clone());
             }
+            self.set_local_alias(&param.name, param.name.clone());
             self.activate_local_binding(&param.name);
         }
 
@@ -10310,12 +10671,18 @@ impl WasmCodeGen {
                     free_vars,
                 )?;
             }
+            ExprKind::Return(Some(inner)) => {
+                self.collect_free_variables_for_codegen(inner, bound, seen, free_vars)?;
+            }
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
             | ExprKind::StringLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
+            | ExprKind::Break
+            | ExprKind::Continue
+            | ExprKind::Return(None)
             | ExprKind::VariantRef(_) => {}
         }
 
@@ -10508,15 +10875,36 @@ impl WasmCodeGen {
     }
 
     fn emit_local_get(&mut self, name: &str) {
-        if self.in_lambda_with_captures && self.captured_vars.iter().any(|var| var == name) {
-            self.output
-                .push_str(&format!("    local.get ${}_captured\n", name));
-        } else if let Some(local_name) = self.lookup_local_alias(name) {
+        if let Some(local_name) = self.lookup_local_alias(name) {
             self.output
                 .push_str(&format!("    local.get ${}\n", local_name));
+        } else if self.in_lambda_with_captures && self.captured_vars.iter().any(|var| var == name) {
+            self.output
+                .push_str(&format!("    local.get ${}_captured\n", name));
         } else {
             self.output.push_str(&format!("    local.get ${}\n", name));
         }
+    }
+
+    fn is_payload_free_enum_binary(&self, binary: &BinaryExpr) -> bool {
+        let enum_name = match self
+            .infer_expr_source_type(&binary.left)
+            .or_else(|| self.infer_expr_source_type(&binary.right))
+        {
+            Some(Type::Named(name)) => name,
+            _ => return false,
+        };
+        self.enums
+            .get(&enum_name)
+            .is_some_and(|variants| variants.iter().all(|v| v.payload.is_none()))
+    }
+
+    fn is_char_binary(&self, binary: &BinaryExpr) -> bool {
+        matches!(
+            self.infer_expr_source_type(&binary.left)
+                .or_else(|| self.infer_expr_source_type(&binary.right)),
+            Some(Type::Named(ref name)) if name == "Char"
+        )
     }
 
     fn generate_binary_expr(&mut self, binary: &BinaryExpr) -> Result<(), CodeGenError> {
@@ -10537,6 +10925,21 @@ impl WasmCodeGen {
             return Ok(());
         }
 
+        if matches!(binary.op, BinaryOp::Eq | BinaryOp::Ne)
+            && self.is_payload_free_enum_binary(binary)
+        {
+            self.generate_expr(&binary.left)?;
+            self.output.push_str("    i32.load\n");
+            self.generate_expr(&binary.right)?;
+            self.output.push_str("    i32.load\n");
+            self.output.push_str(if binary.op == BinaryOp::Eq {
+                "    i32.eq\n"
+            } else {
+                "    i32.ne\n"
+            });
+            return Ok(());
+        }
+
         let operand_type = self.infer_binary_operand_type(binary)?;
 
         if operand_type == WasmType::F64 && binary.op == BinaryOp::Mod {
@@ -10554,6 +10957,24 @@ impl WasmCodeGen {
         } else {
             self.generate_expr_with_wasm_type(&binary.left, operand_type)?;
             self.generate_expr_with_wasm_type(&binary.right, operand_type)?;
+        }
+
+        if operand_type == WasmType::I32
+            && matches!(
+                binary.op,
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+            )
+            && self.is_char_binary(binary)
+        {
+            let op = match binary.op {
+                BinaryOp::Lt => "i32.lt_u",
+                BinaryOp::Le => "i32.le_u",
+                BinaryOp::Gt => "i32.gt_u",
+                BinaryOp::Ge => "i32.ge_u",
+                _ => unreachable!(),
+            };
+            self.output.push_str(&format!("    {}\n", op));
+            return Ok(());
         }
 
         // Generate operation
@@ -11688,8 +12109,11 @@ impl WasmCodeGen {
 
         match &expr.kind {
             ExprKind::Match(match_expr) => {
-                return self
-                    .generate_match_expr_with_expected_source(match_expr, Some(expected_source));
+                return self.generate_match_expr_with_expected_source(
+                    expr.id,
+                    match_expr,
+                    Some(expected_source),
+                );
             }
             ExprKind::Then(then) => {
                 return self.generate_then_expr_with_expected_source(then, Some(expected_source));
@@ -12959,6 +13383,13 @@ impl WasmCodeGen {
                 result_source_ty,
                 result_ty,
             ),
+            IterationInputKind::Range => self.generate_range_map_call(
+                call,
+                &item_source_ty,
+                item_ty,
+                result_source_ty,
+                result_ty,
+            ),
             IterationInputKind::List | IterationInputKind::Unknown => self.generate_list_map_call(
                 call,
                 &item_source_ty,
@@ -13088,6 +13519,9 @@ impl WasmCodeGen {
         match self.iteration_input_kind(call, "filter")? {
             IterationInputKind::Option => {
                 self.generate_option_filter_call(call, &item_source_ty, item_ty)
+            }
+            IterationInputKind::Range => {
+                self.generate_range_filter_call(call, &item_source_ty, item_ty)
             }
             IterationInputKind::List | IterationInputKind::Unknown => {
                 self.generate_list_filter_call(call, &item_source_ty, item_ty)
@@ -13235,7 +13669,13 @@ impl WasmCodeGen {
                 "fold expects list, initial, and reducer arguments".to_string(),
             ));
         }
-        self.ensure_list_iteration_argument(call, "fold")?;
+        let input_kind = self.iteration_input_kind(call, "fold")?;
+        if matches!(input_kind, IterationInputKind::Option) {
+            return Err(CodeGenError::UnsupportedFeature(
+                "fold code generation currently supports List and Range inputs, found Option"
+                    .to_string(),
+            ));
+        }
         let item_source_ty = self.iteration_item_source_type(call, "fold")?;
         let item_ty = self.convert_type(&item_source_ty)?;
         let acc_source_ty = self.infer_expr_source_type(&call.args[1]).ok_or_else(|| {
@@ -13245,8 +13685,18 @@ impl WasmCodeGen {
             )
         })?;
         let acc_ty = self.convert_type(&acc_source_ty)?;
-        self.ensure_supported_closure_wasm_type(item_ty, "fold List item")?;
+        self.ensure_supported_closure_wasm_type(item_ty, "fold input item")?;
         self.ensure_supported_closure_wasm_type(acc_ty, "fold accumulator")?;
+
+        if matches!(input_kind, IterationInputKind::Range) {
+            return self.generate_range_fold_call(
+                call,
+                &item_source_ty,
+                item_ty,
+                acc_source_ty,
+                acc_ty,
+            );
+        }
 
         self.output
             .push_str("    ;; fold(list, initial, reducer)\n");
@@ -13297,6 +13747,218 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn emit_range_loop_setup(&mut self) {
+        self.output.push_str("    local.get $iter_list\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.set $iter_value\n");
+        self.output.push_str("    local.get $iter_list\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    local.get $iter_value\n");
+        self.output.push_str("    i32.sub\n");
+        self.output.push_str("    local.tee $iter_len\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.lt_s\n");
+        self.output.push_str("    (if\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        i32.const 0\n");
+        self.output.push_str("        local.set $iter_len\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $iter_index\n");
+    }
+
+    fn generate_range_map_call(
+        &mut self,
+        call: &CallExpr,
+        item_source_ty: &Type,
+        item_ty: WasmType,
+        result_source_ty: Type,
+        result_ty: WasmType,
+    ) -> Result<(), CodeGenError> {
+        let result_size = self.wasm_type_size(result_ty);
+        self.output.push_str("    ;; map(range, mapper)\n");
+        self.generate_expr(&call.args[0])?;
+        self.output.push_str("    local.set $iter_list\n");
+        self.generate_lambda_argument(
+            &call.args[1],
+            vec![item_ty],
+            result_ty,
+            vec![item_source_ty.clone()],
+            result_source_ty,
+        )?;
+        self.output.push_str("    local.set $iter_func\n");
+
+        self.emit_range_loop_setup();
+
+        self.output.push_str("    local.get $iter_len\n");
+        self.output
+            .push_str(&format!("    i32.const {}\n", result_size));
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $iter_out\n");
+
+        self.store_iter_out_header("iter_len")?;
+
+        self.output.push_str("    (loop $map_loop\n");
+        self.output.push_str("      local.get $iter_index\n");
+        self.output.push_str("      local.get $iter_len\n");
+        self.output.push_str("      i32.lt_u\n");
+        self.output.push_str("      (if\n");
+        self.output.push_str("        (then\n");
+        self.store_current_iter_output_address("iter_index", result_ty)?;
+        self.output.push_str("          local.get $iter_value\n");
+        self.emit_iter_func_call(&[item_ty], result_ty, "          ");
+        self.output.push_str(&format!(
+            "          {}\n",
+            self.wasm_store_op_for_wasm_type(result_ty)
+        ));
+        self.increment_local("iter_index")?;
+        self.increment_local("iter_value")?;
+        self.output.push_str("          br $map_loop\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("    local.get $iter_out\n");
+
+        Ok(())
+    }
+
+    fn generate_range_filter_call(
+        &mut self,
+        call: &CallExpr,
+        item_source_ty: &Type,
+        item_ty: WasmType,
+    ) -> Result<(), CodeGenError> {
+        let item_size = self.wasm_type_size(item_ty);
+        self.output.push_str("    ;; filter(range, predicate)\n");
+        self.generate_expr(&call.args[0])?;
+        self.output.push_str("    local.set $iter_list\n");
+        self.generate_lambda_argument(
+            &call.args[1],
+            vec![item_ty],
+            WasmType::I32,
+            vec![item_source_ty.clone()],
+            Type::Named("Boolean".to_string()),
+        )?;
+        self.output.push_str("    local.set $iter_func\n");
+
+        self.emit_range_loop_setup();
+
+        self.output.push_str("    local.get $iter_len\n");
+        self.output
+            .push_str(&format!("    i32.const {}\n", item_size));
+        self.output.push_str("    i32.mul\n");
+        self.output.push_str("    i32.const 8\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    call $allocate\n");
+        self.output.push_str("    local.set $iter_out\n");
+
+        self.output.push_str("    local.get $iter_out\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $iter_out\n");
+        self.output.push_str("    i32.const 4\n");
+        self.output.push_str("    i32.add\n");
+        self.output.push_str("    local.get $iter_len\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    i32.const 0\n");
+        self.output.push_str("    local.set $iter_out_index\n");
+
+        self.output.push_str("    (loop $filter_loop\n");
+        self.output.push_str("      local.get $iter_index\n");
+        self.output.push_str("      local.get $iter_len\n");
+        self.output.push_str("      i32.lt_u\n");
+        self.output.push_str("      (if\n");
+        self.output.push_str("        (then\n");
+        self.output.push_str("          local.get $iter_value\n");
+        self.emit_iter_func_call(&[item_ty], WasmType::I32, "          ");
+        self.output.push_str("          local.set $iter_result\n");
+        self.output.push_str("          local.get $iter_result\n");
+        self.output.push_str("          (if\n");
+        self.output.push_str("            (then\n");
+        self.store_current_iter_output_address("iter_out_index", item_ty)?;
+        self.output.push_str("              local.get $iter_value\n");
+        self.output.push_str(&format!(
+            "              {}\n",
+            self.wasm_store_op_for_wasm_type(item_ty)
+        ));
+        self.increment_local("iter_out_index")?;
+        self.output.push_str("            )\n");
+        self.output.push_str("          )\n");
+        self.increment_local("iter_index")?;
+        self.increment_local("iter_value")?;
+        self.output.push_str("          br $filter_loop\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+
+        self.output.push_str("    local.get $iter_out\n");
+        self.output.push_str("    local.get $iter_out_index\n");
+        self.output.push_str("    i32.store\n");
+        self.output.push_str("    local.get $iter_out\n");
+
+        Ok(())
+    }
+
+    fn generate_range_fold_call(
+        &mut self,
+        call: &CallExpr,
+        item_source_ty: &Type,
+        item_ty: WasmType,
+        acc_source_ty: Type,
+        acc_ty: WasmType,
+    ) -> Result<(), CodeGenError> {
+        self.output
+            .push_str("    ;; fold(range, initial, reducer)\n");
+        self.generate_expr(&call.args[0])?;
+        self.output.push_str("    local.set $iter_list\n");
+        self.generate_expr(&call.args[1])?;
+        self.output
+            .push_str(&format!("    local.set ${}\n", self.iter_acc_local(acc_ty)));
+        self.generate_lambda_argument(
+            &call.args[2],
+            vec![acc_ty, item_ty],
+            acc_ty,
+            vec![acc_source_ty.clone(), item_source_ty.clone()],
+            acc_source_ty,
+        )?;
+        self.output.push_str("    local.set $iter_func\n");
+
+        self.emit_range_loop_setup();
+
+        self.output.push_str("    (loop $fold_loop\n");
+        self.output.push_str("      local.get $iter_index\n");
+        self.output.push_str("      local.get $iter_len\n");
+        self.output.push_str("      i32.lt_u\n");
+        self.output.push_str("      (if\n");
+        self.output.push_str("        (then\n");
+        self.output.push_str(&format!(
+            "          local.get ${}\n",
+            self.iter_acc_local(acc_ty)
+        ));
+        self.output.push_str("          local.get $iter_value\n");
+        self.emit_iter_func_call(&[acc_ty, item_ty], acc_ty, "          ");
+        self.output.push_str(&format!(
+            "          local.set ${}\n",
+            self.iter_acc_local(acc_ty)
+        ));
+        self.increment_local("iter_index")?;
+        self.increment_local("iter_value")?;
+        self.output.push_str("          br $fold_loop\n");
+        self.output.push_str("        )\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output
+            .push_str(&format!("    local.get ${}\n", self.iter_acc_local(acc_ty)));
+
+        Ok(())
+    }
+
     fn iteration_input_kind(
         &self,
         call: &CallExpr,
@@ -13306,8 +13968,9 @@ impl WasmCodeGen {
             match source_ty {
                 Type::Generic(ref name, _) if name == "List" => Ok(IterationInputKind::List),
                 Type::Generic(ref name, _) if name == "Option" => Ok(IterationInputKind::Option),
+                Type::Generic(ref name, _) if name == "Range" => Ok(IterationInputKind::Range),
                 _ => Err(CodeGenError::UnsupportedFeature(format!(
-                    "{} code generation currently supports List and Option inputs, found {}",
+                    "{} code generation currently supports List, Option, and Range inputs, found {}",
                     function_name, source_ty
                 ))),
             }
@@ -13323,9 +13986,10 @@ impl WasmCodeGen {
     ) -> Result<Type, CodeGenError> {
         self.container_item_source_type(&call.args[0], "List")
             .or_else(|| self.container_item_source_type(&call.args[0], "Option"))
+            .or_else(|| self.container_item_source_type(&call.args[0], "Range"))
             .ok_or_else(|| {
                 CodeGenError::UnsupportedFeature(format!(
-                    "{} code generation requires a known List or Option item type",
+                    "{} code generation requires a known List, Option, or Range item type",
                     function_name
                 ))
             })
@@ -13357,25 +14021,6 @@ impl WasmCodeGen {
         self.output.push_str("        i32.store\n");
         self.output
             .push_str(&format!("        local.get ${}\n", temp_local));
-    }
-
-    fn ensure_list_iteration_argument(
-        &self,
-        call: &CallExpr,
-        function_name: &str,
-    ) -> Result<(), CodeGenError> {
-        if let Some(source_ty) = self.infer_expr_source_type(&call.args[0]) {
-            if matches!(source_ty, Type::Generic(ref name, _) if name == "List") {
-                return Ok(());
-            }
-
-            return Err(CodeGenError::UnsupportedFeature(format!(
-                "{} code generation currently supports List inputs, found {}",
-                function_name, source_ty
-            )));
-        }
-
-        Ok(())
     }
 
     fn store_iter_out_header(&mut self, len_local: &str) -> Result<(), CodeGenError> {
@@ -13875,7 +14520,15 @@ impl WasmCodeGen {
             "map" if args.len() == 2 => {
                 return self.infer_mapped_container_source_type(args[0], args[1])
             }
-            "filter" if args.len() == 2 => return self.infer_expr_source_type(args[0]),
+            "filter" if args.len() == 2 => {
+                let container_ty = self.infer_expr_source_type(args[0])?;
+                return match container_ty {
+                    Type::Generic(name, params) if name == "Range" => {
+                        Some(Type::Generic("List".to_string(), params))
+                    }
+                    other => Some(other),
+                };
+            }
             "fold" if args.len() == 3 => return self.infer_expr_source_type(args[1]),
             _ => {}
         }
@@ -13961,12 +14614,17 @@ impl WasmCodeGen {
         mapper_expr: &Expr,
     ) -> Option<Type> {
         match self.infer_expr_source_type(container_expr)? {
-            Type::Generic(name, params) if name == "List" || name == "Option" => {
+            Type::Generic(name, params) if name == "List" || name == "Option" || name == "Range" => {
                 let item_ty = params.first()?.clone();
                 let mapped_ty = self
                     .infer_callable_return_source_type(mapper_expr, std::slice::from_ref(&item_ty))
                     .unwrap_or(item_ty);
-                Some(Type::Generic(name, vec![mapped_ty]))
+                let out_container = if name == "Range" {
+                    "List".to_string()
+                } else {
+                    name
+                };
+                Some(Type::Generic(out_container, vec![mapped_ty]))
             }
             _ => None,
         }
@@ -13975,7 +14633,8 @@ impl WasmCodeGen {
     fn infer_map_result_source_type(&self, call: &CallExpr) -> Option<Type> {
         let item_ty = self
             .container_item_source_type(&call.args[0], "List")
-            .or_else(|| self.container_item_source_type(&call.args[0], "Option"))?;
+            .or_else(|| self.container_item_source_type(&call.args[0], "Option"))
+            .or_else(|| self.container_item_source_type(&call.args[0], "Range"))?;
         self.infer_callable_return_source_type(&call.args[1], &[item_ty])
     }
 
@@ -14706,6 +15365,9 @@ impl WasmCodeGen {
         block: &BlockExpr,
         bindings: &HashMap<String, Type>,
     ) -> Option<Type> {
+        if Self::block_diverges_codegen(block) {
+            return None;
+        }
         let mut block_bindings = bindings.clone();
 
         for stmt in &block.statements {
@@ -14904,7 +15566,20 @@ impl WasmCodeGen {
     }
 
     fn infer_then_result_type(&self, then: &ThenExpr) -> Result<WasmType, CodeGenError> {
-        self.infer_block_result_type(&then.then_block)
+        if !Self::block_diverges_codegen(&then.then_block) {
+            return self.infer_block_result_type(&then.then_block);
+        }
+        for (_, block) in &then.else_ifs {
+            if !Self::block_diverges_codegen(block) {
+                return self.infer_block_result_type(block);
+            }
+        }
+        if let Some(else_block) = &then.else_block {
+            if !Self::block_diverges_codegen(else_block) {
+                return self.infer_block_result_type(else_block);
+            }
+        }
+        Ok(WasmType::I32)
     }
 
     fn infer_field_access_type(
@@ -15669,6 +16344,209 @@ impl WasmCodeGen {
         Ok(())
     }
 
+    fn collect_pattern_scratch_locals(
+        &self,
+        pattern: &Pattern,
+        ty: &WasmType,
+        source_ty: Option<&Type>,
+        prefix: &str,
+        step: &mut usize,
+        locals: &mut Vec<(String, WasmType)>,
+    ) -> Result<(), CodeGenError> {
+        let my_step = *step;
+        *step += 1;
+
+        match pattern {
+            Pattern::Wildcard
+            | Pattern::Ident(_)
+            | Pattern::Literal(_)
+            | Pattern::EmptyList
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. } => {}
+            Pattern::ListExact(patterns) => {
+                if !patterns.is_empty() {
+                    let element_source_ty = self.list_element_source_type(source_ty);
+                    let element_wasm_ty = element_source_ty
+                        .as_ref()
+                        .map(|t| self.convert_type(t))
+                        .transpose()?
+                        .unwrap_or(*ty);
+                    for (i, p) in patterns.iter().enumerate() {
+                        let elem_local = format!("{}_elem_{}_{}", prefix, my_step, i);
+                        locals.push((elem_local, element_wasm_ty));
+                        self.collect_pattern_scratch_locals(
+                            p,
+                            &element_wasm_ty,
+                            element_source_ty.as_ref(),
+                            prefix,
+                            step,
+                            locals,
+                        )?;
+                    }
+                }
+            }
+            Pattern::ListCons(head_pattern, tail_pattern) => {
+                let element_source_ty = self.list_element_source_type(source_ty);
+                let element_wasm_ty = element_source_ty
+                    .as_ref()
+                    .map(|t| self.convert_type(t))
+                    .transpose()?
+                    .unwrap_or(*ty);
+                let elem_local = format!("{}_elem_{}", prefix, my_step);
+                let tail_local = format!("{}_tail_{}", prefix, my_step);
+                locals.push((elem_local, element_wasm_ty));
+                locals.push((tail_local, *ty));
+                self.collect_pattern_scratch_locals(
+                    head_pattern,
+                    &element_wasm_ty,
+                    element_source_ty.as_ref(),
+                    prefix,
+                    step,
+                    locals,
+                )?;
+                self.collect_pattern_scratch_locals(
+                    tail_pattern,
+                    ty,
+                    source_ty,
+                    prefix,
+                    step,
+                    locals,
+                )?;
+            }
+            Pattern::Some(inner) => {
+                let payload_ty = self.variant_payload_type(source_ty, "Some");
+                self.collect_variant_pattern_scratch_locals(
+                    inner, payload_ty, prefix, my_step, step, locals,
+                )?;
+            }
+            Pattern::Ok(inner) => {
+                let payload_ty = self.variant_payload_type(source_ty, "Ok");
+                self.collect_variant_pattern_scratch_locals(
+                    inner, payload_ty, prefix, my_step, step, locals,
+                )?;
+            }
+            Pattern::Err(inner) => {
+                let payload_ty = self.variant_payload_type(source_ty, "Err");
+                self.collect_variant_pattern_scratch_locals(
+                    inner, payload_ty, prefix, my_step, step, locals,
+                )?;
+            }
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                payload: Some(inner),
+            } => {
+                let payload_ty = self.enum_variant_payload_type(enum_name, variant_name);
+                self.collect_variant_pattern_scratch_locals(
+                    inner, payload_ty, prefix, my_step, step, locals,
+                )?;
+            }
+            Pattern::Record(record_name, fields) => {
+                self.collect_record_pattern_scratch_locals(
+                    record_name,
+                    source_ty,
+                    fields,
+                    None,
+                    prefix,
+                    my_step,
+                    step,
+                    locals,
+                )?;
+            }
+            Pattern::RecordDestruct {
+                type_name,
+                fields,
+                rest,
+            } => {
+                self.collect_record_pattern_scratch_locals(
+                    type_name,
+                    source_ty,
+                    fields,
+                    rest.as_ref(),
+                    prefix,
+                    my_step,
+                    step,
+                    locals,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_variant_pattern_scratch_locals(
+        &self,
+        inner: &Pattern,
+        payload_ty: Option<&Type>,
+        prefix: &str,
+        my_step: usize,
+        step: &mut usize,
+        locals: &mut Vec<(String, WasmType)>,
+    ) -> Result<(), CodeGenError> {
+        if !matches!(inner, Pattern::Ident(_) | Pattern::Wildcard) {
+            let payload_wasm_ty = self.variant_payload_wasm_type(payload_ty)?;
+            let payload_local = format!("{}_payload_{}", prefix, my_step);
+            locals.push((payload_local, payload_wasm_ty));
+            self.collect_pattern_scratch_locals(
+                inner,
+                &payload_wasm_ty,
+                payload_ty,
+                prefix,
+                step,
+                locals,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_record_pattern_scratch_locals(
+        &self,
+        record_name: &str,
+        source_ty: Option<&Type>,
+        fields: &[(String, Pattern)],
+        rest: Option<&String>,
+        prefix: &str,
+        my_step: usize,
+        step: &mut usize,
+        locals: &mut Vec<(String, WasmType)>,
+    ) -> Result<(), CodeGenError> {
+        if let Some(rest_name) = rest {
+            if rest_name != "_" {
+                locals.push((format!("{}_rest_tmp_{}", prefix, my_step), WasmType::I32));
+            }
+        }
+
+        for (field_index, (field_name, field_pattern)) in fields.iter().enumerate() {
+            if !matches!(
+                field_pattern,
+                Pattern::Ident(_) | Pattern::Wildcard | Pattern::Literal(_)
+            ) {
+                let field_type = self
+                    .instantiated_record_field_type_by_name(record_name, source_ty, field_name)
+                    .ok_or_else(|| {
+                        CodeGenError::NotImplemented(format!(
+                            "field destructuring for {} in record {}",
+                            field_name, record_name
+                        ))
+                    })?;
+                let field_wasm_ty = self.convert_type(&field_type)?;
+                let field_local = format!("{}_field_{}_{}", prefix, my_step, field_index);
+                locals.push((field_local, field_wasm_ty));
+                self.collect_pattern_scratch_locals(
+                    field_pattern,
+                    &field_wasm_ty,
+                    Some(&field_type),
+                    prefix,
+                    step,
+                    locals,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn collect_record_pattern_locals(
         &mut self,
         record_name: &str,
@@ -15677,6 +16555,15 @@ impl WasmCodeGen {
         rest: Option<&String>,
         locals: &mut Vec<(String, WasmType)>,
     ) -> Result<(), CodeGenError> {
+        if let Some(rest_name) = rest {
+            if rest_name != "_" {
+                let residual_name = self.ensure_residual_record_definition(record_name, fields)?;
+                locals.push((rest_name.clone(), WasmType::I32));
+                self.set_local_type(rest_name, WasmType::I32);
+                self.set_local_source_type(rest_name, Type::Named(residual_name));
+            }
+        }
+
         for (field_name, field_pattern) in fields {
             let field_type = self
                 .instantiated_record_field_type_by_name(record_name, source_ty, field_name)
@@ -15688,16 +16575,6 @@ impl WasmCodeGen {
                 })?;
             let wasm_type = self.convert_type(&field_type)?;
             self.collect_locals_from_pattern(field_pattern, &wasm_type, Some(&field_type), locals)?;
-        }
-
-        if let Some(rest_name) = rest {
-            if rest_name == "_" {
-                return Ok(());
-            }
-            let residual_name = self.ensure_residual_record_definition(record_name, fields)?;
-            locals.push((rest_name.clone(), WasmType::I32));
-            self.set_local_type(rest_name, WasmType::I32);
-            self.set_local_source_type(rest_name, Type::Named(residual_name));
         }
 
         Ok(())
@@ -16031,7 +16908,8 @@ impl WasmCodeGen {
             ExprKind::Freeze(inner)
             | ExprKind::Await(inner)
             | ExprKind::Spawn(inner)
-            | ExprKind::FieldAccess(inner, _) => {
+            | ExprKind::FieldAccess(inner, _)
+            | ExprKind::Return(Some(inner)) => {
                 Self::merge_array_use(
                     &mut found_array_use,
                     &mut elem_ty,
@@ -16066,7 +16944,10 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
-            | ExprKind::VariantRef(_) => {}
+            | ExprKind::VariantRef(_)
+            | ExprKind::Break
+            | ExprKind::Continue
+            | ExprKind::Return(None) => {}
         }
 
         (found_array_use, elem_ty)
@@ -16183,6 +17064,17 @@ impl WasmCodeGen {
                             self.register_record_var_type(name, annotation);
                         }
                     } else {
+                        let bind_id = self.alloc_node_id(Self::ast_node_key(bind.value.id, 3));
+                        locals.push((format!("__pat_bind_scrutinee_{}", bind_id), ty));
+                        let mut step = 0usize;
+                        self.collect_pattern_scratch_locals(
+                            &bind.pattern,
+                            &ty,
+                            source_ty.as_ref(),
+                            &format!("__pb{}", bind_id),
+                            &mut step,
+                            locals,
+                        )?;
                         self.collect_locals_from_pattern(
                             &bind.pattern,
                             &ty,
@@ -16371,6 +17263,7 @@ impl WasmCodeGen {
                     }
                 }
             }
+            ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => false,
             // Most other expressions leave values
             _ => true,
         }
@@ -16456,124 +17349,173 @@ impl WasmCodeGen {
     }
 
     fn max_record_tmp_depth_in_block(block: &BlockExpr) -> usize {
+        Self::max_tmp_depth_in_block(block, false)
+    }
+
+    fn max_record_tmp_depth_in_expr(expr: &Expr) -> usize {
+        Self::max_tmp_depth_in_expr(expr, false)
+    }
+
+    fn max_list_tmp_depth_in_block(block: &BlockExpr) -> usize {
+        Self::max_tmp_depth_in_block(block, true)
+    }
+
+    fn max_list_tmp_depth_in_expr(expr: &Expr) -> usize {
+        Self::max_tmp_depth_in_expr(expr, true)
+    }
+
+    fn max_tmp_depth_in_block(block: &BlockExpr, count_lists: bool) -> usize {
         let stmt_depth = block
             .statements
             .iter()
-            .map(Self::max_record_tmp_depth_in_stmt)
+            .map(|stmt| Self::max_tmp_depth_in_stmt(stmt, count_lists))
             .max()
             .unwrap_or(0);
         let expr_depth = block
             .expr
             .as_deref()
-            .map(Self::max_record_tmp_depth_in_expr)
+            .map(|expr| Self::max_tmp_depth_in_expr(expr, count_lists))
             .unwrap_or(0);
         stmt_depth.max(expr_depth)
     }
 
-    fn max_record_tmp_depth_in_stmt(stmt: &Stmt) -> usize {
+    fn max_tmp_depth_in_stmt(stmt: &Stmt, count_lists: bool) -> usize {
         match stmt {
-            Stmt::Binding(bind) => Self::max_record_tmp_depth_in_expr(&bind.value)
-                .max(Self::max_record_tmp_depth_in_pattern(&bind.pattern)),
-            Stmt::Assignment(assign) => Self::max_record_tmp_depth_in_expr(&assign.value),
-            Stmt::Expr(expr) => Self::max_record_tmp_depth_in_expr(expr),
+            Stmt::Binding(bind) => {
+                let expr_depth = Self::max_tmp_depth_in_expr(&bind.value, count_lists);
+                if count_lists {
+                    expr_depth
+                } else {
+                    expr_depth.max(Self::max_record_tmp_depth_in_pattern(&bind.pattern))
+                }
+            }
+            Stmt::Assignment(assign) => Self::max_tmp_depth_in_expr(&assign.value, count_lists),
+            Stmt::Expr(expr) => Self::max_tmp_depth_in_expr(expr, count_lists),
         }
     }
 
-    fn max_record_tmp_depth_in_expr(expr: &Expr) -> usize {
+    fn max_tmp_depth_in_expr(expr: &Expr, count_lists: bool) -> usize {
         match &expr.kind {
             ExprKind::RecordLit(record) => {
-                1 + record
-                    .fields
-                    .iter()
-                    .map(Self::max_record_tmp_depth_in_field_init)
-                    .max()
-                    .unwrap_or(0)
+                let child = Self::max_tmp_depth_in_record_lit_fields(record, count_lists);
+                if count_lists {
+                    child
+                } else {
+                    1 + child
+                }
             }
-            ExprKind::Clone(clone) => Self::max_record_tmp_depth_in_expr(&clone.base)
-                .max(Self::max_record_tmp_depth_in_record_lit(&clone.updates)),
-            ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
-                Self::max_record_tmp_depth_in_expr(inner)
-            }
+            ExprKind::Clone(clone) => Self::max_tmp_depth_in_expr(&clone.base, count_lists).max(
+                Self::max_tmp_depth_in_record_lit(&clone.updates, count_lists),
+            ),
+            ExprKind::Freeze(inner)
+            | ExprKind::Await(inner)
+            | ExprKind::Spawn(inner)
+            | ExprKind::Return(Some(inner)) => Self::max_tmp_depth_in_expr(inner, count_lists),
             ExprKind::Then(then) => {
                 let else_if_depth = then
                     .else_ifs
                     .iter()
                     .map(|(condition, block)| {
-                        Self::max_record_tmp_depth_in_expr(condition)
-                            .max(Self::max_record_tmp_depth_in_block(block))
+                        Self::max_tmp_depth_in_expr(condition, count_lists)
+                            .max(Self::max_tmp_depth_in_block(block, count_lists))
                     })
                     .max()
                     .unwrap_or(0);
-                Self::max_record_tmp_depth_in_expr(&then.condition)
-                    .max(Self::max_record_tmp_depth_in_block(&then.then_block))
+                Self::max_tmp_depth_in_expr(&then.condition, count_lists)
+                    .max(Self::max_tmp_depth_in_block(&then.then_block, count_lists))
                     .max(else_if_depth)
                     .max(
                         then.else_block
                             .as_ref()
-                            .map(Self::max_record_tmp_depth_in_block)
+                            .map(|block| Self::max_tmp_depth_in_block(block, count_lists))
                             .unwrap_or(0),
                     )
             }
             ExprKind::While(while_expr) => {
-                Self::max_record_tmp_depth_in_expr(&while_expr.condition)
-                    .max(Self::max_record_tmp_depth_in_block(&while_expr.body))
+                Self::max_tmp_depth_in_expr(&while_expr.condition, count_lists)
+                    .max(Self::max_tmp_depth_in_block(&while_expr.body, count_lists))
             }
             ExprKind::Match(match_expr) => {
                 let arm_depth = match_expr
                     .arms
                     .iter()
                     .map(|arm| {
-                        Self::max_record_tmp_depth_in_pattern(&arm.pattern)
-                            .max(Self::max_record_tmp_depth_in_block(&arm.body))
+                        let body_depth = Self::max_tmp_depth_in_block(&arm.body, count_lists);
+                        if count_lists {
+                            body_depth
+                        } else {
+                            body_depth.max(Self::max_record_tmp_depth_in_pattern(&arm.pattern))
+                        }
                     })
                     .max()
                     .unwrap_or(0);
-                Self::max_record_tmp_depth_in_expr(&match_expr.expr).max(arm_depth)
+                Self::max_tmp_depth_in_expr(&match_expr.expr, count_lists).max(arm_depth)
             }
             ExprKind::Call(call) => {
                 let arg_depth = call
                     .args
                     .iter()
-                    .map(|arg| Self::max_record_tmp_depth_in_expr(arg))
+                    .map(|arg| Self::max_tmp_depth_in_expr(arg, count_lists))
                     .max()
                     .unwrap_or(0);
-                Self::max_record_tmp_depth_in_expr(&call.function).max(arg_depth)
+                Self::max_tmp_depth_in_expr(&call.function, count_lists).max(arg_depth)
             }
-            ExprKind::Binary(binary) => Self::max_record_tmp_depth_in_expr(&binary.left)
-                .max(Self::max_record_tmp_depth_in_expr(&binary.right)),
-            ExprKind::Unary(unary) => Self::max_record_tmp_depth_in_expr(&unary.expr),
-            ExprKind::Cast(cast) => Self::max_record_tmp_depth_in_expr(&cast.expr),
+            ExprKind::Binary(binary) => Self::max_tmp_depth_in_expr(&binary.left, count_lists)
+                .max(Self::max_tmp_depth_in_expr(&binary.right, count_lists)),
+            ExprKind::Unary(unary) => Self::max_tmp_depth_in_expr(&unary.expr, count_lists),
+            ExprKind::Cast(cast) => Self::max_tmp_depth_in_expr(&cast.expr, count_lists),
             ExprKind::Pipe(pipe) => {
                 let target_depth = match &pipe.target {
                     PipeTarget::Ident(_) => 0,
-                    PipeTarget::Expr(target) => Self::max_record_tmp_depth_in_expr(target),
+                    PipeTarget::Expr(target) => Self::max_tmp_depth_in_expr(target, count_lists),
                 };
-                Self::max_record_tmp_depth_in_expr(&pipe.expr).max(target_depth)
+                Self::max_tmp_depth_in_expr(&pipe.expr, count_lists).max(target_depth)
             }
             ExprKind::With(with) => {
                 let binding_depth = with
                     .bindings
                     .iter()
-                    .map(Self::max_record_tmp_depth_in_field_init)
+                    .map(|field| Self::max_tmp_depth_in_field_init(field, count_lists))
                     .max()
                     .unwrap_or(0);
-                binding_depth.max(Self::max_record_tmp_depth_in_block(&with.body))
+                binding_depth.max(Self::max_tmp_depth_in_block(&with.body, count_lists))
             }
             ExprKind::WithLifetime(with_lifetime) => {
-                Self::max_record_tmp_depth_in_block(&with_lifetime.body)
+                Self::max_tmp_depth_in_block(&with_lifetime.body, count_lists)
             }
-            ExprKind::Block(block) => Self::max_record_tmp_depth_in_block(block),
-            ExprKind::FieldAccess(object, _) => Self::max_record_tmp_depth_in_expr(object),
-            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => items
-                .iter()
-                .map(|item| Self::max_record_tmp_depth_in_expr(item))
-                .max()
-                .unwrap_or(0),
-            ExprKind::RangeLit(range) => Self::max_record_tmp_depth_in_expr(&range.start)
-                .max(Self::max_record_tmp_depth_in_expr(&range.end)),
-            ExprKind::Lambda(lambda) => Self::max_record_tmp_depth_in_expr(&lambda.body),
+            ExprKind::Block(block) => Self::max_tmp_depth_in_block(block, count_lists),
+            ExprKind::FieldAccess(object, _) => Self::max_tmp_depth_in_expr(object, count_lists),
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+                let child = items
+                    .iter()
+                    .map(|item| Self::max_tmp_depth_in_expr(item, count_lists))
+                    .max()
+                    .unwrap_or(0);
+                if count_lists {
+                    1 + child
+                } else {
+                    child
+                }
+            }
+            ExprKind::RangeLit(range) => {
+                let child = Self::max_tmp_depth_in_expr(&range.start, count_lists)
+                    .max(Self::max_tmp_depth_in_expr(&range.end, count_lists));
+                if count_lists {
+                    1 + child
+                } else {
+                    child
+                }
+            }
+            ExprKind::Lambda(lambda) => {
+                if count_lists {
+                    // Lambdas are emitted as separate Wasm functions with their own list_tmp slots.
+                    0
+                } else {
+                    Self::max_tmp_depth_in_expr(&lambda.body, count_lists)
+                }
+            }
             ExprKind::PrototypeClone(proto_clone) => {
-                Self::max_record_tmp_depth_in_record_lit(&proto_clone.updates)
+                Self::max_tmp_depth_in_record_lit(&proto_clone.updates, count_lists)
             }
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
@@ -16582,23 +17524,35 @@ impl WasmCodeGen {
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
             | ExprKind::Ident(_)
-            | ExprKind::VariantRef(_) => 0,
+            | ExprKind::VariantRef(_)
+            | ExprKind::Break
+            | ExprKind::Continue
+            | ExprKind::Return(None) => 0,
         }
     }
 
-    fn max_record_tmp_depth_in_record_lit(record: &RecordLit) -> usize {
-        1 + record
+    fn max_tmp_depth_in_record_lit_fields(record: &RecordLit, count_lists: bool) -> usize {
+        record
             .fields
             .iter()
-            .map(Self::max_record_tmp_depth_in_field_init)
+            .map(|field| Self::max_tmp_depth_in_field_init(field, count_lists))
             .max()
             .unwrap_or(0)
     }
 
-    fn max_record_tmp_depth_in_field_init(field: &FieldInit) -> usize {
+    fn max_tmp_depth_in_record_lit(record: &RecordLit, count_lists: bool) -> usize {
+        let child = Self::max_tmp_depth_in_record_lit_fields(record, count_lists);
+        if count_lists {
+            child
+        } else {
+            1 + child
+        }
+    }
+
+    fn max_tmp_depth_in_field_init(field: &FieldInit, count_lists: bool) -> usize {
         match field {
             FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
-                Self::max_record_tmp_depth_in_expr(value)
+                Self::max_tmp_depth_in_expr(value, count_lists)
             }
         }
     }
@@ -16641,18 +17595,11 @@ impl WasmCodeGen {
     }
 
     fn match_pattern_local_name(
-        &mut self,
-        match_expr: &MatchExpr,
+        match_id: usize,
         arm_index: usize,
         binding_index: usize,
         source_name: &str,
     ) -> String {
-        // The pointer is only an in-run identity key shared by the local
-        // collection and emission passes; the emitted name carries the dense
-        // per-function index, so the WAT text is deterministic across runs.
-        let key = std::ptr::from_ref(match_expr) as usize;
-        let next = self.match_local_ids.len();
-        let match_id = *self.match_local_ids.entry(key).or_insert(next);
         format!(
             "__match_{}_{}_{}_{}",
             match_id, arm_index, binding_index, source_name
@@ -16845,12 +17792,15 @@ impl WasmCodeGen {
                 self.collect_locals_from_block_with_expected(block, locals, expected_source)?;
             }
             ExprKind::Match(match_expr) => {
+                self.collect_locals_from_expr(&match_expr.expr, locals)?;
+                let match_id = self.alloc_node_id(Self::ast_node_key(expr.id, 1));
                 let scrutinee_source_ty = self.infer_expr_source_type(&match_expr.expr);
                 let scrutinee_wasm_ty = if let Some(source_ty) = &scrutinee_source_ty {
                     self.convert_type(source_ty)?
                 } else {
                     self.infer_expr_type(&match_expr.expr)?
                 };
+                locals.push((format!("__match_scrutinee_{}", match_id), scrutinee_wasm_ty));
                 let conflicting_pattern_bindings = self.match_pattern_binding_conflicts(
                     match_expr,
                     scrutinee_source_ty.as_ref(),
@@ -16859,6 +17809,16 @@ impl WasmCodeGen {
                 // Collect locals from match arms
                 for (arm_index, arm) in match_expr.arms.iter().enumerate() {
                     self.push_scope();
+                    let prefix = format!("__pm{}_{}", match_id, arm_index);
+                    let mut step = 0usize;
+                    self.collect_pattern_scratch_locals(
+                        &arm.pattern,
+                        &scrutinee_wasm_ty,
+                        scrutinee_source_ty.as_ref(),
+                        &prefix,
+                        &mut step,
+                        locals,
+                    )?;
                     let mut pattern_locals = Vec::new();
                     self.collect_locals_from_pattern(
                         &arm.pattern,
@@ -16869,8 +17829,8 @@ impl WasmCodeGen {
 
                     for (binding_index, (name, ty)) in pattern_locals.iter().enumerate() {
                         if conflicting_pattern_bindings.contains(name) {
-                            let local_name = self.match_pattern_local_name(
-                                match_expr,
+                            let local_name = Self::match_pattern_local_name(
+                                match_id,
                                 arm_index,
                                 binding_index,
                                 name,
@@ -16878,6 +17838,7 @@ impl WasmCodeGen {
                             self.set_local_alias(name, local_name.clone());
                             locals.push((local_name, *ty));
                         } else {
+                            self.set_local_alias(name, name.clone());
                             locals.push((name.clone(), *ty));
                         }
                         self.activate_local_binding(name);
@@ -16892,6 +17853,7 @@ impl WasmCodeGen {
                 }
             }
             ExprKind::Then(then) => {
+                self.collect_locals_from_expr(&then.condition, locals)?;
                 self.push_scope();
                 let then_result = self.collect_locals_from_block_with_expected(
                     &then.then_block,
@@ -16900,7 +17862,8 @@ impl WasmCodeGen {
                 );
                 self.pop_scope();
                 then_result?;
-                for (_, block) in &then.else_ifs {
+                for (cond, block) in &then.else_ifs {
+                    self.collect_locals_from_expr(cond, locals)?;
                     self.push_scope();
                     let else_if_result = self.collect_locals_from_block_with_expected(
                         block,
@@ -16922,6 +17885,7 @@ impl WasmCodeGen {
                 }
             }
             ExprKind::While(while_expr) => {
+                self.collect_locals_from_expr(&while_expr.condition, locals)?;
                 self.collect_locals_from_block(&while_expr.body, locals)?;
             }
             ExprKind::With(with) => {
@@ -17092,6 +18056,55 @@ impl WasmCodeGen {
             ExprKind::RangeLit(range) => {
                 self.collect_locals_from_expr(&range.start, locals)?;
                 self.collect_locals_from_expr(&range.end, locals)?;
+            }
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+                for item in items {
+                    self.collect_locals_from_expr(item, locals)?;
+                }
+            }
+            ExprKind::RecordLit(record) => {
+                for field in &record.fields {
+                    match field {
+                        FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
+                            self.collect_locals_from_expr(value, locals)?;
+                        }
+                    }
+                }
+            }
+            ExprKind::Clone(clone) => {
+                let clone_id = self.alloc_node_id(Self::ast_node_key(expr.id, 2));
+                locals.push((format!("__clone_tmp_{}", clone_id), WasmType::I32));
+                locals.push((format!("__clone_base_{}", clone_id), WasmType::I32));
+                self.collect_locals_from_expr(&clone.base, locals)?;
+                for field in &clone.updates.fields {
+                    match field {
+                        FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
+                            self.collect_locals_from_expr(value, locals)?;
+                        }
+                    }
+                }
+            }
+            ExprKind::Freeze(inner) => {
+                self.collect_locals_from_expr(inner, locals)?;
+            }
+            ExprKind::PrototypeClone(proto_clone) => {
+                for field in &proto_clone.updates.fields {
+                    match field {
+                        FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
+                            self.collect_locals_from_expr(value, locals)?;
+                        }
+                    }
+                }
+            }
+            ExprKind::Binary(binary) => {
+                self.collect_locals_from_expr(&binary.left, locals)?;
+                self.collect_locals_from_expr(&binary.right, locals)?;
+            }
+            ExprKind::FieldAccess(object, _) => {
+                self.collect_locals_from_expr(object, locals)?;
+            }
+            ExprKind::Return(Some(inner)) => {
+                self.collect_locals_from_expr(inner, locals)?;
             }
             ExprKind::Unary(unary) => {
                 self.collect_locals_from_expr(&unary.expr, locals)?;
@@ -17346,24 +18359,48 @@ impl WasmCodeGen {
         self.generate_list_literal_with_expected(items, None)
     }
 
+    fn current_list_tmp_local(&self) -> String {
+        if self.list_literal_depth == 0 {
+            "list_tmp".to_string()
+        } else {
+            format!("list_tmp_{}", self.list_literal_depth)
+        }
+    }
+
     fn generate_range_literal(&mut self, range: &RangeLit) -> Result<(), CodeGenError> {
-        self.output.push_str("    i32.const 8 ;; range size\n");
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.set $list_tmp\n");
+        if self.list_literal_depth >= self.list_tmp_count {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Collection literal nesting deeper than {} levels",
+                self.list_tmp_count
+            )));
+        }
+        let list_tmp = self.current_list_tmp_local();
+        self.list_literal_depth += 1;
+        let result = (|| -> Result<(), CodeGenError> {
+            self.output.push_str("    i32.const 8 ;; range size\n");
+            self.output.push_str("    call $allocate\n");
+            self.output
+                .push_str(&format!("    local.set ${}\n", list_tmp));
 
-        self.output.push_str("    local.get $list_tmp\n");
-        self.generate_expr_with_expected_source(&range.start, &Type::Named("Int32".to_string()))?;
-        self.output.push_str("    i32.store\n");
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+            self.generate_expr_with_expected_source(&range.start, &Type::Named("Int32".to_string()))?;
+            self.output.push_str("    i32.store\n");
 
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output
-            .push_str("    i32.const 4 ;; range end offset\n");
-        self.output.push_str("    i32.add\n");
-        self.generate_expr_with_expected_source(&range.end, &Type::Named("Int32".to_string()))?;
-        self.output.push_str("    i32.store\n");
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+            self.output
+                .push_str("    i32.const 4 ;; range end offset\n");
+            self.output.push_str("    i32.add\n");
+            self.generate_expr_with_expected_source(&range.end, &Type::Named("Int32".to_string()))?;
+            self.output.push_str("    i32.store\n");
 
-        self.output.push_str("    local.get $list_tmp\n");
-        Ok(())
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+            Ok(())
+        })();
+        self.list_literal_depth -= 1;
+        result
     }
 
     fn generate_list_literal_with_expected(
@@ -17371,58 +18408,75 @@ impl WasmCodeGen {
         items: &[Box<Expr>],
         element_source_ty: Option<&Type>,
     ) -> Result<(), CodeGenError> {
-        let element_type = if let Some(source_ty) = element_source_ty {
-            self.convert_type(source_ty)?
-        } else {
-            self.infer_collection_element_wasm_type(items)?
-        };
-        let element_size = self.wasm_type_size(element_type);
-        let list_size = 8 + (items.len() * element_size); // Header (length + capacity) + elements
-
-        // Allocate memory for the list
-        self.output
-            .push_str(&format!("    i32.const {} ;; list size\n", list_size));
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.set $list_tmp\n");
-
-        // Write length
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output
-            .push_str(&format!("    i32.const {} ;; length\n", items.len()));
-        self.output.push_str("    i32.store\n");
-
-        // Write capacity (same as length for literals)
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output
-            .push_str(&format!("    i32.const {} ;; capacity\n", items.len()));
-        self.output.push_str("    i32.store\n");
-
-        // Write elements
-        for (i, item) in items.iter().enumerate() {
-            self.output.push_str("    local.get $list_tmp\n");
-            self.output.push_str(&format!(
-                "    i32.const {} ;; offset to element {}\n",
-                8 + (i * element_size),
-                i
-            ));
-            self.output.push_str("    i32.add\n");
-            if let Some(source_ty) = element_source_ty {
-                self.generate_expr_with_expected_source(item, source_ty)?;
-            } else {
-                self.generate_expr(item)?;
-            }
-            self.output.push_str(&format!(
-                "    {}\n",
-                self.wasm_store_op_for_wasm_type(element_type)
-            ));
+        if self.list_literal_depth >= self.list_tmp_count {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Collection literal nesting deeper than {} levels",
+                self.list_tmp_count
+            )));
         }
+        let list_tmp = self.current_list_tmp_local();
+        self.list_literal_depth += 1;
+        let result = (|| -> Result<(), CodeGenError> {
+            let element_type = if let Some(source_ty) = element_source_ty {
+                self.convert_type(source_ty)?
+            } else {
+                self.infer_collection_element_wasm_type(items)?
+            };
+            let element_size = self.wasm_type_size(element_type);
+            let list_size = 8 + (items.len() * element_size); // Header (length + capacity) + elements
 
-        // Return the list pointer
-        self.output.push_str("    local.get $list_tmp\n");
+            // Allocate memory for the list
+            self.output
+                .push_str(&format!("    i32.const {} ;; list size\n", list_size));
+            self.output.push_str("    call $allocate\n");
+            self.output
+                .push_str(&format!("    local.set ${}\n", list_tmp));
 
-        Ok(())
+            // Write length
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+            self.output
+                .push_str(&format!("    i32.const {} ;; length\n", items.len()));
+            self.output.push_str("    i32.store\n");
+
+            // Write capacity (same as length for literals)
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+            self.output.push_str("    i32.const 4\n");
+            self.output.push_str("    i32.add\n");
+            self.output
+                .push_str(&format!("    i32.const {} ;; capacity\n", items.len()));
+            self.output.push_str("    i32.store\n");
+
+            // Write elements
+            for (i, item) in items.iter().enumerate() {
+                self.output
+                    .push_str(&format!("    local.get ${}\n", list_tmp));
+                self.output.push_str(&format!(
+                    "    i32.const {} ;; offset to element {}\n",
+                    8 + (i * element_size),
+                    i
+                ));
+                self.output.push_str("    i32.add\n");
+                if let Some(source_ty) = element_source_ty {
+                    self.generate_expr_with_expected_source(item, source_ty)?;
+                } else {
+                    self.generate_expr(item)?;
+                }
+                self.output.push_str(&format!(
+                    "    {}\n",
+                    self.wasm_store_op_for_wasm_type(element_type)
+                ));
+            }
+
+            // Return the list pointer
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+
+            Ok(())
+        })();
+        self.list_literal_depth -= 1;
+        result
     }
 
     fn generate_array_literal(&mut self, items: &[Box<Expr>]) -> Result<(), CodeGenError> {
@@ -17434,60 +18488,76 @@ impl WasmCodeGen {
         items: &[Box<Expr>],
         element_source_ty: Option<&Type>,
     ) -> Result<(), CodeGenError> {
-        let element_type = if let Some(source_ty) = element_source_ty {
-            self.convert_type(source_ty)?
-        } else {
-            self.infer_collection_element_wasm_type(items)?
-        };
-        let element_size = self.wasm_type_size(element_type);
-        let array_size = 8 + (items.len() * element_size);
-
-        // Allocate memory for the array: length + element-size metadata + elements.
-        self.output
-            .push_str(&format!("    i32.const {} ;; array size\n", array_size));
-        self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.tee $list_tmp\n"); // Save and leave on stack
-
-        // Write length
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output
-            .push_str(&format!("    i32.const {} ;; array length\n", items.len()));
-        self.output.push_str("    i32.store\n");
-
-        // Write element-size metadata. The current runtime only needs length,
-        // but the second header word keeps the layout explicit and extensible.
-        self.output.push_str("    local.get $list_tmp\n");
-        self.output.push_str("    i32.const 4\n");
-        self.output.push_str("    i32.add\n");
-        self.output.push_str(&format!(
-            "    i32.const {} ;; array element size\n",
-            element_size
-        ));
-        self.output.push_str("    i32.store\n");
-
-        // Write elements
-        for (i, item) in items.iter().enumerate() {
-            self.output.push_str("    local.get $list_tmp\n");
-            self.output.push_str(&format!(
-                "    i32.const {} ;; offset to element {}\n",
-                8 + (i * element_size),
-                i
-            ));
-            self.output.push_str("    i32.add\n");
-            if let Some(source_ty) = element_source_ty {
-                self.generate_expr_with_expected_source(item, source_ty)?;
-            } else {
-                self.generate_expr(item)?;
-            }
-            self.output.push_str(&format!(
-                "    {}\n",
-                self.wasm_store_op_for_wasm_type(element_type)
-            ));
+        if self.list_literal_depth >= self.list_tmp_count {
+            return Err(CodeGenError::UnsupportedFeature(format!(
+                "Collection literal nesting deeper than {} levels",
+                self.list_tmp_count
+            )));
         }
+        let list_tmp = self.current_list_tmp_local();
+        self.list_literal_depth += 1;
+        let result = (|| -> Result<(), CodeGenError> {
+            let element_type = if let Some(source_ty) = element_source_ty {
+                self.convert_type(source_ty)?
+            } else {
+                self.infer_collection_element_wasm_type(items)?
+            };
+            let element_size = self.wasm_type_size(element_type);
+            let array_size = 8 + (items.len() * element_size);
 
-        // Array pointer is already on stack from local.tee
+            // Allocate memory for the array: length + element-size metadata + elements.
+            self.output
+                .push_str(&format!("    i32.const {} ;; array size\n", array_size));
+            self.output.push_str("    call $allocate\n");
+            self.output
+                .push_str(&format!("    local.tee ${}\n", list_tmp)); // Save and leave on stack
 
-        Ok(())
+            // Write length
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+            self.output
+                .push_str(&format!("    i32.const {} ;; array length\n", items.len()));
+            self.output.push_str("    i32.store\n");
+
+            // Write element-size metadata. The current runtime only needs length,
+            // but the second header word keeps the layout explicit and extensible.
+            self.output
+                .push_str(&format!("    local.get ${}\n", list_tmp));
+            self.output.push_str("    i32.const 4\n");
+            self.output.push_str("    i32.add\n");
+            self.output.push_str(&format!(
+                "    i32.const {} ;; array element size\n",
+                element_size
+            ));
+            self.output.push_str("    i32.store\n");
+
+            // Write elements
+            for (i, item) in items.iter().enumerate() {
+                self.output
+                    .push_str(&format!("    local.get ${}\n", list_tmp));
+                self.output.push_str(&format!(
+                    "    i32.const {} ;; offset to element {}\n",
+                    8 + (i * element_size),
+                    i
+                ));
+                self.output.push_str("    i32.add\n");
+                if let Some(source_ty) = element_source_ty {
+                    self.generate_expr_with_expected_source(item, source_ty)?;
+                } else {
+                    self.generate_expr(item)?;
+                }
+                self.output.push_str(&format!(
+                    "    {}\n",
+                    self.wasm_store_op_for_wasm_type(element_type)
+                ));
+            }
+
+            // Array pointer is already on stack from local.tee
+
+            Ok(())
+        })();
+        self.list_literal_depth -= 1;
+        result
     }
 
     fn infer_collection_element_wasm_type(
@@ -17511,12 +18581,17 @@ impl WasmCodeGen {
             .and_then(|first| self.infer_expr_source_type(first))
     }
 
-    fn generate_match_expr(&mut self, match_expr: &MatchExpr) -> Result<(), CodeGenError> {
-        self.generate_match_expr_with_expected_source(match_expr, None)
+    fn generate_match_expr(
+        &mut self,
+        expr_id: NodeId,
+        match_expr: &MatchExpr,
+    ) -> Result<(), CodeGenError> {
+        self.generate_match_expr_with_expected_source(expr_id, match_expr, None)
     }
 
     fn generate_match_expr_with_expected_source(
         &mut self,
+        expr_id: NodeId,
         match_expr: &MatchExpr,
         expected_source: Option<&Type>,
     ) -> Result<(), CodeGenError> {
@@ -17531,13 +18606,14 @@ impl WasmCodeGen {
             self.infer_match_result_type(match_expr)?
         };
         let result_type_name = self.wasm_type_str(result_type);
+        let match_id = self.alloc_node_id(Self::ast_node_key(expr_id, 1));
         let scrutinee_source_ty = self.infer_expr_source_type(&match_expr.expr);
         let scrutinee_wasm_ty = if let Some(source_ty) = &scrutinee_source_ty {
             self.convert_type(source_ty)?
         } else {
             self.infer_expr_type(&match_expr.expr)?
         };
-        let match_local = self.match_temp_local(scrutinee_wasm_ty);
+        let match_local = format!("__match_scrutinee_{}", match_id);
         let conflicting_pattern_bindings = self.match_pattern_binding_conflicts(
             match_expr,
             scrutinee_source_ty.as_ref(),
@@ -17558,10 +18634,14 @@ impl WasmCodeGen {
             // Generate pattern matching code
             self.output
                 .push_str(&format!("    local.get ${}\n", match_local));
+            let prefix = format!("__pm{}_{}", match_id, i);
+            let mut step = 0usize;
             let bindings = self.generate_pattern_match(
                 &arm.pattern,
                 scrutinee_source_ty.as_ref(),
-                match_local,
+                &match_local,
+                &prefix,
+                &mut step,
             )?;
             let mut binding_infos = Vec::new();
             self.collect_pattern_binding_types(
@@ -17576,11 +18656,6 @@ impl WasmCodeGen {
             self.output.push_str("      (then\n");
 
             self.push_scope();
-            // Nested patterns such as `[head | tail]` materialize their
-            // bindings while evaluating the pattern and therefore do not
-            // return them in `bindings`. Register every type-checked pattern
-            // binding as visible in the arm, not only the bindings that still
-            // need a final `local.set` below.
             for (name, wasm_ty, source_ty) in &binding_infos {
                 self.set_local_type(name, *wasm_ty);
                 if let Some(source_ty) = source_ty {
@@ -17600,10 +18675,11 @@ impl WasmCodeGen {
                     })?;
                 let local_name = if conflicting_pattern_bindings.contains(&name) {
                     let local_name =
-                        self.match_pattern_local_name(match_expr, i, binding_index, &name);
+                        Self::match_pattern_local_name(match_id, i, binding_index, &name);
                     self.set_local_alias(&name, local_name.clone());
                     local_name
                 } else {
+                    self.set_local_alias(&name, name.clone());
                     name.clone()
                 };
                 self.output.push_str(&load_code);
@@ -17611,7 +18687,8 @@ impl WasmCodeGen {
                     .push_str(&format!("        local.set ${}\n", local_name));
                 self.set_local_type(&name, wasm_ty);
                 if let Some(source_ty) = source_ty {
-                    self.set_local_source_type(&name, source_ty);
+                    self.set_local_source_type(&name, source_ty.clone());
+                    self.register_record_var_type(&name, &source_ty);
                 }
                 self.activate_local_binding(&name);
             }
@@ -17640,6 +18717,13 @@ impl WasmCodeGen {
     }
 
     fn infer_match_result_type(&self, match_expr: &MatchExpr) -> Result<WasmType, CodeGenError> {
+        if let Some(arm) = match_expr
+            .arms
+            .iter()
+            .find(|arm| !Self::block_diverges_codegen(&arm.body))
+        {
+            return self.infer_block_result_type(&arm.body);
+        }
         match match_expr.arms.first() {
             Some(arm) => self.infer_block_result_type(&arm.body),
             None => Ok(WasmType::I32),
@@ -17651,8 +18735,12 @@ impl WasmCodeGen {
         pattern: &Pattern,
         source_ty: Option<&Type>,
         match_local: &str,
+        prefix: &str,
+        step: &mut usize,
     ) -> Result<Vec<(String, String)>, CodeGenError> {
         let mut bindings = Vec::new();
+        let my_step = *step;
+        *step += 1;
 
         match pattern {
             Pattern::Wildcard => {
@@ -17712,12 +18800,6 @@ impl WasmCodeGen {
             }
             Pattern::ListExact(patterns) => {
                 let element_source_ty = self.list_element_source_type(source_ty);
-                let element_wasm_ty = element_source_ty
-                    .as_ref()
-                    .map(|ty| self.convert_type(ty))
-                    .transpose()?
-                    .unwrap_or(WasmType::I32);
-                let element_local = self.payload_temp_local(element_wasm_ty);
                 let list_get_fn = self.list_get_function_for_element(element_source_ty.as_ref());
 
                 // Check length first
@@ -17726,118 +18808,92 @@ impl WasmCodeGen {
                     .push_str(&format!("    i32.const {}\n", patterns.len()));
                 self.output.push_str("    i32.eq\n");
 
-                // For each element pattern
-                for (i, pattern) in patterns.iter().enumerate() {
-                    self.output.push_str("    (if (result i32)\n");
-                    self.output.push_str("      (then\n");
-                    self.output
-                        .push_str(&format!("        local.get ${}\n", match_local));
-                    self.output.push_str(&format!("        i32.const {}\n", i));
-                    self.output
-                        .push_str(&format!("        call ${}\n", list_get_fn));
-                    self.output
-                        .push_str(&format!("        local.set ${}\n", element_local));
-                    self.output
-                        .push_str(&format!("        local.get ${}\n", element_local));
-
-                    let sub_bindings = self.generate_pattern_match(
-                        pattern,
-                        element_source_ty.as_ref(),
-                        element_local,
-                    )?;
-                    self.output.push_str("        (if (result i32)\n");
-                    self.output.push_str("          (then\n");
-                    for (name, load_code) in sub_bindings {
-                        self.output.push_str(&load_code);
+                if !patterns.is_empty() {
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        let elem_local = format!("{}_elem_{}_{}", prefix, my_step, i);
+                        self.output.push_str("    (if (result i32)\n");
+                        self.output.push_str("      (then\n");
                         self.output
-                            .push_str(&format!("            local.set ${}\n", name));
-                    }
-                    self.output
-                        .push_str("            i32.const 1 ;; element pattern matched\n");
-                    self.output.push_str("          )\n");
-                    self.output.push_str("          (else\n");
-                    self.output
-                        .push_str("            i32.const 0 ;; element pattern failed\n");
-                    self.output.push_str("          )\n");
-                    self.output.push_str("        )\n");
+                            .push_str(&format!("        local.get ${}\n", match_local));
+                        self.output.push_str(&format!("        i32.const {}\n", i));
+                        self.output
+                            .push_str(&format!("        call ${}\n", list_get_fn));
+                        self.output
+                            .push_str(&format!("        local.set ${}\n", elem_local));
+                        self.output
+                            .push_str(&format!("        local.get ${}\n", elem_local));
 
-                    self.output.push_str("      )\n");
-                    self.output.push_str("      (else\n");
-                    self.output
-                        .push_str("        i32.const 0 ;; pattern failed\n");
-                    self.output.push_str("      )\n");
-                    self.output.push_str("    )\n");
+                        let sub_bindings = self.generate_pattern_match(
+                            pattern,
+                            element_source_ty.as_ref(),
+                            &elem_local,
+                            prefix,
+                            step,
+                        )?;
+                        bindings.extend(sub_bindings);
+
+                        self.output.push_str("      )\n");
+                        self.output.push_str("      (else\n");
+                        self.output
+                            .push_str("        i32.const 0 ;; pattern failed\n");
+                        self.output.push_str("      )\n");
+                        self.output.push_str("    )\n");
+                    }
                 }
             }
             Pattern::ListCons(head_pattern, tail_pattern) => {
                 let element_source_ty = self.list_element_source_type(source_ty);
-                let element_wasm_ty = element_source_ty
-                    .as_ref()
-                    .map(|ty| self.convert_type(ty))
-                    .transpose()?
-                    .unwrap_or(WasmType::I32);
-                let element_local = self.payload_temp_local(element_wasm_ty);
                 let list_get_fn = self.list_get_function_for_element(element_source_ty.as_ref());
                 let tail_fn = self.list_tail_function_for_element(element_source_ty.as_ref());
+                let elem_local = format!("{}_elem_{}", prefix, my_step);
+                let tail_local = format!("{}_tail_{}", prefix, my_step);
 
                 // Check that list is not empty
-                self.output
-                    .push_str("    local.tee $tail_tmp ;; save list for tail\n");
                 self.output.push_str("    call $list_length\n");
-                self.output
-                    .push_str("    local.tee $tail_len ;; save length\n");
                 self.output.push_str("    i32.const 0\n");
                 self.output.push_str("    i32.gt_u ;; length > 0\n");
 
-                // Match head
+                // Match head then tail
                 self.output.push_str("    (if (result i32)\n");
                 self.output.push_str("      (then\n");
-                self.output.push_str("        local.get $tail_tmp\n");
+                self.output
+                    .push_str(&format!("        local.get ${}\n", match_local));
                 self.output.push_str("        i32.const 0\n");
                 self.output
                     .push_str(&format!("        call ${}\n", list_get_fn));
                 self.output
-                    .push_str(&format!("        local.set ${}\n", element_local));
+                    .push_str(&format!("        local.set ${}\n", elem_local));
                 self.output
-                    .push_str(&format!("        local.get ${}\n", element_local));
+                    .push_str(&format!("        local.get ${}\n", elem_local));
 
                 let head_bindings = self.generate_pattern_match(
                     head_pattern,
                     element_source_ty.as_ref(),
-                    element_local,
+                    &elem_local,
+                    prefix,
+                    step,
                 )?;
+                bindings.extend(head_bindings);
 
-                // Get tail
                 self.output.push_str("        (if (result i32)\n");
                 self.output.push_str("          (then\n");
-                for (name, load_code) in head_bindings {
-                    self.output.push_str(&load_code);
-                    self.output
-                        .push_str(&format!("            local.set ${}\n", name));
-                }
-                self.output.push_str("            local.get $tail_tmp\n");
+                self.output
+                    .push_str(&format!("            local.get ${}\n", match_local));
                 self.output
                     .push_str(&format!("            call ${}\n", tail_fn));
-                self.output.push_str("            local.set $tail_tmp\n");
-                self.output.push_str("            local.get $tail_tmp\n");
+                self.output
+                    .push_str(&format!("            local.set ${}\n", tail_local));
+                self.output
+                    .push_str(&format!("            local.get ${}\n", tail_local));
 
-                let tail_bindings =
-                    self.generate_pattern_match(tail_pattern, source_ty, "tail_tmp")?;
-                self.output.push_str("            (if (result i32)\n");
-                self.output.push_str("              (then\n");
-                for (name, load_code) in tail_bindings {
-                    self.output.push_str(&load_code);
-                    self.output
-                        .push_str(&format!("                local.set ${}\n", name));
-                }
-                self.output
-                    .push_str("                i32.const 1 ;; tail pattern matched\n");
-                self.output.push_str("              )\n");
-                self.output.push_str("              (else\n");
-                self.output
-                    .push_str("                i32.const 0 ;; tail pattern failed\n");
-                self.output.push_str("              )\n");
-                self.output.push_str("            )\n");
+                let tail_bindings = self.generate_pattern_match(
+                    tail_pattern,
+                    source_ty,
+                    &tail_local,
+                    prefix,
+                    step,
+                )?;
+                bindings.extend(tail_bindings);
 
                 self.output.push_str("          )\n");
                 self.output.push_str("          (else\n");
@@ -17846,7 +18902,8 @@ impl WasmCodeGen {
                 self.output.push_str("        )\n");
                 self.output.push_str("      )\n");
                 self.output.push_str("      (else\n");
-                self.output.push_str("        i32.const 0 ;; empty list\n");
+                self.output
+                    .push_str("        i32.const 0 ;; empty list\n");
                 self.output.push_str("      )\n");
                 self.output.push_str("    )\n");
             }
@@ -17856,47 +18913,25 @@ impl WasmCodeGen {
                     source_ty,
                     field_patterns,
                     None,
+                    match_local,
+                    prefix,
+                    my_step,
+                    step,
                 );
             }
             Pattern::Some(inner_pattern) => {
                 let payload_ty = self.variant_payload_type(source_ty, "Some");
-                // Check if tag is 1 (Some)
-                self.output
-                    .push_str("    local.tee $option_value_tmp ;; save for value extraction\n");
-                self.output.push_str("    i32.load ;; load tag\n");
-                self.output.push_str("    i32.const 1 ;; Some tag\n");
-                self.output.push_str("    i32.eq\n");
-
-                match inner_pattern.as_ref() {
-                    Pattern::Ident(name) => {
-                        bindings.push((
-                            name.clone(),
-                            self.variant_payload_load_code(
-                                "option_value_tmp",
-                                payload_ty,
-                                "        ",
-                            )?,
-                        ));
-                    }
-                    Pattern::Wildcard => {}
-                    _ => {
-                        // If tag matches, match the inner pattern.
-                        self.output.push_str("    (if (result i32)\n");
-                        self.output.push_str("      (then\n");
-                        self.emit_variant_payload_load("option_value_tmp", payload_ty)?;
-
-                        let inner_bindings =
-                            self.generate_pattern_match(inner_pattern, payload_ty, "match_tmp")?;
-                        bindings.extend(inner_bindings);
-
-                        self.output.push_str("      )\n");
-                        self.output.push_str("      (else\n");
-                        self.output
-                            .push_str("        i32.const 0 ;; tag mismatch\n");
-                        self.output.push_str("      )\n");
-                        self.output.push_str("    )\n");
-                    }
-                }
+                self.generate_variant_pattern_match(
+                    match_local,
+                    1,
+                    "Some",
+                    payload_ty,
+                    inner_pattern,
+                    prefix,
+                    my_step,
+                    step,
+                    &mut bindings,
+                )?;
             }
             Pattern::None => {
                 // Check if tag is 0 (None)
@@ -17906,79 +18941,31 @@ impl WasmCodeGen {
             }
             Pattern::Ok(inner_pattern) => {
                 let payload_ty = self.variant_payload_type(source_ty, "Ok");
-                self.output
-                    .push_str("    local.tee $option_value_tmp ;; save for Ok extraction\n");
-                self.output.push_str("    i32.load ;; load tag\n");
-                self.output.push_str("    i32.const 1 ;; Ok tag\n");
-                self.output.push_str("    i32.eq\n");
-
-                match inner_pattern.as_ref() {
-                    Pattern::Ident(name) => {
-                        bindings.push((
-                            name.clone(),
-                            self.variant_payload_load_code(
-                                "option_value_tmp",
-                                payload_ty,
-                                "        ",
-                            )?,
-                        ));
-                    }
-                    Pattern::Wildcard => {}
-                    _ => {
-                        self.output.push_str("    (if (result i32)\n");
-                        self.output.push_str("      (then\n");
-                        self.emit_variant_payload_load("option_value_tmp", payload_ty)?;
-
-                        let inner_bindings =
-                            self.generate_pattern_match(inner_pattern, payload_ty, "match_tmp")?;
-                        bindings.extend(inner_bindings);
-
-                        self.output.push_str("      )\n");
-                        self.output.push_str("      (else\n");
-                        self.output
-                            .push_str("        i32.const 0 ;; tag mismatch\n");
-                        self.output.push_str("      )\n");
-                        self.output.push_str("    )\n");
-                    }
-                }
+                self.generate_variant_pattern_match(
+                    match_local,
+                    1,
+                    "Ok",
+                    payload_ty,
+                    inner_pattern,
+                    prefix,
+                    my_step,
+                    step,
+                    &mut bindings,
+                )?;
             }
             Pattern::Err(inner_pattern) => {
                 let payload_ty = self.variant_payload_type(source_ty, "Err");
-                self.output
-                    .push_str("    local.tee $option_value_tmp ;; save for Err extraction\n");
-                self.output.push_str("    i32.load ;; load tag\n");
-                self.output.push_str("    i32.const 0 ;; Err tag\n");
-                self.output.push_str("    i32.eq\n");
-
-                match inner_pattern.as_ref() {
-                    Pattern::Ident(name) => {
-                        bindings.push((
-                            name.clone(),
-                            self.variant_payload_load_code(
-                                "option_value_tmp",
-                                payload_ty,
-                                "        ",
-                            )?,
-                        ));
-                    }
-                    Pattern::Wildcard => {}
-                    _ => {
-                        self.output.push_str("    (if (result i32)\n");
-                        self.output.push_str("      (then\n");
-                        self.emit_variant_payload_load("option_value_tmp", payload_ty)?;
-
-                        let inner_bindings =
-                            self.generate_pattern_match(inner_pattern, payload_ty, "match_tmp")?;
-                        bindings.extend(inner_bindings);
-
-                        self.output.push_str("      )\n");
-                        self.output.push_str("      (else\n");
-                        self.output
-                            .push_str("        i32.const 0 ;; tag mismatch\n");
-                        self.output.push_str("      )\n");
-                        self.output.push_str("    )\n");
-                    }
-                }
+                self.generate_variant_pattern_match(
+                    match_local,
+                    0,
+                    "Err",
+                    payload_ty,
+                    inner_pattern,
+                    prefix,
+                    my_step,
+                    step,
+                    &mut bindings,
+                )?;
             }
             Pattern::EnumVariant {
                 enum_name,
@@ -18019,47 +19006,17 @@ impl WasmCodeGen {
                         )));
                     }
                     (Some(inner_pattern), Some(payload_ty)) => {
-                        self.output.push_str(
-                            "    local.tee $option_value_tmp ;; save for enum payload extraction\n",
-                        );
-                        self.output.push_str("    i32.load ;; load enum tag\n");
-                        self.output
-                            .push_str(&format!("    i32.const {} ;; {} tag\n", tag, label));
-                        self.output.push_str("    i32.eq\n");
-
-                        match inner_pattern {
-                            Pattern::Ident(name) => {
-                                bindings.push((
-                                    name.clone(),
-                                    self.variant_payload_load_code(
-                                        "option_value_tmp",
-                                        Some(payload_ty),
-                                        "        ",
-                                    )?,
-                                ));
-                            }
-                            Pattern::Wildcard => {}
-                            _ => {
-                                self.output.push_str("    (if (result i32)\n");
-                                self.output.push_str("      (then\n");
-                                self.emit_variant_payload_load(
-                                    "option_value_tmp",
-                                    Some(payload_ty),
-                                )?;
-                                let inner_bindings = self.generate_pattern_match(
-                                    inner_pattern,
-                                    Some(payload_ty),
-                                    "match_tmp",
-                                )?;
-                                bindings.extend(inner_bindings);
-                                self.output.push_str("      )\n");
-                                self.output.push_str("      (else\n");
-                                self.output
-                                    .push_str("        i32.const 0 ;; tag mismatch\n");
-                                self.output.push_str("      )\n");
-                                self.output.push_str("    )\n");
-                            }
-                        }
+                        self.generate_variant_pattern_match(
+                            match_local,
+                            tag,
+                            &label,
+                            Some(payload_ty),
+                            inner_pattern,
+                            prefix,
+                            my_step,
+                            step,
+                            &mut bindings,
+                        )?;
                     }
                 }
             }
@@ -18073,6 +19030,10 @@ impl WasmCodeGen {
                     source_ty,
                     fields,
                     rest.as_ref(),
+                    match_local,
+                    prefix,
+                    my_step,
+                    step,
                 );
             }
         }
@@ -18080,25 +19041,90 @@ impl WasmCodeGen {
         Ok(bindings)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn generate_variant_pattern_match(
+        &mut self,
+        match_local: &str,
+        tag: i32,
+        label: &str,
+        payload_ty: Option<&Type>,
+        inner_pattern: &Pattern,
+        prefix: &str,
+        my_step: usize,
+        step: &mut usize,
+        bindings: &mut Vec<(String, String)>,
+    ) -> Result<(), CodeGenError> {
+        self.output.push_str("    i32.load ;; load tag\n");
+        self.output
+            .push_str(&format!("    i32.const {} ;; {} tag\n", tag, label));
+        self.output.push_str("    i32.eq\n");
+
+        match inner_pattern {
+            Pattern::Ident(name) => {
+                bindings.push((
+                    name.clone(),
+                    self.variant_payload_load_code(match_local, payload_ty, "        ")?,
+                ));
+            }
+            Pattern::Wildcard => {}
+            _ => {
+                let payload_local = format!("{}_payload_{}", prefix, my_step);
+                self.output.push_str("    (if (result i32)\n");
+                self.output.push_str("      (then\n");
+                self.emit_variant_payload_load(match_local, payload_ty)?;
+                self.output
+                    .push_str(&format!("        local.set ${}\n", payload_local));
+                self.output
+                    .push_str(&format!("        local.get ${}\n", payload_local));
+
+                let inner_bindings = self.generate_pattern_match(
+                    inner_pattern,
+                    payload_ty,
+                    &payload_local,
+                    prefix,
+                    step,
+                )?;
+                bindings.extend(inner_bindings);
+
+                self.output.push_str("      )\n");
+                self.output.push_str("      (else\n");
+                self.output
+                    .push_str("        i32.const 0 ;; tag mismatch\n");
+                self.output.push_str("      )\n");
+                self.output.push_str("    )\n");
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn generate_record_pattern_match(
         &mut self,
         record_name: &str,
         source_ty: Option<&Type>,
         field_patterns: &[(String, Pattern)],
         rest: Option<&String>,
+        match_local: &str,
+        prefix: &str,
+        my_step: usize,
+        step: &mut usize,
     ) -> Result<Vec<(String, String)>, CodeGenError> {
         let mut bindings = Vec::new();
 
-        // Type checking has already proven the scrutinee is this record type.
-        self.output.push_str("    local.set $match_tmp\n");
+        // Type checking has already proven the scrutinee is this record type;
+        // `match_local` already holds the record pointer.
+        self.output.push_str("    drop\n");
 
         if let Some(rest_name) = rest {
             if rest_name != "_" {
+                let rest_tmp = format!("{}_rest_tmp_{}", prefix, my_step);
                 let (residual_name, load_code) = self.record_rest_load_code(
                     record_name,
                     source_ty,
                     field_patterns,
-                    "match_tmp",
+                    match_local,
+                    &rest_tmp,
                     "        ",
                 )?;
                 bindings.push((rest_name.clone(), load_code));
@@ -18113,16 +19139,21 @@ impl WasmCodeGen {
             return Ok(bindings);
         }
 
-        for (index, (field_name, field_pattern)) in field_patterns.iter().enumerate() {
+        for (field_index, (field_name, field_pattern)) in field_patterns.iter().enumerate() {
             self.generate_record_field_pattern_condition(
                 record_name,
                 source_ty,
                 field_name,
                 field_pattern,
+                match_local,
+                prefix,
+                my_step,
+                field_index,
+                step,
                 &mut bindings,
             )?;
 
-            if index > 0 {
+            if field_index > 0 {
                 self.output.push_str("    i32.and\n");
             }
         }
@@ -18130,12 +19161,18 @@ impl WasmCodeGen {
         Ok(bindings)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn generate_record_field_pattern_condition(
         &mut self,
         record_name: &str,
         source_ty: Option<&Type>,
         field_name: &str,
         field_pattern: &Pattern,
+        match_local: &str,
+        prefix: &str,
+        my_step: usize,
+        field_index: usize,
+        step: &mut usize,
         bindings: &mut Vec<(String, String)>,
     ) -> Result<(), CodeGenError> {
         match field_pattern {
@@ -18143,7 +19180,7 @@ impl WasmCodeGen {
                 let load_code = self.record_field_load_code(
                     record_name,
                     source_ty,
-                    "match_tmp",
+                    match_local,
                     field_name,
                     "        ",
                 )?;
@@ -18156,13 +19193,19 @@ impl WasmCodeGen {
                     .push_str("    i32.const 1 ;; wildcard field always matches\n");
             }
             Pattern::Literal(lit) => {
-                self.load_record_field_from_local(record_name, "match_tmp", field_name)?;
+                let load_code = self.record_field_load_code(
+                    record_name,
+                    source_ty,
+                    match_local,
+                    field_name,
+                    "    ",
+                )?;
+                self.output.push_str(&load_code);
+                let field_type = self
+                    .instantiated_record_field_type_by_name(record_name, source_ty, field_name);
                 match lit {
                     Literal::Int(n) => {
-                        if matches!(
-                            self.record_field_type(record_name, field_name),
-                            Some(Type::Named(name)) if name == "Int64"
-                        ) {
+                        if matches!(field_type, Some(Type::Named(ref name)) if name == "Int64") {
                             self.output.push_str(&format!("    i64.const {}\n", n));
                             self.output.push_str("    i64.eq\n");
                         } else {
@@ -18207,52 +19250,28 @@ impl WasmCodeGen {
                     )));
                 }
 
-                if self.record_pattern_depth >= self.record_tmp_count {
-                    return Err(CodeGenError::NotImplemented(format!(
-                        "record pattern nesting deeper than {} levels",
-                        self.record_tmp_count
-                    )));
-                }
-                let parent_tmp = format!("record_tmp_{}", self.record_pattern_depth);
-
-                self.output.push_str("    local.get $match_tmp\n");
-                self.output
-                    .push_str(&format!("    local.set ${}\n", parent_tmp));
+                let field_local = format!("{}_field_{}_{}", prefix, my_step, field_index);
                 let load_code = self.record_field_load_code(
                     record_name,
                     source_ty,
-                    &parent_tmp,
+                    match_local,
                     field_name,
                     "    ",
                 )?;
                 self.output.push_str(&load_code);
-                self.output.push_str("    local.set $match_tmp\n");
-                self.output.push_str("    local.get $match_tmp\n");
+                self.output
+                    .push_str(&format!("    local.set ${}\n", field_local));
+                self.output
+                    .push_str(&format!("    local.get ${}\n", field_local));
 
-                self.record_pattern_depth += 1;
-                let nested_bindings_result =
-                    self.generate_pattern_match(nested_pattern, field_ty.as_ref(), "match_tmp");
-                self.record_pattern_depth -= 1;
-                let nested_bindings = nested_bindings_result?;
-
-                self.output.push_str("    (if (result i32)\n");
-                self.output.push_str("      (then\n");
-                for (name, load_code) in nested_bindings {
-                    self.output.push_str(&load_code);
-                    self.output
-                        .push_str(&format!("        local.set ${}\n", name));
-                }
-                self.output
-                    .push_str("        i32.const 1 ;; nested field pattern matched\n");
-                self.output.push_str("      )\n");
-                self.output.push_str("      (else\n");
-                self.output
-                    .push_str("        i32.const 0 ;; nested field pattern failed\n");
-                self.output.push_str("      )\n");
-                self.output.push_str("    )\n");
-                self.output
-                    .push_str(&format!("    local.get ${}\n", parent_tmp));
-                self.output.push_str("    local.set $match_tmp\n");
+                let nested_bindings = self.generate_pattern_match(
+                    nested_pattern,
+                    field_ty.as_ref(),
+                    &field_local,
+                    prefix,
+                    step,
+                )?;
+                bindings.extend(nested_bindings);
             }
         }
 
@@ -18381,19 +19400,28 @@ impl WasmCodeGen {
     }
 
     fn generate_while_expr(&mut self, while_expr: &WhileExpr) -> Result<(), CodeGenError> {
-        self.output.push_str("    (loop $while_loop\n");
+        self.loop_arena_depths.push(self.arena_stack.len());
+        self.output.push_str("    (block $while_break\n");
+        self.output.push_str("      (loop $while_loop\n");
 
         // Generate condition
-        self.generate_expr(&while_expr.condition)?;
+        let cond_res = self.generate_expr(&while_expr.condition);
+        if let Err(err) = cond_res {
+            self.loop_arena_depths.pop();
+            return Err(err);
+        }
 
-        self.output.push_str("      (if\n");
-        self.output.push_str("        (then\n");
+        self.output.push_str("        (if\n");
+        self.output.push_str("          (then\n");
 
         // Generate body
-        self.generate_block(&while_expr.body)?;
+        let body_res = self.generate_block(&while_expr.body);
+        self.loop_arena_depths.pop();
+        body_res?;
 
         // Loop back
-        self.output.push_str("          br $while_loop\n");
+        self.output.push_str("            br $while_loop\n");
+        self.output.push_str("          )\n");
         self.output.push_str("        )\n");
         self.output.push_str("      )\n");
         self.output.push_str("    )\n");
@@ -18535,7 +19563,11 @@ impl WasmCodeGen {
         Ok(())
     }
 
-    fn generate_clone_expr(&mut self, clone: &CloneExpr) -> Result<(), CodeGenError> {
+    fn generate_clone_expr(
+        &mut self,
+        expr_id: NodeId,
+        clone: &CloneExpr,
+    ) -> Result<(), CodeGenError> {
         // Clone expressions create a new record by copying the base record
         // and updating specified fields with new values
 
@@ -18559,21 +19591,28 @@ impl WasmCodeGen {
             clone.updates.fields.len(),
         );
 
+        let clone_id = self.alloc_node_id(Self::ast_node_key(expr_id, 2));
+        let clone_tmp = format!("__clone_tmp_{}", clone_id);
+        let base_tmp = format!("__clone_base_{}", clone_id);
+
         // Allocate memory for the new record
         self.output
             .push_str(&format!("    i32.const {} ;; record size\n", record_size));
         self.output.push_str("    call $allocate\n");
-        self.output.push_str("    local.set $clone_tmp\n");
+        self.output
+            .push_str(&format!("    local.set ${}\n", clone_tmp));
 
         // Generate base expression to get the original record
         self.generate_expr(&clone.base)?;
-        self.output.push_str("    local.set $base_tmp\n");
+        self.output
+            .push_str(&format!("    local.set ${}\n", base_tmp));
 
         // Copy all fields from base record to new record
         // For simplicity, we'll copy the entire record memory
         self.output
-            .push_str("    local.get $clone_tmp ;; destination\n");
-        self.output.push_str("    local.get $base_tmp ;; source\n");
+            .push_str(&format!("    local.get ${} ;; destination\n", clone_tmp));
+        self.output
+            .push_str(&format!("    local.get ${} ;; source\n", base_tmp));
         self.output
             .push_str(&format!("    i32.const {} ;; size\n", record_size));
         self.output.push_str("    memory.copy\n");
@@ -18591,7 +19630,8 @@ impl WasmCodeGen {
                     let store_op = self.wasm_store_op_for_type(field_type.as_ref()).to_string();
 
                     // Store the target address first
-                    self.output.push_str("    local.get $clone_tmp\n");
+                    self.output
+                        .push_str(&format!("    local.get ${}\n", clone_tmp));
                     self.output.push_str(&format!(
                         "    i32.const {} ;; field offset for {}\n",
                         field_offset, name
@@ -18612,13 +19652,14 @@ impl WasmCodeGen {
                     self.output.push_str(&format!("    {}\n", store_op));
                 }
                 FieldInit::Spread(expr) => {
-                    self.generate_record_spread_copy(&record_name, expr, "clone_tmp")?;
+                    self.generate_record_spread_copy(&record_name, expr, &clone_tmp)?;
                 }
             }
         }
 
         // Return pointer to the new cloned record
-        self.output.push_str("    local.get $clone_tmp\n");
+        self.output
+            .push_str(&format!("    local.get ${}\n", clone_tmp));
 
         Ok(())
     }

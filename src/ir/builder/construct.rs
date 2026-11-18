@@ -400,6 +400,9 @@ impl<'a> CheckedIrBuilder<'a> {
             ExprKind::Lambda(lambda) => {
                 self.push_typed_exprs_from_expr(&lambda.body, exprs, sites, bindings)?;
             }
+            ExprKind::Return(Some(inner)) => {
+                self.push_typed_exprs_from_expr(inner, exprs, sites, bindings)?;
+            }
             ExprKind::VariantRef(_) => {}
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)
@@ -407,6 +410,9 @@ impl<'a> CheckedIrBuilder<'a> {
             | ExprKind::CharLit(_)
             | ExprKind::BoolLit(_)
             | ExprKind::Unit
+            | ExprKind::Break
+            | ExprKind::Continue
+            | ExprKind::Return(None)
             | ExprKind::Ident(_) => {}
         }
 

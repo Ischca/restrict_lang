@@ -28,6 +28,8 @@ mod test_comment_in_function;
 mod test_comments;
 #[path = "cases/test_context_bindings.rs"]
 mod test_context_bindings;
+#[path = "cases/test_core_practicality.rs"]
+mod test_core_practicality;
 #[path = "cases/test_default_arena.rs"]
 mod test_default_arena;
 #[path = "cases/test_differential_prototype_bugs.rs"]

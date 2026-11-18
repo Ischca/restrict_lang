@@ -1,70 +1,67 @@
 # Restrict Language 標準ライブラリ
 
-このディレクトリには、Restrict Language の標準ライブラリが含まれています。
+このディレクトリには、コンパイラに組み込まれている標準ライブラリモジュール (`std.*`) のソースが含まれています。
+`import std.<module>.*`、`import std.<module>.{...}`、`import std.<module>` で任意のプロジェクトからインポートできます。
 
 ## モジュール構成
 
-### `prelude.rl`
-自動的にインポートされる基本的な関数とユーティリティ。
+### `std.prelude` (`prelude.rl`)
+コンパイラ組み込みの `identity`、`map`、`filter`、`fold`、`not`、`and`、`or`、`assert`、`panic` に加え、
+以下の純粋 Restrict ヘルパーを提供します。
+- `value |> identity_val`
+- `(left, right) bool_xor` / `(cond, consequent) bool_implies` / `flag |> bool_to_int`
+- `(left, right) eq_int` / `(left, right) ne_int` / `(left, right) cmp_int` / `cmp_int64` / `cmp_float`
 
-### `math.rl`
-数学的な計算に関する関数群。
-- `x |> abs` - 絶対値
-- `(a, b) max` - 最大値
-- `(a, b) min` - 最小値
-- `(base, exp) pow` - 累乗
-- `n |> factorial` - 階乗
+### `std.math` (`math.rl`)
+組み込みの `abs`、`max`、`min`、`pow`、`factorial`、`abs_f`、`max_f`、`min_f` に加え、
+以下のヘルパーを提供します。
+- `(value, low, high) clamp` / `value |> signum` / `value |> is_even` / `value |> is_odd`
+- `(a, b) gcd` / `(a, b) lcm`
+- `abs_i64` / `min_i64` / `max_i64` / `clamp_i64` / `signum_i64`
+- `clamp_f` / `lerp_f` / `approx_eq_f`
 
-### `string.rl`
-現在の文字列 surface は、文字列リテラル、`+` による結合、`==` / `!=`
-による比較です。長さ取得、パース、フォーマット、trim、split などの
-ヘルパーは v0.0.1 の標準ライブラリ surface には含まれていません。
+### `std.option` (`option.rl`)
+組み込みの `option_is_some`、`option_is_none`、`option_unwrap_or` に加え、以下を提供します。
+- `(opt, fallback) option_or` / `(opt, fallback_fn) option_unwrap_or_else`
+- `(opt, f) option_and_then` / `(opt, error) option_ok_or`
+- `nested |> option_flatten` / `(left, right, combine) option_zip_with`
 
-### `list.rl`
-リスト操作に関する関数群。
-- `list |> list_is_empty` - 空リスト判定
-- `list |> list_head` - 先頭要素取得
-- `list |> list_tail` - 末尾リスト取得
-- `list |> list_reverse` - リスト反転
-- `(item, list) list_prepend` - 先頭追加
-- `(list, item) list_append` - 要素追加
-- `(a, b) list_concat` - リスト連結
-- `list |> list_count` - 要素数取得
-- `list |> list_length` - 要素数取得
-- `(list, index) list_get` - インデックス取得
+### `std.result` (`result.rl`)
+- `res |> result_is_ok` / `res |> result_is_err`
+- `(res, fallback) result_unwrap_or` / `(res, recover) result_unwrap_or_else`
+- `(res, f) result_map` / `(res, f) result_map_err` / `(res, f) result_and_then`
+- `res |> result_ok` / `res |> result_err`
 
-`map`、`filter`、`fold` は `prelude.rl` の compiler-registered generic
-container builtin として扱います。
+### `std.list` (`list.rl`)
+組み込みのリスト演算に加え、以下を提供します。
+- `IndexedInt` レコード
+- `(items, pred) list_any` / `(items, pred) list_all` / `(items, pred) list_find`
+- `(items, count) list_take` / `(items, count) list_drop` / `(start, end) list_range`
+- `items |> list_sum` / `list_sum_i64` / `list_sum_f` / `list_product`
+- `(items, start) list_enumerate_from` / `(left, right, combine) list_zip_with`
 
-### `option.rl`
-Option型操作に関する関数群。
-- `opt |> option_is_some` - 値を持つか判定
-- `opt |> option_is_none` - 空か判定
-- `(opt, default) option_unwrap_or` - デフォルト値付き取得
+### `std.string` (`string.rl`)
+- `s |> string_is_empty` / `s |> string_non_empty`
+- `(s, count) string_repeat` / `(s, pad, count) string_pad_left`
+- `(parts, sep) string_join_simple`
 
-### `io.rl`
-入出力に関する関数群。
-- `s |> print` - 文字列出力
-- `n |> print_int` - 整数出力
-- `f |> print_float` - 浮動小数出力
-- `s |> eprint` - エラー出力
-- `s |> eprintln` - 改行付きエラー出力
+### `std.io` (`io.rl`)
+- `(key, value) format_kv`
+- `(key, value) println_kv`
+- `(label, message) eprintln_labeled`
 
-標準入力やファイルI/Oは current v0.0.1 surface には含まれていません。
+### `std.lib` (`lib.rl`)
+標準ライブラリのルートインデックスと `() std_version` を提供します。
 
 ## 使用例
 
 ```restrict
-fun main: () -> Int32 = {
-    val numbers = [1, -2, 3, -4, 5]
-    val positives = (numbers, |x| x > 0) filter
-    val absolutes = (positives, abs) map
+import std.math.{clamp, gcd}
+import std.list.{list_range, list_sum}
 
-    (10, 20) max |> print_int
-    absolutes |> list_count
+export fun main: () -> Int32 = {
+    val total = (1, 6) list_range |> list_sum;
+    val bounded = (total, 0, 10) clamp;
+    bounded + ((12, 8) gcd)
 }
 ```
-
-現在の v0.0.1 では、これらの標準関数はコンパイラに登録された組み込み
-surface として利用します。標準ライブラリの集約モジュール import や import
-alias は、v0.0.1 の標準ライブラリ surface には含まれていません。

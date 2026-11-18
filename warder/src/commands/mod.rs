@@ -1,9 +1,12 @@
 use anyhow::{bail, Context, Result};
 use colored::*;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 mod add;
 mod build;
+mod check;
+mod clean;
 mod doctor;
 mod init;
 mod new;
@@ -14,6 +17,8 @@ mod wrap;
 
 pub use add::{add_dependency, remove_dependency};
 pub use build::build_project;
+pub use check::check_project;
+pub use clean::clean_project;
 pub use doctor::doctor_check;
 pub use init::init_project;
 pub use new::new_project;
@@ -161,6 +166,85 @@ pub fn save_manifest(manifest: &Manifest) -> Result<()> {
     manifest.save(&manifest_path)
 }
 
+pub(crate) fn resolve_restrict_lang_bin(project_root: Option<&Path>) -> PathBuf {
+    if let Some(configured) = std::env::var_os("RESTRICT_LANG_BIN").filter(|v| !v.is_empty()) {
+        return PathBuf::from(configured);
+    }
+    locate_restrict_lang_without_env(project_root).unwrap_or_else(|| PathBuf::from("restrict_lang"))
+}
+
+pub(crate) fn locate_restrict_lang_bin(project_root: Option<&Path>) -> Result<PathBuf, String> {
+    if let Some(configured) = std::env::var_os("RESTRICT_LANG_BIN").filter(|v| !v.is_empty()) {
+        let candidate = PathBuf::from(&configured);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        if let Ok(resolved) = which::which(&configured) {
+            return Ok(resolved);
+        }
+        return Err(format!(
+            "RESTRICT_LANG_BIN points to missing compiler '{}'",
+            candidate.display()
+        ));
+    }
+    locate_restrict_lang_without_env(project_root).ok_or_else(|| {
+        "'restrict_lang' compiler not found (checked RESTRICT_LANG_BIN, sibling executable, target/{release,debug}, and PATH)"
+            .to_string()
+    })
+}
+
+fn locate_restrict_lang_without_env(project_root: Option<&Path>) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok();
+    let cwd = std::env::current_dir().ok();
+    let path_lookup = || which::which("restrict_lang").ok();
+    locate_restrict_lang_from_candidates(
+        exe.as_deref(),
+        project_root,
+        cwd.as_deref(),
+        path_lookup,
+    )
+}
+
+fn locate_restrict_lang_from_candidates<F>(
+    current_exe: Option<&Path>,
+    project_root: Option<&Path>,
+    current_dir: Option<&Path>,
+    path_lookup: F,
+) -> Option<PathBuf>
+where
+    F: FnOnce() -> Option<PathBuf>,
+{
+    let bin_name = format!("restrict_lang{}", std::env::consts::EXE_SUFFIX);
+
+    if let Some(sibling) = current_exe
+        .and_then(|exe| exe.parent())
+        .map(|dir| dir.join(&bin_name))
+        .filter(|path| path.is_file())
+    {
+        return Some(sibling);
+    }
+
+    let search_roots = [project_root, current_dir, current_exe.and_then(|exe| exe.parent())];
+    for start in search_roots.into_iter().flatten() {
+        for ancestor in start.ancestors() {
+            for profile in ["release", "debug"] {
+                let candidate = ancestor.join("target").join(profile).join(&bin_name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+                if ancestor.file_name() == Some(OsStr::new("target")) {
+                    let direct_candidate = ancestor.join(profile).join(&bin_name);
+                    if direct_candidate.is_file() {
+                        return Some(direct_candidate);
+                    }
+                }
+            }
+        }
+    }
+
+    path_lookup()
+}
+
 pub fn print_success(message: &str) {
     println!("{} {}", "✓".green().bold(), message);
 }
@@ -272,5 +356,74 @@ mod tests {
         std::fs::write(inner.join(WARDER_MANIFEST_FILENAME), "").unwrap();
 
         assert_eq!(find_project_root_from(&inner_source).unwrap(), inner);
+    }
+
+    #[test]
+    fn compiler_lookup_prefers_sibling_then_workspace_target_then_path() {
+        let temp = TempDir::new().unwrap();
+        let bin_name = format!("restrict_lang{}", std::env::consts::EXE_SUFFIX);
+
+        let exe_dir = temp.path().join("bin");
+        let sibling_compiler = exe_dir.join(&bin_name);
+        let workspace = temp.path().join("workspace");
+        let project = workspace.join("sub/app");
+        let target_debug = workspace.join("target/debug");
+        let target_release = workspace.join("target/release");
+        let path_compiler = temp.path().join("from_path").join(&bin_name);
+
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&target_debug).unwrap();
+        std::fs::create_dir_all(&target_release).unwrap();
+        std::fs::create_dir_all(path_compiler.parent().unwrap()).unwrap();
+
+        std::fs::write(&sibling_compiler, "").unwrap();
+        std::fs::write(target_debug.join(&bin_name), "").unwrap();
+        std::fs::write(target_release.join(&bin_name), "").unwrap();
+        std::fs::write(&path_compiler, "").unwrap();
+
+        let current_exe = exe_dir.join("warder");
+        assert_eq!(
+            locate_restrict_lang_from_candidates(
+                Some(&current_exe),
+                Some(&project),
+                None,
+                || Some(path_compiler.clone()),
+            ),
+            Some(sibling_compiler.clone())
+        );
+
+        std::fs::remove_file(&sibling_compiler).unwrap();
+        assert_eq!(
+            locate_restrict_lang_from_candidates(
+                Some(&current_exe),
+                Some(&project),
+                None,
+                || Some(path_compiler.clone()),
+            ),
+            Some(target_release.join(&bin_name))
+        );
+
+        std::fs::remove_file(target_release.join(&bin_name)).unwrap();
+        assert_eq!(
+            locate_restrict_lang_from_candidates(
+                Some(&current_exe),
+                Some(&project),
+                None,
+                || Some(path_compiler.clone()),
+            ),
+            Some(target_debug.join(&bin_name))
+        );
+
+        std::fs::remove_file(target_debug.join(&bin_name)).unwrap();
+        assert_eq!(
+            locate_restrict_lang_from_candidates(
+                Some(&current_exe),
+                Some(&project),
+                None,
+                || Some(path_compiler.clone()),
+            ),
+            Some(path_compiler)
+        );
     }
 }

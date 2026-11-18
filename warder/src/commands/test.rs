@@ -1,7 +1,11 @@
-use super::{find_project_root, load_manifest, print_error, print_info, print_success};
+use super::{
+    find_project_root, load_manifest, print_error, print_info, print_success,
+    resolve_restrict_lang_bin,
+};
 use crate::dependencies::{
     resolve_local_dependencies, ResolvedLocalDependency, PROJECT_SOURCE_NAMESPACE,
 };
+use crate::wasi_runner::{register_wasi_preview1, WasiProcExit, WasiState};
 use anyhow::{bail, Context, Result};
 use restrict_lang::ast::{FunDecl, TopDecl, Type};
 use restrict_lang::diagnostics::format_parse_error;
@@ -9,7 +13,7 @@ use restrict_lang::parser::parse_program;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
-use wasmi::{Caller, Engine, Linker, Memory, Module, Store};
+use wasmi::{Engine, Linker, Module, Store};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TestFunction {
@@ -22,12 +26,6 @@ struct TestOutcome {
     failure: Option<String>,
     stdout: String,
     stderr: String,
-}
-
-#[derive(Debug, Default)]
-struct TestIo {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
 }
 
 pub async fn test_project(filter: Option<String>) -> Result<()> {
@@ -85,6 +83,7 @@ pub async fn test_project(filter: Option<String>) -> Result<()> {
             &project_source_root,
             &test_file,
             &resolved_dependencies,
+            manifest.build.arena_bytes,
             filter.as_deref(),
         )
         .await
@@ -145,6 +144,7 @@ async fn run_test_file(
     project_source_root: &Path,
     test_file: &PathBuf,
     resolved_dependencies: &[ResolvedLocalDependency],
+    arena_bytes: Option<u32>,
     filter: Option<&str>,
 ) -> Result<Vec<TestOutcome>> {
     let source = std::fs::read_to_string(test_file)
@@ -170,12 +170,16 @@ async fn run_test_file(
         .tempdir()
         .context("Failed to create test compilation directory")?;
     let wat_output = staging.path().join("test.wat");
-    let compiler =
-        std::env::var("RESTRICT_LANG_BIN").unwrap_or_else(|_| "restrict_lang".to_string());
+    let compiler = resolve_restrict_lang_bin(Some(project_root));
     let mut command = Command::new(compiler);
     command
         .current_dir(project_root)
         .args(["--target", "wasip1"]);
+    if let Some(arena_bytes) = arena_bytes {
+        command
+            .arg("--arena-bytes")
+            .arg(arena_bytes.to_string());
+    }
     command.arg("--module-root").arg(format!(
         "{}={}",
         PROJECT_SOURCE_NAMESPACE,
@@ -267,22 +271,13 @@ fn execute_test_functions(wasm: &[u8], tests: &[TestFunction]) -> Result<Vec<Tes
     let engine = Engine::default();
     let module = Module::new(&engine, wasm).context("Failed to load compiled test module")?;
     let mut linker = Linker::new(&engine);
-    linker
-        .func_wrap("wasi_snapshot_preview1", "fd_write", capture_fd_write)
-        .context("Failed to register the test stdout bridge")?;
-    linker
-        .func_wrap(
-            "wasi_snapshot_preview1",
-            "proc_exit",
-            |_caller: Caller<'_, TestIo>, _code: i32| {},
-        )
-        .context("Failed to register the test process-exit bridge")?;
+    register_wasi_preview1(&mut linker)?;
 
     let mut outcomes = Vec::with_capacity(tests.len());
     for test in tests {
         // Give every test a fresh instance so one test cannot leak mutable
         // globals or linear-memory state into the next one.
-        let mut store = Store::new(&engine, TestIo::default());
+        let mut store = Store::new(&engine, WasiState::captured());
         let instance = linker
             .instantiate_and_start(&mut store, &module)
             .context("Failed to instantiate compiled test module")?;
@@ -293,12 +288,17 @@ fn execute_test_functions(wasm: &[u8], tests: &[TestFunction]) -> Result<Vec<Tes
                 Ok(value) => Some(format!(
                     "returned invalid Boolean representation {value}; expected 0 or 1"
                 )),
-                Err(error) => Some(format!("trapped: {error}")),
+                Err(error) => match error.downcast_ref::<WasiProcExit>() {
+                    Some(WasiProcExit(code)) => Some(format!(
+                        "exited via proc_exit({code}) without returning Boolean"
+                    )),
+                    None => Some(format!("trapped: {error}")),
+                },
             },
             Err(error) => Some(format!("missing executable Boolean export: {error}")),
         };
-        let stdout = String::from_utf8_lossy(&store.data().stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&store.data().stderr).into_owned();
+        let stdout = String::from_utf8_lossy(store.data().stdout_bytes()).into_owned();
+        let stderr = String::from_utf8_lossy(store.data().stderr_bytes()).into_owned();
         outcomes.push(TestOutcome {
             name: test.name.clone(),
             failure,
@@ -307,106 +307,6 @@ fn execute_test_functions(wasm: &[u8], tests: &[TestFunction]) -> Result<Vec<Tes
         });
     }
     Ok(outcomes)
-}
-
-fn read_i32(memory: Memory, caller: &Caller<'_, TestIo>, offset: i32) -> Result<i32, i32> {
-    let offset = usize::try_from(offset).map_err(|_| 1)?;
-    let mut bytes = [0; 4];
-    memory.read(caller, offset, &mut bytes).map_err(|_| 1)?;
-    Ok(i32::from_le_bytes(bytes))
-}
-
-fn capture_fd_write(
-    mut caller: Caller<'_, TestIo>,
-    fd: i32,
-    iovs: i32,
-    iovs_len: i32,
-    nwritten: i32,
-) -> i32 {
-    const MAX_IOVECS: i32 = 1024;
-    const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
-
-    if !(0..=MAX_IOVECS).contains(&iovs_len) {
-        return 1;
-    }
-    let Some(memory) = caller
-        .get_export("memory")
-        .and_then(|export| export.into_memory())
-    else {
-        return 1;
-    };
-
-    let mut captured = Vec::new();
-    for index in 0..iovs_len {
-        let Some(iov) = index
-            .checked_mul(8)
-            .and_then(|offset| iovs.checked_add(offset))
-        else {
-            return 1;
-        };
-        let base = match read_i32(memory, &caller, iov) {
-            Ok(base) => base,
-            Err(errno) => return errno,
-        };
-        let Some(len_offset) = iov.checked_add(4) else {
-            return 1;
-        };
-        let len = match read_i32(memory, &caller, len_offset) {
-            Ok(len) => len,
-            Err(errno) => return errno,
-        };
-        let Ok(base) = usize::try_from(base) else {
-            return 1;
-        };
-        let Ok(len) = usize::try_from(len) else {
-            return 1;
-        };
-        if captured
-            .len()
-            .checked_add(len)
-            .is_none_or(|total| total > MAX_CAPTURE_BYTES)
-        {
-            return 1;
-        }
-
-        let start = captured.len();
-        captured.resize(start + len, 0);
-        if memory.read(&caller, base, &mut captured[start..]).is_err() {
-            return 1;
-        }
-    }
-
-    let existing_len = match fd {
-        1 => caller.data().stdout.len(),
-        2 => caller.data().stderr.len(),
-        _ => return 8,
-    };
-    if existing_len
-        .checked_add(captured.len())
-        .is_none_or(|total| total > MAX_CAPTURE_BYTES)
-    {
-        return 1;
-    }
-    match fd {
-        1 => caller.data_mut().stdout.extend_from_slice(&captured),
-        2 => caller.data_mut().stderr.extend_from_slice(&captured),
-        _ => unreachable!("file descriptor was validated above"),
-    }
-
-    let Ok(nwritten) = usize::try_from(nwritten) else {
-        return 1;
-    };
-    if memory
-        .write(
-            &mut caller,
-            nwritten,
-            &(captured.len() as i32).to_le_bytes(),
-        )
-        .is_err()
-    {
-        return 1;
-    }
-    0
 }
 
 fn print_test_output(label: &str, output: &str) {

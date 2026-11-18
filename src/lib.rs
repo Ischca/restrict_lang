@@ -140,6 +140,9 @@ pub mod module;
 /// User-facing diagnostic formatting helpers
 pub mod diagnostics;
 
+/// Token-preserving source code formatter
+pub mod formatter;
+
 /// Default and opt-in host ABI release-surface validation
 pub mod release_surface;
 

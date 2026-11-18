@@ -9,6 +9,7 @@ mod dependencies;
 mod manifest;
 mod registry;
 mod vault;
+mod wasi_runner;
 
 use commands::*;
 
@@ -82,9 +83,23 @@ enum Commands {
         repro: bool,
     },
 
+    /// Check the project sources without producing build artifacts
+    Check,
+
+    /// Format Restrict source files in the project
+    Fmt {
+        /// Check whether files are formatted without modifying them
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Remove build output and temporary Warder staging files
+    Clean,
+
     /// Build and run the project
     Run {
         /// Arguments to pass to the program
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
 
@@ -175,6 +190,15 @@ async fn main() -> Result<()> {
             repro,
         } => {
             build_project(release, watch, component, core, verify, repro).await?;
+        }
+        Commands::Check => {
+            check_project().await?;
+        }
+        Commands::Fmt { check } => {
+            fmt_project(check).await?;
+        }
+        Commands::Clean => {
+            clean_project().await?;
         }
         Commands::Run { args } => {
             run_project(args).await?;

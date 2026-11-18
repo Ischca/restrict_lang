@@ -1,5 +1,6 @@
 use super::{
     find_project_root, load_manifest, print_error, print_info, print_success, print_warning,
+    resolve_restrict_lang_bin,
 };
 use crate::cage::Cage;
 use crate::component_artifact::{
@@ -8,6 +9,7 @@ use crate::component_artifact::{
 };
 use crate::dependencies::{
     resolve_local_dependencies, snapshot_local_dependencies, validate_local_dependency_layout,
+    PROJECT_SOURCE_NAMESPACE,
 };
 use crate::manifest::{
     Manifest, COMPONENT_SCHEMA_VERSION, COMPONENT_SCHEMA_VERSION_V2, WARDER_LOCK_FILENAME,
@@ -194,6 +196,15 @@ async fn build_project_once(
         );
     }
 
+    let snapshot_project_source_root = application_snapshot
+        .entry_path
+        .parent()
+        .context("application snapshot entry must have a source directory")?;
+    let arena_size_bytes = manifest
+        .build
+        .arena_bytes
+        .unwrap_or(COMPONENT_ARENA_SIZE_BYTES);
+
     let published_build = if build_component {
         progress.set_message("Compiling and validating Component...");
         let source =
@@ -203,10 +214,35 @@ async fn build_project_once(
                     application_snapshot.entry_path.display()
                 )
             })?;
-        let package_roots = snapshot_dependencies
+        let uses_project_namespace = restrict_lang::parser::parse_program(&source)
+            .is_ok_and(|(_, program)| {
+                program.imports.iter().any(|import| {
+                    import
+                        .module_path
+                        .first()
+                        .is_some_and(|root| root == PROJECT_SOURCE_NAMESPACE)
+                })
+            });
+        let mut package_roots = snapshot_dependencies
             .iter()
             .map(|dependency| (dependency.alias.clone(), dependency.source_dir.clone()))
             .collect::<Vec<_>>();
+        let component_entry_path = if uses_project_namespace {
+            let component_entry_dir = staging_dir.path().join("component-entry");
+            std::fs::create_dir_all(&component_entry_dir).with_context(|| {
+                format!(
+                    "Failed to create component entry staging directory {}",
+                    component_entry_dir.display()
+                )
+            })?;
+            package_roots.push((
+                PROJECT_SOURCE_NAMESPACE.to_string(),
+                snapshot_project_source_root.to_path_buf(),
+            ));
+            component_entry_dir.join("main.rl")
+        } else {
+            application_snapshot.entry_path.clone()
+        };
         let contract = component_contract
             .as_ref()
             .context("validated Component contract disappeared before compilation")?;
@@ -223,22 +259,22 @@ async fn build_project_once(
                 restrict_lang::component::compile_component(
                     restrict_lang::component::ComponentCompileRequest {
                         source: &source,
-                        entry_path: &application_snapshot.entry_path,
+                        entry_path: &component_entry_path,
                         package_roots: &package_roots,
                         selection,
                         optimization_level,
-                        arena_size_bytes: COMPONENT_ARENA_SIZE_BYTES,
+                        arena_size_bytes,
                     },
                 )
             }
             COMPONENT_SCHEMA_VERSION_V2 => restrict_lang::component::compile_component_contract(
                 restrict_lang::component::ComponentCompileContractRequest {
                     source: &source,
-                    entry_path: &application_snapshot.entry_path,
+                    entry_path: &component_entry_path,
                     package_roots: &package_roots,
                     selection: contract,
                     optimization_level,
-                    arena_size_bytes: COMPONENT_ARENA_SIZE_BYTES,
+                    arena_size_bytes,
                 },
             ),
             schema => bail!("Unsupported component schema {schema}"),
@@ -275,11 +311,17 @@ async fn build_project_once(
     } else {
         // Core builds retain the installed-compiler boundary used by Warder
         // v0.0.1. Component builds use the pinned compiler library above.
-        let compiler =
-            std::env::var("RESTRICT_LANG_BIN").unwrap_or_else(|_| "restrict_lang".to_string());
+        let compiler = resolve_restrict_lang_bin(Some(&root));
         let mut cmd = Command::new(compiler);
+        let mut project_root_arg = std::ffi::OsString::from(PROJECT_SOURCE_NAMESPACE);
+        project_root_arg.push("=");
+        project_root_arg.push(snapshot_project_source_root);
+        cmd.arg("--module-root").arg(project_root_arg);
         for dependency in &snapshot_dependencies {
             cmd.arg("--module-root").arg(dependency.module_root_arg());
+        }
+        if let Some(arena_bytes) = manifest.build.arena_bytes {
+            cmd.arg("--arena-bytes").arg(arena_bytes.to_string());
         }
         if release || manifest.build.optimize {
             cmd.arg("--release");
@@ -1256,7 +1298,7 @@ fn is_portable_file_fragment(value: &str) -> bool {
         && value != ".."
 }
 
-fn checked_relative_components<'a>(
+pub(crate) fn checked_relative_components<'a>(
     path: &'a Path,
     label: &str,
 ) -> Result<Vec<&'a std::ffi::OsStr>> {
@@ -1277,7 +1319,7 @@ fn checked_relative_components<'a>(
     Ok(components)
 }
 
-fn resolve_project_file(root: &Path, relative: &Path, label: &str) -> Result<PathBuf> {
+pub(crate) fn resolve_project_file(root: &Path, relative: &Path, label: &str) -> Result<PathBuf> {
     let components = checked_relative_components(relative, label)?;
     let mut current = root.to_path_buf();
     for component in components {

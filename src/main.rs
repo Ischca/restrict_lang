@@ -1,15 +1,21 @@
-use restrict_lang::diagnostics::{
-    format_lex_error, format_parse_error, format_type_error, format_unparsed_input,
+use restrict_lang::ast::{
+    BlockExpr, Expr, ExprKind, FunDecl, Pattern, PipeTarget, Program, Stmt, TopDecl,
 };
+use restrict_lang::diagnostics::{
+    format_lex_error, format_parse_error, format_release_surface_error, format_type_error,
+    format_unparsed_input,
+};
+use restrict_lang::formatter::format_source;
 use restrict_lang::ir::builder::build_checked_ir;
-use restrict_lang::module::resolve_program_imports_for_file_with_package_roots;
+use restrict_lang::module::{resolve_program_imports_for_file_with_package_roots, ModuleResolver};
 use restrict_lang::{
     check_release_surface, lex, parse_program, HostAbiProfile, TypeChecker, WasmCodeGen,
     WasmOptimizationLevel, WasmTargetProfile,
 };
+use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,6 +44,7 @@ Options:
   --module-root <ALIAS=DIR>
                 Mount a package src directory under a source import namespace; repeatable
   --ast         Show AST only (no compilation)
+  --fmt         Format source file(s) in-place (combine with --check to verify formatting)
   --verbose     Show lexing, parsing, and codegen progress details
   --lsp         Start Language Server Protocol mode
   --help        Show this help message
@@ -76,6 +83,7 @@ async fn main() {
 
     // Parse command line arguments
     let mut check_only = false;
+    let mut fmt_mode = false;
     let mut show_ast = false;
     let mut lsp_mode = false;
     let mut verbose = false;
@@ -87,6 +95,7 @@ async fn main() {
     let mut instrument_memory = false;
     let mut package_roots = Vec::new();
     let mut source_file = String::new();
+    let mut extra_source_files = Vec::new();
     let mut output_file = None;
 
     let mut i = 1;
@@ -190,6 +199,7 @@ async fn main() {
                 i += 1;
             }
             "--ast" => show_ast = true,
+            "--fmt" => fmt_mode = true,
             "--verbose" => verbose = true,
             "--lsp" => lsp_mode = true,
             "--help" => {
@@ -199,6 +209,8 @@ async fn main() {
             arg => {
                 if source_file.is_empty() {
                     source_file = arg.to_string();
+                } else if fmt_mode {
+                    extra_source_files.push(arg.to_string());
                 } else if output_file.is_none() {
                     output_file = Some(arg.to_string());
                 } else {
@@ -208,6 +220,18 @@ async fn main() {
             }
         }
         i += 1;
+    }
+
+    if fmt_mode {
+        if source_file.is_empty() {
+            eprintln!("No source file specified");
+            std::process::exit(1);
+        }
+        let mut files = Vec::with_capacity(1 + extra_source_files.len());
+        files.push(source_file);
+        files.extend(extra_source_files);
+        run_fmt_cli(&files, check_only);
+        return;
     }
 
     if lsp_mode {
@@ -283,11 +307,7 @@ async fn main() {
         }
     };
 
-    let ast = match resolve_program_imports_for_file_with_package_roots(
-        ast,
-        Path::new(filename),
-        &package_roots,
-    ) {
+    let ast = match resolve_cli_imports(ast, Path::new(filename), &package_roots) {
         Ok(resolved) => resolved,
         Err(e) => {
             eprintln!("Import resolution error: {}", e);
@@ -303,7 +323,11 @@ async fn main() {
     match type_checker.check_program(&ast) {
         Ok(()) => {
             if let Err(e) = check_release_surface(&ast, &type_checker, host_abi_profile) {
-                eprintln!("Release surface error: {}", e);
+                eprintln!("{}", format_release_surface_error(&source, &e));
+                std::process::exit(1);
+            }
+            if let Err(e) = validate_target_profile(&ast, target_profile) {
+                eprintln!("Target profile error: {}", e);
                 std::process::exit(1);
             }
             if check_only {
@@ -411,7 +435,7 @@ async fn main() {
     }
 }
 
-fn parse_module_root_spec(value: &str) -> Result<(String, std::path::PathBuf), String> {
+fn parse_module_root_spec(value: &str) -> Result<(String, PathBuf), String> {
     let Some((namespace, source_dir)) = value.split_once('=') else {
         return Err(format!(
             "Invalid --module-root '{}': expected ALIAS=DIR",
@@ -426,4 +450,442 @@ fn parse_module_root_spec(value: &str) -> Result<(String, std::path::PathBuf), S
     }
 
     Ok((namespace.to_string(), source_dir.into()))
+}
+
+fn resolve_cli_imports(
+    mut ast: Program,
+    source_file: &Path,
+    package_roots: &[(String, PathBuf)],
+) -> anyhow::Result<Program> {
+    let base_dir = source_file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let project_root = package_roots
+        .iter()
+        .find(|(namespace, _)| namespace == "project")
+        .map(|(_, dir)| dir);
+
+    let project_overlaps_entry_dir = match (project_root, fs::canonicalize(base_dir)) {
+        (Some(project_dir), Ok(canonical_base)) => fs::canonicalize(project_dir)
+            .ok()
+            .filter(|canonical_project| {
+                canonical_base.starts_with(canonical_project)
+                    || canonical_project.starts_with(&canonical_base)
+            })
+            .map(|canonical_project| (canonical_base, canonical_project)),
+        _ => None,
+    };
+
+    let Some((canonical_base, canonical_project)) = project_overlaps_entry_dir else {
+        return resolve_program_imports_for_file_with_package_roots(
+            ast,
+            source_file,
+            package_roots,
+        );
+    };
+
+    let mut resolver = ModuleResolver::new();
+    for (namespace, source_dir) in package_roots {
+        resolver.add_package_root(namespace.clone(), source_dir.clone())?;
+    }
+
+    if ast.imports.is_empty() {
+        return Ok(ast);
+    }
+
+    if canonical_base == canonical_project {
+        for import in &mut ast.imports {
+            let first = import.module_path.first().map(String::as_str);
+            let is_known_root = first.is_some_and(|name| {
+                name == "std"
+                    || name == "project"
+                    || package_roots.iter().any(|(alias, _)| alias == name)
+            });
+            if !is_known_root {
+                import.module_path.insert(0, "project".to_string());
+            }
+        }
+    }
+
+    resolver.resolve_program_imports(ast)
+}
+
+fn validate_target_profile(
+    program: &Program,
+    target_profile: WasmTargetProfile,
+) -> Result<(), String> {
+    if target_profile != WasmTargetProfile::WasmCore {
+        return Ok(());
+    }
+
+    let mut scopes = vec![HashSet::new()];
+    for decl in &program.declarations {
+        let inner = unwrap_export_decl(decl);
+        match inner {
+            TopDecl::Function(func) => {
+                scopes[0].insert(func.name.clone());
+            }
+            TopDecl::Binding(bind) => {
+                collect_pattern_bindings(&bind.pattern, &mut scopes[0]);
+            }
+            _ => {}
+        }
+    }
+
+    for decl in &program.declarations {
+        check_top_decl_for_wasm_core(decl, &mut scopes)?;
+    }
+    Ok(())
+}
+
+fn unwrap_export_decl(decl: &TopDecl) -> &TopDecl {
+    match decl {
+        TopDecl::Export(export) => unwrap_export_decl(export.item.as_ref()),
+        other => other,
+    }
+}
+
+fn check_top_decl_for_wasm_core(
+    decl: &TopDecl,
+    scopes: &mut Vec<HashSet<String>>,
+) -> Result<(), String> {
+    match unwrap_export_decl(decl) {
+        TopDecl::Function(func) => check_fun_decl_for_wasm_core(func, scopes),
+        TopDecl::Binding(bind) => check_expr_for_wasm_core(&bind.value, scopes),
+        TopDecl::Impl(impl_block) => {
+            for func in &impl_block.functions {
+                check_fun_decl_for_wasm_core(func, scopes)?;
+            }
+            Ok(())
+        }
+        TopDecl::Takes(takes_decl) => {
+            for func in &takes_decl.functions {
+                check_fun_decl_for_wasm_core(func, scopes)?;
+            }
+            Ok(())
+        }
+        TopDecl::Record(_)
+        | TopDecl::Enum(_)
+        | TopDecl::Form(_)
+        | TopDecl::Context(_)
+        | TopDecl::Export(_) => Ok(()),
+    }
+}
+
+fn check_fun_decl_for_wasm_core(
+    func: &FunDecl,
+    scopes: &mut Vec<HashSet<String>>,
+) -> Result<(), String> {
+    let mut fn_scope = HashSet::new();
+    for param in &func.params {
+        fn_scope.insert(param.name.clone());
+    }
+    scopes.push(fn_scope);
+    let result = check_block_for_wasm_core(&func.body, scopes);
+    scopes.pop();
+    result
+}
+
+fn check_block_for_wasm_core(
+    block: &BlockExpr,
+    scopes: &mut Vec<HashSet<String>>,
+) -> Result<(), String> {
+    scopes.push(HashSet::new());
+    for stmt in &block.statements {
+        match stmt {
+            Stmt::Binding(bind) => {
+                if let Err(err) = check_expr_for_wasm_core(&bind.value, scopes) {
+                    scopes.pop();
+                    return Err(err);
+                }
+                if let Some(current) = scopes.last_mut() {
+                    collect_pattern_bindings(&bind.pattern, current);
+                }
+            }
+            Stmt::Assignment(assign) => {
+                if let Err(err) = check_expr_for_wasm_core(&assign.value, scopes) {
+                    scopes.pop();
+                    return Err(err);
+                }
+            }
+            Stmt::Expr(expr) => {
+                if let Err(err) = check_expr_for_wasm_core(expr, scopes) {
+                    scopes.pop();
+                    return Err(err);
+                }
+            }
+        }
+    }
+    let result = match &block.expr {
+        Some(expr) => check_expr_for_wasm_core(expr, scopes),
+        None => Ok(()),
+    };
+    scopes.pop();
+    result
+}
+
+fn check_expr_for_wasm_core(
+    expr: &Expr,
+    scopes: &mut Vec<HashSet<String>>,
+) -> Result<(), String> {
+    match &expr.kind {
+        ExprKind::Ident(name) => reject_if_host_io_builtin(name, scopes),
+        ExprKind::Call(call) => {
+            for arg in &call.args {
+                check_expr_for_wasm_core(arg, scopes)?;
+            }
+            if let ExprKind::Ident(name) = &call.function.kind {
+                reject_if_host_io_builtin(name, scopes)
+            } else {
+                check_expr_for_wasm_core(&call.function, scopes)
+            }
+        }
+        ExprKind::Pipe(pipe) => {
+            check_expr_for_wasm_core(&pipe.expr, scopes)?;
+            match &pipe.target {
+                PipeTarget::Ident(name) => reject_if_host_io_builtin(name, scopes),
+                PipeTarget::Expr(target) => check_expr_for_wasm_core(target, scopes),
+            }
+        }
+        ExprKind::Block(block) => check_block_for_wasm_core(block, scopes),
+        ExprKind::Lambda(lambda) => {
+            let mut lambda_scope = HashSet::new();
+            for param in &lambda.params {
+                lambda_scope.insert(param.name.clone());
+            }
+            if lambda.implicit_focus {
+                lambda_scope.insert("it".to_string());
+            }
+            scopes.push(lambda_scope);
+            let result = check_expr_for_wasm_core(&lambda.body, scopes);
+            scopes.pop();
+            result
+        }
+        ExprKind::Then(then_expr) => {
+            check_expr_for_wasm_core(&then_expr.condition, scopes)?;
+            check_block_for_wasm_core(&then_expr.then_block, scopes)?;
+            for (cond, block) in &then_expr.else_ifs {
+                check_expr_for_wasm_core(cond, scopes)?;
+                check_block_for_wasm_core(block, scopes)?;
+            }
+            if let Some(else_block) = &then_expr.else_block {
+                check_block_for_wasm_core(else_block, scopes)?;
+            }
+            Ok(())
+        }
+        ExprKind::While(while_expr) => {
+            check_expr_for_wasm_core(&while_expr.condition, scopes)?;
+            check_block_for_wasm_core(&while_expr.body, scopes)
+        }
+        ExprKind::Match(match_expr) => {
+            check_expr_for_wasm_core(&match_expr.expr, scopes)?;
+            for arm in &match_expr.arms {
+                let mut arm_scope = HashSet::new();
+                collect_pattern_bindings(&arm.pattern, &mut arm_scope);
+                scopes.push(arm_scope);
+                let result = check_block_for_wasm_core(&arm.body, scopes);
+                scopes.pop();
+                result?;
+            }
+            Ok(())
+        }
+        ExprKind::RecordLit(record) => {
+            for field in &record.fields {
+                match field {
+                    restrict_lang::ast::FieldInit::Field { value, .. }
+                    | restrict_lang::ast::FieldInit::Spread(value) => {
+                        check_expr_for_wasm_core(value, scopes)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        ExprKind::Clone(clone) => {
+            check_expr_for_wasm_core(&clone.base, scopes)?;
+            for field in &clone.updates.fields {
+                match field {
+                    restrict_lang::ast::FieldInit::Field { value, .. }
+                    | restrict_lang::ast::FieldInit::Spread(value) => {
+                        check_expr_for_wasm_core(value, scopes)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        ExprKind::Freeze(inner)
+        | ExprKind::FieldAccess(inner, _)
+        | ExprKind::Await(inner)
+        | ExprKind::Spawn(inner) => check_expr_for_wasm_core(inner, scopes),
+        ExprKind::PrototypeClone(proto) => {
+            for field in &proto.updates.fields {
+                match field {
+                    restrict_lang::ast::FieldInit::Field { value, .. }
+                    | restrict_lang::ast::FieldInit::Spread(value) => {
+                        check_expr_for_wasm_core(value, scopes)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        ExprKind::Binary(binary) => {
+            check_expr_for_wasm_core(&binary.left, scopes)?;
+            check_expr_for_wasm_core(&binary.right, scopes)
+        }
+        ExprKind::Unary(unary) => check_expr_for_wasm_core(&unary.expr, scopes),
+        ExprKind::Cast(cast) => check_expr_for_wasm_core(&cast.expr, scopes),
+        ExprKind::With(with_expr) => {
+            for binding in &with_expr.bindings {
+                match binding {
+                    restrict_lang::ast::FieldInit::Field { value, .. }
+                    | restrict_lang::ast::FieldInit::Spread(value) => {
+                        check_expr_for_wasm_core(value, scopes)?;
+                    }
+                }
+            }
+            check_block_for_wasm_core(&with_expr.body, scopes)
+        }
+        ExprKind::WithLifetime(with_lt) => check_block_for_wasm_core(&with_lt.body, scopes),
+        ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+            for item in items {
+                check_expr_for_wasm_core(item, scopes)?;
+            }
+            Ok(())
+        }
+        ExprKind::RangeLit(range) => {
+            check_expr_for_wasm_core(&range.start, scopes)?;
+            check_expr_for_wasm_core(&range.end, scopes)
+        }
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Unit
+        | ExprKind::VariantRef(_) => Ok(()),
+    }
+}
+
+fn collect_pattern_bindings(pattern: &Pattern, bound: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Ident(name) => {
+            bound.insert(name.clone());
+        }
+        Pattern::Record(_, fields) => {
+            for (_, sub) in fields {
+                collect_pattern_bindings(sub, bound);
+            }
+        }
+        Pattern::RecordDestruct { fields, rest, .. } => {
+            for (_, sub) in fields {
+                collect_pattern_bindings(sub, bound);
+            }
+            if let Some(rest_name) = rest {
+                bound.insert(rest_name.clone());
+            }
+        }
+        Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
+            collect_pattern_bindings(inner, bound);
+        }
+        Pattern::EnumVariant {
+            payload: Some(inner),
+            ..
+        } => {
+            collect_pattern_bindings(inner, bound);
+        }
+        Pattern::ListCons(head, tail) => {
+            collect_pattern_bindings(head, bound);
+            collect_pattern_bindings(tail, bound);
+        }
+        Pattern::ListExact(items) => {
+            for item in items {
+                collect_pattern_bindings(item, bound);
+            }
+        }
+        Pattern::Wildcard
+        | Pattern::Literal(_)
+        | Pattern::None
+        | Pattern::EnumVariant { payload: None, .. }
+        | Pattern::EmptyList => {}
+    }
+}
+
+fn run_fmt_cli(files: &[String], check_only: bool) {
+    let mut needs_formatting = false;
+    for path in files {
+        let source = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Error reading file {}: {}", path, e);
+                std::process::exit(1);
+            }
+        };
+        let formatted = match format_source(&source) {
+            Ok(formatted) => formatted,
+            Err(e) => {
+                eprintln!("Formatting error in {}: {}", path, e);
+                std::process::exit(1);
+            }
+        };
+        if formatted != source {
+            if check_only {
+                eprintln!("Would reformat {}", path);
+                needs_formatting = true;
+            } else if let Err(e) = fs::write(path, formatted) {
+                eprintln!("Error writing file {}: {}", path, e);
+                std::process::exit(1);
+            } else {
+                println!("Formatted {}", path);
+            }
+        }
+    }
+    if check_only && needs_formatting {
+        std::process::exit(1);
+    }
+}
+
+fn reject_if_host_io_builtin(name: &str, scopes: &[HashSet<String>]) -> Result<(), String> {
+    let is_host_io = matches!(
+        name,
+        "println"
+            | "print"
+            | "eprint"
+            | "eprintln"
+            | "print_int"
+            | "print_float"
+            | "cli_args"
+            | "env_get"
+            | "stdin_read_all"
+            | "exit"
+    );
+    if is_host_io && !scopes.iter().any(|scope| scope.contains(name)) {
+        return Err(format!(
+            "'{name}' requires the 'wasip1' target profile; 'wasm-core' does not import host I/O"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wasm_core_validation_rejects_new_wasi_builtins() {
+        for (name, call_expr) in [
+            ("cli_args", "() cli_args"),
+            ("env_get", "\"HOME\" |> env_get"),
+            ("stdin_read_all", "() stdin_read_all"),
+            ("exit", "1 |> exit"),
+        ] {
+            let source = format!("fun main: () -> () = {{ val _v = {call_expr}; () }}\n");
+            let (rem, program) = parse_program(&source).expect("source should parse");
+            assert!(rem.trim().is_empty());
+            let err = validate_target_profile(&program, WasmTargetProfile::WasmCore)
+                .expect_err("wasm-core must reject WASI builtin");
+            assert!(err.contains(name), "{err}");
+            assert!(err.contains("wasip1"), "{err}");
+        }
+    }
 }

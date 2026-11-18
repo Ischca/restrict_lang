@@ -238,49 +238,64 @@ implemented and passes the v0.1.0 Component ABI gate.
 
 ### 1.6 Whitespace and Expression Boundaries
 
-Spaces, tabs, comments, and line breaks are ordinary whitespace. A line break
-does not terminate an expression. The parser reads the maximal expression
-allowed by the grammar, including a direct OSV call split across lines:
+Spaces, tabs, and inline comments are ordinary horizontal whitespace. Line
+breaks separate top-level/block statements by bounding direct OSV juxtaposition
+and anonymous scopes:
+
+- **Same-line direct OSV and scoped clauses**: Direct bare OSV calls
+  (`"hello" println`, `(10, 20) add`, `42 Option::Some`), same-line chained
+  scoped clauses (`values map { ... } filter { ... }`), and same-line anonymous
+  scopes (`value { |v| ... }`) associate across horizontal whitespace on the
+  same line. Inside `{ ... }`, clause and block bodies may span multiple lines
+  normally.
+- **Line-bounded direct OSV and bare `return`**: Bare direct OSV verbs and
+  anonymous `{ ... }` scopes do not cross line breaks. A newline after a
+  binding, expression, or completed block ends direct OSV juxtaposition so the
+  next line starts a new statement naturally without a semicolon. Similarly, a
+  bare `return` followed by a newline returns `()`.
+- **Explicit multi-line continuation**: Expressions continue across line breaks
+  through explicit continuation syntax: the pipe operator (`|>`), infix binary
+  operators (`+`, `-`, `*`, `&&`, `||`, etc.), postfix `.field` / `.clone`, or
+  control-flow keywords (`then`, `else`, `match`, `while`).
 
 ```rust
-val answer = 41
-    increment
-// Equivalent to: val answer = 41 increment
-```
-
-A direct OSV chain continues only while the following expression can serve as
-a verb (a function value). A literal, record, or collection value cannot be a
-verb, so it naturally begins a new expression even without a semicolon:
-
-```rust
-"first" println
-"second" println
-```
-
-A semicolon explicitly terminates the current statement when the following
-source could instead be interpreted as another verb in the same OSV chain:
-
-```rust
-val message = "ready";
+// Multi-line statements do not need semicolons
+val message = "ready"
 message println
+
+// Multi-line composition uses |>
+val answer = 41
+    |> increment
 ```
 
-Reserved declaration keywords, delimiters, operators, and values that cannot
-act as verbs still establish the boundaries required by their grammar, so
-semicolons are not required after every declaration or unambiguous expression.
-A block's final expression is not followed by a semicolon. Top-level
-declarations are never separated by semicolons.
-
-An explicit semicolon is appropriate when a local `val` deliberately stages a
-named value before an identifier-started expression. When the name exists only
-inside a higher-order transformation, a scoped verb clause can keep the same
-flow semicolon-free by naming the callback input instead:
+Semicolons (`;`) remain valid and optional. They are used only when placing
+multiple statements on a single line or when explicitly discarding a block's
+final expression as `()`:
 
 ```rust
-values map { |value|
-    value + 1
-}
+val a = 1; val b = 2
+do_side_effect;   // block evaluates to ()
 ```
+
+Idiomatic multi-line Restrict code, standard library modules, and examples are
+written semicolon-free. Top-level declarations are never separated by
+semicolons. See `docs/NAMING_AND_SYNTAX_DECISIONS.md` for the design record.
+
+### 1.7 Naming Conventions
+
+Restrict standardizes on `UpperCamelCase` for nominal types and type-level
+entities, and `snake_case` for values, functions, modules, and lifetimes (see
+`docs/NAMING_AND_SYNTAX_DECISIONS.md` for the full rationale, including 1:1
+WIT `kebab-case` mapping and parser disambiguation):
+
+- **`UpperCamelCase`**: `record`, `enum`, `form`, and `context` names
+  (`UserProfile`, `ParseError`, `Display`), generic type parameters (`T`, `U`,
+  `Item`), and qualified variant constructors (`Option::Some`, `Result::Ok`,
+  `ParseError::Message`).
+- **`snake_case`**: `fun` declarations, `impl` / `form` / `takes` methods,
+  `val` / `mut val` bindings, function/lambda parameters, record and context
+  fields, module names, source filenames (`my_module.rl`), and temporal
+  lifetimes (`~file`, `~tx`).
 
 ## 2. Variable Declarations
 
@@ -470,10 +485,11 @@ Ordinary value arguments always come BEFORE the function name. Traditional
 parenthetical function calls `function(args)` will cause compilation errors.
 The scoped verb clause in Section 5.9 is a separate OSV form: its trailing
 block is a scope opened by the verb, not an ordinary value argument.
-Whitespace, including line breaks, does not end a direct call. A following
-value that cannot be a verb begins a new expression naturally. Use `;` when a
-following callable-shaped expression must begin a new statement instead of
-extending the OSV call, as specified in Section 1.6.
+Direct OSV calls (`value function`) are line-bounded: a newline terminates a
+direct OSV chain so the next line starts a new statement naturally. Use `|>`
+for multi-line pipelines, and use `;` only when placing multiple statements on
+one line or explicitly discarding a final block value as `()`, as specified in
+Section 1.6.
 
 **OSV Pattern Examples:**
 ```rust
@@ -533,7 +549,8 @@ age >= 18 then { "adult" } else { "minor" }
 
 `break` and `continue` are valid only inside a `while` loop body. `return`
 exits the enclosing function early (preserving type compatibility with the
-function's return type; bare `return` is valid when the return type is `()`).
+function's return type; bare `return` followed by a newline, `}`, or `;`
+returns `()` when the return type is `()`).
 
 ### 5.5 Match Expressions
 ```rust
@@ -709,9 +726,11 @@ Rules:
 - Application continuations associate left-to-right. For example,
   `values map { it + 1 } { |mapped| mapped print }` first completes `map`, then
   applies the anonymous scope to the mapped value.
-- Newlines remain ordinary whitespace. Use `;` when a following callable-shaped
-  expression must begin a separate expression rather than continue the current
-  application chain.
+- Direct OSV and anonymous `{ ... }` continuation are line-bounded: a newline
+  after a completed expression or block starts a new statement on the following
+  line. Use `|>` (or infix operators, `.field` / `.clone`, and control
+  keywords) to continue across lines; `;` remains optional for single-line
+  multi-statement sequencing or explicit unit discard.
 
 The braces after a completed value denote an anonymous scope. Nominal record
 construction remains `UpperCamelName { fields... }`; it is parsed as a record
@@ -819,7 +838,7 @@ Spread destructuring allows extraction of specific fields while capturing remain
 Person { name, email, ...rest }         // Extract name and email, rest gets remaining fields
 
 // Spread with explicit field patterns
-User { id: userId, name, ...userMeta }  // Extract id as userId, name as name, rest as userMeta
+User { id: user_id, name, ...user_meta }  // Extract id as user_id, name as name, rest as user_meta
 
 // Spread in match expressions
 value match {
@@ -831,12 +850,12 @@ value match {
 // Future/planned: nested spread patterns in backend codegen
 // Shown as a planned match-arm shape, not a current v0.0.1 guarantee.
 Company {
-    name: companyName,
-    contact: Contact { email, ...contactInfo },
-    ...companyDetails
+    name: company_name,
+    contact: Contact { email, ...contact_info },
+    ...company_details
 } => {
     // Extract company name, contact email, and group remaining fields
-    (companyName, email, contactInfo, companyDetails) process_company
+    (company_name, email, contact_info, company_details) process_company
 }
 
 // Wildcard spread (ignore remaining fields)
@@ -869,9 +888,11 @@ counter = counter + 1   // Only for mutable variables
 x + y                   // Must be pure (no side effects)
 ```
 
-Expression statements that could be parsed as one whitespace-adjacent OSV
-expression must be separated with `;`. A newline alone is not a statement
-terminator.
+Multi-line statements are naturally separated by newlines because direct OSV
+juxtaposition and anonymous scopes do not cross line breaks (Section 1.6).
+Semicolons (`;`) are optional and are only needed when placing multiple
+statements on the same line or when explicitly discarding a block's final
+expression as `()`.
 
 ## 8. Record Types
 
@@ -1080,7 +1101,7 @@ where ~inner within ~outer     // inner lifetime contained in outer
 
 ### 11.1 Clone
 ```rust
-val newObj = obj.clone { field: newValue }
+val new_obj = obj.clone { field: new_value }
 ```
 
 When `.clone { ... }` consumes an owned `val` base record once under affine
@@ -1093,7 +1114,7 @@ reads (such as `outer.inner.x` when `x` is Copy) do not consume `outer`.
 ### 11.2 Freeze
 ```rust
 val frozen = obj freeze         // Make immutable
-val cloneAndFreeze = obj.clone { field: value } freeze
+val clone_and_freeze = obj.clone { field: value } freeze
 ```
 
 ## 12. Import/Export
@@ -1168,7 +1189,7 @@ rather than producing unresolved `warder.lock` entries.
 
 ### 12.2 Exports
 ```rust
-pub fun publicFunction: () = { ... }
+pub fun public_function: () = { ... }
 pub record PublicType { ... }
 pub enum PublicError { Missing Invalid(String) }
 pub form PublicContract { fun render: (self: Self) -> String }
@@ -1774,7 +1795,7 @@ fun main: () -> Int32 = {
 
 ### 16.8 Temporal Resource Management
 ```rust
-fun processFile: (path: String) -> Result<String, Error> = {
+fun process_file: (path: String) -> Result<String, Error> = {
     temporal ~file {
         val file = File<~file> { path: path }
         file |> read
@@ -1859,6 +1880,6 @@ explicitly include them.
 
 **Documentation**: All other documentation files are superseded by this specification.
 
-**Last Updated**: 2026-08-09
+**Last Updated**: 2026-11-18
 **Version**: 1.0.0
 **Status**: CANONICAL SOURCE OF TRUTH

@@ -249,6 +249,10 @@ pub struct WasmCodeGen {
     component_resource_arena_addr: Option<u32>,
     /// Host environment selected for the generated Core Wasm module.
     target_profile: WasmTargetProfile,
+    /// On-demand WASI Preview 1 import flags detected for the current module.
+    needs_wasi_args: bool,
+    needs_wasi_environ: bool,
+    needs_wasi_stdin: bool,
     /// Bytes reserved for each compiler-managed arena.
     arena_size_bytes: u32,
     /// Deterministic optimization applied after WAT lowering.
@@ -416,6 +420,9 @@ impl WasmCodeGen {
             component_boundary_arena_addr: None,
             component_resource_arena_addr: None,
             target_profile: WasmTargetProfile::WasiP1,
+            needs_wasi_args: false,
+            needs_wasi_environ: false,
+            needs_wasi_stdin: false,
             arena_size_bytes: DEFAULT_ARENA_SIZE_BYTES,
             optimization_level: WasmOptimizationLevel::None,
             optimization_report: None,
@@ -627,12 +634,25 @@ impl WasmCodeGen {
         #[cfg(not(target_arch = "wasm32"))]
         self.generate_canonical_abi_scalar_imports(program)?;
 
+        self.prepare_on_demand_wasi_imports(program)?;
+
         if self.target_profile == WasmTargetProfile::WasiP1 {
             self.output.push_str("  ;; WASI Preview 1 imports\n");
             self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
             self.output.push_str(
                 "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n",
             );
+            if self.needs_wasi_args {
+                self.output.push_str("  (import \"wasi_snapshot_preview1\" \"args_sizes_get\" (func $args_sizes_get (param i32 i32) (result i32)))\n");
+                self.output.push_str("  (import \"wasi_snapshot_preview1\" \"args_get\" (func $args_get (param i32 i32) (result i32)))\n");
+            }
+            if self.needs_wasi_environ {
+                self.output.push_str("  (import \"wasi_snapshot_preview1\" \"environ_sizes_get\" (func $environ_sizes_get (param i32 i32) (result i32)))\n");
+                self.output.push_str("  (import \"wasi_snapshot_preview1\" \"environ_get\" (func $environ_get (param i32 i32) (result i32)))\n");
+            }
+            if self.needs_wasi_stdin {
+                self.output.push_str("  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n");
+            }
         }
 
         // Memory
@@ -1397,6 +1417,379 @@ impl WasmCodeGen {
             .unwrap_or(false)
     }
 
+    fn prepare_on_demand_wasi_imports(&mut self, program: &Program) -> Result<(), CodeGenError> {
+        self.needs_wasi_args = false;
+        self.needs_wasi_environ = false;
+        self.needs_wasi_stdin = false;
+
+        let mut top_level_shadows = HashSet::new();
+        for decl in &program.declarations {
+            match Self::decl_codegen_item(decl) {
+                TopDecl::Function(func) => {
+                    top_level_shadows.insert(func.name.clone());
+                }
+                TopDecl::Binding(binding) => {
+                    Self::collect_pattern_binding_names(&binding.pattern, &mut top_level_shadows);
+                }
+                _ => {}
+            }
+        }
+
+        let mut first_wasi_only_in_core: Option<String> = None;
+        for decl in &program.declarations {
+            let mut scopes = vec![top_level_shadows.clone()];
+            match Self::decl_codegen_item(decl) {
+                TopDecl::Function(func) => {
+                    let mut fn_scope = HashSet::new();
+                    for param in &func.params {
+                        fn_scope.insert(param.name.clone());
+                    }
+                    scopes.push(fn_scope);
+                    self.scan_wasi_builtins_in_block(
+                        &func.body,
+                        &mut scopes,
+                        &mut first_wasi_only_in_core,
+                    );
+                }
+                TopDecl::Binding(binding) => {
+                    self.scan_wasi_builtins_in_expr(
+                        &binding.value,
+                        &mut scopes,
+                        &mut first_wasi_only_in_core,
+                    );
+                }
+                TopDecl::Impl(impl_block) => {
+                    for func in &impl_block.functions {
+                        let mut fn_scope = HashSet::new();
+                        for param in &func.params {
+                            fn_scope.insert(param.name.clone());
+                        }
+                        scopes.push(fn_scope);
+                        self.scan_wasi_builtins_in_block(
+                            &func.body,
+                            &mut scopes,
+                            &mut first_wasi_only_in_core,
+                        );
+                        scopes.pop();
+                    }
+                }
+                TopDecl::Takes(takes) => {
+                    for func in &takes.functions {
+                        let mut fn_scope = HashSet::new();
+                        for param in &func.params {
+                            fn_scope.insert(param.name.clone());
+                        }
+                        scopes.push(fn_scope);
+                        self.scan_wasi_builtins_in_block(
+                            &func.body,
+                            &mut scopes,
+                            &mut first_wasi_only_in_core,
+                        );
+                        scopes.pop();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if self.target_profile == WasmTargetProfile::WasmCore {
+            if let Some(name) = first_wasi_only_in_core {
+                return Err(CodeGenError::UnsupportedFeature(format!(
+                    "'{name}' requires the 'wasip1' target profile; 'wasm-core' does not import host I/O"
+                )));
+            }
+            self.needs_wasi_args = false;
+            self.needs_wasi_environ = false;
+            self.needs_wasi_stdin = false;
+        }
+
+        Ok(())
+    }
+
+    fn collect_pattern_binding_names(pattern: &Pattern, names: &mut HashSet<String>) {
+        match pattern {
+            Pattern::Ident(name) => {
+                names.insert(name.clone());
+            }
+            Pattern::Record(_, fields) => {
+                for (_, field_pattern) in fields {
+                    Self::collect_pattern_binding_names(field_pattern, names);
+                }
+            }
+            Pattern::RecordDestruct { fields, rest, .. } => {
+                for (_, field_pattern) in fields {
+                    Self::collect_pattern_binding_names(field_pattern, names);
+                }
+                if let Some(rest_name) = rest {
+                    names.insert(rest_name.clone());
+                }
+            }
+            Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
+                Self::collect_pattern_binding_names(inner, names);
+            }
+            Pattern::EnumVariant {
+                payload: Some(inner),
+                ..
+            } => {
+                Self::collect_pattern_binding_names(inner, names);
+            }
+            Pattern::ListCons(head, tail) => {
+                Self::collect_pattern_binding_names(head, names);
+                Self::collect_pattern_binding_names(tail, names);
+            }
+            Pattern::ListExact(patterns) => {
+                for pat in patterns {
+                    Self::collect_pattern_binding_names(pat, names);
+                }
+            }
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::None
+            | Pattern::EnumVariant { payload: None, .. }
+            | Pattern::EmptyList => {}
+        }
+    }
+
+    fn record_wasi_builtin_ref(
+        &mut self,
+        name: &str,
+        scopes: &[HashSet<String>],
+        first_wasi_only_in_core: &mut Option<String>,
+    ) {
+        if scopes.iter().any(|scope| scope.contains(name)) {
+            return;
+        }
+        match name {
+            "cli_args" => {
+                self.needs_wasi_args = true;
+                if first_wasi_only_in_core.is_none() {
+                    *first_wasi_only_in_core = Some(name.to_string());
+                }
+            }
+            "env_get" => {
+                self.needs_wasi_environ = true;
+                if first_wasi_only_in_core.is_none() {
+                    *first_wasi_only_in_core = Some(name.to_string());
+                }
+            }
+            "stdin_read_all" => {
+                self.needs_wasi_stdin = true;
+                if first_wasi_only_in_core.is_none() {
+                    *first_wasi_only_in_core = Some(name.to_string());
+                }
+            }
+            "exit" | "eprint" | "eprintln" | "print_int" | "print_float" => {
+                if first_wasi_only_in_core.is_none() {
+                    *first_wasi_only_in_core = Some(name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn scan_wasi_builtins_in_block(
+        &mut self,
+        block: &BlockExpr,
+        scopes: &mut Vec<HashSet<String>>,
+        first_wasi_only_in_core: &mut Option<String>,
+    ) {
+        scopes.push(HashSet::new());
+        for stmt in &block.statements {
+            match stmt {
+                Stmt::Binding(binding) => {
+                    self.scan_wasi_builtins_in_expr(
+                        &binding.value,
+                        scopes,
+                        first_wasi_only_in_core,
+                    );
+                    if let Some(scope) = scopes.last_mut() {
+                        Self::collect_pattern_binding_names(&binding.pattern, scope);
+                    }
+                }
+                Stmt::Assignment(assign) => {
+                    self.scan_wasi_builtins_in_expr(
+                        &assign.value,
+                        scopes,
+                        first_wasi_only_in_core,
+                    );
+                }
+                Stmt::Expr(expr) => {
+                    self.scan_wasi_builtins_in_expr(expr, scopes, first_wasi_only_in_core);
+                }
+            }
+        }
+        if let Some(expr) = &block.expr {
+            self.scan_wasi_builtins_in_expr(expr, scopes, first_wasi_only_in_core);
+        }
+        scopes.pop();
+    }
+
+    fn scan_wasi_builtins_in_expr(
+        &mut self,
+        expr: &Expr,
+        scopes: &mut Vec<HashSet<String>>,
+        first_wasi_only_in_core: &mut Option<String>,
+    ) {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                self.record_wasi_builtin_ref(name, scopes, first_wasi_only_in_core);
+            }
+            ExprKind::Call(call) => {
+                self.scan_wasi_builtins_in_expr(&call.function, scopes, first_wasi_only_in_core);
+                for arg in &call.args {
+                    self.scan_wasi_builtins_in_expr(arg, scopes, first_wasi_only_in_core);
+                }
+            }
+            ExprKind::Pipe(pipe) => {
+                self.scan_wasi_builtins_in_expr(&pipe.expr, scopes, first_wasi_only_in_core);
+                match &pipe.target {
+                    PipeTarget::Ident(name) => {
+                        self.record_wasi_builtin_ref(name, scopes, first_wasi_only_in_core);
+                    }
+                    PipeTarget::Expr(target) => {
+                        self.scan_wasi_builtins_in_expr(target, scopes, first_wasi_only_in_core);
+                    }
+                }
+            }
+            ExprKind::Block(block) => {
+                self.scan_wasi_builtins_in_block(block, scopes, first_wasi_only_in_core);
+            }
+            ExprKind::Binary(binary) => {
+                self.scan_wasi_builtins_in_expr(&binary.left, scopes, first_wasi_only_in_core);
+                self.scan_wasi_builtins_in_expr(&binary.right, scopes, first_wasi_only_in_core);
+            }
+            ExprKind::Unary(unary) => {
+                self.scan_wasi_builtins_in_expr(&unary.expr, scopes, first_wasi_only_in_core);
+            }
+            ExprKind::Cast(cast) => {
+                self.scan_wasi_builtins_in_expr(&cast.expr, scopes, first_wasi_only_in_core);
+            }
+            ExprKind::RecordLit(record) => {
+                for field in &record.fields {
+                    match field {
+                        FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
+                            self.scan_wasi_builtins_in_expr(
+                                value,
+                                scopes,
+                                first_wasi_only_in_core,
+                            );
+                        }
+                    }
+                }
+            }
+            ExprKind::Clone(clone) => {
+                self.scan_wasi_builtins_in_expr(&clone.base, scopes, first_wasi_only_in_core);
+                for field in &clone.updates.fields {
+                    match field {
+                        FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
+                            self.scan_wasi_builtins_in_expr(
+                                value,
+                                scopes,
+                                first_wasi_only_in_core,
+                            );
+                        }
+                    }
+                }
+            }
+            ExprKind::Freeze(inner) | ExprKind::FieldAccess(inner, _) => {
+                self.scan_wasi_builtins_in_expr(inner, scopes, first_wasi_only_in_core);
+            }
+            ExprKind::ListLit(items) | ExprKind::ArrayLit(items) => {
+                for item in items {
+                    self.scan_wasi_builtins_in_expr(item, scopes, first_wasi_only_in_core);
+                }
+            }
+            ExprKind::RangeLit(range) => {
+                self.scan_wasi_builtins_in_expr(&range.start, scopes, first_wasi_only_in_core);
+                self.scan_wasi_builtins_in_expr(&range.end, scopes, first_wasi_only_in_core);
+            }
+            ExprKind::Then(then_expr) => {
+                self.scan_wasi_builtins_in_expr(
+                    &then_expr.condition,
+                    scopes,
+                    first_wasi_only_in_core,
+                );
+                self.scan_wasi_builtins_in_block(
+                    &then_expr.then_block,
+                    scopes,
+                    first_wasi_only_in_core,
+                );
+                for (cond, block) in &then_expr.else_ifs {
+                    self.scan_wasi_builtins_in_expr(cond, scopes, first_wasi_only_in_core);
+                    self.scan_wasi_builtins_in_block(block, scopes, first_wasi_only_in_core);
+                }
+                if let Some(block) = &then_expr.else_block {
+                    self.scan_wasi_builtins_in_block(block, scopes, first_wasi_only_in_core);
+                }
+            }
+            ExprKind::While(while_expr) => {
+                self.scan_wasi_builtins_in_expr(
+                    &while_expr.condition,
+                    scopes,
+                    first_wasi_only_in_core,
+                );
+                self.scan_wasi_builtins_in_block(
+                    &while_expr.body,
+                    scopes,
+                    first_wasi_only_in_core,
+                );
+            }
+            ExprKind::Match(match_expr) => {
+                self.scan_wasi_builtins_in_expr(
+                    &match_expr.expr,
+                    scopes,
+                    first_wasi_only_in_core,
+                );
+                for arm in &match_expr.arms {
+                    let mut arm_scope = HashSet::new();
+                    Self::collect_pattern_binding_names(&arm.pattern, &mut arm_scope);
+                    scopes.push(arm_scope);
+                    self.scan_wasi_builtins_in_block(
+                        &arm.body,
+                        scopes,
+                        first_wasi_only_in_core,
+                    );
+                    scopes.pop();
+                }
+            }
+            ExprKind::With(with_expr) => {
+                for binding in &with_expr.bindings {
+                    match binding {
+                        FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
+                            self.scan_wasi_builtins_in_expr(
+                                value,
+                                scopes,
+                                first_wasi_only_in_core,
+                            );
+                        }
+                    }
+                }
+                self.scan_wasi_builtins_in_block(
+                    &with_expr.body,
+                    scopes,
+                    first_wasi_only_in_core,
+                );
+            }
+            ExprKind::WithLifetime(with_lifetime) => {
+                self.scan_wasi_builtins_in_block(
+                    &with_lifetime.body,
+                    scopes,
+                    first_wasi_only_in_core,
+                );
+            }
+            ExprKind::Lambda(lambda) => {
+                let mut lambda_scope = HashSet::new();
+                for param in &lambda.params {
+                    lambda_scope.insert(param.name.clone());
+                }
+                scopes.push(lambda_scope);
+                self.scan_wasi_builtins_in_expr(&lambda.body, scopes, first_wasi_only_in_core);
+                scopes.pop();
+            }
+            _ => {}
+        }
+    }
+
     fn generate_builtin_functions(&mut self) -> Result<(), CodeGenError> {
         self.output.push_str("\n  ;; Built-in functions\n");
         if self.target_profile == WasmTargetProfile::WasiP1 {
@@ -1620,6 +2013,9 @@ impl WasmCodeGen {
         }
 
         self.generate_std_option_functions();
+        self.generate_std_string_functions()?;
+        self.generate_std_char_functions()?;
+        self.generate_std_range_functions()?;
 
         Ok(())
     }
@@ -1778,6 +2174,7 @@ impl WasmCodeGen {
             ("print_float", Type::Named("Float64".to_string())),
             ("eprint", Type::Named("String".to_string())),
             ("eprintln", Type::Named("String".to_string())),
+            ("exit", Type::Named("Int32".to_string())),
         ] {
             let wasm_param = self.convert_type(&param_ty)?;
             self.functions.insert(
@@ -1795,6 +2192,513 @@ impl WasmCodeGen {
                     result: Some(Type::Named("Unit".to_string())),
                 },
             );
+        }
+
+        self.output.push_str(
+            r#"  (func $exit (param $code i32)
+    local.get $code
+    call $proc_exit
+    unreachable
+  )
+"#,
+        );
+
+        if self.needs_wasi_args {
+            self.output.push_str(
+                r#"  (func $cli_args (result i32)
+    (local $sizes i32)
+    (local $argc i32)
+    (local $buf_size i32)
+    (local $argv i32)
+    (local $buf i32)
+    (local $list i32)
+    (local $i i32)
+    (local $cstr i32)
+    (local $slen i32)
+    (local $str_ptr i32)
+    i32.const 8
+    call $allocate
+    local.set $sizes
+    local.get $sizes
+    local.get $sizes
+    i32.const 4
+    i32.add
+    call $args_sizes_get
+    i32.const 0
+    i32.ne
+    (if
+      (then
+        call $__restrict_empty_list
+        return
+      )
+    )
+    local.get $sizes
+    i32.load
+    local.set $argc
+    local.get $sizes
+    i32.const 4
+    i32.add
+    i32.load
+    local.set $buf_size
+    local.get $argc
+    i32.const 0
+    i32.le_s
+    (if
+      (then
+        call $__restrict_empty_list
+        return
+      )
+    )
+    local.get $argc
+    i32.const 4
+    i32.mul
+    call $allocate
+    local.set $argv
+    local.get $buf_size
+    i32.const 1
+    i32.lt_s
+    (if (result i32)
+      (then i32.const 1)
+      (else local.get $buf_size)
+    )
+    call $allocate
+    local.set $buf
+    local.get $argv
+    local.get $buf
+    call $args_get
+    i32.const 0
+    i32.ne
+    (if
+      (then
+        call $__restrict_empty_list
+        return
+      )
+    )
+    local.get $argc
+    i32.const 4
+    i32.mul
+    i32.const 8
+    i32.add
+    call $allocate
+    local.set $list
+    local.get $list
+    local.get $argc
+    i32.store
+    local.get $list
+    i32.const 4
+    i32.add
+    local.get $argc
+    i32.store
+    i32.const 0
+    local.set $i
+    (block $cli_args_done
+      (loop $cli_args_loop
+        local.get $i
+        local.get $argc
+        i32.ge_s
+        br_if $cli_args_done
+        local.get $argv
+        local.get $i
+        i32.const 4
+        i32.mul
+        i32.add
+        i32.load
+        local.set $cstr
+        i32.const 0
+        local.set $slen
+        (block $cli_strlen_done
+          (loop $cli_strlen_loop
+            local.get $cstr
+            local.get $slen
+            i32.add
+            i32.load8_u
+            i32.eqz
+            br_if $cli_strlen_done
+            local.get $slen
+            i32.const 1
+            i32.add
+            local.set $slen
+            br $cli_strlen_loop
+          )
+        )
+        local.get $slen
+        i32.const 4
+        i32.add
+        call $allocate
+        local.set $str_ptr
+        local.get $str_ptr
+        local.get $slen
+        i32.store
+        local.get $slen
+        i32.const 0
+        i32.gt_s
+        (if
+          (then
+            local.get $str_ptr
+            i32.const 4
+            i32.add
+            local.get $cstr
+            local.get $slen
+            memory.copy
+          )
+        )
+        local.get $list
+        i32.const 8
+        i32.add
+        local.get $i
+        i32.const 4
+        i32.mul
+        i32.add
+        local.get $str_ptr
+        i32.store
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $cli_args_loop
+      )
+    )
+    local.get $list
+  )
+"#,
+            );
+            self.register_builtin_sig(
+                "cli_args",
+                vec![],
+                Type::Generic("List".to_string(), vec![Type::Named("String".to_string())]),
+            )?;
+        }
+
+        if self.needs_wasi_environ {
+            self.output.push_str(
+                r#"  (func $env_get (param $key i32) (result i32)
+    (local $sizes i32)
+    (local $count i32)
+    (local $buf_size i32)
+    (local $envp i32)
+    (local $buf i32)
+    (local $key_len i32)
+    (local $i i32)
+    (local $entry i32)
+    (local $j i32)
+    (local $matched i32)
+    (local $eb i32)
+    (local $val_ptr i32)
+    (local $val_len i32)
+    (local $val_str i32)
+    i32.const 8
+    call $allocate
+    local.set $sizes
+    local.get $sizes
+    local.get $sizes
+    i32.const 4
+    i32.add
+    call $environ_sizes_get
+    i32.const 0
+    i32.ne
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $sizes
+    i32.load
+    local.set $count
+    local.get $sizes
+    i32.const 4
+    i32.add
+    i32.load
+    local.set $buf_size
+    local.get $count
+    i32.const 0
+    i32.le_s
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $count
+    i32.const 4
+    i32.mul
+    call $allocate
+    local.set $envp
+    local.get $buf_size
+    i32.const 1
+    i32.lt_s
+    (if (result i32)
+      (then i32.const 1)
+      (else local.get $buf_size)
+    )
+    call $allocate
+    local.set $buf
+    local.get $envp
+    local.get $buf
+    call $environ_get
+    i32.const 0
+    i32.ne
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $key
+    i32.load
+    local.set $key_len
+    i32.const 0
+    local.set $i
+    (block $env_loop_done
+      (loop $env_loop
+        local.get $i
+        local.get $count
+        i32.ge_s
+        br_if $env_loop_done
+        local.get $envp
+        local.get $i
+        i32.const 4
+        i32.mul
+        i32.add
+        i32.load
+        local.set $entry
+        i32.const 0
+        local.set $j
+        i32.const 1
+        local.set $matched
+        (block $env_cmp_done
+          (loop $env_cmp_loop
+            local.get $j
+            local.get $key_len
+            i32.ge_s
+            br_if $env_cmp_done
+            local.get $entry
+            local.get $j
+            i32.add
+            i32.load8_u
+            local.tee $eb
+            i32.eqz
+            local.get $eb
+            local.get $key
+            i32.const 4
+            i32.add
+            local.get $j
+            i32.add
+            i32.load8_u
+            i32.ne
+            i32.or
+            (if
+              (then
+                i32.const 0
+                local.set $matched
+                br $env_cmp_done
+              )
+            )
+            local.get $j
+            i32.const 1
+            i32.add
+            local.set $j
+            br $env_cmp_loop
+          )
+        )
+        local.get $matched
+        (if
+          (then
+            local.get $entry
+            local.get $key_len
+            i32.add
+            i32.load8_u
+            i32.const 61
+            i32.eq
+            (if
+              (then
+                local.get $entry
+                local.get $key_len
+                i32.add
+                i32.const 1
+                i32.add
+                local.set $val_ptr
+                i32.const 0
+                local.set $val_len
+                (block $env_vlen_done
+                  (loop $env_vlen_loop
+                    local.get $val_ptr
+                    local.get $val_len
+                    i32.add
+                    i32.load8_u
+                    i32.eqz
+                    br_if $env_vlen_done
+                    local.get $val_len
+                    i32.const 1
+                    i32.add
+                    local.set $val_len
+                    br $env_vlen_loop
+                  )
+                )
+                local.get $val_len
+                i32.const 4
+                i32.add
+                call $allocate
+                local.set $val_str
+                local.get $val_str
+                local.get $val_len
+                i32.store
+                local.get $val_len
+                i32.const 0
+                i32.gt_s
+                (if
+                  (then
+                    local.get $val_str
+                    i32.const 4
+                    i32.add
+                    local.get $val_ptr
+                    local.get $val_len
+                    memory.copy
+                  )
+                )
+                local.get $val_str
+                call $__restrict_make_some_i32
+                return
+              )
+            )
+          )
+        )
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $env_loop
+      )
+    )
+    call $__restrict_make_none
+  )
+"#,
+            );
+            self.register_builtin_sig(
+                "env_get",
+                vec![Type::Named("String".to_string())],
+                Type::Generic("Option".to_string(), vec![Type::Named("String".to_string())]),
+            )?;
+        }
+
+        if self.needs_wasi_stdin {
+            self.output.push_str(
+                r#"  (func $stdin_read_all (result i32)
+    (local $iov i32)
+    (local $nread_ptr i32)
+    (local $cap i32)
+    (local $total i32)
+    (local $buf i32)
+    (local $new_cap i32)
+    (local $new_buf i32)
+    (local $n i32)
+    (local $out i32)
+    i32.const 8
+    call $allocate
+    local.set $iov
+    i32.const 4
+    call $allocate
+    local.set $nread_ptr
+    i32.const 128
+    local.set $cap
+    i32.const 0
+    local.set $total
+    local.get $cap
+    call $allocate
+    local.set $buf
+    (block $stdin_done
+      (loop $stdin_loop
+        local.get $total
+        local.get $cap
+        i32.ge_s
+        (if
+          (then
+            local.get $cap
+            i32.const 2
+            i32.mul
+            local.set $new_cap
+            local.get $new_cap
+            call $allocate
+            local.set $new_buf
+            local.get $total
+            i32.const 0
+            i32.gt_s
+            (if
+              (then
+                local.get $new_buf
+                local.get $buf
+                local.get $total
+                memory.copy
+              )
+            )
+            local.get $new_buf
+            local.set $buf
+            local.get $new_cap
+            local.set $cap
+          )
+        )
+        local.get $iov
+        local.get $buf
+        local.get $total
+        i32.add
+        i32.store
+        local.get $iov
+        i32.const 4
+        i32.add
+        local.get $cap
+        local.get $total
+        i32.sub
+        i32.store
+        i32.const 0
+        local.get $iov
+        i32.const 1
+        local.get $nread_ptr
+        call $fd_read
+        i32.const 0
+        i32.ne
+        br_if $stdin_done
+        local.get $nread_ptr
+        i32.load
+        local.tee $n
+        i32.eqz
+        br_if $stdin_done
+        local.get $total
+        local.get $n
+        i32.add
+        local.set $total
+        br $stdin_loop
+      )
+    )
+    local.get $total
+    i32.const 4
+    i32.add
+    call $allocate
+    local.set $out
+    local.get $out
+    local.get $total
+    i32.store
+    local.get $total
+    i32.const 0
+    i32.gt_s
+    (if
+      (then
+        local.get $out
+        i32.const 4
+        i32.add
+        local.get $buf
+        local.get $total
+        memory.copy
+      )
+    )
+    local.get $out
+  )
+"#,
+            );
+            self.register_builtin_sig(
+                "stdin_read_all",
+                vec![],
+                Type::Named("String".to_string()),
+            )?;
         }
 
         Ok(())
@@ -2548,6 +3452,18 @@ impl WasmCodeGen {
         self.output.push_str("    f64.min\n");
         self.output.push_str("  )\n");
 
+        for (name, op) in [
+            ("sqrt", "f64.sqrt"),
+            ("floor", "f64.floor"),
+            ("ceil", "f64.ceil"),
+            ("round", "f64.nearest"),
+            ("trunc", "f64.trunc"),
+        ] {
+            self.output.push_str(&format!(
+                "  (func ${name} (param $x f64) (result f64)\n    local.get $x\n    {op}\n  )\n"
+            ));
+        }
+
         for (name, params, result) in [
             (
                 "abs",
@@ -2604,6 +3520,31 @@ impl WasmCodeGen {
                 ],
                 Type::Named("Float64".to_string()),
             ),
+            (
+                "sqrt",
+                vec![Type::Named("Float64".to_string())],
+                Type::Named("Float64".to_string()),
+            ),
+            (
+                "floor",
+                vec![Type::Named("Float64".to_string())],
+                Type::Named("Float64".to_string()),
+            ),
+            (
+                "ceil",
+                vec![Type::Named("Float64".to_string())],
+                Type::Named("Float64".to_string()),
+            ),
+            (
+                "round",
+                vec![Type::Named("Float64".to_string())],
+                Type::Named("Float64".to_string()),
+            ),
+            (
+                "trunc",
+                vec![Type::Named("Float64".to_string())],
+                Type::Named("Float64".to_string()),
+            ),
         ] {
             let wasm_params = params
                 .iter()
@@ -2658,6 +3599,10 @@ impl WasmCodeGen {
         self.output.push_str("    i32.eqz\n");
         self.output.push_str("    (if\n");
         self.output.push_str("      (then\n");
+        if self.target_profile == WasmTargetProfile::WasiP1 {
+            self.output.push_str("        local.get $message\n");
+            self.output.push_str("        call $eprintln\n");
+        }
         self.output.push_str("        unreachable\n");
         self.output.push_str("      )\n");
         self.output.push_str("    )\n");
@@ -2665,6 +3610,10 @@ impl WasmCodeGen {
 
         self.output
             .push_str("  (func $panic (param $message i32)\n");
+        if self.target_profile == WasmTargetProfile::WasiP1 {
+            self.output.push_str("    local.get $message\n");
+            self.output.push_str("    call $eprintln\n");
+        }
         self.output.push_str("    unreachable\n");
         self.output.push_str("  )\n");
 
@@ -2850,6 +3799,2203 @@ impl WasmCodeGen {
                 result: Some(WasmType::F64),
             },
         );
+        self.function_source_sigs.insert(
+            "option_unwrap_or_f64".to_string(),
+            FunctionSourceSig {
+                type_params: vec![],
+                params: vec![
+                    Type::Generic("Option".to_string(), vec![Type::Named("Float64".to_string())]),
+                    Type::Named("Float64".to_string()),
+                ],
+                result: Some(Type::Named("Float64".to_string())),
+            },
+        );
+
+        self.output.push_str(
+            "  (func $option_unwrap_or_i64 (param $option i32) (param $default i64) (result i64)\n",
+        );
+        self.output.push_str("    local.get $option\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("    i32.const 1\n");
+        self.output.push_str("    i32.eq\n");
+        self.output.push_str("    (if (result i64)\n");
+        self.output.push_str("      (then\n");
+        self.output.push_str("        local.get $option\n");
+        self.output.push_str("        i32.const 4\n");
+        self.output.push_str("        i32.add\n");
+        self.output.push_str("        i64.load\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("      (else\n");
+        self.output.push_str("        local.get $default\n");
+        self.output.push_str("      )\n");
+        self.output.push_str("    )\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert(
+            "option_unwrap_or_i64".to_string(),
+            FunctionSig {
+                _params: vec![WasmType::I32, WasmType::I64],
+                result: Some(WasmType::I64),
+            },
+        );
+        self.function_source_sigs.insert(
+            "option_unwrap_or_i64".to_string(),
+            FunctionSourceSig {
+                type_params: vec![],
+                params: vec![
+                    Type::Generic("Option".to_string(), vec![Type::Named("Int64".to_string())]),
+                    Type::Named("Int64".to_string()),
+                ],
+                result: Some(Type::Named("Int64".to_string())),
+            },
+        );
+
+        self.output.push_str(
+            r#"  (func $__restrict_make_none (result i32)
+    (local $opt i32)
+    i32.const 4
+    call $allocate
+    local.tee $opt
+    i32.const 0
+    i32.store
+    local.get $opt
+  )
+  (func $__restrict_make_some_i32 (param $val i32) (result i32)
+    (local $opt i32)
+    i32.const 8
+    call $allocate
+    local.tee $opt
+    i32.const 1
+    i32.store
+    local.get $opt
+    i32.const 4
+    i32.add
+    local.get $val
+    i32.store
+    local.get $opt
+  )
+  (func $__restrict_make_some_i64 (param $val i64) (result i32)
+    (local $opt i32)
+    i32.const 12
+    call $allocate
+    local.tee $opt
+    i32.const 1
+    i32.store
+    local.get $opt
+    i32.const 4
+    i32.add
+    local.get $val
+    i64.store
+    local.get $opt
+  )
+  (func $__restrict_make_some_f64 (param $val f64) (result i32)
+    (local $opt i32)
+    i32.const 12
+    call $allocate
+    local.tee $opt
+    i32.const 1
+    i32.store
+    local.get $opt
+    i32.const 4
+    i32.add
+    local.get $val
+    f64.store
+    local.get $opt
+  )
+  (func $__restrict_empty_list (result i32)
+    (local $list i32)
+    i32.const 8
+    call $allocate
+    local.tee $list
+    i32.const 0
+    i32.store
+    local.get $list
+    i32.const 4
+    i32.add
+    i32.const 0
+    i32.store
+    local.get $list
+  )
+  (func $__restrict_alloc_string_slice (param $src i32) (param $start i32) (param $len i32) (result i32)
+    (local $out i32)
+    local.get $len
+    i32.const 4
+    i32.add
+    call $allocate
+    local.tee $out
+    local.get $len
+    i32.store
+    local.get $len
+    i32.const 0
+    i32.gt_s
+    (if
+      (then
+        local.get $out
+        i32.const 4
+        i32.add
+        local.get $src
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        local.get $len
+        memory.copy
+      )
+    )
+    local.get $out
+  )
+"#,
+        );
+    }
+
+    fn register_builtin_sig(
+        &mut self,
+        name: &str,
+        params: Vec<Type>,
+        result: Type,
+    ) -> Result<(), CodeGenError> {
+        let wasm_params = params
+            .iter()
+            .map(|param| self.convert_type(param))
+            .collect::<Result<Vec<_>, _>>()?;
+        let wasm_result = self.convert_type(&result)?;
+        self.functions.insert(
+            name.to_string(),
+            FunctionSig {
+                _params: wasm_params,
+                result: Some(wasm_result),
+            },
+        );
+        self.function_source_sigs.insert(
+            name.to_string(),
+            FunctionSourceSig {
+                type_params: vec![],
+                params,
+                result: Some(result),
+            },
+        );
+        Ok(())
+    }
+
+    fn generate_std_string_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; String runtime functions\n");
+        self.output.push_str(
+            r#"  (func $__restrict_is_ascii_ws (param $b i32) (result i32)
+    local.get $b
+    i32.const 32
+    i32.eq
+    local.get $b
+    i32.const 9
+    i32.eq
+    i32.or
+    local.get $b
+    i32.const 10
+    i32.eq
+    i32.or
+    local.get $b
+    i32.const 13
+    i32.eq
+    i32.or
+  )
+  (func $__restrict_string_find_from (param $haystack i32) (param $needle i32) (param $from i32) (result i32)
+    (local $hlen i32)
+    (local $nlen i32)
+    (local $limit i32)
+    (local $i i32)
+    (local $j i32)
+    (local $matched i32)
+    local.get $haystack
+    i32.load
+    local.set $hlen
+    local.get $needle
+    i32.load
+    local.set $nlen
+    local.get $from
+    i32.const 0
+    i32.lt_s
+    (if
+      (then
+        i32.const 0
+        local.set $from
+      )
+    )
+    local.get $nlen
+    i32.eqz
+    (if
+      (then
+        local.get $from
+        local.get $hlen
+        i32.le_s
+        (if (result i32)
+          (then local.get $from)
+          (else i32.const -1)
+        )
+        return
+      )
+    )
+    local.get $hlen
+    local.get $nlen
+    i32.sub
+    local.set $limit
+    local.get $from
+    local.get $limit
+    i32.gt_s
+    (if
+      (then
+        i32.const -1
+        return
+      )
+    )
+    local.get $from
+    local.set $i
+    (block $find_outer_done
+      (loop $find_outer
+        local.get $i
+        local.get $limit
+        i32.gt_s
+        br_if $find_outer_done
+        i32.const 0
+        local.set $j
+        i32.const 1
+        local.set $matched
+        (block $find_inner_done
+          (loop $find_inner
+            local.get $j
+            local.get $nlen
+            i32.ge_s
+            br_if $find_inner_done
+            local.get $haystack
+            i32.const 4
+            i32.add
+            local.get $i
+            i32.add
+            local.get $j
+            i32.add
+            i32.load8_u
+            local.get $needle
+            i32.const 4
+            i32.add
+            local.get $j
+            i32.add
+            i32.load8_u
+            i32.ne
+            (if
+              (then
+                i32.const 0
+                local.set $matched
+                br $find_inner_done
+              )
+            )
+            local.get $j
+            i32.const 1
+            i32.add
+            local.set $j
+            br $find_inner
+          )
+        )
+        local.get $matched
+        (if
+          (then
+            local.get $i
+            return
+          )
+        )
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $find_outer
+      )
+    )
+    i32.const -1
+  )
+  (func $string_length (param $s i32) (result i32)
+    local.get $s
+    i32.load
+  )
+  (func $string_byte_length (param $s i32) (result i32)
+    local.get $s
+    i32.load
+  )
+  (func $string_byte_at (param $s i32) (param $idx i32) (result i32)
+    (local $len i32)
+    local.get $s
+    i32.load
+    local.set $len
+    local.get $idx
+    i32.const 0
+    i32.lt_s
+    local.get $idx
+    local.get $len
+    i32.ge_s
+    i32.or
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $s
+    i32.const 4
+    i32.add
+    local.get $idx
+    i32.add
+    i32.load8_u
+    call $__restrict_make_some_i32
+  )
+  (func $string_slice (param $s i32) (param $start i32) (param $end i32) (result i32)
+    (local $len i32)
+    local.get $s
+    i32.load
+    local.set $len
+    local.get $start
+    i32.const 0
+    i32.lt_s
+    local.get $end
+    local.get $start
+    i32.lt_s
+    i32.or
+    local.get $end
+    local.get $len
+    i32.gt_s
+    i32.or
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $start
+    i32.const 0
+    i32.gt_s
+    local.get $start
+    local.get $len
+    i32.lt_s
+    i32.and
+    (if
+      (then
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        i32.const 192
+        i32.and
+        i32.const 128
+        i32.eq
+        (if
+          (then
+            call $__restrict_make_none
+            return
+          )
+        )
+      )
+    )
+    local.get $end
+    local.get $len
+    i32.lt_s
+    (if
+      (then
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $end
+        i32.add
+        i32.load8_u
+        i32.const 192
+        i32.and
+        i32.const 128
+        i32.eq
+        (if
+          (then
+            call $__restrict_make_none
+            return
+          )
+        )
+      )
+    )
+    local.get $s
+    local.get $start
+    local.get $end
+    local.get $start
+    i32.sub
+    call $__restrict_alloc_string_slice
+    call $__restrict_make_some_i32
+  )
+  (func $string_index_of (param $haystack i32) (param $needle i32) (result i32)
+    (local $idx i32)
+    local.get $haystack
+    local.get $needle
+    i32.const 0
+    call $__restrict_string_find_from
+    local.tee $idx
+    i32.const 0
+    i32.lt_s
+    (if (result i32)
+      (then call $__restrict_make_none)
+      (else
+        local.get $idx
+        call $__restrict_make_some_i32
+      )
+    )
+  )
+  (func $string_contains (param $haystack i32) (param $needle i32) (result i32)
+    local.get $haystack
+    local.get $needle
+    i32.const 0
+    call $__restrict_string_find_from
+    i32.const 0
+    i32.ge_s
+  )
+  (func $string_starts_with (param $s i32) (param $prefix i32) (result i32)
+    (local $slen i32)
+    (local $plen i32)
+    (local $i i32)
+    local.get $s
+    i32.load
+    local.set $slen
+    local.get $prefix
+    i32.load
+    local.set $plen
+    local.get $plen
+    local.get $slen
+    i32.gt_s
+    (if
+      (then
+        i32.const 0
+        return
+      )
+    )
+    i32.const 0
+    local.set $i
+    (block $sw_done
+      (loop $sw_loop
+        local.get $i
+        local.get $plen
+        i32.ge_s
+        br_if $sw_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $i
+        i32.add
+        i32.load8_u
+        local.get $prefix
+        i32.const 4
+        i32.add
+        local.get $i
+        i32.add
+        i32.load8_u
+        i32.ne
+        (if
+          (then
+            i32.const 0
+            return
+          )
+        )
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $sw_loop
+      )
+    )
+    i32.const 1
+  )
+  (func $string_ends_with (param $s i32) (param $suffix i32) (result i32)
+    (local $slen i32)
+    (local $suflen i32)
+    (local $offset i32)
+    (local $i i32)
+    local.get $s
+    i32.load
+    local.set $slen
+    local.get $suffix
+    i32.load
+    local.set $suflen
+    local.get $suflen
+    local.get $slen
+    i32.gt_s
+    (if
+      (then
+        i32.const 0
+        return
+      )
+    )
+    local.get $slen
+    local.get $suflen
+    i32.sub
+    local.set $offset
+    i32.const 0
+    local.set $i
+    (block $ew_done
+      (loop $ew_loop
+        local.get $i
+        local.get $suflen
+        i32.ge_s
+        br_if $ew_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $offset
+        i32.add
+        local.get $i
+        i32.add
+        i32.load8_u
+        local.get $suffix
+        i32.const 4
+        i32.add
+        local.get $i
+        i32.add
+        i32.load8_u
+        i32.ne
+        (if
+          (then
+            i32.const 0
+            return
+          )
+        )
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $ew_loop
+      )
+    )
+    i32.const 1
+  )
+  (func $string_trim (param $s i32) (result i32)
+    (local $len i32)
+    (local $start i32)
+    (local $end i32)
+    local.get $s
+    i32.load
+    local.set $len
+    i32.const 0
+    local.set $start
+    local.get $len
+    local.set $end
+    (block $trim_start_done
+      (loop $trim_start
+        local.get $start
+        local.get $end
+        i32.ge_s
+        br_if $trim_start_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $trim_start_done
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+        br $trim_start
+      )
+    )
+    (block $trim_end_done
+      (loop $trim_end
+        local.get $end
+        local.get $start
+        i32.le_s
+        br_if $trim_end_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $end
+        i32.add
+        i32.const 1
+        i32.sub
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $trim_end_done
+        local.get $end
+        i32.const 1
+        i32.sub
+        local.set $end
+        br $trim_end
+      )
+    )
+    local.get $s
+    local.get $start
+    local.get $end
+    local.get $start
+    i32.sub
+    call $__restrict_alloc_string_slice
+  )
+  (func $__restrict_utf8_char_len (param $b i32) (result i32)
+    local.get $b
+    i32.const 128
+    i32.and
+    i32.eqz
+    (if (result i32)
+      (then i32.const 1)
+      (else
+        local.get $b
+        i32.const 224
+        i32.and
+        i32.const 192
+        i32.eq
+        (if (result i32)
+          (then i32.const 2)
+          (else
+            local.get $b
+            i32.const 240
+            i32.and
+            i32.const 224
+            i32.eq
+            (if (result i32)
+              (then i32.const 3)
+              (else
+                local.get $b
+                i32.const 248
+                i32.and
+                i32.const 240
+                i32.eq
+                (if (result i32)
+                  (then i32.const 4)
+                  (else i32.const 1)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  (func $string_split (param $text i32) (param $sep i32) (result i32)
+    (local $tlen i32)
+    (local $slen i32)
+    (local $count i32)
+    (local $pos i32)
+    (local $found i32)
+    (local $list i32)
+    (local $idx i32)
+    (local $seg_end i32)
+    (local $clen i32)
+    (local $rem i32)
+    local.get $text
+    i32.load
+    local.set $tlen
+    local.get $sep
+    i32.load
+    local.set $slen
+    local.get $slen
+    i32.eqz
+    (if
+      (then
+        local.get $tlen
+        i32.eqz
+        (if
+          (then
+            call $__restrict_empty_list
+            return
+          )
+        )
+        i32.const 0
+        local.set $pos
+        i32.const 0
+        local.set $count
+        (block $split_cp_count_done
+          (loop $split_cp_count
+            local.get $pos
+            local.get $tlen
+            i32.ge_s
+            br_if $split_cp_count_done
+            local.get $text
+            i32.const 4
+            i32.add
+            local.get $pos
+            i32.add
+            i32.load8_u
+            call $__restrict_utf8_char_len
+            local.set $clen
+            local.get $tlen
+            local.get $pos
+            i32.sub
+            local.set $rem
+            local.get $clen
+            local.get $rem
+            i32.gt_s
+            (if
+              (then
+                local.get $rem
+                local.set $clen
+              )
+            )
+            local.get $pos
+            local.get $clen
+            i32.add
+            local.set $pos
+            local.get $count
+            i32.const 1
+            i32.add
+            local.set $count
+            br $split_cp_count
+          )
+        )
+        local.get $count
+        i32.const 4
+        i32.mul
+        i32.const 8
+        i32.add
+        call $allocate
+        local.set $list
+        local.get $list
+        local.get $count
+        i32.store
+        local.get $list
+        i32.const 4
+        i32.add
+        local.get $count
+        i32.store
+        i32.const 0
+        local.set $pos
+        i32.const 0
+        local.set $idx
+        (block $split_cp_fill_done
+          (loop $split_cp_fill
+            local.get $idx
+            local.get $count
+            i32.ge_s
+            br_if $split_cp_fill_done
+            local.get $text
+            i32.const 4
+            i32.add
+            local.get $pos
+            i32.add
+            i32.load8_u
+            call $__restrict_utf8_char_len
+            local.set $clen
+            local.get $tlen
+            local.get $pos
+            i32.sub
+            local.set $rem
+            local.get $clen
+            local.get $rem
+            i32.gt_s
+            (if
+              (then
+                local.get $rem
+                local.set $clen
+              )
+            )
+            local.get $list
+            i32.const 8
+            i32.add
+            local.get $idx
+            i32.const 4
+            i32.mul
+            i32.add
+            local.get $text
+            local.get $pos
+            local.get $clen
+            call $__restrict_alloc_string_slice
+            i32.store
+            local.get $pos
+            local.get $clen
+            i32.add
+            local.set $pos
+            local.get $idx
+            i32.const 1
+            i32.add
+            local.set $idx
+            br $split_cp_fill
+          )
+        )
+        local.get $list
+        return
+      )
+    )
+    i32.const 0
+    local.set $pos
+    i32.const 1
+    local.set $count
+    (block $split_count_done
+      (loop $split_count
+        local.get $text
+        local.get $sep
+        local.get $pos
+        call $__restrict_string_find_from
+        local.tee $found
+        i32.const 0
+        i32.lt_s
+        br_if $split_count_done
+        local.get $count
+        i32.const 1
+        i32.add
+        local.set $count
+        local.get $found
+        local.get $slen
+        i32.add
+        local.set $pos
+        br $split_count
+      )
+    )
+    local.get $count
+    i32.const 4
+    i32.mul
+    i32.const 8
+    i32.add
+    call $allocate
+    local.set $list
+    local.get $list
+    local.get $count
+    i32.store
+    local.get $list
+    i32.const 4
+    i32.add
+    local.get $count
+    i32.store
+    i32.const 0
+    local.set $pos
+    i32.const 0
+    local.set $idx
+    (block $split_fill_done
+      (loop $split_fill
+        local.get $idx
+        local.get $count
+        i32.ge_s
+        br_if $split_fill_done
+        local.get $text
+        local.get $sep
+        local.get $pos
+        call $__restrict_string_find_from
+        local.tee $found
+        i32.const 0
+        i32.lt_s
+        (if (result i32)
+          (then local.get $tlen)
+          (else local.get $found)
+        )
+        local.set $seg_end
+        local.get $list
+        i32.const 8
+        i32.add
+        local.get $idx
+        i32.const 4
+        i32.mul
+        i32.add
+        local.get $text
+        local.get $pos
+        local.get $seg_end
+        local.get $pos
+        i32.sub
+        call $__restrict_alloc_string_slice
+        i32.store
+        local.get $seg_end
+        local.get $slen
+        i32.add
+        local.set $pos
+        local.get $idx
+        i32.const 1
+        i32.add
+        local.set $idx
+        br $split_fill
+      )
+    )
+    local.get $list
+  )
+  (func $string_join (param $parts i32) (param $sep i32) (result i32)
+    (local $count i32)
+    (local $sep_len i32)
+    (local $total_len i32)
+    (local $i i32)
+    (local $part i32)
+    (local $plen i32)
+    (local $out i32)
+    (local $cursor i32)
+    local.get $parts
+    i32.load
+    local.set $count
+    local.get $count
+    i32.const 0
+    i32.le_s
+    (if
+      (then
+        local.get $sep
+        i32.const 0
+        i32.const 0
+        call $__restrict_alloc_string_slice
+        return
+      )
+    )
+    local.get $sep
+    i32.load
+    local.set $sep_len
+    local.get $count
+    i32.const 1
+    i32.sub
+    local.get $sep_len
+    i32.mul
+    local.set $total_len
+    i32.const 0
+    local.set $i
+    (block $join_len_done
+      (loop $join_len
+        local.get $i
+        local.get $count
+        i32.ge_s
+        br_if $join_len_done
+        local.get $parts
+        i32.const 8
+        i32.add
+        local.get $i
+        i32.const 4
+        i32.mul
+        i32.add
+        i32.load
+        i32.load
+        local.get $total_len
+        i32.add
+        local.set $total_len
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $join_len
+      )
+    )
+    local.get $total_len
+    i32.const 4
+    i32.add
+    call $allocate
+    local.set $out
+    local.get $out
+    local.get $total_len
+    i32.store
+    local.get $out
+    i32.const 4
+    i32.add
+    local.set $cursor
+    i32.const 0
+    local.set $i
+    (block $join_copy_done
+      (loop $join_copy
+        local.get $i
+        local.get $count
+        i32.ge_s
+        br_if $join_copy_done
+        local.get $i
+        i32.const 0
+        i32.gt_s
+        local.get $sep_len
+        i32.const 0
+        i32.gt_s
+        i32.and
+        (if
+          (then
+            local.get $cursor
+            local.get $sep
+            i32.const 4
+            i32.add
+            local.get $sep_len
+            memory.copy
+            local.get $cursor
+            local.get $sep_len
+            i32.add
+            local.set $cursor
+          )
+        )
+        local.get $parts
+        i32.const 8
+        i32.add
+        local.get $i
+        i32.const 4
+        i32.mul
+        i32.add
+        i32.load
+        local.tee $part
+        i32.load
+        local.set $plen
+        local.get $plen
+        i32.const 0
+        i32.gt_s
+        (if
+          (then
+            local.get $cursor
+            local.get $part
+            i32.const 4
+            i32.add
+            local.get $plen
+            memory.copy
+            local.get $cursor
+            local.get $plen
+            i32.add
+            local.set $cursor
+          )
+        )
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $join_copy
+      )
+    )
+    local.get $out
+  )
+  (func $string_parse_int (param $s i32) (result i32)
+    (local $len i32)
+    (local $start i32)
+    (local $end i32)
+    (local $b i32)
+    (local $neg i32)
+    (local $limit i64)
+    (local $acc i64)
+    local.get $s
+    i32.load
+    local.set $len
+    i32.const 0
+    local.set $start
+    local.get $len
+    local.set $end
+    (block $pi_ts_done
+      (loop $pi_ts
+        local.get $start
+        local.get $end
+        i32.ge_s
+        br_if $pi_ts_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $pi_ts_done
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+        br $pi_ts
+      )
+    )
+    (block $pi_te_done
+      (loop $pi_te
+        local.get $end
+        local.get $start
+        i32.le_s
+        br_if $pi_te_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $end
+        i32.add
+        i32.const 1
+        i32.sub
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $pi_te_done
+        local.get $end
+        i32.const 1
+        i32.sub
+        local.set $end
+        br $pi_te
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.ge_s
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $s
+    i32.const 4
+    i32.add
+    local.get $start
+    i32.add
+    i32.load8_u
+    local.set $b
+    local.get $b
+    i32.const 45
+    i32.eq
+    (if
+      (then
+        i32.const 1
+        local.set $neg
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+      )
+      (else
+        local.get $b
+        i32.const 43
+        i32.eq
+        (if
+          (then
+            local.get $start
+            i32.const 1
+            i32.add
+            local.set $start
+          )
+        )
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.ge_s
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $neg
+    (if (result i64)
+      (then i64.const 2147483648)
+      (else i64.const 2147483647)
+    )
+    local.set $limit
+    i64.const 0
+    local.set $acc
+    (block $pi_loop_done
+      (loop $pi_loop
+        local.get $start
+        local.get $end
+        i32.ge_s
+        br_if $pi_loop_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        local.set $b
+        local.get $b
+        i32.const 48
+        i32.lt_s
+        local.get $b
+        i32.const 57
+        i32.gt_s
+        i32.or
+        (if
+          (then
+            call $__restrict_make_none
+            return
+          )
+        )
+        local.get $acc
+        i64.const 10
+        i64.mul
+        local.get $b
+        i32.const 48
+        i32.sub
+        i64.extend_i32_s
+        i64.add
+        local.tee $acc
+        local.get $limit
+        i64.gt_s
+        (if
+          (then
+            call $__restrict_make_none
+            return
+          )
+        )
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+        br $pi_loop
+      )
+    )
+    local.get $neg
+    (if (result i64)
+      (then
+        i64.const 0
+        local.get $acc
+        i64.sub
+      )
+      (else local.get $acc)
+    )
+    i32.wrap_i64
+    call $__restrict_make_some_i32
+  )
+  (func $string_parse_int64 (param $s i32) (result i32)
+    (local $len i32)
+    (local $start i32)
+    (local $end i32)
+    (local $b i32)
+    (local $neg i32)
+    (local $limit i64)
+    (local $acc i64)
+    (local $digit i64)
+    local.get $s
+    i32.load
+    local.set $len
+    i32.const 0
+    local.set $start
+    local.get $len
+    local.set $end
+    (block $pi64_ts_done
+      (loop $pi64_ts
+        local.get $start
+        local.get $end
+        i32.ge_s
+        br_if $pi64_ts_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $pi64_ts_done
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+        br $pi64_ts
+      )
+    )
+    (block $pi64_te_done
+      (loop $pi64_te
+        local.get $end
+        local.get $start
+        i32.le_s
+        br_if $pi64_te_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $end
+        i32.add
+        i32.const 1
+        i32.sub
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $pi64_te_done
+        local.get $end
+        i32.const 1
+        i32.sub
+        local.set $end
+        br $pi64_te
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.ge_s
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $s
+    i32.const 4
+    i32.add
+    local.get $start
+    i32.add
+    i32.load8_u
+    local.set $b
+    local.get $b
+    i32.const 45
+    i32.eq
+    (if
+      (then
+        i32.const 1
+        local.set $neg
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+      )
+      (else
+        local.get $b
+        i32.const 43
+        i32.eq
+        (if
+          (then
+            local.get $start
+            i32.const 1
+            i32.add
+            local.set $start
+          )
+        )
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.ge_s
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $neg
+    (if (result i64)
+      (then i64.const -9223372036854775808)
+      (else i64.const 9223372036854775807)
+    )
+    local.set $limit
+    i64.const 0
+    local.set $acc
+    (block $pi64_loop_done
+      (loop $pi64_loop
+        local.get $start
+        local.get $end
+        i32.ge_s
+        br_if $pi64_loop_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        local.set $b
+        local.get $b
+        i32.const 48
+        i32.lt_s
+        local.get $b
+        i32.const 57
+        i32.gt_s
+        i32.or
+        (if
+          (then
+            call $__restrict_make_none
+            return
+          )
+        )
+        local.get $b
+        i32.const 48
+        i32.sub
+        i64.extend_i32_s
+        local.set $digit
+        local.get $acc
+        local.get $limit
+        local.get $digit
+        i64.sub
+        i64.const 10
+        i64.div_u
+        i64.gt_u
+        (if
+          (then
+            call $__restrict_make_none
+            return
+          )
+        )
+        local.get $acc
+        i64.const 10
+        i64.mul
+        local.get $digit
+        i64.add
+        local.set $acc
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+        br $pi64_loop
+      )
+    )
+    local.get $neg
+    (if (result i64)
+      (then
+        i64.const 0
+        local.get $acc
+        i64.sub
+      )
+      (else local.get $acc)
+    )
+    call $__restrict_make_some_i64
+  )
+  (func $__restrict_pow10 (param $exp i32) (result f64)
+    (local $scale f64)
+    (local $base f64)
+    f64.const 1.0
+    local.set $scale
+    f64.const 10.0
+    local.set $base
+    (block $pow10_done
+      (loop $pow10_loop
+        local.get $exp
+        i32.const 0
+        i32.le_s
+        br_if $pow10_done
+        local.get $exp
+        i32.const 1
+        i32.and
+        (if
+          (then
+            local.get $scale
+            local.get $base
+            f64.mul
+            local.set $scale
+          )
+        )
+        local.get $exp
+        i32.const 1
+        i32.shr_u
+        local.tee $exp
+        i32.const 0
+        i32.gt_s
+        (if
+          (then
+            local.get $base
+            local.get $base
+            f64.mul
+            local.set $base
+          )
+        )
+        br $pow10_loop
+      )
+    )
+    local.get $scale
+  )
+  (func $string_parse_float (param $s i32) (result i32)
+    (local $len i32)
+    (local $start i32)
+    (local $end i32)
+    (local $b i32)
+    (local $neg i32)
+    (local $mantissa i64)
+    (local $sig_digits i32)
+    (local $seen_digits i32)
+    (local $dec_exp i32)
+    (local $exp_neg i32)
+    (local $exp_val i32)
+    (local $exp_digits i32)
+    (local $digit i32)
+    (local $val f64)
+    local.get $s
+    i32.load
+    local.set $len
+    i32.const 0
+    local.set $start
+    local.get $len
+    local.set $end
+    (block $pf_ts_done
+      (loop $pf_ts
+        local.get $start
+        local.get $end
+        i32.ge_s
+        br_if $pf_ts_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $pf_ts_done
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+        br $pf_ts
+      )
+    )
+    (block $pf_te_done
+      (loop $pf_te
+        local.get $end
+        local.get $start
+        i32.le_s
+        br_if $pf_te_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $end
+        i32.add
+        i32.const 1
+        i32.sub
+        i32.load8_u
+        call $__restrict_is_ascii_ws
+        i32.eqz
+        br_if $pf_te_done
+        local.get $end
+        i32.const 1
+        i32.sub
+        local.set $end
+        br $pf_te
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.ge_s
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $s
+    i32.const 4
+    i32.add
+    local.get $start
+    i32.add
+    i32.load8_u
+    local.set $b
+    local.get $b
+    i32.const 45
+    i32.eq
+    (if
+      (then
+        i32.const 1
+        local.set $neg
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+      )
+      (else
+        local.get $b
+        i32.const 43
+        i32.eq
+        (if
+          (then
+            local.get $start
+            i32.const 1
+            i32.add
+            local.set $start
+          )
+        )
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.ge_s
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    (block $pf_int_done
+      (loop $pf_int_loop
+        local.get $start
+        local.get $end
+        i32.ge_s
+        br_if $pf_int_done
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        local.set $b
+        local.get $b
+        i32.const 48
+        i32.lt_s
+        local.get $b
+        i32.const 57
+        i32.gt_s
+        i32.or
+        br_if $pf_int_done
+        local.get $seen_digits
+        i32.const 1
+        i32.add
+        local.set $seen_digits
+        local.get $b
+        i32.const 48
+        i32.sub
+        local.set $digit
+        local.get $mantissa
+        i64.const 0
+        i64.ne
+        local.get $digit
+        i32.const 0
+        i32.ne
+        i32.or
+        (if
+          (then
+            local.get $sig_digits
+            i32.const 18
+            i32.lt_s
+            (if
+              (then
+                local.get $mantissa
+                i64.const 10
+                i64.mul
+                local.get $digit
+                i64.extend_i32_s
+                i64.add
+                local.set $mantissa
+                local.get $sig_digits
+                i32.const 1
+                i32.add
+                local.set $sig_digits
+              )
+              (else
+                local.get $dec_exp
+                i32.const 1
+                i32.add
+                local.set $dec_exp
+              )
+            )
+          )
+        )
+        local.get $start
+        i32.const 1
+        i32.add
+        local.set $start
+        br $pf_int_loop
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.lt_s
+    (if
+      (then
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        i32.const 46
+        i32.eq
+        (if
+          (then
+            local.get $start
+            i32.const 1
+            i32.add
+            local.set $start
+            (block $pf_frac_done
+              (loop $pf_frac_loop
+                local.get $start
+                local.get $end
+                i32.ge_s
+                br_if $pf_frac_done
+                local.get $s
+                i32.const 4
+                i32.add
+                local.get $start
+                i32.add
+                i32.load8_u
+                local.set $b
+                local.get $b
+                i32.const 48
+                i32.lt_s
+                local.get $b
+                i32.const 57
+                i32.gt_s
+                i32.or
+                br_if $pf_frac_done
+                local.get $seen_digits
+                i32.const 1
+                i32.add
+                local.set $seen_digits
+                local.get $b
+                i32.const 48
+                i32.sub
+                local.set $digit
+                local.get $sig_digits
+                i32.const 18
+                i32.lt_s
+                (if
+                  (then
+                    local.get $dec_exp
+                    i32.const 1
+                    i32.sub
+                    local.set $dec_exp
+                    local.get $mantissa
+                    i64.const 0
+                    i64.ne
+                    local.get $digit
+                    i32.const 0
+                    i32.ne
+                    i32.or
+                    (if
+                      (then
+                        local.get $mantissa
+                        i64.const 10
+                        i64.mul
+                        local.get $digit
+                        i64.extend_i32_s
+                        i64.add
+                        local.set $mantissa
+                        local.get $sig_digits
+                        i32.const 1
+                        i32.add
+                        local.set $sig_digits
+                      )
+                    )
+                  )
+                )
+                local.get $start
+                i32.const 1
+                i32.add
+                local.set $start
+                br $pf_frac_loop
+              )
+            )
+          )
+        )
+      )
+    )
+    local.get $seen_digits
+    i32.eqz
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.lt_s
+    (if
+      (then
+        local.get $s
+        i32.const 4
+        i32.add
+        local.get $start
+        i32.add
+        i32.load8_u
+        local.tee $b
+        i32.const 101
+        i32.eq
+        local.get $b
+        i32.const 69
+        i32.eq
+        i32.or
+        (if
+          (then
+            local.get $start
+            i32.const 1
+            i32.add
+            local.set $start
+            local.get $start
+            local.get $end
+            i32.lt_s
+            (if
+              (then
+                local.get $s
+                i32.const 4
+                i32.add
+                local.get $start
+                i32.add
+                i32.load8_u
+                local.set $b
+                local.get $b
+                i32.const 45
+                i32.eq
+                (if
+                  (then
+                    i32.const 1
+                    local.set $exp_neg
+                    local.get $start
+                    i32.const 1
+                    i32.add
+                    local.set $start
+                  )
+                  (else
+                    local.get $b
+                    i32.const 43
+                    i32.eq
+                    (if
+                      (then
+                        local.get $start
+                        i32.const 1
+                        i32.add
+                        local.set $start
+                      )
+                    )
+                  )
+                )
+              )
+            )
+            (block $pf_exp_done
+              (loop $pf_exp_loop
+                local.get $start
+                local.get $end
+                i32.ge_s
+                br_if $pf_exp_done
+                local.get $s
+                i32.const 4
+                i32.add
+                local.get $start
+                i32.add
+                i32.load8_u
+                local.set $b
+                local.get $b
+                i32.const 48
+                i32.lt_s
+                local.get $b
+                i32.const 57
+                i32.gt_s
+                i32.or
+                (if
+                  (then
+                    call $__restrict_make_none
+                    return
+                  )
+                )
+                local.get $exp_digits
+                i32.const 1
+                i32.add
+                local.set $exp_digits
+                local.get $exp_val
+                i32.const 10000
+                i32.lt_s
+                (if
+                  (then
+                    local.get $exp_val
+                    i32.const 10
+                    i32.mul
+                    local.get $b
+                    i32.const 48
+                    i32.sub
+                    i32.add
+                    local.set $exp_val
+                  )
+                )
+                local.get $start
+                i32.const 1
+                i32.add
+                local.set $start
+                br $pf_exp_loop
+              )
+            )
+            local.get $exp_digits
+            i32.eqz
+            (if
+              (then
+                call $__restrict_make_none
+                return
+              )
+            )
+            local.get $exp_neg
+            (if
+              (then
+                i32.const 0
+                local.get $exp_val
+                i32.sub
+                local.set $exp_val
+              )
+            )
+            local.get $dec_exp
+            local.get $exp_val
+            i32.add
+            local.set $dec_exp
+          )
+        )
+      )
+    )
+    local.get $start
+    local.get $end
+    i32.ne
+    (if
+      (then
+        call $__restrict_make_none
+        return
+      )
+    )
+    local.get $mantissa
+    f64.convert_i64_u
+    local.set $val
+    local.get $mantissa
+    i64.const 0
+    i64.ne
+    (if
+      (then
+        local.get $dec_exp
+        i32.const 308
+        i32.gt_s
+        (if
+          (then
+            call $__restrict_make_none
+            return
+          )
+        )
+        local.get $dec_exp
+        i32.const -340
+        i32.lt_s
+        (if
+          (then
+            f64.const 0.0
+            local.set $val
+          )
+          (else
+            local.get $dec_exp
+            i32.const 0
+            i32.gt_s
+            (if
+              (then
+                local.get $val
+                local.get $dec_exp
+                call $__restrict_pow10
+                f64.mul
+                local.tee $val
+                local.get $val
+                f64.sub
+                f64.const 0.0
+                f64.ne
+                (if
+                  (then
+                    call $__restrict_make_none
+                    return
+                  )
+                )
+              )
+              (else
+                local.get $dec_exp
+                i32.const 0
+                i32.lt_s
+                (if
+                  (then
+                    local.get $dec_exp
+                    i32.const -308
+                    i32.lt_s
+                    (if
+                      (then
+                        local.get $val
+                        i32.const 308
+                        call $__restrict_pow10
+                        f64.div
+                        i32.const 0
+                        local.get $dec_exp
+                        i32.const 308
+                        i32.add
+                        i32.sub
+                        call $__restrict_pow10
+                        f64.div
+                        local.set $val
+                      )
+                      (else
+                        local.get $val
+                        i32.const 0
+                        local.get $dec_exp
+                        i32.sub
+                        call $__restrict_pow10
+                        f64.div
+                        local.set $val
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+    local.get $neg
+    (if
+      (then
+        local.get $val
+        f64.neg
+        local.set $val
+      )
+    )
+    local.get $val
+    call $__restrict_make_some_f64
+  )
+"#,
+        );
+
+        let str_ty = Type::Named("String".to_string());
+        let i32_ty = Type::Named("Int32".to_string());
+        let i64_ty = Type::Named("Int64".to_string());
+        let f64_ty = Type::Named("Float64".to_string());
+        let bool_ty = Type::Named("Boolean".to_string());
+        let list_str_ty = Type::Generic("List".to_string(), vec![str_ty.clone()]);
+        let opt_i32_ty = Type::Generic("Option".to_string(), vec![i32_ty.clone()]);
+        let opt_i64_ty = Type::Generic("Option".to_string(), vec![i64_ty]);
+        let opt_f64_ty = Type::Generic("Option".to_string(), vec![f64_ty]);
+        let opt_str_ty = Type::Generic("Option".to_string(), vec![str_ty.clone()]);
+
+        self.register_builtin_sig("string_length", vec![str_ty.clone()], i32_ty.clone())?;
+        self.register_builtin_sig("string_byte_length", vec![str_ty.clone()], i32_ty)?;
+        self.register_builtin_sig("string_byte_at", vec![str_ty.clone(), Type::Named("Int32".to_string())], opt_i32_ty.clone())?;
+        self.register_builtin_sig(
+            "string_slice",
+            vec![
+                str_ty.clone(),
+                Type::Named("Int32".to_string()),
+                Type::Named("Int32".to_string()),
+            ],
+            opt_str_ty,
+        )?;
+        self.register_builtin_sig(
+            "string_index_of",
+            vec![str_ty.clone(), str_ty.clone()],
+            opt_i32_ty.clone(),
+        )?;
+        self.register_builtin_sig(
+            "string_contains",
+            vec![str_ty.clone(), str_ty.clone()],
+            bool_ty.clone(),
+        )?;
+        self.register_builtin_sig(
+            "string_starts_with",
+            vec![str_ty.clone(), str_ty.clone()],
+            bool_ty.clone(),
+        )?;
+        self.register_builtin_sig(
+            "string_ends_with",
+            vec![str_ty.clone(), str_ty.clone()],
+            bool_ty,
+        )?;
+        self.register_builtin_sig("string_trim", vec![str_ty.clone()], str_ty.clone())?;
+        self.register_builtin_sig(
+            "string_split",
+            vec![str_ty.clone(), str_ty.clone()],
+            list_str_ty.clone(),
+        )?;
+        self.register_builtin_sig(
+            "string_join",
+            vec![list_str_ty, str_ty.clone()],
+            str_ty.clone(),
+        )?;
+        self.register_builtin_sig("string_parse_int", vec![str_ty.clone()], opt_i32_ty)?;
+        self.register_builtin_sig("string_parse_int64", vec![str_ty.clone()], opt_i64_ty)?;
+        self.register_builtin_sig("string_parse_float", vec![str_ty], opt_f64_ty)?;
+        Ok(())
+    }
+
+    fn generate_std_char_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; Char runtime functions\n");
+        self.output.push_str(
+            r#"  (func $char_code (param $c i32) (result i32)
+    local.get $c
+  )
+  (func $char_from_code (param $code i32) (result i32)
+    local.get $code
+    i32.const 0
+    i32.ge_s
+    local.get $code
+    i32.const 55295
+    i32.le_s
+    i32.and
+    local.get $code
+    i32.const 57344
+    i32.ge_s
+    local.get $code
+    i32.const 1114111
+    i32.le_s
+    i32.and
+    i32.or
+    (if (result i32)
+      (then
+        local.get $code
+        call $__restrict_make_some_i32
+      )
+      (else
+        call $__restrict_make_none
+      )
+    )
+  )
+"#,
+        );
+        let char_ty = Type::Named("Char".to_string());
+        let i32_ty = Type::Named("Int32".to_string());
+        self.register_builtin_sig("char_code", vec![char_ty.clone()], i32_ty.clone())?;
+        self.register_builtin_sig(
+            "char_from_code",
+            vec![i32_ty],
+            Type::Generic("Option".to_string(), vec![char_ty]),
+        )?;
+        Ok(())
+    }
+
+    fn generate_std_range_functions(&mut self) -> Result<(), CodeGenError> {
+        self.output.push_str("\n  ;; Range runtime functions\n");
+        self.output.push_str(
+            r#"  (func $range_start (param $range i32) (result i32)
+    local.get $range
+    i32.load
+  )
+  (func $range_end (param $range i32) (result i32)
+    local.get $range
+    i32.const 4
+    i32.add
+    i32.load
+  )
+  (func $range_to_list (param $range i32) (result i32)
+    (local $start i32)
+    (local $end i32)
+    (local $len i32)
+    (local $list i32)
+    (local $i i32)
+    local.get $range
+    i32.load
+    local.set $start
+    local.get $range
+    i32.const 4
+    i32.add
+    i32.load
+    local.set $end
+    local.get $end
+    local.get $start
+    i32.gt_s
+    (if (result i32)
+      (then
+        local.get $end
+        local.get $start
+        i32.sub
+      )
+      (else i32.const 0)
+    )
+    local.set $len
+    local.get $len
+    i32.const 4
+    i32.mul
+    i32.const 8
+    i32.add
+    call $allocate
+    local.set $list
+    local.get $list
+    local.get $len
+    i32.store
+    local.get $list
+    i32.const 4
+    i32.add
+    local.get $len
+    i32.store
+    i32.const 0
+    local.set $i
+    (block $range_list_done
+      (loop $range_list_loop
+        local.get $i
+        local.get $len
+        i32.ge_s
+        br_if $range_list_done
+        local.get $list
+        i32.const 8
+        i32.add
+        local.get $i
+        i32.const 4
+        i32.mul
+        i32.add
+        local.get $start
+        local.get $i
+        i32.add
+        i32.store
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $range_list_loop
+      )
+    )
+    local.get $list
+  )
+"#,
+        );
+        let range_ty = Type::Generic("Range".to_string(), vec![Type::Named("Int32".to_string())]);
+        let i32_ty = Type::Named("Int32".to_string());
+        self.register_builtin_sig("range_start", vec![range_ty.clone()], i32_ty.clone())?;
+        self.register_builtin_sig("range_end", vec![range_ty.clone()], i32_ty.clone())?;
+        self.register_builtin_sig(
+            "range_to_list",
+            vec![range_ty],
+            Type::Generic("List".to_string(), vec![i32_ty]),
+        )?;
+        Ok(())
     }
 
     fn generate_indirect_call_types(&mut self) {
@@ -5221,6 +8367,31 @@ impl WasmCodeGen {
                     Type::Named("Int64".to_string()),
                 ],
                 result: Some(Type::Named("Unit".to_string())),
+            },
+        );
+
+        self.output
+            .push_str("  (func $array_length (param $array i32) (result i32)\n");
+        self.output.push_str("    local.get $array\n");
+        self.output.push_str("    i32.load\n");
+        self.output.push_str("  )\n");
+
+        self.functions.insert(
+            "array_length".to_string(),
+            FunctionSig {
+                _params: vec![WasmType::I32],
+                result: Some(WasmType::I32),
+            },
+        );
+        self.function_source_sigs.insert(
+            "array_length".to_string(),
+            FunctionSourceSig {
+                type_params: vec!["T".to_string()],
+                params: vec![Type::Generic(
+                    "Array".to_string(),
+                    vec![Type::Named("T".to_string())],
+                )],
+                result: Some(Type::Named("Int32".to_string())),
             },
         );
 
@@ -11840,15 +15011,15 @@ impl WasmCodeGen {
             },
             "option_unwrap_or" => {
                 let payload_ty = args
-                    .get(1)
-                    .and_then(|arg| self.infer_expr_source_type(arg))
-                    .or_else(|| {
-                        args.first()
-                            .and_then(|arg| self.option_payload_source_type(arg))
-                    });
+                    .first()
+                    .and_then(|arg| self.option_payload_source_type(arg))
+                    .or_else(|| args.get(1).and_then(|arg| self.infer_expr_source_type(arg)));
                 match payload_ty {
                     Some(Type::Named(name)) if name == "Float64" => {
                         "option_unwrap_or_f64".to_string()
+                    }
+                    Some(Type::Named(name)) if name == "Int64" => {
+                        "option_unwrap_or_i64".to_string()
                     }
                     _ => func_name.to_string(),
                 }

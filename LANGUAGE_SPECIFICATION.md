@@ -75,6 +75,16 @@ requiring the caller to change its shell working directory. `warder build
 `warder.toml`, root `.rl` sources, or `.rl` sources in a configured direct
 local dependency change. Watch mode does not add transitive dependency
 resolution, an incremental compiler, or a JavaScript package/bundler graph.
+`warder.toml` may also set `[build] arena-bytes = N` (a multiple of four) to
+configure the default arena capacity for Core and Component builds. `warder
+check` validates the project without producing build artifacts, `warder clean`
+removes generated build outputs, and `warder fmt [--check]` / `restrict_lang
+--fmt [--check]` formats Restrict source files while preserving comments and
+tokens. `warder run` executes Core Wasm / WASI Preview 1 artifacts directly via
+its embedded `wasmi` WASI Preview 1 runner (forwarding CLI arguments after `--`,
+environment variables, stdin, stdout/stderr, and exit codes) when external
+runtimes are absent or when targeting Core Wasm. `warder build` passes
+`--module-root project=<src_dir>` for parity with `warder test`.
 
 `warder test` compiles test files under `tests/` to WASI Preview 1 Core Wasm and executes
 source-public, synchronous, non-generic, zero-argument Boolean functions whose
@@ -82,7 +92,7 @@ names begin with `test_` or end with `_test`. A return value of `true` passes;
 `false`, a trap, an invalid Boolean representation, a compilation error, or a
 missing export fails. The optional filter matches function names. This is a
 Warder convention over ordinary Restrict functions, not a separate language
-declaration syntax. During test compilation, the reserved package namespace
+declaration syntax. During test and build compilation, the reserved package namespace
 `project` maps to the directory containing `package.entry`, so a default
 project can import its implementation with `import project.main.{name}`.
 Dependency aliases may not use `project`.
@@ -96,9 +106,12 @@ Warder discover local sources, but public package identity and Component ABI
 identity remain explicit, path-independent contract data.
 
 The compiler exposes two artifact target profiles. `wasip1` is the default and
-retains the v0.0.1 program-I/O imports. `wasm-core` emits an import-free Core
-WebAssembly module for host-neutral workloads and rejects `print`, `println`,
-and other host-I/O calls. Both profiles use the same Restrict source semantics.
+retains the v0.0.1 program-I/O imports plus on-demand WASI Preview 1 imports for
+`cli_args`, `env_get`, `stdin_read_all`, and `exit` when referenced. `wasm-core`
+emits an import-free Core WebAssembly module for host-neutral workloads and
+rejects `print`, `println`, `eprint`, `eprintln`, `print_int`, `print_float`,
+`cli_args`, `env_get`, `stdin_read_all`, and `exit`. Both profiles use the
+same Restrict source semantics.
 The native CLI can encode and validate binary output directly with `--emit
 wasm`; text output remains available with `--emit wat`.
 
@@ -160,7 +173,7 @@ JavaScript.
 
 ### 1.1 Keywords (Reserved)
 ```
-fun val mut record context enum match then else while
+fun val mut record context enum match then else while break continue return
 temporal within where clone freeze pub import export
 impl as fatal true false Some None with lifetime await spawn
 form takes of
@@ -214,8 +227,8 @@ implemented and passes the v0.1.0 Component ABI gate.
 ### 1.4 Literals
 - **Integers**: `42`, `0xFF`, `1_000_000`
 - **Floats**: `3.14`, `1.5e10`, `3.14E-2`
-- **Strings**: `"hello"`, with escapes `\n \t \\ \" \'`
-- **Characters**: `'a'`, `'\n'`
+- **Strings**: `"hello"`, with escapes `\n \r \t \\ \" \' \0 \xHH`
+- **Characters**: `'a'`, `'\n'`, `'\0'`, `'\x41'`
 - **Booleans**: `true`, `false`
 - **Unit**: `()`
 
@@ -351,6 +364,10 @@ fun process: <~t>(data: Data<~t>) -> Result<Data<~t>, Error> = {
 - `String`, `Char`, `Boolean`
 - `()` (Unit type)
 
+`Char` values support relational comparisons (`<`, `<=`, `>`, `>=`) in addition
+to `==`/`!=`, and explicit `Char as Int32` numeric scalar casts (as well as
+`char_code` and `char_from_code`).
+
 ### 4.2 Generic and Built-in Collection Types
 ```rust
 List<T>           // Dynamic list
@@ -361,11 +378,15 @@ Range<Int32>      // v0.0.1 range values with Int32 endpoints
 ```
 
 `Array<T, N>` is a fixed-length public type. The compiler may use an internal
-wildcard length for built-in array operations, but that internal representation
-is not a source-level `Array<T, 0>` contract.
+wildcard length for built-in array operations (`array_get`, `array_set`,
+`array_length`), but that internal representation is not a source-level
+`Array<T, 0>` contract.
 
-Range literals are intentionally concrete in v0.0.1. Ranges over non-Int32
-endpoint types are outside the current public support surface.
+Range literals are intentionally concrete in v0.0.1. `Range<Int32>` adopts the
+built-in `Container` behavior for `map`, `filter`, and `fold` (for example,
+`[0..10] map { it * 2 }`), and also provides `range_start`, `range_end`, and
+`range_to_list`. Ranges over non-Int32 endpoint types are outside the current
+public support surface.
 
 ### 4.3 Temporal Types (Experimental / Outside v0.0.1 Default Gate)
 ```rust
@@ -401,14 +422,18 @@ The current slice has these constraints:
 - payload types are concrete, monomorphic, non-temporal, non-function types
   supported by the compiler's internal WebAssembly representation;
 - variants are scoped under their enum name and are never injected as bare
-  names; and
-- `impl`, `clone`, `freeze`, match guards, first-class constructor values, and
-  `==`/`!=` structural equality for enums are outside this slice. Use `match`
-  on qualified variants instead of comparing enum allocation identities.
+  names;
+- closed, non-generic user-defined enums may adopt method-only forms via
+  `MyEnum takes FormName { ... }` (including `Display`);
+- payload-free user-defined enums support `==` and `!=` value equality;
+  payload-carrying enum equality, `impl`, `clone`, `freeze`, match guards, and
+  first-class constructor values are outside this slice. Use `match` on
+  qualified variants when comparing payload-carrying enum values.
 
 An enum value is Copy only when every payload type is Copy. A payload-free enum
-is therefore Copy. Constructing a payload variant moves an affine payload, and
-matching an enum consumes the scrutinee once under the ordinary affine rules.
+is therefore Copy and may be used multiple times under affine rules. Constructing
+a payload variant moves an affine payload, and matching an enum consumes the
+scrutinee once under the ordinary affine rules.
 
 ## 5. Expressions
 
@@ -488,7 +513,7 @@ x && y          // Logical and
 x || y          // Logical or
 ```
 
-### 5.4 Conditional Expressions
+### 5.4 Conditional Expressions, Loops, and Early Return
 ```rust
 condition then {
     // true branch
@@ -496,9 +521,19 @@ condition then {
     // false branch
 }
 
+condition while {
+    // loop body; supports `break` and `continue`
+}
+
+return expr    // early return matching function return type (or bare `return` for `()`)
+
 // Example:
 age >= 18 then { "adult" } else { "minor" }
 ```
+
+`break` and `continue` are valid only inside a `while` loop body. `return`
+exits the enclosing function early (preserving type compatibility with the
+function's return type; bare `return` is valid when the return type is `()`).
 
 ### 5.5 Match Expressions
 ```rust
@@ -932,13 +967,15 @@ Rules:
 
 - A form method must declare `self: Self` as its first parameter and must have
   an explicit return type. `Self` is available only in the form contract.
-- A `takes` declaration targets one concrete, non-generic record. It provides
+- A `takes` declaration targets one concrete, non-generic record (or one
+  concrete, closed user-defined enum). It provides
   exactly the methods required by the form using fully typed `fun`
   declarations with bodies. Missing, extra, duplicate, generic, temporal, or
   signature-incompatible methods are errors.
 - `takes` declarations cannot be marked `pub`. Export the form and nominal
-  record instead. A `pub form` is source-module metadata and can be imported by
-  other Restrict modules; it does not create a host-visible WebAssembly export.
+  record or enum instead. A `pub form` is source-module metadata and can be
+  imported by other Restrict modules; it does not create a host-visible
+  WebAssembly export.
 - A type parameter may require one or more forms with `<T of A + B>`. The
   concrete argument must have one compiler-provided or explicit adoption for
   every bound. An ordinary `impl` method with a matching name does not satisfy
@@ -961,10 +998,10 @@ Rules:
 
 The initial form slice does not include associated types, generic forms,
 generic or conditional `takes`, form default bodies, negative bounds,
-first-class existential form values, selective adoption imports, or enum
-adoptions. Form method compatibility is positional: parameter names may differ,
+first-class existential form values, or selective adoption imports. Form method
+compatibility is positional: parameter names may differ,
 but arity and parameter and return types must match after replacing `Self` with
-the target record. The compiler-internal `Container.Item` /
+the target record or enum. The compiler-internal `Container.Item` /
 `Container.Mapped<U>` machinery used by current collection builtins does not
 make `Container` or associated-type syntax source-visible.
 
@@ -977,8 +1014,8 @@ pub form Display {
 ```
 
 `String`, `Int32`, `Int64`, `Float64`, `Boolean`, `Char`, and `()` have
-compiler-provided `Display` adoptions. A user record adopts the form explicitly
-with a `RecordName takes Display` declaration. Its `display`
+compiler-provided `Display` adoptions. A user record or closed user enum adopts
+the form explicitly with a `TypeName takes Display` declaration. Its `display`
 method consumes a non-Copy `self` in the same way
 as any other affine call.
 
@@ -1046,6 +1083,13 @@ where ~inner within ~outer     // inner lifetime contained in outer
 val newObj = obj.clone { field: newValue }
 ```
 
+When `.clone { ... }` consumes an owned `val` base record once under affine
+rules, unmentioned non-Copy fields transfer into the newly constructed record
+without duplicating live references. When the base is a `mut val` that remains
+live after `.clone { ... }`, unmentioned non-Copy fields cannot be implicitly
+aliased and must be overridden or transferred explicitly. Chained Copy field
+reads (such as `outer.inner.x` when `x` is Copy) do not consume `outer`.
+
 ### 11.2 Freeze
 ```rust
 val frozen = obj freeze         // Make immutable
@@ -1059,15 +1103,30 @@ val cloneAndFreeze = obj.clone { field: value } freeze
 import release.policy.{score}
 import release.policy.*
 import release.policy
+import std.math.{clamp, gcd}
+import std.list.*
 ```
 
-Imports are source-level declarations. The current v0.0.1 implementation
-supports dotted module paths with named imports, wildcard imports, or whole
-module imports. String paths, source-level import aliases, re-exports, and
-package-level standard-library aggregators are reserved for a later
-module-design pass. A build tool may bind the first dotted path segment to a
+Imports are source-level declarations. The implementation supports dotted
+module paths with named imports, wildcard imports, or whole-module imports.
+String paths, source-level import aliases, and re-exports are unsupported in
+this release. A build tool may bind the first dotted path segment to a
 package source root; that root-configuration/compiler binding is not an `import ... as`
 source alias.
+
+The compiler embeds the bundled pure-Restrict standard library under the
+reserved `std` namespace, supporting `import std.<module>.*`,
+`import std.<module>.{...}`, and `import std.<module>` without requiring
+filesystem access to the repository's `std/` directory:
+
+- shipped bundled modules: `std.prelude`, `std.math`, `std.option`,
+  `std.result`, `std.list`, `std.string`, `std.char`, `std.map`, `std.io`, and
+  `std.lib`;
+- planned capability-profile modules (`std.filesystem`, `std.http`,
+  `std.database`) and unknown `std.<name>` paths are rejected with explicit
+  diagnostics; and
+- `--module-root std=...` and virtual `std.*` source overrides remain rejected
+  so user files cannot shadow compiler-bundled standard library modules.
 
 Within one compilation, a source declaration has one canonical identity: its
 dotted module path plus its declaration name. Splitting named imports across
@@ -1435,12 +1494,12 @@ An anonymous scope also receives the complete expression to its left, so
 `1 + 2 { |value| value * value }` applies the scope to `1 + 2`, not only to
 `2`.
 
-## 14. Standard Library Types
+## 14. Standard Library Types, Builtins, and Modules
 
 ### 14.1 Collections
 - `List<T>` - Dynamic list
-- `Array<T, N>` - Fixed-size array
-- `Range<Int32>` - Range type from `[start..end]` with Int32 endpoints
+- `Array<T, N>` - Fixed-size array (`array_get`, `array_set`, `array_length`)
+- `Range<Int32>` - Range type from `[start..end]` with `Int32` endpoints (`map`, `filter`, `fold`, `range_start`, `range_end`, `range_to_list`)
 
 ### 14.2 Error Handling
 - `Option<T>` - May contain `value Option::Some` or `() Option::None`
@@ -1459,13 +1518,15 @@ fun fail: (message: String) -> Result<Int32, DecodeError> = {
 }
 ```
 
-Error propagation is explicit through `match` in the current compiler. A
+Error propagation is explicit through `match` (or `std.result` / `std.option`
+combinators) in the current compiler. A
 postfix `?` operator remains future work until the language specifies a real
 early-exit operation together with affine branch merging and deterministic
 cleanup of arena and temporal resources.
 
-### 14.3 Basic Functions
+### 14.3 Compiler-Registered Builtins
 ```rust
+// Display and I/O (`print*`/`eprint*` require `wasip1`; `display` works in both profiles)
 println: <T of Display>(T) -> ()
 print: <T of Display>(T) -> ()
 display: <T of Display>(T) -> String
@@ -1473,12 +1534,64 @@ print_int: (Int32) -> ()
 print_float: (Float64) -> ()
 eprint: (String) -> ()
 eprintln: (String) -> ()
+
+// On-demand WASI Preview 1 CLI, environment, stdin, and exit (`wasip1` only)
+cli_args: () -> List<String>
+env_get: (String) -> Option<String>
+stdin_read_all: () -> String
+exit: (Int32) -> ()
+
+// String & text primitives
+string_length: (String) -> Int32
+string_byte_length: (String) -> Int32
+string_byte_at: (String, Int32) -> Option<Int32>
+string_slice: (String, Int32, Int32) -> Option<String>
+string_index_of: (String, String) -> Option<Int32>
+string_contains: (String, String) -> Boolean
+string_starts_with: (String, String) -> Boolean
+string_ends_with: (String, String) -> Boolean
+string_trim: (String) -> String
+string_split: (String, String) -> List<String>
+string_join: (List<String>, String) -> String
+string_parse_int: (String) -> Option<Int32>
+string_parse_int64: (String) -> Option<Int64>
+string_parse_float: (String) -> Option<Float64>
+
+// Math, Char, Array, Option, Range, and Prelude builtins
+sqrt: (Float64) -> Float64
+floor: (Float64) -> Float64
+ceil: (Float64) -> Float64
+round: (Float64) -> Float64
+trunc: (Float64) -> Float64
+char_code: (Char) -> Int32
+char_from_code: (Int32) -> Option<Char>
+array_length: <T>(Array<T, N>) -> Int32
+range_start: (Range<Int32>) -> Int32
+range_end: (Range<Int32>) -> Int32
+range_to_list: (Range<Int32>) -> List<Int32>
 ```
 
 `print` and `println` statically select the argument type's `Display` adoption.
 `print_int` and `print_float` remain available as compatibility helpers;
 `eprint` and `eprintln` remain String-only. No runtime type tag or dynamic
-dispatch is used.
+dispatch is used. Under `wasip1`, `panic` and failed `assert` write their
+message to stderr (`fd=2`) before trapping, and `cli_args`, `env_get`,
+`stdin_read_all`, and `exit` emit their `wasi_snapshot_preview1` imports on
+demand only when called (and are rejected under `wasm-core`).
+
+### 14.4 Bundled Standard Library Modules (`std.*`)
+Programs may import bundled pure-Restrict modules via `import std.<module>.*`,
+`import std.<module>.{...}`, or `import std.<module>`:
+- `std.prelude`: `identity_val`, `bool_xor`, `bool_implies`, `bool_to_int`, `eq_int`, `ne_int`, `cmp_int`, `cmp_int64`, `cmp_float`
+- `std.char`: `is_ascii_digit`, `is_ascii_alpha`, `is_ascii_alphanumeric`, `is_ascii_whitespace`, `is_ascii_upper`, `is_ascii_lower`, `to_ascii_upper`, `to_ascii_lower`, `char_digit_value`
+- `std.math`: `clamp`, `signum`, `is_even`, `is_odd`, `gcd`, `lcm`, `abs_i64`, `min_i64`, `max_i64`, `clamp_i64`, `signum_i64`, `clamp_f`, `lerp_f`, `approx_eq_f`
+- `std.option`: `option_or`, `option_unwrap_or_else`, `option_and_then`, `option_ok_or`, `option_flatten`, `option_zip_with`
+- `std.result`: `result_is_ok`, `result_is_err`, `result_unwrap_or`, `result_unwrap_or_else`, `result_map`, `result_map_err`, `result_and_then`, `result_ok`, `result_err`
+- `std.list`: `IndexedInt`, `list_any`, `list_all`, `list_find`, `list_take`, `list_drop`, `list_range`, `list_sum`, `list_sum_i64`, `list_sum_f`, `list_product`, `list_enumerate_from`, `list_zip_with`
+- `std.map`: `StringMap<V>` (`smap_empty`, `smap_put`, `smap_get`, `smap_contains`, `smap_remove`, `smap_keys`, `smap_values`, `smap_len`) and `IntMap<V>` (`imap_*`)
+- `std.string`: `string_is_empty`, `string_non_empty`, `string_repeat`, `string_join_simple`, `string_lines`, `string_words`, `string_replace`, `string_pad_left`, `string_pad_right`, `string_to_upper_ascii`, `string_to_lower_ascii`
+- `std.io`: `format_kv`, `println_kv`, `eprintln_labeled`
+- `std.lib`: `std_version`
 
 ## 15. DEPRECATED AND REMOVED SYNTAX
 

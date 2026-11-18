@@ -497,7 +497,11 @@ export fun test_parse_float: () -> Float64 = {
 }
 "#;
 
-    let wasm = compile_wasm(source, WasmTargetProfile::WasmCore, WasmOptimizationLevel::Release)?;
+    let wasm = compile_wasm(
+        source,
+        WasmTargetProfile::WasmCore,
+        WasmOptimizationLevel::Release,
+    )?;
     let (mut store, instance) = instantiate_with_env(&wasm, WasiTestEnv::default())?;
 
     let trimmed = instance
@@ -538,8 +542,12 @@ export fun test_parse_float: () -> Float64 = {
     let pf = instance
         .get_typed_func::<(), f64>(&store, "test_parse_float")?
         .call(&mut store, ())?;
+    #[allow(clippy::approx_constant)]
     let expected = 3.14 - 0.005 + 150.0 + 0.025;
-    assert!((pf - expected).abs() < 1e-12, "got {pf}, expected {expected}");
+    assert!(
+        (pf - expected).abs() < 1e-12,
+        "got {pf}, expected {expected}"
+    );
     Ok(())
 }
 
@@ -591,7 +599,11 @@ export fun test_range_builtins: () -> Int32 = {
 }
 "#;
 
-    let wasm = compile_wasm(source, WasmTargetProfile::WasmCore, WasmOptimizationLevel::Release)?;
+    let wasm = compile_wasm(
+        source,
+        WasmTargetProfile::WasmCore,
+        WasmOptimizationLevel::Release,
+    )?;
     assert!(import_names(&wasm)?.is_empty());
     let (mut store, instance) = instantiate_with_env(&wasm, WasiTestEnv::default())?;
 
@@ -631,7 +643,11 @@ fun main: () -> () = {
     "fatal: bad input" |> panic
 }
 "#;
-    let panic_wasm = compile_wasm(panic_src, WasmTargetProfile::WasiP1, WasmOptimizationLevel::None)?;
+    let panic_wasm = compile_wasm(
+        panic_src,
+        WasmTargetProfile::WasiP1,
+        WasmOptimizationLevel::None,
+    )?;
     let (mut panic_store, panic_instance) =
         instantiate_with_env(&panic_wasm, WasiTestEnv::default())?;
     let panic_err = call_start(&panic_instance, &mut panic_store);
@@ -647,8 +663,11 @@ export fun fail_assert: () -> () = {
     (false, "assert failed: expected > 0") assert
 }
 "#;
-    let assert_wasm =
-        compile_wasm(assert_src, WasmTargetProfile::WasiP1, WasmOptimizationLevel::Release)?;
+    let assert_wasm = compile_wasm(
+        assert_src,
+        WasmTargetProfile::WasiP1,
+        WasmOptimizationLevel::Release,
+    )?;
     let (mut store, instance) = instantiate_with_env(&assert_wasm, WasiTestEnv::default())?;
     assert_eq!(
         instance
@@ -668,13 +687,14 @@ fun main: () -> () = {
     42 |> exit
 }
 "#;
-    let exit_wasm =
-        compile_wasm(exit_src, WasmTargetProfile::WasiP1, WasmOptimizationLevel::Release)?;
-    let (mut exit_store, exit_instance) =
-        instantiate_with_env(&exit_wasm, WasiTestEnv::default())?;
-    let err = call_start(&exit_instance, &mut exit_store)
-        .err()
-        .expect("exit(42) should call proc_exit");
+    let exit_wasm = compile_wasm(
+        exit_src,
+        WasmTargetProfile::WasiP1,
+        WasmOptimizationLevel::Release,
+    )?;
+    let (mut exit_store, exit_instance) = instantiate_with_env(&exit_wasm, WasiTestEnv::default())?;
+    let err =
+        call_start(&exit_instance, &mut exit_store).expect_err("exit(42) should call proc_exit");
     assert_eq!(err.i32_exit_status(), Some(42));
     assert_eq!(exit_store.data().exit_code, Some(42));
 
@@ -714,7 +734,10 @@ fun main: () -> () = {
         plain_imports,
         vec![
             ("wasi_snapshot_preview1".to_string(), "fd_write".to_string()),
-            ("wasi_snapshot_preview1".to_string(), "proc_exit".to_string()),
+            (
+                "wasi_snapshot_preview1".to_string(),
+                "proc_exit".to_string()
+            ),
         ]
     );
 
@@ -725,15 +748,20 @@ fun main: () -> () = {
     (args, "|") string_join |> print
 }
 "#;
-    let args_wasm =
-        compile_wasm(args_src, WasmTargetProfile::WasiP1, WasmOptimizationLevel::Release)?;
+    let args_wasm = compile_wasm(
+        args_src,
+        WasmTargetProfile::WasiP1,
+        WasmOptimizationLevel::Release,
+    )?;
     let args_imports = import_names(&args_wasm)?;
     assert!(args_imports.contains(&(
         "wasi_snapshot_preview1".to_string(),
         "args_sizes_get".to_string()
     )));
     assert!(args_imports.contains(&("wasi_snapshot_preview1".to_string(), "args_get".to_string())));
-    assert!(!args_imports.iter().any(|(_, n)| n == "environ_get" || n == "fd_read"));
+    assert!(!args_imports
+        .iter()
+        .any(|(_, n)| n == "environ_get" || n == "fd_read"));
 
     let (mut store, instance) = instantiate_with_env(
         &args_wasm,
@@ -757,8 +785,11 @@ fun main: () -> () = {
     (a + "|" + b + "|" + c) |> print
 }
 "#;
-    let env_wasm =
-        compile_wasm(env_src, WasmTargetProfile::WasiP1, WasmOptimizationLevel::Release)?;
+    let env_wasm = compile_wasm(
+        env_src,
+        WasmTargetProfile::WasiP1,
+        WasmOptimizationLevel::Release,
+    )?;
     let env_imports = import_names(&env_wasm)?;
     assert!(env_imports.contains(&(
         "wasi_snapshot_preview1".to_string(),
@@ -768,7 +799,9 @@ fun main: () -> () = {
         "wasi_snapshot_preview1".to_string(),
         "environ_get".to_string()
     )));
-    assert!(!env_imports.iter().any(|(_, n)| n == "args_get" || n == "fd_read"));
+    assert!(!env_imports
+        .iter()
+        .any(|(_, n)| n == "args_get" || n == "fd_read"));
 
     let (mut store, instance) = instantiate_with_env(
         &env_wasm,
@@ -789,11 +822,16 @@ fun main: () -> () = {
     () stdin_read_all |> print
 }
 "#;
-    let stdin_wasm =
-        compile_wasm(stdin_src, WasmTargetProfile::WasiP1, WasmOptimizationLevel::Release)?;
+    let stdin_wasm = compile_wasm(
+        stdin_src,
+        WasmTargetProfile::WasiP1,
+        WasmOptimizationLevel::Release,
+    )?;
     let stdin_imports = import_names(&stdin_wasm)?;
     assert!(stdin_imports.contains(&("wasi_snapshot_preview1".to_string(), "fd_read".to_string())));
-    assert!(!stdin_imports.iter().any(|(_, n)| n == "args_get" || n == "environ_get"));
+    assert!(!stdin_imports
+        .iter()
+        .any(|(_, n)| n == "args_get" || n == "environ_get"));
 
     let long_input = "line-東京-".repeat(40); // > 400 bytes, triggers buffer growth (128 -> 256 -> 512)
     let (mut store, instance) = instantiate_with_env(
@@ -818,8 +856,14 @@ fun main: () -> () = {
 #[test]
 fn wasm_core_rejects_wasi_builtins_and_dce_strips_unused_imports() -> anyhow::Result<()> {
     for (name, snippet) in [
-        ("cli_args", "fun main: () -> () = { val _a = () cli_args; () }"),
-        ("env_get", "fun main: () -> () = { val _e = \"K\" env_get; () }"),
+        (
+            "cli_args",
+            "fun main: () -> () = { val _a = () cli_args; () }",
+        ),
+        (
+            "env_get",
+            "fun main: () -> () = { val _e = \"K\" env_get; () }",
+        ),
         (
             "stdin_read_all",
             "fun main: () -> () = { val _s = () stdin_read_all; () }",

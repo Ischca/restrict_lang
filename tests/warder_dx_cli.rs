@@ -12,7 +12,10 @@ fn cli_check_wasm_core_rejects_all_host_io_builtins() {
         ("eprint", r#"fun main: () -> () = { "err" |> eprint }"#),
         ("eprintln", r#"fun main: () -> () = { "err" |> eprintln }"#),
         ("print_int", r#"fun main: () -> () = { 42 |> print_int }"#),
-        ("print_float", r#"fun main: () -> () = { 3.14 |> print_float }"#),
+        (
+            "print_float",
+            r#"fun main: () -> () = { 3.14 |> print_float }"#,
+        ),
     ];
 
     for (name, source) in cases {
@@ -204,8 +207,14 @@ fn cli_reports_located_affine_and_release_surface_errors() {
         .unwrap();
     assert!(!affine_out.status.success());
     let affine_err = String::from_utf8_lossy(&affine_out.stderr);
-    assert!(affine_err.contains("at line 4, column 5 (second use)"), "{affine_err}");
-    assert!(affine_err.contains("first used at line 3, column 13"), "{affine_err}");
+    assert!(
+        affine_err.contains("at line 4, column 5 (second use)"),
+        "{affine_err}"
+    );
+    assert!(
+        affine_err.contains("first used at line 3, column 13"),
+        "{affine_err}"
+    );
 
     let release_file = temp.path().join("release.rl");
     fs::write(
@@ -220,6 +229,9 @@ fn cli_reports_located_affine_and_release_surface_errors() {
         .unwrap();
     assert!(!release_out.status.success());
     let release_err = String::from_utf8_lossy(&release_out.stderr);
-    assert!(release_err.contains("Release surface error:"), "{release_err}");
+    assert!(
+        release_err.contains("Release surface error:"),
+        "{release_err}"
+    );
     assert!(release_err.contains("at line 1, column 9"), "{release_err}");
 }

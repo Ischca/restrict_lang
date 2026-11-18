@@ -436,11 +436,12 @@ impl TypeConstructor {
         match (self, ty) {
             (TypeConstructor::List, TypedType::List(item))
             | (TypeConstructor::Option, TypedType::Option(item)) => (**item).clone(),
-            (TypeConstructor::Range, TypedType::Record { name, type_args, .. })
-                if name == "Range" =>
-            {
-                type_args.first().cloned().unwrap_or(TypedType::Int32)
-            }
+            (
+                TypeConstructor::Range,
+                TypedType::Record {
+                    name, type_args, ..
+                },
+            ) if name == "Range" => type_args.first().cloned().unwrap_or(TypedType::Int32),
             _ => unreachable!("type constructor must match adopted type"),
         }
     }

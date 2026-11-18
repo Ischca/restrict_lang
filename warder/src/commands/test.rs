@@ -176,9 +176,7 @@ async fn run_test_file(
         .current_dir(project_root)
         .args(["--target", "wasip1"]);
     if let Some(arena_bytes) = arena_bytes {
-        command
-            .arg("--arena-bytes")
-            .arg(arena_bytes.to_string());
+        command.arg("--arena-bytes").arg(arena_bytes.to_string());
     }
     command.arg("--module-root").arg(format!(
         "{}={}",

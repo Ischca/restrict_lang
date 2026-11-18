@@ -626,10 +626,7 @@ fn check_block_for_wasm_core(
     result
 }
 
-fn check_expr_for_wasm_core(
-    expr: &Expr,
-    scopes: &mut Vec<HashSet<String>>,
-) -> Result<(), String> {
+fn check_expr_for_wasm_core(expr: &Expr, scopes: &mut Vec<HashSet<String>>) -> Result<(), String> {
     match &expr.kind {
         ExprKind::Ident(name) => reject_if_host_io_builtin(name, scopes),
         ExprKind::Call(call) => {
@@ -757,13 +754,17 @@ fn check_expr_for_wasm_core(
             check_expr_for_wasm_core(&range.start, scopes)?;
             check_expr_for_wasm_core(&range.end, scopes)
         }
+        ExprKind::Return(Some(inner)) => check_expr_for_wasm_core(inner, scopes),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
         | ExprKind::StringLit(_)
         | ExprKind::CharLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
-        | ExprKind::VariantRef(_) => Ok(()),
+        | ExprKind::VariantRef(_)
+        | ExprKind::Break
+        | ExprKind::Continue
+        | ExprKind::Return(None) => Ok(()),
     }
 }
 

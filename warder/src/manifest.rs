@@ -169,7 +169,11 @@ pub struct Build {
     pub optimize: bool,
     #[serde(default = "default_output")]
     pub output: String,
-    #[serde(rename = "arena-bytes", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "arena-bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub arena_bytes: Option<u32>,
 }
 

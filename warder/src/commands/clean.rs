@@ -11,18 +11,24 @@ pub async fn clean_project() -> Result<()> {
 
     let mut removed = 0usize;
 
-    if let Some(build_dir) = resolve_existing_project_dir(&root, Path::new(&manifest.build.output), "build.output")? {
+    if let Some(build_dir) =
+        resolve_existing_project_dir(&root, Path::new(&manifest.build.output), "build.output")?
+    {
         std::fs::remove_dir_all(&build_dir).with_context(|| {
-            format!("Failed to remove build output directory {}", build_dir.display())
+            format!(
+                "Failed to remove build output directory {}",
+                build_dir.display()
+            )
         })?;
         print_info(&format!("Removed {}", build_dir.display()));
         removed += 1;
     }
 
-    if let Some(cache_dir) = resolve_existing_project_dir(&root, Path::new(".restrict-cache"), ".restrict-cache")? {
-        std::fs::remove_dir_all(&cache_dir).with_context(|| {
-            format!("Failed to remove cache directory {}", cache_dir.display())
-        })?;
+    if let Some(cache_dir) =
+        resolve_existing_project_dir(&root, Path::new(".restrict-cache"), ".restrict-cache")?
+    {
+        std::fs::remove_dir_all(&cache_dir)
+            .with_context(|| format!("Failed to remove cache directory {}", cache_dir.display()))?;
         print_info(&format!("Removed {}", cache_dir.display()));
         removed += 1;
     }

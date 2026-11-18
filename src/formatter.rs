@@ -105,7 +105,8 @@ pub fn format_source(source: &str) -> Result<String, String> {
         output.push_str(&"    ".repeat(indent_levels));
 
         let mut prev_idx_on_line: Option<usize> = None;
-        let mut prev_non_comment_idx: Option<usize> = prev_non_comment_before(&items, line_indices[0]);
+        let mut prev_non_comment_idx: Option<usize> =
+            prev_non_comment_before(&items, line_indices[0]);
 
         for &idx in line_indices {
             match &items[idx] {
@@ -131,7 +132,13 @@ pub fn format_source(source: &str) -> Result<String, String> {
                                 lambda_bar_depth = None;
                             }
                         } else if prev_non_comment_idx.is_some_and(|p| {
-                            matches!(&items[p], Item::Token { token: Token::LBrace, .. })
+                            matches!(
+                                &items[p],
+                                Item::Token {
+                                    token: Token::LBrace,
+                                    ..
+                                }
+                            )
                         }) {
                             bar_opens_lambda = true;
                             lambda_bar_depth = Some(delim_stack.len());
@@ -163,16 +170,14 @@ pub fn format_source(source: &str) -> Result<String, String> {
                         Token::LParen => delim_stack.push(Delim::Paren),
                         Token::LBracket => delim_stack.push(Delim::Bracket),
                         Token::RBrace => {
-                            if let Some(pos) =
-                                delim_stack.iter().rposition(|d| *d == Delim::Brace)
+                            if let Some(pos) = delim_stack.iter().rposition(|d| *d == Delim::Brace)
                             {
                                 delim_stack.truncate(pos);
                             }
                             in_import_line = false;
                         }
                         Token::RParen => {
-                            if let Some(pos) =
-                                delim_stack.iter().rposition(|d| *d == Delim::Paren)
+                            if let Some(pos) = delim_stack.iter().rposition(|d| *d == Delim::Paren)
                             {
                                 delim_stack.truncate(pos);
                             }
@@ -229,7 +234,15 @@ fn should_insert_space(
     }
 
     // Never insert spaces around `.` or `::` or `..` or after `...` / `~` / `!`.
-    if matches!(prev, Token::Dot | Token::ColonColon | Token::DotDot | Token::DotDotDot | Token::Tilde | Token::Not) {
+    if matches!(
+        prev,
+        Token::Dot
+            | Token::ColonColon
+            | Token::DotDot
+            | Token::DotDotDot
+            | Token::Tilde
+            | Token::Not
+    ) {
         return false;
     }
     if matches!(curr, Token::Dot | Token::ColonColon | Token::DotDot) {
@@ -257,7 +270,10 @@ fn should_insert_space(
     if generic_gt[prev_idx] {
         // `List<Option<Int32>>` or `fun id: <T>(x: T)`: no space before `>` or `(`,
         // space before identifier/arrow/`=`/`{`/`where`.
-        return !matches!(curr, Token::LParen | Token::RParen | Token::Comma | Token::Gt | Token::Colon);
+        return !matches!(
+            curr,
+            Token::LParen | Token::RParen | Token::Comma | Token::Gt | Token::Colon
+        );
     }
 
     // No space before `,`, `;`, `:`, `)`, `]`.
@@ -280,10 +296,12 @@ fn should_insert_space(
     if matches!(prev, Token::Bar) && inside_lambda_params {
         return false;
     }
-    if matches!(prev, Token::Bar) && prev_non_comment_idx.is_some_and(|p| {
-        let _ = p;
-        false
-    }) {
+    if matches!(prev, Token::Bar)
+        && prev_non_comment_idx.is_some_and(|p| {
+            let _ = p;
+            false
+        })
+    {
         return false;
     }
 
@@ -300,7 +318,10 @@ fn should_insert_space(
 
     // Space before `{`.
     if matches!(curr, Token::LBrace) {
-        return !matches!(prev, Token::Dot | Token::LParen | Token::LBracket | Token::LBrace);
+        return !matches!(
+            prev,
+            Token::Dot | Token::LParen | Token::LBracket | Token::LBrace
+        );
     }
 
     // `~` after `<` or `(` or `,`.

@@ -1420,12 +1420,35 @@ fn assert_current_import_surface(label: &str, source: &str) {
             ));
         }
 
-        if code.starts_with("import std.") || code.starts_with("export import std.") {
+        if code.starts_with("export import std.") {
             failures.push(format!(
                 "line {}: std aggregator imports are reserved outside the current source import examples: {}",
                 line_index + 1,
                 line.trim()
             ));
+        }
+
+        if let Some(after_std) = code.strip_prefix("import std.") {
+            let module_name = after_std.split(['.', ' ', ';', '{']).next().unwrap_or("");
+            let is_bundled_std = matches!(
+                module_name,
+                "prelude"
+                    | "math"
+                    | "option"
+                    | "result"
+                    | "list"
+                    | "string"
+                    | "char"
+                    | "map"
+                    | "io"
+            );
+            if !is_bundled_std {
+                failures.push(format!(
+                    "line {}: std aggregator or unbundled imports are reserved outside the current source import examples: {}",
+                    line_index + 1,
+                    line.trim()
+                ));
+            }
         }
 
         if !code.starts_with("import ") {

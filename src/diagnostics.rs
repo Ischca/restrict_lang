@@ -106,7 +106,12 @@ pub fn format_type_error(source: &str, error: &TypeError) -> String {
         TypeError::ImmutableReassignment(name) => {
             let mask = code_byte_mask(source);
             if let Some(offset) = find_reassignment_target(source, &mask, name) {
-                append_location_snippet(&mut message, source, offset, "cannot reassign immutable binding");
+                append_location_snippet(
+                    &mut message,
+                    source,
+                    offset,
+                    "cannot reassign immutable binding",
+                );
             }
         }
         TypeError::UnknownType(name) => {
@@ -264,7 +269,11 @@ fn collect_function_bodies(source: &str, mask: &[bool]) -> Vec<(usize, usize, us
         let mut idx = fun_pos + 3;
         let mut found_assign = false;
         while idx < source.len() {
-            if mask[idx] && source.as_bytes()[idx] == b'=' && !source[idx..].starts_with("==") && !source[idx..].starts_with("=>") {
+            if mask[idx]
+                && source.as_bytes()[idx] == b'='
+                && !source[idx..].starts_with("==")
+                && !source[idx..].starts_with("=>")
+            {
                 found_assign = true;
                 idx += 1;
                 break;
@@ -362,7 +371,8 @@ fn is_binding_or_pattern_site(source: &str, mask: &[bool], pos: usize, after: us
         return is_lambda_param_binder(source, mask, pos, after)
             || is_match_arm_binder(source, mask, after);
     };
-    let prev_word = &source[prev_word_start..scan_ident_end(source, mask, prev_word_start).unwrap_or(prev_word_start)];
+    let prev_word = &source
+        [prev_word_start..scan_ident_end(source, mask, prev_word_start).unwrap_or(prev_word_start)];
     if matches!(
         prev_word,
         "val" | "mut" | "fun" | "record" | "enum" | "form" | "takes" | "import"
@@ -863,7 +873,8 @@ fn find_custom_parser_failure_offset(source: &str, detail: &str) -> Option<usize
         }
         return None;
     }
-    if detail.contains("built-in constructors for Option or Result do not take source type arguments")
+    if detail
+        .contains("built-in constructors for Option or Result do not take source type arguments")
     {
         for prefix in ["Option::Some", "Option::None", "Result::Ok", "Result::Err"] {
             let mut cursor = 0;
@@ -942,9 +953,9 @@ fn find_custom_parser_failure_offset(source: &str, detail: &str) -> Option<usize
 
 fn find_traditional_call_offset(source: &str, mask: &[bool]) -> Option<usize> {
     const NON_CALL_KEYWORDS: &[&str] = &[
-        "fun", "val", "mut", "record", "enum", "form", "takes", "impl", "context", "match",
-        "then", "else", "while", "if", "with", "within", "where", "import", "export", "pub",
-        "as", "clone", "freeze", "Ok", "Err", "Some", "None", "true", "false",
+        "fun", "val", "mut", "record", "enum", "form", "takes", "impl", "context", "match", "then",
+        "else", "while", "if", "with", "within", "where", "import", "export", "pub", "as", "clone",
+        "freeze", "Ok", "Err", "Some", "None", "true", "false",
     ];
 
     let mut i = 0;
@@ -1429,8 +1440,14 @@ fun make_quote: () -> Quote = {
 }
 "#;
         let message = format_type_error(source, &TypeError::AffineViolation("raw".to_string()));
-        assert!(message.contains("at line 6, column 5 (second use)"), "{message}");
-        assert!(message.contains("first used at line 5, column 17"), "{message}");
+        assert!(
+            message.contains("at line 6, column 5 (second use)"),
+            "{message}"
+        );
+        assert!(
+            message.contains("first used at line 5, column 17"),
+            "{message}"
+        );
         assert!(message.contains("^ first consumed here"), "{message}");
         assert!(message.contains("^ used again here"), "{message}");
     }
@@ -1442,8 +1459,10 @@ fun make_quote: () -> Quote = {
     println_typo
 }
 "#;
-        let message =
-            format_type_error(source, &TypeError::UndefinedFunction("println_typo".to_string()));
+        let message = format_type_error(
+            source,
+            &TypeError::UndefinedFunction("println_typo".to_string()),
+        );
         assert!(message.contains("at line 3, column 5"), "{message}");
         assert!(
             message.contains("previous 'val' binding on line 2 does not end with ';'"),
@@ -1494,12 +1513,16 @@ fun make_quote: () -> Quote = {
         let (_, program) = parse_program(source).unwrap();
         let mut checker = crate::TypeChecker::new();
         checker.check_program(&program).unwrap();
-        let err = crate::check_release_surface(&program, &checker, crate::HostAbiProfile::V001Scalar)
-            .unwrap_err();
+        let err =
+            crate::check_release_surface(&program, &checker, crate::HostAbiProfile::V001Scalar)
+                .unwrap_err();
         let formatted = format_release_surface_error(source, &err);
 
         assert!(formatted.contains("Release surface error: Exported function 'bad_export'"));
         assert!(formatted.contains("at line 1, column 9"), "{formatted}");
-        assert!(formatted.contains("^ exported item violates host ABI surface"), "{formatted}");
+        assert!(
+            formatted.contains("^ exported item violates host ABI surface"),
+            "{formatted}"
+        );
     }
 }

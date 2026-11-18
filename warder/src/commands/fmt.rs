@@ -44,8 +44,9 @@ pub async fn fmt_project(check: bool) -> Result<()> {
                 print_error(&format!("Needs formatting: {display}"));
                 unformatted.push(display.to_string());
             } else {
-                std::fs::write(file, formatted)
-                    .with_context(|| format!("Failed to write formatted file {}", file.display()))?;
+                std::fs::write(file, formatted).with_context(|| {
+                    format!("Failed to write formatted file {}", file.display())
+                })?;
                 print_info(&format!("Formatted {display}"));
                 formatted_count += 1;
             }

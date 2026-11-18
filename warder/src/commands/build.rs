@@ -214,8 +214,8 @@ async fn build_project_once(
                     application_snapshot.entry_path.display()
                 )
             })?;
-        let uses_project_namespace = restrict_lang::parser::parse_program(&source)
-            .is_ok_and(|(_, program)| {
+        let uses_project_namespace =
+            restrict_lang::parser::parse_program(&source).is_ok_and(|(_, program)| {
                 program.imports.iter().any(|import| {
                     import
                         .module_path

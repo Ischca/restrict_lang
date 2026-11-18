@@ -28,10 +28,9 @@ fn write_basic_app(root: &Path, build_extra: &str) {
 
 fn compile_wat_emitter(temp: &TempDir) -> (PathBuf, PathBuf) {
     let source = temp.path().join("wat-emitter.rs");
-    let compiler = temp.path().join(format!(
-        "wat-emitter{}",
-        std::env::consts::EXE_SUFFIX
-    ));
+    let compiler = temp
+        .path()
+        .join(format!("wat-emitter{}", std::env::consts::EXE_SUFFIX));
     let captured_args = temp.path().join("emitter-args.txt");
     fs::write(
         &source,
@@ -378,7 +377,10 @@ fn warder_check_validates_sources_and_tests_without_creating_dist() {
             .any(|line| line.starts_with("project=") && line.ends_with("/app/src")),
         "{args}"
     );
-    assert!(args.lines().any(|line| line.ends_with("/src/main.rl")), "{args}");
+    assert!(
+        args.lines().any(|line| line.ends_with("/src/main.rl")),
+        "{args}"
+    );
     assert!(
         args.lines()
             .any(|line| line.ends_with("/tests/main_test.rl")),
@@ -521,5 +523,107 @@ fn warder_fmt_formats_src_and_tests_and_supports_check_mode() {
         check_after.status.success(),
         "{}",
         String::from_utf8_lossy(&check_after.stderr)
+    );
+}
+
+#[test]
+fn warder_practical_log_analyzer_end_to_end() {
+    let warder_bin = Path::new(env!("CARGO_BIN_EXE_warder"));
+    let restrict_bin =
+        warder_bin.with_file_name(format!("restrict_lang{}", std::env::consts::EXE_SUFFIX));
+    if !restrict_bin.is_file() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("warder should live under workspace root");
+        let built = Command::new("cargo")
+            .current_dir(workspace_root)
+            .args(["build", "--offline", "--locked", "--bin", "restrict_lang"])
+            .output()
+            .expect("cargo build restrict_lang should run");
+        assert!(
+            built.status.success(),
+            "failed to build restrict_lang binary: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("warder should live under workspace root");
+    let showcase_source =
+        fs::read_to_string(workspace_root.join("examples/practical_log_analyzer.rl"))
+            .expect("examples/practical_log_analyzer.rl should be readable");
+
+    let temp = TempDir::new().unwrap();
+    let app = temp.path().join("log_analyzer_app");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::create_dir_all(app.join("tests")).unwrap();
+    fs::write(
+        app.join("warder.toml"),
+        "manifest-version = 1\n\n[package]\nname = \"log_analyzer_app\"\nversion = \"0.1.0\"\nentry = \"src/main.rl\"\nedition = \"2025\"\n\n[dependencies]\n\n[build]\ntarget = \"wasm32\"\noptimize = true\noutput = \"dist/\"\narena-bytes = 65536\n",
+    )
+    .unwrap();
+    fs::write(app.join("src/main.rl"), &showcase_source).unwrap();
+    fs::write(
+        app.join("tests/analyzer_test.rl"),
+        "import project.main.{analyze_logs_summary}\n\npub fun test_summary: () -> Boolean = {\n    () analyze_logs_summary == 4430\n}\n",
+    )
+    .unwrap();
+
+    let fmt_check = Command::new(warder_bin)
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &restrict_bin)
+        .args(["fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        fmt_check.status.success(),
+        "warder fmt --check failed\nstdout:{}\nstderr:{}",
+        String::from_utf8_lossy(&fmt_check.stdout),
+        String::from_utf8_lossy(&fmt_check.stderr)
+    );
+
+    let check = Command::new(warder_bin)
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &restrict_bin)
+        .arg("check")
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "warder check failed\nstdout:{}\nstderr:{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+
+    let test = Command::new(warder_bin)
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &restrict_bin)
+        .arg("test")
+        .output()
+        .unwrap();
+    assert!(
+        test.status.success(),
+        "warder test failed\nstdout:{}\nstderr:{}",
+        String::from_utf8_lossy(&test.stdout),
+        String::from_utf8_lossy(&test.stderr)
+    );
+
+    let run = Command::new(warder_bin)
+        .current_dir(&app)
+        .env("RESTRICT_LANG_BIN", &restrict_bin)
+        .arg("run")
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "warder run failed\nstdout:{}\nstderr:{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let run_stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run_stdout.contains("level=ERROR summary=4430"),
+        "unexpected warder run stdout: {run_stdout}"
     );
 }

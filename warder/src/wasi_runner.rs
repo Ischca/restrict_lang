@@ -211,7 +211,8 @@ pub fn run_wasi_module(wasm: &[u8], state: WasiState) -> Result<(i32, WasiState)
         .validate_all(wasm)
         .context("Compiled WebAssembly module is invalid")?;
     let engine = Engine::default();
-    let module = Module::new(&engine, wasm).context("Failed to load compiled WebAssembly module")?;
+    let module =
+        Module::new(&engine, wasm).context("Failed to load compiled WebAssembly module")?;
     let mut linker = Linker::new(&engine);
     register_wasi_preview1(&mut linker)?;
 
@@ -497,7 +498,11 @@ fn write_cstr_array_sizes(
     };
     let mut total_bytes: u32 = 0;
     for item in slice {
-        let Some(with_nul) = item.len().checked_add(1).and_then(|n| u32::try_from(n).ok()) else {
+        let Some(with_nul) = item
+            .len()
+            .checked_add(1)
+            .and_then(|n| u32::try_from(n).ok())
+        else {
             return ERRNO_OVERFLOW;
         };
         let Some(next) = total_bytes.checked_add(with_nul) else {

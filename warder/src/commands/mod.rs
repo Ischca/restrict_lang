@@ -199,12 +199,7 @@ fn locate_restrict_lang_without_env(project_root: Option<&Path>) -> Option<PathB
     let exe = std::env::current_exe().ok();
     let cwd = std::env::current_dir().ok();
     let path_lookup = || which::which("restrict_lang").ok();
-    locate_restrict_lang_from_candidates(
-        exe.as_deref(),
-        project_root,
-        cwd.as_deref(),
-        path_lookup,
-    )
+    locate_restrict_lang_from_candidates(exe.as_deref(), project_root, cwd.as_deref(), path_lookup)
 }
 
 fn locate_restrict_lang_from_candidates<F>(
@@ -226,7 +221,11 @@ where
         return Some(sibling);
     }
 
-    let search_roots = [project_root, current_dir, current_exe.and_then(|exe| exe.parent())];
+    let search_roots = [
+        project_root,
+        current_dir,
+        current_exe.and_then(|exe| exe.parent()),
+    ];
     for start in search_roots.into_iter().flatten() {
         for ancestor in start.ancestors() {
             for profile in ["release", "debug"] {

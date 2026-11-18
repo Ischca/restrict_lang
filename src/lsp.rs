@@ -4525,7 +4525,8 @@ fun main: () -> () = {\n\
 
     #[test]
     fn lsp_diagnostics_locate_affine_and_undefined_variable_errors() {
-        let source = "fun main: () -> String = {\n    val raw = \"abc\";\n    val a = raw;\n    raw\n}\n";
+        let source =
+            "fun main: () -> String = {\n    val raw = \"abc\";\n    val a = raw;\n    raw\n}\n";
         let uri = Url::parse("file:///tmp/affine.rl").unwrap();
         let diagnostics = collect_diagnostics_for_source(&uri, source);
         assert_eq!(diagnostics.len(), 1);

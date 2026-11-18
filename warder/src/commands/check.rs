@@ -1,5 +1,7 @@
 use super::build::resolve_project_file;
-use super::{find_project_root, load_manifest, print_info, print_success, resolve_restrict_lang_bin};
+use super::{
+    find_project_root, load_manifest, print_info, print_success, resolve_restrict_lang_bin,
+};
 use crate::dependencies::{
     resolve_local_dependencies, validate_local_dependency_layout, PROJECT_SOURCE_NAMESPACE,
 };
@@ -34,8 +36,8 @@ pub async fn check_project() -> Result<()> {
     if let Some(contract) = component_contract {
         let source = std::fs::read_to_string(&entry_path)
             .with_context(|| format!("Failed to read entry source {}", entry_path.display()))?;
-        let uses_project_namespace = restrict_lang::parser::parse_program(&source)
-            .is_ok_and(|(_, program)| {
+        let uses_project_namespace =
+            restrict_lang::parser::parse_program(&source).is_ok_and(|(_, program)| {
                 program.imports.iter().any(|import| {
                     import
                         .module_path

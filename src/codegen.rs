@@ -1614,11 +1614,7 @@ impl WasmCodeGen {
                     }
                 }
                 Stmt::Assignment(assign) => {
-                    self.scan_wasi_builtins_in_expr(
-                        &assign.value,
-                        scopes,
-                        first_wasi_only_in_core,
-                    );
+                    self.scan_wasi_builtins_in_expr(&assign.value, scopes, first_wasi_only_in_core);
                 }
                 Stmt::Expr(expr) => {
                     self.scan_wasi_builtins_in_expr(expr, scopes, first_wasi_only_in_core);
@@ -1675,11 +1671,7 @@ impl WasmCodeGen {
                 for field in &record.fields {
                     match field {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
-                            self.scan_wasi_builtins_in_expr(
-                                value,
-                                scopes,
-                                first_wasi_only_in_core,
-                            );
+                            self.scan_wasi_builtins_in_expr(value, scopes, first_wasi_only_in_core);
                         }
                     }
                 }
@@ -1689,11 +1681,7 @@ impl WasmCodeGen {
                 for field in &clone.updates.fields {
                     match field {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
-                            self.scan_wasi_builtins_in_expr(
-                                value,
-                                scopes,
-                                first_wasi_only_in_core,
-                            );
+                            self.scan_wasi_builtins_in_expr(value, scopes, first_wasi_only_in_core);
                         }
                     }
                 }
@@ -1735,27 +1723,15 @@ impl WasmCodeGen {
                     scopes,
                     first_wasi_only_in_core,
                 );
-                self.scan_wasi_builtins_in_block(
-                    &while_expr.body,
-                    scopes,
-                    first_wasi_only_in_core,
-                );
+                self.scan_wasi_builtins_in_block(&while_expr.body, scopes, first_wasi_only_in_core);
             }
             ExprKind::Match(match_expr) => {
-                self.scan_wasi_builtins_in_expr(
-                    &match_expr.expr,
-                    scopes,
-                    first_wasi_only_in_core,
-                );
+                self.scan_wasi_builtins_in_expr(&match_expr.expr, scopes, first_wasi_only_in_core);
                 for arm in &match_expr.arms {
                     let mut arm_scope = HashSet::new();
                     Self::collect_pattern_binding_names(&arm.pattern, &mut arm_scope);
                     scopes.push(arm_scope);
-                    self.scan_wasi_builtins_in_block(
-                        &arm.body,
-                        scopes,
-                        first_wasi_only_in_core,
-                    );
+                    self.scan_wasi_builtins_in_block(&arm.body, scopes, first_wasi_only_in_core);
                     scopes.pop();
                 }
             }
@@ -1763,19 +1739,11 @@ impl WasmCodeGen {
                 for binding in &with_expr.bindings {
                     match binding {
                         FieldInit::Field { value, .. } | FieldInit::Spread(value) => {
-                            self.scan_wasi_builtins_in_expr(
-                                value,
-                                scopes,
-                                first_wasi_only_in_core,
-                            );
+                            self.scan_wasi_builtins_in_expr(value, scopes, first_wasi_only_in_core);
                         }
                     }
                 }
-                self.scan_wasi_builtins_in_block(
-                    &with_expr.body,
-                    scopes,
-                    first_wasi_only_in_core,
-                );
+                self.scan_wasi_builtins_in_block(&with_expr.body, scopes, first_wasi_only_in_core);
             }
             ExprKind::WithLifetime(with_lifetime) => {
                 self.scan_wasi_builtins_in_block(
@@ -1792,6 +1760,9 @@ impl WasmCodeGen {
                 scopes.push(lambda_scope);
                 self.scan_wasi_builtins_in_expr(&lambda.body, scopes, first_wasi_only_in_core);
                 scopes.pop();
+            }
+            ExprKind::Return(Some(inner)) => {
+                self.scan_wasi_builtins_in_expr(inner, scopes, first_wasi_only_in_core);
             }
             _ => {}
         }
@@ -2584,7 +2555,10 @@ impl WasmCodeGen {
             self.register_builtin_sig(
                 "env_get",
                 vec![Type::Named("String".to_string())],
-                Type::Generic("Option".to_string(), vec![Type::Named("String".to_string())]),
+                Type::Generic(
+                    "Option".to_string(),
+                    vec![Type::Named("String".to_string())],
+                ),
             )?;
         }
 
@@ -2701,11 +2675,7 @@ impl WasmCodeGen {
   )
 "#,
             );
-            self.register_builtin_sig(
-                "stdin_read_all",
-                vec![],
-                Type::Named("String".to_string()),
-            )?;
+            self.register_builtin_sig("stdin_read_all", vec![], Type::Named("String".to_string()))?;
         }
 
         Ok(())
@@ -3811,7 +3781,10 @@ impl WasmCodeGen {
             FunctionSourceSig {
                 type_params: vec![],
                 params: vec![
-                    Type::Generic("Option".to_string(), vec![Type::Named("Float64".to_string())]),
+                    Type::Generic(
+                        "Option".to_string(),
+                        vec![Type::Named("Float64".to_string())],
+                    ),
                     Type::Named("Float64".to_string()),
                 ],
                 result: Some(Type::Named("Float64".to_string())),
@@ -5817,7 +5790,11 @@ impl WasmCodeGen {
 
         self.register_builtin_sig("string_length", vec![str_ty.clone()], i32_ty.clone())?;
         self.register_builtin_sig("string_byte_length", vec![str_ty.clone()], i32_ty)?;
-        self.register_builtin_sig("string_byte_at", vec![str_ty.clone(), Type::Named("Int32".to_string())], opt_i32_ty.clone())?;
+        self.register_builtin_sig(
+            "string_byte_at",
+            vec![str_ty.clone(), Type::Named("Int32".to_string())],
+            opt_i32_ty.clone(),
+        )?;
         self.register_builtin_sig(
             "string_slice",
             vec![
@@ -9650,7 +9627,8 @@ impl WasmCodeGen {
             ));
         }
         if self.contexts.contains(&takes.target)
-            || (!self.records.contains_key(&takes.target) && !self.enums.contains_key(&takes.target))
+            || (!self.records.contains_key(&takes.target)
+                && !self.enums.contains_key(&takes.target))
         {
             return Err(CodeGenError::UnsupportedType(format!(
                 "takes target '{}' is not a concrete, non-generic record or enum",
@@ -17053,7 +17031,8 @@ impl WasmCodeGen {
         self.output.push_str("          (if\n");
         self.output.push_str("            (then\n");
         self.store_current_iter_output_address("iter_out_index", item_ty)?;
-        self.output.push_str("              local.get $iter_value\n");
+        self.output
+            .push_str("              local.get $iter_value\n");
         self.output.push_str(&format!(
             "              {}\n",
             self.wasm_store_op_for_wasm_type(item_ty)
@@ -17785,7 +17764,9 @@ impl WasmCodeGen {
         mapper_expr: &Expr,
     ) -> Option<Type> {
         match self.infer_expr_source_type(container_expr)? {
-            Type::Generic(name, params) if name == "List" || name == "Option" || name == "Range" => {
+            Type::Generic(name, params)
+                if name == "List" || name == "Option" || name == "Range" =>
+            {
                 let item_ty = params.first()?.clone();
                 let mapped_ty = self
                     .infer_callable_return_source_type(mapper_expr, std::slice::from_ref(&item_ty))
@@ -21555,7 +21536,10 @@ impl WasmCodeGen {
 
             self.output
                 .push_str(&format!("    local.get ${}\n", list_tmp));
-            self.generate_expr_with_expected_source(&range.start, &Type::Named("Int32".to_string()))?;
+            self.generate_expr_with_expected_source(
+                &range.start,
+                &Type::Named("Int32".to_string()),
+            )?;
             self.output.push_str("    i32.store\n");
 
             self.output
@@ -22073,8 +22057,7 @@ impl WasmCodeGen {
                 self.output.push_str("        )\n");
                 self.output.push_str("      )\n");
                 self.output.push_str("      (else\n");
-                self.output
-                    .push_str("        i32.const 0 ;; empty list\n");
+                self.output.push_str("        i32.const 0 ;; empty list\n");
                 self.output.push_str("      )\n");
                 self.output.push_str("    )\n");
             }
@@ -22372,8 +22355,8 @@ impl WasmCodeGen {
                     "    ",
                 )?;
                 self.output.push_str(&load_code);
-                let field_type = self
-                    .instantiated_record_field_type_by_name(record_name, source_ty, field_name);
+                let field_type =
+                    self.instantiated_record_field_type_by_name(record_name, source_ty, field_name);
                 match lit {
                     Literal::Int(n) => {
                         if matches!(field_type, Some(Type::Named(ref name)) if name == "Int64") {

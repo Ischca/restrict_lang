@@ -2170,7 +2170,11 @@ impl TypeChecker {
             );
         };
 
-        insert_fn("string_length", vec![("s", TypedType::String)], TypedType::Int32);
+        insert_fn(
+            "string_length",
+            vec![("s", TypedType::String)],
+            TypedType::Int32,
+        );
         insert_fn(
             "string_byte_length",
             vec![("s", TypedType::String)],
@@ -2192,12 +2196,18 @@ impl TypeChecker {
         );
         insert_fn(
             "string_index_of",
-            vec![("haystack", TypedType::String), ("needle", TypedType::String)],
+            vec![
+                ("haystack", TypedType::String),
+                ("needle", TypedType::String),
+            ],
             TypedType::Option(Box::new(TypedType::Int32)),
         );
         insert_fn(
             "string_contains",
-            vec![("haystack", TypedType::String), ("needle", TypedType::String)],
+            vec![
+                ("haystack", TypedType::String),
+                ("needle", TypedType::String),
+            ],
             TypedType::Boolean,
         );
         insert_fn(
@@ -2210,7 +2220,11 @@ impl TypeChecker {
             vec![("s", TypedType::String), ("suffix", TypedType::String)],
             TypedType::Boolean,
         );
-        insert_fn("string_trim", vec![("s", TypedType::String)], TypedType::String);
+        insert_fn(
+            "string_trim",
+            vec![("s", TypedType::String)],
+            TypedType::String,
+        );
         insert_fn(
             "string_split",
             vec![("text", TypedType::String), ("sep", TypedType::String)],
@@ -4606,9 +4620,13 @@ impl TypeChecker {
         };
 
         match receiver_ty {
-            TypedType::Record { name, .. } | TypedType::Enum { name } => adopted_form_has_method(&name),
+            TypedType::Record { name, .. } | TypedType::Enum { name } => {
+                adopted_form_has_method(&name)
+            }
             TypedType::Temporal { base_type, .. } => match *base_type {
-                TypedType::Record { name, .. } | TypedType::Enum { name } => adopted_form_has_method(&name),
+                TypedType::Record { name, .. } | TypedType::Enum { name } => {
+                    adopted_form_has_method(&name)
+                }
                 _ => false,
             },
             TypedType::TypeParam(name) => {
@@ -9009,13 +9027,15 @@ impl TypeChecker {
         checked_arg_types: &[Option<TypedType>],
     ) -> bool {
         match (func_name, arg_index) {
-            ("map" | "filter", 1) => matches!(
-                checked_arg_types.first().and_then(Option::as_ref),
-                Some(TypedType::List(_))
-            ) || matches!(
-                checked_arg_types.first().and_then(Option::as_ref),
-                Some(TypedType::Record { name, .. }) if name == "Range"
-            ),
+            ("map" | "filter", 1) => {
+                matches!(
+                    checked_arg_types.first().and_then(Option::as_ref),
+                    Some(TypedType::List(_))
+                ) || matches!(
+                    checked_arg_types.first().and_then(Option::as_ref),
+                    Some(TypedType::Record { name, .. }) if name == "Range"
+                )
+            }
             ("fold", 2) => true,
             _ => false,
         }
@@ -9729,7 +9749,9 @@ impl TypeChecker {
                                             TypedType::TypeParam("U".to_string()),
                                             TypedType::Int32,
                                         ],
-                                        return_type: Box::new(TypedType::TypeParam("U".to_string())),
+                                        return_type: Box::new(TypedType::TypeParam(
+                                            "U".to_string(),
+                                        )),
                                     },
                                 ),
                             ],
@@ -10876,10 +10898,8 @@ impl TypeChecker {
             BinaryOp::Eq | BinaryOp::Ne => {
                 // Payload-free user enums have scalar tag semantics and support
                 // structural tag equality; payload-bearing enums require match.
-                if let (
-                    TypedType::Enum { name: left_name },
-                    TypedType::Enum { name: right_name },
-                ) = (&left_ty, &right_ty)
+                if let (TypedType::Enum { name: left_name }, TypedType::Enum { name: right_name }) =
+                    (&left_ty, &right_ty)
                 {
                     if left_name == right_name {
                         let is_payload_free = self.enums.get(left_name).is_some_and(|enum_def| {
@@ -11690,10 +11710,7 @@ impl TypeChecker {
                 .else_ifs
                 .iter()
                 .all(|(_, block)| Self::block_diverges(block))
-            && then
-                .else_block
-                .as_ref()
-                .is_some_and(Self::block_diverges)
+            && then.else_block.as_ref().is_some_and(Self::block_diverges)
     }
 
     fn check_loop_control(

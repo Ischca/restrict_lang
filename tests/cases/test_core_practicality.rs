@@ -431,7 +431,10 @@ fun bad: () -> Int32 = {
 }
 "#;
     assert!(
-        matches!(check_source(consumed_val_clone), Err(TypeError::AffineViolation(_))),
+        matches!(
+            check_source(consumed_val_clone),
+            Err(TypeError::AffineViolation(_))
+        ),
         "using a val base after .clone must be rejected"
     );
 

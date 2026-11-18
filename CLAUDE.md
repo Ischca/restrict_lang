@@ -70,11 +70,19 @@ The Restrict Language compiler is structured as follows:
 
 ## Language Features
 
-- **OSV word order**: Object-Subject-Verb syntax (e.g., `obj subj.verb`)
+- **OSV word order**: Object-Subject-Verb syntax (e.g., `(args) function` or `value |> function`)
 - **Affine types**: Each binding can be referenced 0-1 times
 - **Prototype-based records**: Use `clone` and `freeze` for inheritance
 - **Context binding**: Resource management with `with` blocks
 - **Pipe operator**: `|>` for OSV function composition
+- **Statement boundaries**: Direct OSV calls and anonymous `{ ... }` scopes
+  are line-bounded. Multi-line code is semicolon-free and uses `|>` (or infix
+  operators, `.field`/`.clone`, and control keywords) for multi-line
+  continuation; `;` is optional (for single-line multi-statements or unit
+  discard). Never put semicolons after top-level declarations.
+- **Naming conventions**: `UpperCamelCase` for types, constructors, forms, and
+  contexts; `snake_case` for functions, methods, variables, fields, modules,
+  filenames, and lifetimes (see `docs/NAMING_AND_SYNTAX_DECISIONS.md`).
 
 ## Compiler Development Principles
 

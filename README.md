@@ -220,8 +220,8 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 
 fun main: () -> Int32 = {
     val result = (10, 20) add
-    "Result: " println;
-    result println;
+    "Result: " println
+    result println
     result
 }
 ```
@@ -238,8 +238,8 @@ val message = "hello"
 val next = message
 
 // Mutable bindings can be reassigned
-mut val counter = 0;
-counter = counter + 1;
+mut val counter = 0
+counter = counter + 1
 counter = counter + 1
 ```
 
@@ -272,27 +272,22 @@ val process_data = data
     |> save_to_database
 ```
 
-Line breaks are whitespace, so a direct OSV call may span lines. A literal or
-other value that cannot be a verb naturally starts a new expression:
+Direct OSV calls (`value function`) are line-bounded: they attach on the same
+line, so multi-line Restrict code is semicolon-free by default:
 
 ```restrict
-"first" println
-"second" println
-```
-
-Use `;` when the next callable-shaped expression must not extend the current
-OSV chain. This most often appears when a named intermediate is declared and
-then used by the block's final expression:
-
-```restrict
-val message = "ready";
+val message = "ready"
 message println
 ```
 
-That semicolon is intentional when `val` stages a named intermediate before a
-separate identifier-started expression. If the name is only needed inside a
-higher-order transformation, open a scoped verb clause and name its lambda
-input instead:
+Multi-line pipelines continue explicitly with `|>` (or infix operators,
+`.field` / `.clone`, and `then` / `else` / `match` / `while`). Semicolons (`;`)
+remain optional and are used only for placing multiple statements on one line
+(`val a = 1; a println`) or explicitly discarding a block's final expression as
+`()`.
+
+Scoped verb clauses keep higher-order transformations concise without extra
+bindings:
 
 ```restrict
 values map { |value|
@@ -300,8 +295,10 @@ values map { |value|
 }
 ```
 
-This keeps the transformation semicolon-free without making line breaks carry
-statement semantics.
+Restrict also standardizes on **`UpperCamelCase`** for types, constructors,
+forms, and contexts (`Option::Some`, `UserProfile`), and **`snake_case`** for
+functions, methods, variables, fields, modules, and lifetimes (`parse_int`,
+`user_id`). See [Naming and Syntax Decisions](docs/NAMING_AND_SYNTAX_DECISIONS.md).
 
 ### Lambda Expressions and Closures
 
@@ -351,9 +348,10 @@ positive match {
 ```
 
 The anonymous form is an immediate unary lambda application: it evaluates the
-left value once, evaluates the body once, and returns the body result. Use `;`
-when a following callable-shaped expression should start a separate expression.
-By contrast, `List` callbacks may run many times, so their inline scopes may
+left value once, evaluates the body once, and returns the body result. Direct
+OSV and anonymous scopes are line-bounded, so a following line starts a new
+statement naturally without `;` (use `|>` to continue across lines). By
+contrast, `List` callbacks may run many times, so their inline scopes may
 capture only immutable Copy values; `Option` callbacks run at most once.
 
 ### Pattern Matching
@@ -522,7 +520,7 @@ ordinary affine rules. Forms with associated types, generic or conditional
 // Arena context with scoped temporary heap allocation
 fun process_batch: () -> Int32 = {
     with Arena { } {
-        val big_list = [1, 2, 3, 4, 5];
+        val big_list = [1, 2, 3, 4, 5]
         big_list |> list_count
     }
 }
@@ -539,6 +537,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - **[Quick Start](docs/public/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
 - **[Language Guide](docs/public/en/guide/README.md)** - Current release-facing syntax and design rules
+- **[Naming and Syntax Decisions](docs/NAMING_AND_SYNTAX_DECISIONS.md)** - Official `UpperCamelCase` / `snake_case` rules and semicolon-free OSV design
 - **[Release Surface](docs/public/en/reference/release-surface.md)** - Current v0.0.1 language and host ABI boundaries
 - **[v0.1 Component ABI Scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md)** - Implemented B1 boundary, intentional limits, and v0.2 async split
 - **[Examples](examples/)** - Sample programs and use cases

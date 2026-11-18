@@ -102,10 +102,17 @@ public WebAssembly documentation when the direction changes.
 - **Prototype-based records**: Use `clone` and `freeze` for inheritance
 - **Context binding**: Resource management with `with` blocks
 - **Pipe operator**: `|>` for OSV function composition
-- **Statement boundaries**: Newlines are whitespace. Non-callable values
-  naturally start a new expression; use `;` when a callable-shaped value would
-  otherwise extend the same OSV chain. Never put semicolons after top-level
-  declarations.
+- **Statement boundaries**: Direct OSV calls and anonymous `{ ... }` scopes
+  are line-bounded (do not cross newlines). Multi-line continuation uses `|>`,
+  infix operators, `.field`/`.clone`, or control keywords (`then`, `else`,
+  `match`, `while`), and bare `return` followed by a newline returns `()`.
+  Multi-line Restrict code is semicolon-free; `;` is optional (only for
+  multiple statements on one line or explicitly discarding a block's final
+  value as `()`). Never put semicolons after top-level declarations.
+- **Naming conventions**: `UpperCamelCase` for types, constructors, forms, and
+  contexts (`UserProfile`, `Option::Some`); `snake_case` for functions, methods,
+  variables, fields, modules, filenames, and lifetimes (`parse_int`, `~file`).
+  See `docs/NAMING_AND_SYNTAX_DECISIONS.md`.
 
 ## Important Notes
 

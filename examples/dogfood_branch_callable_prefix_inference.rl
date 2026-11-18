@@ -12,30 +12,30 @@ fun score_batch: (
     scores: List<Int32>
 ) -> Int32 = {
     val adjust = emergency then {
-        val boost = 2;
+        val boost = 2
         |score| score + boost
     } else {
-        val factor = 2;
+        val factor = 2
         |score| score * factor
-    };
+    }
     val normalize = manual_bonus match {
         Some(bonus) => {
-            val doubled = bonus * 2;
+            val doubled = bonus * 2
             |score| score + doubled
         }
         None => {
-            val doubled = 0;
+            val doubled = 0
             |score| score + doubled
         }
-    };
-    val adjusted = (scores, adjust) map;
-    val normalized = (adjusted, normalize) map;
+    }
+    val adjusted = (scores, adjust) map
+    val normalized = (adjusted, normalize) map
 
     (normalized, 0, add_int) fold
 }
 
 fun main: () -> Int32 = {
-    val scores = [10, 20];
+    val scores = [10, 20]
 
     (true, (3) Option::Some, scores) score_batch
 }

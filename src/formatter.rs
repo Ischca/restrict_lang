@@ -8,6 +8,7 @@ enum Item<'a> {
         token: Token,
         raw: &'a str,
         newlines_before: usize,
+        attached_next: bool,
     },
     LineComment {
         raw: &'a str,
@@ -336,6 +337,16 @@ fn should_insert_space(
 }
 
 fn is_unary_minus_at(items: &[Item<'_>], minus_idx: usize) -> bool {
+    if matches!(
+        &items[minus_idx],
+        Item::Token {
+            newlines_before,
+            attached_next: true,
+            ..
+        } if *newlines_before > 0
+    ) {
+        return true;
+    }
     let Some(prev_idx) = prev_non_comment_before(items, minus_idx) else {
         return true;
     };
@@ -569,10 +580,12 @@ fn scan_items(source: &str) -> Result<Vec<Item<'_>>, String> {
         if consumed == 0 {
             return Err("Formatter made zero progress while scanning tokens".to_string());
         }
+        let attached_next = after.chars().next().is_some_and(|c| !c.is_whitespace());
         items.push(Item::Token {
             token,
             raw: &remaining[..consumed],
             newlines_before: newlines,
+            attached_next,
         });
         remaining = after;
     }
@@ -690,5 +703,36 @@ fun compute: (x: Int32, y: Int32) -> Result<Int32, String> = {
         let input = "\n\nfun a: () -> Int32 = { 1 }   \n\n\n\nfun b: () -> Int32 = { 2 }\t \n\n";
         let expected = "fun a: () -> Int32 = { 1 }\n\nfun b: () -> Int32 = { 2 }\n";
         assert_eq!(format_source(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn formats_semicolon_free_code_and_next_line_unary_minus_idempotently() {
+        let input = r#"fun demo:(a:Int32)->Int32={
+val x=1
+-a
+}
+
+fun pipeline:(x:Int32)->Int32={
+val y=x
+y
+|>double
+|>increment
+}
+"#;
+        let expected = r#"fun demo: (a: Int32) -> Int32 = {
+    val x = 1
+    -a
+}
+
+fun pipeline: (x: Int32) -> Int32 = {
+    val y = x
+    y
+    |> double
+    |> increment
+}
+"#;
+        let first = format_source(input).unwrap();
+        assert_eq!(first, expected);
+        assert_eq!(format_source(&first).unwrap(), first);
     }
 }

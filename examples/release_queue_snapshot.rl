@@ -13,7 +13,7 @@ fun candidate_score: (candidate: Candidate) -> Int32 = {
         priority,
         risk,
         effort
-    } = candidate;
+    } = candidate
 
     (priority * 3) + risk - effort
 }
@@ -57,18 +57,18 @@ fun main: () -> Int32 = {
             risk: 1,
             effort: 2
         }
-    ];
+    ]
 
-    val empty = candidates |> list_is_empty;
-    mut val lead = candidates |> list_head;
-    val remaining = candidates |> list_tail;
-    val review_order = candidates |> list_reverse;
+    val empty = candidates |> list_is_empty
+    mut val lead = candidates |> list_head
+    val remaining = candidates |> list_tail
+    val review_order = candidates |> list_reverse
 
-    val lead_exists = lead |> option_is_some;
-    val lead_score = lead |> score_candidate_option;
-    val remaining_count = remaining |> count_tail_option;
-    val last_reviewed = review_order |> list_head;
-    val last_score = last_reviewed |> score_candidate_option;
+    val lead_exists = lead |> option_is_some
+    val lead_score = lead |> score_candidate_option
+    val remaining_count = remaining |> count_tail_option
+    val last_reviewed = review_order |> list_head
+    val last_score = last_reviewed |> score_candidate_option
 
     empty then {
         0

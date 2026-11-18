@@ -55,11 +55,11 @@ fun page_delta: (
         1
     } else {
         0
-    };
+    }
     val ack_page = acknowledged match {
         true => { 0 }
         false => { 1 }
-    };
+    }
 
     severity_page * ack_page
 }
@@ -87,8 +87,8 @@ fun should_page: (alert: Alert, page_threshold: Int32) -> Boolean = {
         owner,
         stale,
         acknowledged
-    } = alert;
-    val urgent = severity >= page_threshold;
+    } = alert
+    val urgent = severity >= page_threshold
 
     acknowledged match {
         true => { false }
@@ -103,8 +103,8 @@ fun page_code: (alert: Alert, fallback_owner: Int32) -> Int32 = {
         owner,
         stale,
         acknowledged
-    } = alert;
-    val owner_id = (owner, fallback_owner) choose_owner;
+    } = alert
+    val owner_id = (owner, fallback_owner) choose_owner
 
     id + severity * 10 + owner_id
 }
@@ -120,24 +120,24 @@ fun add_alert: (
         page_count,
         first_unowned,
         routed_codes
-    } = state;
+    } = state
     val Alert {
         id,
         severity,
         owner,
         stale,
         acknowledged
-    } = alert;
-    val stale_points = (stale, 5) points_when;
-    val ack_points = (acknowledged, 2) points_when;
-    val page_points = ((severity, acknowledged, page_threshold) page_delta) * 20;
-    val alert_score = severity * 10 + stale_points + ack_points + page_points;
-    val next_page_count = page_count + (severity, acknowledged, page_threshold) page_delta;
+    } = alert
+    val stale_points = (stale, 5) points_when
+    val ack_points = (acknowledged, 2) points_when
+    val page_points = ((severity, acknowledged, page_threshold) page_delta) * 20
+    val alert_score = severity * 10 + stale_points + ack_points + page_points
+    val next_page_count = page_count + (severity, acknowledged, page_threshold) page_delta
     val next_routed_codes = stale then {
         (routed_codes, id + 900) list_append
     } else {
         routed_codes
-    };
+    }
 
     TriageState {
         total_score: total_score + alert_score,
@@ -168,7 +168,7 @@ fun finish_report: (
         page_count,
         first_unowned,
         routed_codes
-    } = state;
+    } = state
 
     TriageReport {
         risk_score: total_score,
@@ -188,21 +188,21 @@ fun triage_alerts: (
     val TriagePolicy {
         page_threshold,
         fallback_owner
-    } = policy;
+    } = policy
     val actionable_alerts = (
         paging_alerts,
         |alert| (alert, page_threshold) should_page
-    ) filter;
+    ) filter
     val page_codes = (
         actionable_alerts,
         |alert| (alert, fallback_owner) page_code
-    ) map;
-    val initial = () initial_state;
+    ) map
+    val initial = () initial_state
     val state = (
         audit_alerts,
         initial,
         |current, alert| (current, alert, page_threshold) add_alert
-    ) fold;
+    ) fold
 
     (state, page_codes) finish_report
 }
@@ -223,7 +223,7 @@ fun sample_incident_report: () -> TriageReport = {
             stale: false,
             acknowledged: true
         }
-    ];
+    ]
     val paging_alerts: List<Alert> = [
         Alert {
             id: 21,
@@ -246,17 +246,17 @@ fun sample_incident_report: () -> TriageReport = {
             stale: false,
             acknowledged: true
         }
-    ];
+    ]
     val policy = TriagePolicy {
         page_threshold: 4,
         fallback_owner: 7
-    };
+    }
 
     (audit_alerts, paging_alerts, policy) triage_alerts
 }
 
 export fun incident_triage_runtime_score: () -> Int32 = {
-    val report = () sample_incident_report;
+    val report = () sample_incident_report
     val TriageReport {
         risk_score,
         stale_count,
@@ -264,13 +264,13 @@ export fun incident_triage_runtime_score: () -> Int32 = {
         page_count,
         page_codes,
         routed_codes
-    } = report;
+    } = report
     val owner_score = owner_gap match {
         Some(alert_id) => { alert_id }
         None => { 0 }
-    };
-    val page_code_count = page_codes |> list_count;
-    val routed_code_count = routed_codes |> list_count;
+    }
+    val page_code_count = page_codes |> list_count
+    val routed_code_count = routed_codes |> list_count
 
     risk_score + stale_count + owner_score + page_count + page_code_count + routed_code_count
 }

@@ -51,16 +51,16 @@ fun coverage_gap: (coverage: Int32) -> Int32 = {
 }
 
 fun change_risk: (change: Change) -> Int32 = {
-    val Change { id, risk, test_coverage, customer_visible, owner } = change;
-    val coverage_penalty = (test_coverage < 80, 25) points_when;
-    val visibility_penalty = (customer_visible, 10) points_when;
-    val base = risk + coverage_penalty;
+    val Change { id, risk, test_coverage, customer_visible, owner } = change
+    val coverage_penalty = (test_coverage < 80, 25) points_when
+    val visibility_penalty = (customer_visible, 10) points_when
+    val base = risk + coverage_penalty
     base |> (|score| score + visibility_penalty)
 }
 
 fun needs_review: (change: Change) -> Boolean = {
-    val Change { id, risk, test_coverage, customer_visible, owner } = change;
-    val high_risk = risk > 40;
+    val Change { id, risk, test_coverage, customer_visible, owner } = change
+    val high_risk = risk > 40
     high_risk match {
         true => { true }
         false => { test_coverage < 80 }
@@ -72,8 +72,8 @@ fun review_score: (change: Change) -> Int32 = {
 }
 
 fun review_scores: (changes: List<Change>) -> List<Int32> = {
-    val review_changes = (changes, |change| change |> needs_review) filter;
-    val raw_scores = (review_changes, |change| change |> review_score) map;
+    val review_changes = (changes, |change| change |> needs_review) filter
+    val raw_scores = (review_changes, |change| change |> review_score) map
     (raw_scores, |score| score |> (|value| value + 1)) map
 }
 
@@ -99,11 +99,11 @@ fun accumulate_change: (state: ReleaseState, change: Change) -> ReleaseState = {
         uncovered_count,
         customer_visible_count,
         first_unowned
-    } = state;
-    val Change { id, risk, test_coverage, customer_visible, owner } = change;
-    val coverage_penalty = (test_coverage < 80, 25) points_when;
-    val visibility_penalty = (customer_visible, 10) points_when;
-    val change_risk_value = (risk + coverage_penalty) |> (|score| score + visibility_penalty);
+    } = state
+    val Change { id, risk, test_coverage, customer_visible, owner } = change
+    val coverage_penalty = (test_coverage < 80, 25) points_when
+    val visibility_penalty = (customer_visible, 10) points_when
+    val change_risk_value = (risk + coverage_penalty) |> (|score| score + visibility_penalty)
 
     ReleaseState {
         total_risk: total_risk + change_risk_value,
@@ -123,10 +123,10 @@ fun finish_decision: (
         uncovered_count,
         customer_visible_count,
         first_unowned
-    } = state;
-    val blocker_codes: List<Int32> = [] |> (|empty_codes| (empty_codes, fallback_codes) choose_first);
-    val missing_owner: Option<Int32> = () Option::None |> (|empty_owner| (empty_owner, first_unowned) choose_first);
-    val approval_threshold = customer_visible_count |> (|count| count * 15 + 80);
+    } = state
+    val blocker_codes: List<Int32> = [] |> (|empty_codes| (empty_codes, fallback_codes) choose_first)
+    val missing_owner: Option<Int32> = () Option::None |> (|empty_owner| (empty_owner, first_unowned) choose_first)
+    val approval_threshold = customer_visible_count |> (|count| count * 15 + 80)
 
     ReleaseDecision {
         approved: total_risk < approval_threshold,
@@ -148,9 +148,9 @@ fun assess_release: (
         uncovered_count: 0,
         customer_visible_count: 0,
         first_unowned: () Option::None
-    };
-    val final_state = (changes, initial, |state, change| (state, change) accumulate_change) fold;
-    val scores = scores_input |> review_scores;
+    }
+    val final_state = (changes, initial, |state, change| (state, change) accumulate_change) fold
+    val scores = scores_input |> review_scores
     (final_state, scores, fallback_codes) finish_decision
 }
 
@@ -170,7 +170,7 @@ fun main: () -> ReleaseDecision = {
             customer_visible: false,
             owner: () Option::None
         }
-    ];
+    ]
     val scoring_changes: List<Change> = [
         Change {
             id: 201,
@@ -186,8 +186,8 @@ fun main: () -> ReleaseDecision = {
             customer_visible: false,
             owner: (10) Option::Some
         }
-    ];
-    val fallback_codes = [900, 901];
+    ]
+    val fallback_codes = [900, 901]
 
     (aggregate_changes, scoring_changes, fallback_codes) assess_release
 }

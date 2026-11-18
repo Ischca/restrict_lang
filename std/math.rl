@@ -36,13 +36,13 @@ pub fun is_odd: (value: Int32) -> Boolean = {
 }
 
 pub fun gcd: (a: Int32, b: Int32) -> Int32 = {
-    mut val x = a |> abs;
-    mut val y = b |> abs;
+    mut val x = a |> abs
+    mut val y = b |> abs
     y != 0 while {
-        val rem = x % y;
-        x = y;
+        val rem = x % y
+        x = y
         y = rem
-    };
+    }
     x
 }
 
@@ -50,13 +50,13 @@ pub fun lcm: (a: Int32, b: Int32) -> Int32 = {
     (a == 0 || b == 0) then {
         0
     } else {
-        val g = (a, b) gcd;
+        val g = (a, b) gcd
         ((a |> abs) / g) * (b |> abs)
     }
 }
 
 pub fun abs_i64: (value: Int64) -> Int64 = {
-    val zero: Int64 = 0;
+    val zero: Int64 = 0
     value < zero then {
         zero - value
     } else {
@@ -93,7 +93,7 @@ pub fun clamp_i64: (value: Int64, low: Int64, high: Int64) -> Int64 = {
 }
 
 pub fun signum_i64: (value: Int64) -> Int32 = {
-    val zero: Int64 = 0;
+    val zero: Int64 = 0
     value < zero then {
         -1
     } else {

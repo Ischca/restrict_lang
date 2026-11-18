@@ -74,10 +74,10 @@ fun ticket_score: (
     customer_impact: Boolean,
     signals: List<Int32>
 ) -> Int32 = {
-    val severity_points = severity * 10;
-    val impact_points = (customer_impact, 25) bool_points;
-    val stale_points = age_hours |> age_points;
-    val telemetry_points = signals |> signal_points;
+    val severity_points = severity * 10
+    val impact_points = (customer_impact, 25) bool_points
+    val stale_points = age_hours |> age_points
+    val telemetry_points = signals |> signal_points
 
     severity_points + impact_points + stale_points + telemetry_points
 }
@@ -89,7 +89,7 @@ fun add_ticket: (state: BoardState, ticket: Ticket) -> BoardState = {
         first_unowned,
         escalation_codes,
         scores
-    } = state;
+    } = state
     val Ticket {
         id,
         severity,
@@ -97,18 +97,18 @@ fun add_ticket: (state: BoardState, ticket: Ticket) -> BoardState = {
         customer_impact,
         owner,
         signals
-    } = ticket;
+    } = ticket
 
-    val score = (severity, age_hours, customer_impact, signals) ticket_score;
-    val should_page = score >= 80;
-    val page_delta = (should_page, 1) bool_points;
-    val next_unowned = (first_unowned, owner, id) first_missing_owner;
+    val score = (severity, age_hours, customer_impact, signals) ticket_score
+    val should_page = score >= 80
+    val page_delta = (should_page, 1) bool_points
+    val next_unowned = (first_unowned, owner, id) first_missing_owner
     val next_escalations = should_page then {
         (escalation_codes, id + 900) list_append
     } else {
         escalation_codes
-    };
-    val next_scores = (scores, score) list_append;
+    }
+    val next_scores = (scores, score) list_append
 
     BoardState {
         score_total: score_total + score,
@@ -126,15 +126,15 @@ fun build_board: (tickets: List<Ticket>) -> BoardReport = {
         first_unowned: () Option::None,
         escalation_codes: [],
         scores: []
-    };
-    val state = (tickets, initial, |current, ticket| (current, ticket) add_ticket) fold;
+    }
+    val state = (tickets, initial, |current, ticket| (current, ticket) add_ticket) fold
     val BoardState {
         score_total,
         page_count,
         first_unowned,
         escalation_codes,
         scores
-    } = state;
+    } = state
 
     BoardReport {
         score_total: score_total,
@@ -164,7 +164,7 @@ fun main: () -> BoardReport = {
             owner: () Option::None,
             signals: [5]
         }
-    ];
+    ]
 
     tickets |> build_board
 }

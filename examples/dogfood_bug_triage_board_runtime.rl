@@ -73,10 +73,10 @@ fun ticket_score: (
     customer_impact: Boolean,
     signals: List<Int32>
 ) -> Int32 = {
-    val severity_points = severity * 10;
-    val impact_points = (customer_impact, 25) bool_points;
-    val stale_points = age_hours |> age_points;
-    val telemetry_points = signals |> signal_points;
+    val severity_points = severity * 10
+    val impact_points = (customer_impact, 25) bool_points
+    val stale_points = age_hours |> age_points
+    val telemetry_points = signals |> signal_points
 
     severity_points + impact_points + stale_points + telemetry_points
 }
@@ -88,7 +88,7 @@ fun add_ticket: (state: RuntimeBoardState, ticket: RuntimeTicket) -> RuntimeBoar
         first_unowned,
         escalation_codes,
         scores
-    } = state;
+    } = state
     val RuntimeTicket {
         id,
         severity,
@@ -96,18 +96,18 @@ fun add_ticket: (state: RuntimeBoardState, ticket: RuntimeTicket) -> RuntimeBoar
         customer_impact,
         owner,
         signals
-    } = ticket;
+    } = ticket
 
-    val score = (severity, age_hours, customer_impact, signals) ticket_score;
-    val should_page = score >= 80;
-    val page_delta = (should_page, 1) bool_points;
-    val next_unowned = (first_unowned, owner, id) first_missing_owner;
+    val score = (severity, age_hours, customer_impact, signals) ticket_score
+    val should_page = score >= 80
+    val page_delta = (should_page, 1) bool_points
+    val next_unowned = (first_unowned, owner, id) first_missing_owner
     val next_escalations = should_page then {
         (escalation_codes, id + 900) list_append
     } else {
         escalation_codes
-    };
-    val next_scores = (scores, score) list_append;
+    }
+    val next_scores = (scores, score) list_append
 
     RuntimeBoardState {
         score_total: score_total + score,
@@ -125,15 +125,15 @@ fun build_board: (tickets: List<RuntimeTicket>) -> RuntimeBoardReport = {
         first_unowned: () Option::None,
         escalation_codes: [],
         scores: []
-    };
-    val state = (tickets, initial, |current, ticket| (current, ticket) add_ticket) fold;
+    }
+    val state = (tickets, initial, |current, ticket| (current, ticket) add_ticket) fold
     val RuntimeBoardState {
         score_total,
         page_count,
         first_unowned,
         escalation_codes,
         scores
-    } = state;
+    } = state
 
     RuntimeBoardReport {
         score_total: score_total,
@@ -146,7 +146,7 @@ fun build_board: (tickets: List<RuntimeTicket>) -> RuntimeBoardReport = {
 }
 
 fun sample_bug_triage_board: () -> RuntimeBoardReport = {
-    val first_signals: List<Int32> = [10, 15];
+    val first_signals: List<Int32> = [10, 15]
     val first_ticket = RuntimeTicket {
         id: 101,
         severity: 4,
@@ -154,8 +154,8 @@ fun sample_bug_triage_board: () -> RuntimeBoardReport = {
         customer_impact: true,
         owner: (7) Option::Some,
         signals: first_signals
-    };
-    val second_signals: List<Int32> = [5];
+    }
+    val second_signals: List<Int32> = [5]
     val second_ticket = RuntimeTicket {
         id: 102,
         severity: 2,
@@ -163,17 +163,17 @@ fun sample_bug_triage_board: () -> RuntimeBoardReport = {
         customer_impact: false,
         owner: () Option::None,
         signals: second_signals
-    };
+    }
     val tickets: List<RuntimeTicket> = [
         first_ticket,
         second_ticket
-    ];
+    ]
 
     tickets |> build_board
 }
 
 export fun bug_triage_board_runtime_score: () -> Int32 = {
-    val report = () sample_bug_triage_board;
+    val report = () sample_bug_triage_board
     val RuntimeBoardReport {
         score_total,
         page_count,
@@ -181,18 +181,18 @@ export fun bug_triage_board_runtime_score: () -> Int32 = {
         escalation_codes,
         score_cards,
         accepted
-    } = report;
+    } = report
     val owner_score = first_unowned match {
         Some(ticket_id) => { ticket_id }
         None => { 0 }
-    };
-    val escalation_count = escalation_codes |> list_count;
-    val score_card_count = score_cards |> list_count;
+    }
+    val escalation_count = escalation_codes |> list_count
+    val score_card_count = score_cards |> list_count
     val accepted_score = accepted then {
         1000
     } else {
         0
-    };
+    }
 
     score_total + page_count + owner_score + escalation_count + score_card_count + accepted_score
 }

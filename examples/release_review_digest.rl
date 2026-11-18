@@ -27,7 +27,7 @@ fun summarize_slice: (slice: ReleaseSlice) -> Digest = {
         },
         blocker_codes: [first_blocker, second_blocker],
         fallback
-    } = slice;
+    } = slice
 
     Digest {
         priority: first_queue + second_queue + fallback,
@@ -45,7 +45,7 @@ fun main: () -> Digest = {
         },
         blocker_codes: [101, 202],
         fallback: 2
-    };
+    }
 
     slice |> summarize_slice
 }

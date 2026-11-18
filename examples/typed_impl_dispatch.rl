@@ -24,7 +24,7 @@ impl HealthSignal {
             40.0
         } else {
             0.0
-        };
+        }
 
         error_risk + self.latency + bias
     }
@@ -36,7 +36,7 @@ impl RolloutSignal {
             25.0
         } else {
             0.0
-        };
+        }
 
         canary_risk + (self.exposure * 10.0) + bias
     }
@@ -47,9 +47,9 @@ fun decide_dispatch: (
     rollout: RolloutSignal,
     risk_bias: Float64
 ) -> DispatchDecision = {
-    val health_risk = (health, risk_bias) risk_score;
-    val rollout_risk = (rollout, risk_bias) risk_score;
-    val total_risk = health_risk + rollout_risk;
+    val health_risk = (health, risk_bias) risk_score
+    val rollout_risk = (rollout, risk_bias) risk_score
+    val total_risk = health_risk + rollout_risk
 
     DispatchDecision {
         health_risk: health_risk,
@@ -62,11 +62,11 @@ fun main: () -> DispatchDecision = {
     val health = HealthSignal {
         errors: 1,
         latency: 18.5
-    };
+    }
     val rollout = RolloutSignal {
         canary_pass_rate: 97.0,
         exposure: 0.5
-    };
+    }
 
     (health, rollout, 3.0) decide_dispatch
 }

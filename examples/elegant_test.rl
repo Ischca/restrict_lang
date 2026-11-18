@@ -8,7 +8,7 @@ record Spec {
 }
 
 fun spec_score: (spec: Spec) -> Int32 = {
-    val Spec { name, passed, weight } = spec;
+    val Spec { name, passed, weight } = spec
 
     passed match {
         true => { weight }
@@ -25,15 +25,15 @@ fun make_spec: (name: String, passed: Boolean, weight: Int32) -> Spec = {
 }
 
 fun total_score: (left: Spec, right: Spec) -> Int32 = {
-    val left_score = left |> spec_score;
-    val right_score = right |> spec_score;
+    val left_score = left |> spec_score
+    val right_score = right |> spec_score
 
     left_score + right_score
 }
 
 fun main: () -> Int32 = {
-    val addition = ("addition stays correct", 1 + 1 == 2, 2) make_spec;
-    val ordering = ("ordering stays correct", 5 > 3, 3) make_spec;
+    val addition = ("addition stays correct", 1 + 1 == 2, 2) make_spec
+    val ordering = ("ordering stays correct", 5 > 3, 3) make_spec
 
     (addition, ordering) total_score
 }

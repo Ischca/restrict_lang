@@ -20,9 +20,9 @@ fun owner_penalty: (owner: Option<Int32>) -> Int32 = {
 }
 
 fun decide: (scenario: Scenario) -> Decision = {
-    val Scenario { score, covered, owner } = scenario;
-    val penalty = owner |> owner_penalty;
-    val code = score + penalty;
+    val Scenario { score, covered, owner } = scenario
+    val penalty = owner |> owner_penalty
+    val code = score + penalty
 
     Decision {
         approved: covered && code < 80,
@@ -35,8 +35,8 @@ fun main: () -> Int32 = {
         score: 25,
         covered: true,
         owner: (7) Option::Some
-    };
-    val decision = scenario |> decide;
+    }
+    val decision = scenario |> decide
 
     decision.code
 }

@@ -53,9 +53,9 @@ fun overdue_points: (age_hours: Int32) -> Int32 = {
 }
 
 fun should_route: (ticket: Ticket) -> Boolean = {
-    val Ticket { id, severity, age_hours, vip, owner } = ticket;
-    val missing = owner |> owner_missing;
-    val high_severity = severity > 2;
+    val Ticket { id, severity, age_hours, vip, owner } = ticket
+    val missing = owner |> owner_missing
+    val high_severity = severity > 2
 
     high_severity match {
         true => { true }
@@ -64,17 +64,17 @@ fun should_route: (ticket: Ticket) -> Boolean = {
 }
 
 fun ticket_score: (ticket: Ticket) -> Int32 = {
-    val Ticket { id, severity, age_hours, vip, owner } = ticket;
-    val age_points = age_hours |> overdue_points;
-    val vip_points = (vip, 12) points_when;
-    val missing = owner |> owner_missing;
-    val missing_points = (missing, 3) points_when;
+    val Ticket { id, severity, age_hours, vip, owner } = ticket
+    val age_points = age_hours |> overdue_points
+    val vip_points = (vip, 12) points_when
+    val missing = owner |> owner_missing
+    val missing_points = (missing, 3) points_when
 
     severity * 10 + age_points + vip_points + missing_points
 }
 
 fun routed_scores: (tickets: List<Ticket>) -> List<Int32> = {
-    val routed = (tickets, |ticket| ticket |> should_route) filter;
+    val routed = (tickets, |ticket| ticket |> should_route) filter
     (routed, |ticket| ticket |> ticket_score) map
 }
 
@@ -95,15 +95,15 @@ fun choose_first_unowned: (
 }
 
 fun add_ticket: (state: QueueState, ticket: Ticket) -> QueueState = {
-    val QueueState { total_score, overdue_count, first_unowned, routed_count } = state;
-    val Ticket { id, severity, age_hours, vip, owner } = ticket;
-    val overdue = age_hours > 48;
-    val high_severity = severity > 2;
-    val missing = owner |> owner_missing;
+    val QueueState { total_score, overdue_count, first_unowned, routed_count } = state
+    val Ticket { id, severity, age_hours, vip, owner } = ticket
+    val overdue = age_hours > 48
+    val high_severity = severity > 2
+    val missing = owner |> owner_missing
     val route_delta = high_severity match {
         true => { 1 }
         false => { (missing, 1) points_when }
-    };
+    }
 
     QueueState {
         total_score: total_score + severity * 10 + (overdue, 10) points_when,
@@ -123,10 +123,10 @@ fun build_report: (
         overdue_count: 0,
         first_unowned: () Option::None,
         routed_count: 0
-    };
-    val final_state = (tickets, initial, |current, ticket| (current, ticket) add_ticket) fold;
-    val QueueState { total_score, overdue_count, first_unowned, routed_count } = final_state;
-    val escalation_codes = ([900, 901], fallback_codes) choose_first;
+    }
+    val final_state = (tickets, initial, |current, ticket| (current, ticket) add_ticket) fold
+    val QueueState { total_score, overdue_count, first_unowned, routed_count } = final_state
+    val escalation_codes = ([900, 901], fallback_codes) choose_first
 
     QueueReport {
         total_score: total_score,
@@ -154,8 +154,8 @@ fun main: () -> QueueReport = {
             vip: false,
             owner: () Option::None
         }
-    ];
-    val scores = scoring_tickets |> routed_scores;
+    ]
+    val scores = scoring_tickets |> routed_scores
 
     val report_tickets: List<Ticket> = [
         Ticket {
@@ -172,8 +172,8 @@ fun main: () -> QueueReport = {
             vip: false,
             owner: () Option::None
         }
-    ];
-    val fallback_codes = [800];
+    ]
+    val fallback_codes = [800]
 
     (report_tickets, scores, fallback_codes) build_report
 }

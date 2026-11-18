@@ -39,11 +39,11 @@ fun audit_score: (score: Int32) -> () = {
 }
 
 fun review_checkout: (checkout: Checkout) -> Int32 = {
-    val Checkout { subtotal, expedited, discount, risk_flags } = checkout;
-    val shipping = expedited |> expedited_fee;
-    val discount_value = discount |> discount_amount;
-    val risk = risk_flags |> risk_surcharge;
-    val after_discount = subtotal - discount_value;
+    val Checkout { subtotal, expedited, discount, risk_flags } = checkout
+    val shipping = expedited |> expedited_fee
+    val discount_value = discount |> discount_amount
+    val risk = risk_flags |> risk_surcharge
+    val after_discount = subtotal - discount_value
 
     (|amount| amount + shipping + risk, after_discount) apply_adjustment
 }
@@ -54,7 +54,7 @@ fun main: () -> Int32 = {
         expedited: true,
         discount: () Option::None,
         risk_flags: ([]) Option::Some
-    };
+    }
 
     sample |> review_checkout
 }

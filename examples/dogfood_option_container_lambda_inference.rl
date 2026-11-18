@@ -19,10 +19,10 @@ fun review_policy_score: (input: ReviewPolicyInput) -> Int32 = {
         base_risk,
         reviewer_load,
         customer_data
-    } = input;
-    val privacy_points = (customer_data, 12) points_when;
-    val adjusted = (reviewer_load, |load| load + base_risk) map;
-    val actionable = (adjusted, |score| score >= 70) filter;
+    } = input
+    val privacy_points = (customer_data, 12) points_when
+    val adjusted = (reviewer_load, |load| load + base_risk) map
+    val actionable = (adjusted, |score| score >= 70) filter
 
     actionable match {
         Some(score) => {
@@ -43,12 +43,12 @@ export fun dogfood_option_container_lambda_score: (
         (18) Option::Some
     } else {
         () Option::None
-    };
+    }
     val input = ReviewPolicyInput {
         base_risk: base_risk,
         reviewer_load: reviewer_load,
         customer_data: customer_data
-    };
+    }
 
     input |> review_policy_score
 }

@@ -51,8 +51,8 @@ fun risk_score: (
     error_budget: Int32,
     tier: Int32
 ) -> Int32 = {
-    val latency_over = (latency_ms, latency_budget) budget_overage;
-    val error_over = (error_rate, error_budget) budget_overage;
+    val latency_over = (latency_ms, latency_budget) budget_overage
+    val error_over = (error_rate, error_budget) budget_overage
 
     latency_over + error_over * 4 + tier
 }
@@ -79,17 +79,17 @@ fun candidate_for: (
         latency_ms,
         error_rate,
         owner
-    } = signal;
+    } = signal
     val SloPolicy {
         latency_budget,
         error_budget,
         fallback_owner,
         page_threshold
-    } = policy;
-    val risk = (latency_ms, latency_budget, error_rate, error_budget, tier) risk_score;
-    val owner_id = (owner, fallback_owner) choose_value;
-    val page = risk >= page_threshold;
-    val route = (page, service_id, risk) route_candidate;
+    } = policy
+    val risk = (latency_ms, latency_budget, error_rate, error_budget, tier) risk_score
+    val owner_id = (owner, fallback_owner) choose_value
+    val page = risk >= page_threshold
+    val route = (page, service_id, risk) route_candidate
 
     SloCandidate {
         service_id: service_id,
@@ -129,7 +129,7 @@ fun is_paged: (candidate: SloCandidate) -> Boolean = {
         risk,
         page,
         route
-    } = candidate;
+    } = candidate
 
     page
 }
@@ -141,7 +141,7 @@ fun routed_risk: (candidate: SloCandidate) -> Int32 = {
         risk,
         page,
         route
-    } = candidate;
+    } = candidate
 
     route match {
         Ok(id) => {
@@ -159,13 +159,13 @@ fun main: () -> Int32 = {
         error_budget: 2,
         fallback_owner: 404,
         page_threshold: 20
-    };
+    }
     val SloPolicy {
         latency_budget,
         error_budget,
         fallback_owner,
         page_threshold
-    } = policy;
+    } = policy
     val signals = [
         ServiceSignal {
             service_id: 11,
@@ -188,17 +188,17 @@ fun main: () -> Int32 = {
             error_rate: 5,
             owner: (9) Option::Some
         }
-    ];
+    ]
     val candidates = (signals, |signal| (signal, SloPolicy {
         latency_budget: latency_budget,
         error_budget: error_budget,
         fallback_owner: fallback_owner,
         page_threshold: page_threshold
-    }) candidate_for) map;
-    val paged = (candidates, |candidate| candidate |> is_paged) filter;
-    val routed_risks = (paged, |candidate| candidate |> routed_risk) map;
-    val total_risk = (routed_risks, 0, |total, risk| total + risk) fold;
-    val first_unowned = (() Option::None, () Option::None, 12) remember_first_unowned;
+    }) candidate_for) map
+    val paged = (candidates, |candidate| candidate |> is_paged) filter
+    val routed_risks = (paged, |candidate| candidate |> routed_risk) map
+    val total_risk = (routed_risks, 0, |total, risk| total + risk) fold
+    val first_unowned = (() Option::None, () Option::None, 12) remember_first_unowned
 
     (first_unowned, total_risk) choose_value
 }

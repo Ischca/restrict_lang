@@ -46,7 +46,7 @@ fun score_signal: (signal: Signal, owner_weight: Float64) -> Float64 = {
         severity,
         confidence,
         owner
-    } = signal;
+    } = signal
     val owner_bonus = owner match {
         Some(owner_id) => {
             owner_id > 0 then {
@@ -58,7 +58,7 @@ fun score_signal: (signal: Signal, owner_weight: Float64) -> Float64 = {
         None => {
             0.0
         }
-    };
+    }
 
     (severity * confidence) + owner_bonus
 }
@@ -95,13 +95,13 @@ fun decide_release: (plan: ReleasePlan) -> ReleaseDecision = {
             risk_limit,
             owner_weight
         }
-    } = plan;
-    val scoring_scores = (scoring_signals, |signal| (signal, owner_weight) score_signal) map;
-    val positive_scores = (scoring_scores, has_positive_score) filter;
-    val risk = (positive_scores, 0.0, add_score) fold;
-    val audit_scores = (audit_signals, |signal| (signal, owner_weight) score_signal) map;
-    val primary_owner = (override_owner, default_owner_id) select_owner;
-    val first_blocker = blocker_codes |> first_blocker;
+    } = plan
+    val scoring_scores = (scoring_signals, |signal| (signal, owner_weight) score_signal) map
+    val positive_scores = (scoring_scores, has_positive_score) filter
+    val risk = (positive_scores, 0.0, add_score) fold
+    val audit_scores = (audit_signals, |signal| (signal, owner_weight) score_signal) map
+    val primary_owner = (override_owner, default_owner_id) select_owner
+    val first_blocker = blocker_codes |> first_blocker
 
     ReleaseDecision {
         risk: risk,
@@ -116,7 +116,7 @@ fun main: () -> ReleaseDecision = {
     val config = GateConfig {
         risk_limit: default_risk_limit,
         owner_weight: 1.25
-    };
+    }
     val scoring_signals: List<Signal> = [
         Signal {
             severity: 30.0,
@@ -128,21 +128,21 @@ fun main: () -> ReleaseDecision = {
             confidence: 0.4,
             owner: () Option::None
         }
-    ];
+    ]
     val audit_signals: List<Signal> = [
         Signal {
             severity: 8.0,
             confidence: 0.5,
             owner: (9) Option::Some
         }
-    ];
+    ]
     val plan = ReleasePlan {
         scoring_signals: scoring_signals,
         audit_signals: audit_signals,
         blocker_codes: [],
         override_owner: () Option::None,
         config: config
-    };
+    }
 
     plan |> decide_release
 }

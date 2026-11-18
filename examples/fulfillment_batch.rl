@@ -47,18 +47,18 @@ fun driver_missing: (driver: Option<Int32>) -> Boolean = {
 }
 
 fun shipment_priority: (shipment: Shipment) -> Int32 = {
-    val Shipment { id, zone, value, fragile, driver } = shipment;
-    val fragile_points = (fragile, 12) points_when;
-    val missing_driver = driver |> driver_missing;
-    val assignment_points = (missing_driver, 20) points_when;
+    val Shipment { id, zone, value, fragile, driver } = shipment
+    val fragile_points = (fragile, 12) points_when
+    val missing_driver = driver |> driver_missing
+    val assignment_points = (missing_driver, 20) points_when
 
     value + zone * 3 + fragile_points + assignment_points
 }
 
 fun needs_manual_review: (shipment: Shipment) -> Boolean = {
-    val Shipment { id, zone, value, fragile, driver } = shipment;
-    val missing_driver = driver |> driver_missing;
-    val high_value = value > 70;
+    val Shipment { id, zone, value, fragile, driver } = shipment
+    val missing_driver = driver |> driver_missing
+    val high_value = value > 70
 
     high_value match {
         true => { true }
@@ -67,7 +67,7 @@ fun needs_manual_review: (shipment: Shipment) -> Boolean = {
 }
 
 fun manual_scores_for: (shipments: List<Shipment>) -> List<Int32> = {
-    val manual_shipments = (shipments, |shipment| shipment |> needs_manual_review) filter;
+    val manual_shipments = (shipments, |shipment| shipment |> needs_manual_review) filter
     (manual_shipments, |shipment| shipment |> shipment_priority) map
 }
 
@@ -93,14 +93,14 @@ fun add_shipment: (state: FulfillmentState, shipment: Shipment) -> FulfillmentSt
         fragile_count,
         first_unassigned,
         manual_count
-    } = state;
-    val Shipment { id, zone, value, fragile, driver } = shipment;
-    val missing_driver = driver |> driver_missing;
+    } = state
+    val Shipment { id, zone, value, fragile, driver } = shipment
+    val missing_driver = driver |> driver_missing
     val manual_needed = value > 70 then {
         true
     } else {
         missing_driver
-    };
+    }
 
     FulfillmentState {
         priority_total: priority_total + value + zone * 3 + (fragile, 12) points_when,
@@ -120,17 +120,17 @@ fun build_plan: (
         fragile_count: 0,
         first_unassigned: () Option::None,
         manual_count: 0
-    };
-    val final_state = (aggregate_shipments, initial, |state, shipment| (state, shipment) add_shipment) fold;
+    }
+    val final_state = (aggregate_shipments, initial, |state, shipment| (state, shipment) add_shipment) fold
     val FulfillmentState {
         priority_total,
         fragile_count,
         first_unassigned,
         manual_count
-    } = final_state;
-    val manual_scores = score_shipments |> manual_scores_for;
-    val audit_codes: List<Int32> = [] |> (|codes| (codes, fallback_codes) choose_first);
-    val missing_driver: Option<Int32> = () Option::None |> (|empty| (empty, first_unassigned) choose_first);
+    } = final_state
+    val manual_scores = score_shipments |> manual_scores_for
+    val audit_codes: List<Int32> = [] |> (|codes| (codes, fallback_codes) choose_first)
+    val missing_driver: Option<Int32> = () Option::None |> (|empty| (empty, first_unassigned) choose_first)
 
     FulfillmentPlan {
         priority_total: priority_total,
@@ -158,7 +158,7 @@ fun main: () -> FulfillmentPlan = {
             fragile: false,
             driver: () Option::None
         }
-    ];
+    ]
     val score_shipments: List<Shipment> = [
         Shipment {
             id: 401,
@@ -174,8 +174,8 @@ fun main: () -> FulfillmentPlan = {
             fragile: false,
             driver: () Option::None
         }
-    ];
-    val fallback_codes = [710, 711];
+    ]
+    val fallback_codes = [710, 711]
 
     (aggregate_shipments, score_shipments, fallback_codes) build_plan
 }

@@ -18,7 +18,7 @@ fun route_score: (route: Result<Int64, Int64>) -> Int64 = {
             value
         }
         Err(shortfall) => {
-            val zero: Int64 = 0;
+            val zero: Int64 = 0
             zero - shortfall
         }
     }
@@ -29,19 +29,19 @@ fun snapshot_score: (snapshot: TailSnapshot) -> Int64 = {
         head,
         tail,
         route
-    } = snapshot;
+    } = snapshot
     val head_score = head match {
         Some(value) => {
             value
         }
         None => {
-            val zero: Int64 = 0;
+            val zero: Int64 = 0
             zero
         }
-    };
-    val initial: Int64 = 0;
-    val tail_score = (tail, initial, add_int64) fold;
-    val routed = route |> route_score;
+    }
+    val initial: Int64 = 0
+    val tail_score = (tail, initial, add_int64) fold
+    val routed = route |> route_score
 
     head_score + tail_score + routed
 }
@@ -51,7 +51,7 @@ export fun dogfood_list_tail_inference_score: () -> Int64 = {
         5_000_000_000,
         6_000_000_000,
         7_000_000_000
-    ];
+    ]
     val snapshot = readings match {
         [] => {
             TailSnapshot {
@@ -67,7 +67,7 @@ export fun dogfood_list_tail_inference_score: () -> Int64 = {
                 route: (head) Result::Ok
             }
         }
-    };
+    }
 
     snapshot |> snapshot_score
 }

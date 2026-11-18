@@ -24,11 +24,11 @@ fun quality_score: (
     baseline: Float64,
     threshold: Float64
 ) -> Float64 = {
-    val normalized = (raw_samples, |raw| (raw, baseline) normalize_sample) map;
-    val outliers = (normalized, |sample| sample > threshold) filter;
-    val drift_total = (outliers, 0.0, sum_drift) fold;
-    val safe_offset = (manual_offset, |offset| offset + baseline) map;
-    val accepted_offset = (safe_offset, |offset| offset < threshold) filter;
+    val normalized = (raw_samples, |raw| (raw, baseline) normalize_sample) map
+    val outliers = (normalized, |sample| sample > threshold) filter
+    val drift_total = (outliers, 0.0, sum_drift) fold
+    val safe_offset = (manual_offset, |offset| offset + baseline) map
+    val accepted_offset = (safe_offset, |offset| offset < threshold) filter
 
     accepted_offset match {
         Some(offset) => {
@@ -41,7 +41,7 @@ fun quality_score: (
 }
 
 fun main: () -> Float64 = {
-    val raw_samples = [42, 512, 901];
-    val manual_offset: Option<Float64> = (0.75) Option::Some;
+    val raw_samples = [42, 512, 901]
+    val manual_offset: Option<Float64> = (0.75) Option::Some
     (raw_samples, manual_offset, 10.0, 11.0) quality_score
 }

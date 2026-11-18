@@ -83,11 +83,6 @@ pub fn format_type_error(source: &str, error: &TypeError) -> String {
             let mask = code_byte_mask(source);
             if let Some(offset) = find_function_call_usage(source, &mask, name) {
                 append_location_snippet(&mut message, source, offset, "undefined function");
-                if let Some(prev_line) = previous_val_without_semicolon(source, offset, name) {
-                    message.push_str(&format!(
-                        "\n  hint: the previous 'val' binding on line {prev_line} does not end with ';'; add ';' if '{name}' was meant to start a new statement"
-                    ));
-                }
             }
         }
         TypeError::UndefinedRecord(name) => {
@@ -532,66 +527,6 @@ fn find_type_name_usage(source: &str, mask: &[bool], name: &str) -> Option<usize
         cursor = pos + name.len();
     }
     find_word(source, mask, name, 0)
-}
-
-fn previous_val_without_semicolon(source: &str, offset: usize, verb_name: &str) -> Option<usize> {
-    let (line_num, _) = line_column(source, offset);
-    let line_idx = line_num.checked_sub(1)?;
-    let lines: Vec<&str> = source.lines().collect();
-    let current_line = lines.get(line_idx)?.trim();
-    if !current_line.starts_with(verb_name) {
-        return None;
-    }
-
-    for prev_idx in (0..line_idx).rev() {
-        let stripped = strip_line_comment(lines[prev_idx]).trim();
-        if stripped.is_empty() {
-            continue;
-        }
-        let is_val_binding = stripped.starts_with("val ")
-            || stripped.starts_with("val\t")
-            || stripped.starts_with("mut val ")
-            || stripped.starts_with("mut\tval");
-        let missing_semi = stripped.contains('=')
-            && !stripped.ends_with([
-                ';', '{', ',', '(', '=', '+', '-', '*', '/', '%', '&', '|', '<', '>',
-            ]);
-        if is_val_binding && missing_semi {
-            return Some(prev_idx + 1);
-        }
-        return None;
-    }
-    None
-}
-
-fn strip_line_comment(line: &str) -> &str {
-    let mut in_str = false;
-    let mut escaped = false;
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if bytes[i] == b'\\' {
-                escaped = true;
-            } else if bytes[i] == b'"' {
-                in_str = false;
-            }
-            i += 1;
-            continue;
-        }
-        if bytes[i] == b'"' {
-            in_str = true;
-            i += 1;
-            continue;
-        }
-        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-            return &line[..i];
-        }
-        i += 1;
-    }
-    line
 }
 
 fn find_osv_verb<'a>(source: &'a str, name: &str) -> Option<(usize, usize, &'a str)> {
@@ -1453,20 +1388,20 @@ fun make_quote: () -> Quote = {
     }
 
     #[test]
-    fn undefined_function_after_unsemicoloned_val_suggests_semicolon() {
+    fn undefined_function_is_located_without_semicolon_hint() {
         let source = r#"fun main: () -> () = {
     val msg = "ready"
-    println_typo
+    msg println_typo
 }
 "#;
         let message = format_type_error(
             source,
             &TypeError::UndefinedFunction("println_typo".to_string()),
         );
-        assert!(message.contains("at line 3, column 5"), "{message}");
+        assert!(message.contains("at line 3, column 9"), "{message}");
         assert!(
-            message.contains("previous 'val' binding on line 2 does not end with ';'"),
-            "{message}"
+            !message.contains("does not end with ';'"),
+            "semicolon-free multi-line val bindings should not emit stale semicolon hints: {message}"
         );
     }
 

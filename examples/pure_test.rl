@@ -10,7 +10,7 @@ fun increment: (value: Int32) -> Int32 = {
 }
 
 fun increment_twice: (value: Int32) -> Int32 = {
-    val once = value |> increment;
+    val once = value |> increment
     once |> increment
 }
 
@@ -19,8 +19,8 @@ fun all_three: (first: Boolean, second: Boolean, third: Boolean) -> Boolean = {
 }
 
 fun main: () -> Boolean = {
-    val shifted = 5 |> increment_twice;
-    val scaled = shifted |> double;
+    val shifted = 5 |> increment_twice
+    val scaled = shifted |> double
 
     (scaled == 14, shifted > 0, true) all_three
 }

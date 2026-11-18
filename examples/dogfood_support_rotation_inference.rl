@@ -40,8 +40,8 @@ fun ticket_load: (ticket: SupportTicket) -> Int32 = {
         severity,
         age_hours,
         customer_tier
-    } = ticket;
-    val tier_bonus = (customer_tier, 0) choose_value;
+    } = ticket
+    val tier_bonus = (customer_tier, 0) choose_value
 
     (severity * 10) + age_hours + tier_bonus
 }
@@ -64,14 +64,14 @@ fun build_rotation_plan: (policy: RotationPolicy, tickets: List<SupportTicket>) 
         load_limit,
         fallback_owner,
         manual_owner
-    } = policy;
-    val loads = (tickets, ticket_load) map;
-    val urgent_loads = (loads, |load| load >= 20) filter;
-    val total_load = (urgent_loads, 0, add_load) fold;
-    mut val adjusted_limit = load_limit;
-    adjusted_limit = adjusted_limit - 5;
-    val owner = (manual_owner, fallback_owner) choose_value;
-    val route = (total_load, adjusted_limit, owner) route_support;
+    } = policy
+    val loads = (tickets, ticket_load) map
+    val urgent_loads = (loads, |load| load >= 20) filter
+    val total_load = (urgent_loads, 0, add_load) fold
+    mut val adjusted_limit = load_limit
+    adjusted_limit = adjusted_limit - 5
+    val owner = (manual_owner, fallback_owner) choose_value
+    val route = (total_load, adjusted_limit, owner) route_support
 
     RotationPlan {
         active_window: active_window,
@@ -90,7 +90,7 @@ fun score_rotation: () -> Int32 = {
         load_limit: 75,
         fallback_owner: 31,
         manual_owner: () Option::None
-    };
+    }
     val tickets = [
         SupportTicket {
             severity: 2,
@@ -107,8 +107,8 @@ fun score_rotation: () -> Int32 = {
             age_hours: 4,
             customer_tier: (2) Option::Some
         }
-    ];
-    val plan = (policy, tickets) build_rotation_plan;
+    ]
+    val plan = (policy, tickets) build_rotation_plan
     val RotationPlan {
         active_window,
         owners,
@@ -117,8 +117,8 @@ fun score_rotation: () -> Int32 = {
         route,
         audit_codes,
         sampled_owners
-    } = plan;
-    val owner_score = (selected_owner, 0) choose_value;
+    } = plan
+    val owner_score = (selected_owner, 0) choose_value
     val route_score = route match {
         Ok(owner) => {
             owner
@@ -126,7 +126,7 @@ fun score_rotation: () -> Int32 = {
         Err(shortfall) => {
             0 - shortfall
         }
-    };
+    }
 
     owner_score + route_score
 }

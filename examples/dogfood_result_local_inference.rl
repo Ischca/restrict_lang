@@ -24,30 +24,30 @@ fun add_score: (total: Int32, score: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val release_ready: Boolean = true;
-    val primary = (42) Result::Ok;
-    val fallback = (8) Result::Err;
-    val primary_copy = primary;
+    val release_ready: Boolean = true
+    val primary = (42) Result::Ok
+    val fallback = (8) Result::Err
+    val primary_copy = primary
     val selected = release_ready then {
         primary
     } else {
         fallback
-    };
+    }
     val snapshot = RouteSnapshot {
         primary: primary_copy,
         fallback: fallback,
         selected: selected
-    };
+    }
     val RouteSnapshot {
         primary: stored_primary,
         fallback: stored_fallback,
         selected: stored_selected
-    } = snapshot;
+    } = snapshot
     val scores = [
         stored_primary |> route_score,
         stored_fallback |> route_score,
         stored_selected |> route_score
-    ];
+    ]
 
     (scores, 0, add_score) fold
 }

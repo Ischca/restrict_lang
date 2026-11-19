@@ -173,7 +173,7 @@ fun analyze_batch: (raw_log: String, max_lines: Int32) -> Int32 = {
     val slow_bonus = has_slow then { 100 } else { 0 }
     val auth_hits = (counts, "auth")
     |> smap_get
-    |> { (it, 0) |> option_unwrap_or }
+    ?? 0
     val service_kinds = counts |> smap_len
 
     entry_count * 1000 + service_kinds * 100 + auth_hits * 10 + range_bonus + slow_bonus

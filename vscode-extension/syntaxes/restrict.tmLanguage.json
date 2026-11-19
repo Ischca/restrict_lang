@@ -140,6 +140,10 @@
                     "match": "\\|>"
                 },
                 {
+                    "name": "keyword.operator.fallback.restrict",
+                    "match": "\\?\\?"
+                },
+                {
                     "name": "keyword.operator.logical.restrict",
                     "match": "&&|\\|\\||!"
                 },

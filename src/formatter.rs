@@ -359,6 +359,7 @@ fn is_unary_minus_at(items: &[Item<'_>], minus_idx: usize) -> bool {
             | Token::Arrow
             | Token::ThinArrow
             | Token::Pipe
+            | Token::Fallback
             | Token::Bar
             | Token::LParen
             | Token::LBracket
@@ -459,6 +460,7 @@ fn generic_angle_closes_cleanly(items: &[Item<'_>], lt_idx: usize) -> bool {
             | Token::Assign
             | Token::Arrow
             | Token::Pipe
+            | Token::Fallback
             | Token::Eq
             | Token::Ne
             | Token::Le
@@ -723,6 +725,35 @@ val seed=0
         val seed = 0
         (it, seed) |> fold { |sum, value| sum + value }
     }
+}
+"#;
+        let formatted = format_source(input).unwrap();
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted).unwrap(), formatted);
+    }
+
+    #[test]
+    fn formats_fallback_operator_idempotently() {
+        let input = r#"fun port:(raw:String)->Int32={
+val parsed=raw
+|>string_trim
+|>string_parse_int
+??8080
+|>clamp_port
+val offset=raw string_parse_int??-1
+val first=(1 Option::Some)??(2 Option::Some)??3
+parsed+offset+first
+}
+"#;
+        let expected = r#"fun port: (raw: String) -> Int32 = {
+    val parsed = raw
+    |> string_trim
+    |> string_parse_int
+    ?? 8080
+    |> clamp_port
+    val offset = raw string_parse_int ?? -1
+    val first = (1 Option::Some) ?? (2 Option::Some) ?? 3
+    parsed + offset + first
 }
 "#;
         let formatted = format_source(input).unwrap();

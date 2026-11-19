@@ -73,6 +73,9 @@ const ANONYMOUS_SCOPE_ARITY_ERROR: &str =
 const ARGUMENT_TUPLE_SCOPE_ERROR: &str =
     "an argument tuple such as `(a, b)` is not a value and cannot open an anonymous scope; pipe it to a verb such as `(a, b) |> add` or `(values, 0) |> fold { |sum, value| ... }`";
 
+const FALLBACK_MISSING_RHS_ERROR: &str =
+    "`??` needs a fallback value on its right, such as `value ?? 0`; write a pipe in the fallback with parentheses as `value ?? (key |> load)`, or leave the scope with `return`, `break`, or `continue`";
+
 /// Expects a specific token and consumes it.
 ///
 /// Returns an error if the next token doesn't match.
@@ -458,13 +461,20 @@ fn block_expr_body(input: &str) -> ParseResult<'_, BlockExpr> {
 
         // Declarations begin with reserved keywords, so they form an
         // unambiguous boundary even though ordinary whitespace does not.
-        if let Ok((after_bind, bind_decl)) = bind_decl(remaining) {
-            statements.push(Stmt::Binding(bind_decl));
-            // A semicolon is optional after a declaration. It is required only
-            // when the following source could otherwise extend the expression.
-            let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_bind)?;
-            remaining = after_semi;
-            continue;
+        match bind_decl(remaining) {
+            Ok((after_bind, bind_decl)) => {
+                statements.push(Stmt::Binding(bind_decl));
+                // A semicolon is optional after a declaration. It is required only
+                // when the following source could otherwise extend the expression.
+                let (after_semi, _) = opt(expect_token(Token::Semicolon))(after_bind)?;
+                remaining = after_semi;
+                continue;
+            }
+            // A committed failure inside the initializer (for example a `??`
+            // with no fallback) must reach the user instead of being retried
+            // as an expression statement, which would only blame the `val`.
+            Err(err @ nom::Err::Failure(_)) => return Err(err),
+            Err(_) => {}
         }
 
         // Try to parse an assignment
@@ -1307,6 +1317,7 @@ fn match_expr(input: &str) -> ParseResult<'_, Expr> {
             Expr::new(ExprKind::Match(MatchExpr {
                 expr: Box::new(expr),
                 arms,
+                origin: MatchOrigin::Source,
             })),
         )),
         None => Ok((input, expr)),
@@ -1429,6 +1440,7 @@ fn starts_infix_or_pipe(tok: &Token) -> bool {
             | Token::And
             | Token::Or
             | Token::Pipe
+            | Token::Fallback
             | Token::Bar
     )
 }
@@ -1467,7 +1479,17 @@ fn binary_expr_min_precedence(input: &str, min_precedence: u8) -> ParseResult<'_
 fn pipe_expr(input: &str) -> ParseResult<'_, Expr> {
     let (mut input, mut expr) = binary_expr(input)?;
 
-    while let Ok((after_op, op)) = pipe_op(input) {
+    loop {
+        if let Ok((after_op, ())) = fallback_op(input) {
+            let (after_stage, stage) = fallback_stage(after_op, expr)?;
+            expr = stage;
+            input = after_stage;
+            continue;
+        }
+
+        let Ok((after_op, op)) = pipe_op(input) else {
+            break;
+        };
         match pipe_stage(after_op, op, &expr) {
             Ok((after_stage, stage)) => {
                 expr = stage;
@@ -1481,6 +1503,85 @@ fn pipe_expr(input: &str) -> ParseResult<'_, Expr> {
     }
 
     Ok((input, expr))
+}
+
+fn fallback_op(input: &str) -> ParseResult<'_, ()> {
+    expect_token(Token::Fallback)(input)
+}
+
+/// Apply the stage that follows `??` to `value`.
+///
+/// `value ?? fallback` is sugar for an `Option` match, so the type checker and
+/// code generator need no evaluation rule of their own:
+///
+/// ```restrict
+/// value match { Some(payload) => { payload } None => { fallback } }
+/// ```
+///
+/// The fallback sits in the `None` arm, which cannot see the `Some` binder, so
+/// the binder name can never capture a name written in the fallback.
+fn fallback_stage(input: &str, value: Expr) -> ParseResult<'_, Expr> {
+    let (input, fallback) = fallback_rhs(input)?;
+    Ok((input, fallback_match(value, fallback)))
+}
+
+fn fallback_match(value: Expr, fallback: Expr) -> Expr {
+    let payload = FALLBACK_BINDER.to_string();
+    Expr::new(ExprKind::Match(MatchExpr {
+        expr: Box::new(value),
+        arms: vec![
+            MatchArm {
+                pattern: Pattern::Some(Box::new(Pattern::Ident(payload.clone()))),
+                body: BlockExpr {
+                    statements: Vec::new(),
+                    expr: Some(Box::new(Expr::new(ExprKind::Ident(payload)))),
+                },
+            },
+            MatchArm {
+                pattern: Pattern::None,
+                body: BlockExpr {
+                    statements: Vec::new(),
+                    expr: Some(Box::new(fallback)),
+                },
+            },
+        ],
+        origin: MatchOrigin::Fallback,
+    }))
+}
+
+/// Binder of the `Some` arm of an expanded `??`.
+///
+/// `$` is not an identifier character, so no source program can write this
+/// name and it can never share a name with a user variable.
+const FALLBACK_BINDER: &str = "fallback$payload";
+
+/// Parse the right-hand side of `??`.
+///
+/// The right side is a `binary_expr` (so `a ?? b + 1` is `a ?? (b + 1)` and a
+/// pipe needs parentheses), or a diverging `return`, `break`, or `continue`.
+/// A directly following `??` nests to the right: `a ?? b ?? 0` is
+/// `a ?? (b ?? 0)`. Any other token, including `|>`, ends the right side.
+fn fallback_rhs(input: &str) -> ParseResult<'_, Expr> {
+    let (input, rhs) = match lex_token(input) {
+        Ok((_, Token::Return)) => match return_expr(input) {
+            Ok(parsed) => parsed,
+            Err(nom::Err::Error(_)) => return user_syntax_failure(FALLBACK_MISSING_RHS_ERROR),
+            Err(err) => return Err(err),
+        },
+        Ok((after, Token::Break)) => (after, Expr::new(ExprKind::Break)),
+        Ok((after, Token::Continue)) => (after, Expr::new(ExprKind::Continue)),
+        _ => match binary_expr(input) {
+            Ok(parsed) => parsed,
+            Err(nom::Err::Error(_)) => return user_syntax_failure(FALLBACK_MISSING_RHS_ERROR),
+            Err(err) => return Err(err),
+        },
+    };
+
+    if let Ok((after_op, ())) = fallback_op(input) {
+        let (input, inner) = fallback_rhs(after_op)?;
+        return Ok((input, fallback_match(rhs, inner)));
+    }
+    Ok((input, rhs))
 }
 
 /// Parse the stage that follows a pipe operator and apply it to `object`.
@@ -1866,6 +1967,13 @@ fn expression(input: &str) -> ParseResult<'_, Expr> {
 /// direct OSV, pipe, named scoped verbs, and an anonymous exact-once scope.
 fn application_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult<'a, Expr> {
     loop {
+        if let Ok((after_op, ())) = fallback_op(input) {
+            let (after_stage, stage) = fallback_stage(after_op, expr)?;
+            expr = stage;
+            input = after_stage;
+            continue;
+        }
+
         if let Ok((after_op, op)) = pipe_op(input) {
             let (after_stage, stage) = pipe_stage(after_op, op, &expr)?;
             expr = stage;
@@ -2610,6 +2718,151 @@ mod tests {
             "unparsed input after `{source}`: {remaining:?}"
         );
         expr
+    }
+
+    /// Debug form of an expression with node ids erased and `??` expansions
+    /// shown as the plain `match` they stand for.
+    fn shape(expr: &Expr) -> String {
+        // The expansion's binder cannot be written in source, so the explicit
+        // `match` texts below use an ordinary name in its place.
+        let debug = format!("{expr:?}")
+            .replace("origin: Fallback", "origin: Source")
+            .replace(FALLBACK_BINDER, "fallback_payload");
+        let mut out = String::new();
+        let mut rest = debug.as_str();
+        while let Some(at) = rest.find("NodeId(") {
+            out.push_str(&rest[..at]);
+            let tail = &rest[at..];
+            let close = tail.find(')').unwrap();
+            rest = &tail[close + 1..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    fn fallback_match_text(value: &str, fallback: &str) -> String {
+        format!(
+            "{value} match {{ Some(fallback_payload) => {{ fallback_payload }} None => {{ {fallback} }} }}"
+        )
+    }
+
+    fn assert_same_shape(left: &str, right: &str) {
+        assert_eq!(
+            shape(&parse_complete_expression(left)),
+            shape(&parse_complete_expression(right)),
+            "`{left}` should parse like `{right}`"
+        );
+    }
+
+    #[test]
+    fn test_fallback_expands_to_an_option_match() {
+        assert_same_shape("opt ?? 0", &fallback_match_text("opt", "0"));
+        assert_same_shape("opt ?? -1", &fallback_match_text("opt", "-1"));
+        let expr = parse_complete_expression("opt ?? 0");
+        let ExprKind::Match(expansion) = expr.kind else {
+            panic!("`??` must expand to a match");
+        };
+        assert_eq!(expansion.origin, MatchOrigin::Fallback);
+        let source = parse_complete_expression("opt match { Some(v) => { v } None => { 0 } }");
+        let ExprKind::Match(written) = source.kind else {
+            panic!("expected a written match");
+        };
+        assert_eq!(written.origin, MatchOrigin::Source);
+    }
+
+    #[test]
+    fn test_fallback_is_a_pipe_stage_with_the_pipe_precedence() {
+        // `a |> f ?? 0 |> g` is `((a |> f) ?? 0) |> g`.
+        assert_same_shape("a |> f ?? 0 |> g", "(a |> f ?? 0) |> g");
+        assert_same_shape(
+            "(a |> f ?? 0) |> g",
+            &format!("({}) |> g", fallback_match_text("a |> f", "0")),
+        );
+        // The pipe binds a whole `binary_expr` on its left.
+        assert_same_shape(
+            "1 + 2 |> wrap ?? 0",
+            &fallback_match_text("(1 + 2) |> wrap", "0"),
+        );
+        assert_same_shape("(a, b) |> f ?? 0", &fallback_match_text("(a, b) |> f", "0"));
+        assert_same_shape("(a, b) f ?? 0", &fallback_match_text("(a, b) f", "0"));
+    }
+
+    #[test]
+    fn test_fallback_right_side_is_a_binary_expression() {
+        assert_same_shape("a ?? b + 1", &fallback_match_text("a", "b + 1"));
+        assert_same_shape("a ?? b + 1 > 2", &fallback_match_text("a", "b + 1 > 2"));
+        assert_same_shape("a ?? (x, 1) add", &fallback_match_text("a", "(x, 1) add"));
+        assert_same_shape(
+            "a ?? (key |> load)",
+            &fallback_match_text("a", "key |> load"),
+        );
+        // A bare pipe does not belong to the right side.
+        assert_same_shape("a ?? key |> load", "(a ?? key) |> load");
+    }
+
+    #[test]
+    fn test_chained_fallbacks_nest_to_the_right() {
+        let inner = fallback_match_text("b", "0");
+        assert_same_shape("a ?? b ?? 0", &fallback_match_text("a", &inner));
+        assert_same_shape("a ?? (b ?? 0)", &fallback_match_text("a", &inner));
+        let three = fallback_match_text("b", &fallback_match_text("c", "0"));
+        assert_same_shape("a ?? b ?? c ?? 0", &fallback_match_text("a", &three));
+        // A pipe ends the right side: `a ?? b |> f ?? c` is `((a ?? b) |> f) ?? c`.
+        assert_same_shape(
+            "a ?? b |> f ?? c",
+            &fallback_match_text(&format!("({}) |> f", fallback_match_text("a", "b")), "c"),
+        );
+    }
+
+    #[test]
+    fn test_fallback_right_side_may_diverge() {
+        assert_same_shape(
+            "opt ?? return \"missing\" Result::Err",
+            &fallback_match_text("opt", "return \"missing\" Result::Err"),
+        );
+        assert_same_shape(
+            "{ opt ?? return }",
+            &format!("{{ {} }}", fallback_match_text("opt", "return")),
+        );
+        assert_same_shape("opt ?? break", &fallback_match_text("opt", "break"));
+        assert_same_shape("opt ?? continue", &fallback_match_text("opt", "continue"));
+    }
+
+    #[test]
+    fn test_fallback_continues_across_lines_like_a_pipe() {
+        assert_same_shape(
+            "raw\n|> string_trim\n|> string_parse_int\n?? 8080\n|> clamp_port",
+            "raw |> string_trim |> string_parse_int ?? 8080 |> clamp_port",
+        );
+        assert_same_shape("opt\n    ?? 0", "opt ?? 0");
+        // The fallback value itself may sit on the next line.
+        assert_same_shape("opt ??\n    0", "opt ?? 0");
+    }
+
+    #[test]
+    fn test_fallback_follows_a_completed_control_expression() {
+        let expr = parse_complete_expression("x match { Some(v) => { v } None => { 1 } } ?? 0");
+        let ExprKind::Match(outer) = expr.kind else {
+            panic!("expected a `??` expansion");
+        };
+        assert_eq!(outer.origin, MatchOrigin::Fallback);
+        let ExprKind::Match(inner) = &outer.expr.kind else {
+            panic!("expected the written match on the left");
+        };
+        assert_eq!(inner.origin, MatchOrigin::Source);
+    }
+
+    #[test]
+    fn test_fallback_without_a_right_side_is_a_syntax_error() {
+        for source in ["x ??", "x ?? }", "x ?? ;", "(x ??)"] {
+            match expression(source) {
+                Err(nom::Err::Failure(err)) => assert_eq!(
+                    err.input, FALLBACK_MISSING_RHS_ERROR,
+                    "wrong failure for `{source}`"
+                ),
+                other => panic!("`{source}` must fail with the `??` message, got {other:?}"),
+            }
+        }
     }
 
     #[test]

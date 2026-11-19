@@ -200,6 +200,7 @@ implemented and passes the v0.1.0 Component ABI gate.
 ### 1.2 Operators
 ```
 |>      // Pipe operator (primary)
+??      // Fallback operator for Option values
 =       // Assignment
 =>      // Match arrow
 ->      // Function return type arrow
@@ -262,6 +263,9 @@ and anonymous scopes:
   (`value |> verb`), a tuple call (`(left, right) |> verb`), a scoped verb
   clause (`value |> verb { ... }`), and an anonymous scope
   (`value |> { ... }`). See Section 5.9.
+- **`??` continues like `|>`**: The fallback operator (Section 5.12) is a
+  pipe-level stage, so `??` may begin a line and continue the expression on the
+  previous line, in the middle of a pipeline.
 
 ```rust
 // Multi-line statements do not need semicolons
@@ -862,6 +866,69 @@ value match {
     None => { 0 }
 }
 ```
+
+### 5.12 Fallback Operator `??`
+
+`value ?? fallback` takes the payload of an `Option<T>` or, when the option is
+empty, the fallback. The expression has type `T`:
+
+```rust
+val port = raw_port string_parse_int ?? 8080
+val first = names |> list_head ?? "anonymous"
+```
+
+The rules are:
+
+1. **Only `Option<T>`.** The left side must be an `Option<T>`. A `Result<T, E>`
+   on the left is a type error. Convert it first with `result_ok`:
+   `value |> result_ok ?? fallback`. Any other left type is a type error too.
+2. **Short-circuit evaluation.** The fallback is evaluated only when the left
+   side is `None`.
+3. **Same level as the pipe.** `??` is one stage of the pipe chain and takes the
+   complete expression on its left. It associates to the left together with
+   `|>`:
+   - `a |> f ?? 0 |> g` is `((a |> f) ?? 0) |> g`.
+   - `1 + 2 |> wrap ?? 0` is `((1 + 2) |> wrap) ?? 0`.
+4. **Right side.** The right side is either an expression of binary-operator
+   level (arithmetic, comparison, and direct OSV calls included, but no pipe),
+   or one of `return`, `return value`, `break`, and `continue`.
+   `a ?? b + 1` is `a ?? (b + 1)`. A pipe in the right side needs parentheses:
+   `a ?? (key |> load)`. Without them, `a ?? key |> load` pipes the result of
+   `a ?? key`. A diverging right side leaves the enclosing function or loop on
+   the `None` path:
+
+   ```rust
+   val name = opt_name ?? return "missing" Result::Err
+   ```
+
+5. **Chains nest to the right.** `a ?? b ?? 0` is `a ?? (b ?? 0)`, where `a`
+   and `b` are `Option<T>` and `0` is a `T`. A pipe ends the right side, so
+   `a ?? b |> f ?? c` is `((a ?? b) |> f) ?? c`.
+6. **Line continuation.** Like `|>`, a `??` at the start of a line continues the
+   expression on the previous line:
+
+   ```rust
+   val port = raw_port
+   |> string_trim
+   |> string_parse_int
+   ?? 8080
+   |> clamp_port
+   ```
+
+   Here `clamp_port` receives the parsed port or the default, because `??` and
+   `|>` share one level.
+7. **Affine types.** The left side is always consumed. A binding used in the
+   right side is treated like a binding used in one arm of a `match`: it counts
+   as used after the expression.
+8. **Existing functions stay.** `option_unwrap_or` and the other `std.option`
+   functions remain available and are not deprecated.
+
+`value ?? fallback` is exactly `value match { Some(v) => { v } None =>
+{ fallback } }`. The compiler expands it in the parser and adds no separate
+typing or code generation rule. Type errors for `??` name the operator: a left
+side that is not an `Option`, or a fallback whose type differs from the payload
+type. A missing right side (`value ??` followed by nothing usable) is a syntax
+error.
 
 ## 6. Patterns (for match expressions)
 
@@ -1579,7 +1646,10 @@ integration rather than implied core-language semantics.
 6. Equality: `==`, `!=`
 7. Logical AND: `&&`
 8. Logical OR: `||`
-9. Pipe: `|>` (left associative)
+9. Pipe `|>` and fallback `??` (one level, left associative together). The
+   right side of `??` is a binary-operator-level expression or a diverging
+   `return`, `break`, or `continue`; a directly following `??` nests to the
+   right (`a ?? b ?? 0` is `a ?? (b ?? 0)`)
 10. Completed-value application continuation (left associative): direct OSV,
     a following pipe, a named scoped verb, or an anonymous scope after a
     complete `match`, `then`, `while`, block, or preceding clause
@@ -1608,7 +1678,8 @@ An anonymous scope also receives the complete expression to its left, so
 - `Range<Int32>` - Range type from `[start..end]` with `Int32` endpoints (`map`, `filter`, `fold`, `range_start`, `range_end`, `range_to_list`)
 
 ### 14.2 Error Handling
-- `Option<T>` - May contain `value Option::Some` or `() Option::None`
+- `Option<T>` - May contain `value Option::Some` or `() Option::None`. Use
+  `option ?? fallback` to take the payload or a default (Section 5.12)
 - `Result<T, E>` - Success via `value Result::Ok` or error via `error Result::Err`
 
 A user-defined enum may be used as the error parameter of `Result<T, E>`:
@@ -1625,7 +1696,9 @@ fun fail: (message: String) -> Result<Int32, DecodeError> = {
 ```
 
 Error propagation is explicit through `match` (or `std.result` / `std.option`
-combinators) in the current compiler. A
+combinators) in the current compiler. The fallback operator `??` covers
+`Option<T>` only; for a `Result<T, E>`, write `value |> result_ok ?? fallback`.
+A
 postfix `?` operator remains future work until the language specifies a real
 early-exit operation together with affine branch merging and deterministic
 cleanup of arena and temporal resources.

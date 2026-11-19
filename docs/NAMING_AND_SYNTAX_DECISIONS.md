@@ -2,7 +2,7 @@
 
 **Status**: Accepted direction
 **Decision date**: 2026-11-18
-**Scope**: Official identifier naming conventions (`UpperCamelCase` / `snake_case`), line-bounded direct OSV / semicolon-free statement boundaries, and pipe stages for scopes and argument tuples (Decision 3, 2026-11-19)
+**Scope**: Official identifier naming conventions (`UpperCamelCase` / `snake_case`), line-bounded direct OSV / semicolon-free statement boundaries, pipe stages for scopes and argument tuples (Decision 3, 2026-11-19), and the `Option` fallback operator `??` (Decision 4, 2026-11-19)
 
 This document records the language-architecture rationale behind Restrict's
 identifier naming conventions and line-bounded statement boundaries.
@@ -299,6 +299,87 @@ val range_bonus = (([0..entry_count], |i| i + 1) map, 0, |acc, x| acc + x) fold
   longer forces long flows onto one line.
 - The parser elaborates the piped forms to the existing call nodes; the type
   checker and code generator need no new cases.
-- Fallback for `Option` / `Result` (`??`), index access (`container[key]`), and
-  the remaining brevity proposals are separate decisions and are not part of
-  this one.
+- Index access (`container[key]`) and the remaining brevity proposals are
+  separate decisions and are not part of this one. The fallback for `Option`
+  (`??`) is recorded in Decision 4; its extension to `Result` stays open.
+
+---
+
+## Decision 4: Fallback Operator `??`
+
+**Decision date**: 2026-11-19
+
+### Problem Statement
+
+Taking the payload of an `Option` or a default was only possible through
+`option_unwrap_or` or a `match`. Inside a pipeline, the function needs its
+default as a second argument, and a second argument must be grouped before the
+verb. After Decision 3, a pipeline reaches it only through an anonymous scope:
+
+```restrict
+val auth_hits = (counts, "auth")
+|> smap_get
+|> { (it, 0) |> option_unwrap_or }
+```
+
+The default is the point of the line, but it sits inside a scope that exists
+only to supply a second argument.
+
+### Considered Alternatives
+
+- **Option A (Chosen): a stage `??` at the same level as `|>`**
+  - `value ?? fallback` takes the complete expression on its left, associates
+    to the left together with `|>`, and continues across lines like `|>`:
+    `raw |> string_parse_int ?? 8080 |> clamp_port` is
+    `((raw |> string_parse_int) ?? 8080) |> clamp_port`.
+  - The right side is a binary-operator-level expression or a diverging
+    `return`, `break`, or `continue`. A pipe in the right side is written with
+    parentheses (`a ?? (key |> load)`).
+  - A directly following `??` nests to the right (`a ?? b ?? 0` is
+    `a ?? (b ?? 0)`); a pipe ends the right side.
+  - Applies to `Option<T>` only. The result has type `T` and the fallback is
+    evaluated only for `None`.
+  - The parser expands it to `value match { Some(v) => { v } None =>
+    { fallback } }`, so existing typing, affine merging, and code generation
+    apply unchanged. The expansion records its origin so that diagnostics speak
+    of `??`.
+- **Option B (Rejected): one precedence level below `|>`**
+  - Rejected because the stage after `?? 8080` would apply only to the default:
+    in `raw |> string_parse_int ?? 8080 |> clamp_port`, `clamp_port` would
+    receive `8080` and the parsed value would bypass it. When the types agree,
+    the program is accepted with a meaning the author did not intend.
+- **Option C (Deferred): `Result` on the left**
+  - `Result` has an error value that a fallback would silently discard. Whether
+    and how to support it is decided together with a postfix `?`, which has the
+    same question. Until then, `value |> result_ok ?? fallback` states the
+    discard explicitly.
+
+### Normative Rules
+
+1. The left side of `??` is `Option<T>`; the expression has type `T`. Any other
+   left side is a type error, and a `Result` gets a hint to use `result_ok`.
+2. The fallback is evaluated only when the left side is `None`, and it must
+   have type `T`.
+3. `??` shares a level with `|>`, associates to the left with it, and may begin
+   a line to continue the previous line's expression.
+4. The right side is a `binary_expr`, `return [value]`, `break`, or `continue`.
+   A directly following `??` nests to the right.
+5. The left side is consumed. A binding used in the right side is treated like a
+   binding used in one arm of a `match`.
+6. `option_unwrap_or` and the other `std.option` functions are kept and are not
+   deprecated.
+
+### Design Consequences
+
+- The default value stays in the line where it matters, and no scope is needed
+  to supply a second argument.
+- A diverging right side makes an early exit read as the `None` path:
+  `val name = opt ?? return "missing" Result::Err`.
+- Because `??` and `|>` share one level, a stage written after `??` applies to
+  the combined value. Authors who want a stage to apply to the default alone
+  write it in parentheses.
+- The expansion binds the payload under a name containing `$`, which no source
+  program can write. A name an author could write would hide an outer variable
+  of the same name inside the generated `match` and could change its value.
+- No new typing or code generation rule exists; any future change to `match`
+  applies to `??` as well.

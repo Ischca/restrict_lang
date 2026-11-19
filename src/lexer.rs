@@ -128,6 +128,8 @@ pub enum Token {
     // Operators
     /// Pipe operator `|>` for OSV syntax
     Pipe,
+    /// Fallback operator `??` for `Option` values
+    Fallback,
     /// Vertical bar `|` for patterns
     Bar,
     Assign,    // =
@@ -217,6 +219,7 @@ impl fmt::Display for Token {
             Token::StringLit(s) => write!(f, "\"{}\"", s),
             Token::CharLit(c) => write!(f, "'{}'", c),
             Token::Pipe => write!(f, "|>"),
+            Token::Fallback => write!(f, "??"),
             Token::Bar => write!(f, "|"),
             Token::Assign => write!(f, "="),
             Token::Arrow => write!(f, "=>"),
@@ -532,6 +535,7 @@ fn operator(input: &str) -> IResult<&str, Token> {
     alt((
         alt((
             value(Token::Pipe, tag("|>")),
+            value(Token::Fallback, tag("??")),
             value(Token::Or, tag("||")),
             value(Token::DotDotDot, tag("...")), // Check ... before .
             value(Token::DotDot, tag("..")),
@@ -664,6 +668,7 @@ mod tests {
     fn test_operators() {
         assert_eq!(lex("|>").unwrap().1, vec![Token::Pipe]);
         assert!(lex("|>>").is_err());
+        assert_eq!(lex("??").unwrap().1, vec![Token::Fallback]);
         assert_eq!(lex("&&").unwrap().1, vec![Token::And]);
         assert_eq!(lex("||").unwrap().1, vec![Token::Or]);
         assert_eq!(lex("!").unwrap().1, vec![Token::Not]);

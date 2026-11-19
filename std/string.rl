@@ -38,7 +38,7 @@ pub fun string_lines: (s: String) -> List<String> = {
         []
     } else {
         val trimmed_end = (text, "\n") string_ends_with then {
-            ((text, 0, len - 1) string_slice, text) option_unwrap_or
+            (text, 0, len - 1) string_slice ?? text
         } else {
             text
         }
@@ -47,7 +47,7 @@ pub fun string_lines: (s: String) -> List<String> = {
                 mut val current = line
                 val l = current |> string_length
                 (current, "\r") string_ends_with then {
-                    ((current, 0, l - 1) string_slice, current) option_unwrap_or
+                    (current, 0, l - 1) string_slice ?? current
                 } else {
                     current
                 }
@@ -63,7 +63,7 @@ pub fun string_words: (s: String) -> List<String> = {
     i < len while {
         mut val skipping = true
         (i < len) && skipping while {
-            val b = ((text, i) string_byte_at, -1) option_unwrap_or
+            val b = (text, i) string_byte_at ?? -1
             ((b == 32) || (b == 9) || (b == 10) || (b == 13)) then {
                 i = i + 1
             } else {
@@ -74,14 +74,14 @@ pub fun string_words: (s: String) -> List<String> = {
             val start = i
             mut val scanning = true
             (i < len) && scanning while {
-                val b = ((text, i) string_byte_at, -1) option_unwrap_or
+                val b = (text, i) string_byte_at ?? -1
                 ((b == 32) || (b == 9) || (b == 10) || (b == 13)) then {
                     scanning = false
                 } else {
                     i = i + 1
                 }
             }
-            val word = ((text, start, i) string_slice, "") option_unwrap_or
+            val word = (text, start, i) string_slice ?? ""
             words = (words, word) list_append
         }
     }
@@ -109,7 +109,7 @@ pub fun string_pad_left: (s: String, width: Int32, pad: String) -> String = {
         val needed = width - len
         val reps = (needed + pad_len - 1) / pad_len
         mut val full_pad = (pad_str, reps) string_repeat
-        val prefix = ((full_pad, 0, needed) string_slice, full_pad) option_unwrap_or
+        val prefix = (full_pad, 0, needed) string_slice ?? full_pad
         prefix + text
     }
 }
@@ -125,7 +125,7 @@ pub fun string_pad_right: (s: String, width: Int32, pad: String) -> String = {
         val needed = width - len
         val reps = (needed + pad_len - 1) / pad_len
         mut val full_pad = (pad_str, reps) string_repeat
-        val suffix = ((full_pad, 0, needed) string_slice, full_pad) option_unwrap_or
+        val suffix = (full_pad, 0, needed) string_slice ?? full_pad
         text + suffix
     }
 }
@@ -137,10 +137,10 @@ pub fun string_to_upper_ascii: (s: String) -> String = {
     mut val chunk_start = 0
     mut val i = 0
     i < len while {
-        val b = ((text, i) string_byte_at, -1) option_unwrap_or
+        val b = (text, i) string_byte_at ?? -1
         ((b >= 97) && (b <= 122)) then {
             i > chunk_start then {
-                val chunk = ((text, chunk_start, i) string_slice, "") option_unwrap_or
+                val chunk = (text, chunk_start, i) string_slice ?? ""
                 parts = (parts, chunk) list_append
             }
             val ch = ((b - 32) |> char_from_code) match {
@@ -153,7 +153,7 @@ pub fun string_to_upper_ascii: (s: String) -> String = {
         i = i + 1
     }
     chunk_start < len then {
-        val tail_chunk = ((text, chunk_start, len) string_slice, "") option_unwrap_or
+        val tail_chunk = (text, chunk_start, len) string_slice ?? ""
         parts = (parts, tail_chunk) list_append
     }
     (parts, "") string_join
@@ -166,10 +166,10 @@ pub fun string_to_lower_ascii: (s: String) -> String = {
     mut val chunk_start = 0
     mut val i = 0
     i < len while {
-        val b = ((text, i) string_byte_at, -1) option_unwrap_or
+        val b = (text, i) string_byte_at ?? -1
         ((b >= 65) && (b <= 90)) then {
             i > chunk_start then {
-                val chunk = ((text, chunk_start, i) string_slice, "") option_unwrap_or
+                val chunk = (text, chunk_start, i) string_slice ?? ""
                 parts = (parts, chunk) list_append
             }
             val ch = ((b + 32) |> char_from_code) match {
@@ -182,7 +182,7 @@ pub fun string_to_lower_ascii: (s: String) -> String = {
         i = i + 1
     }
     chunk_start < len then {
-        val tail_chunk = ((text, chunk_start, len) string_slice, "") option_unwrap_or
+        val tail_chunk = (text, chunk_start, len) string_slice ?? ""
         parts = (parts, tail_chunk) list_append
     }
     (parts, "") string_join

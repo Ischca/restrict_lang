@@ -896,10 +896,9 @@ fn cli_non_callable_osv_verb_suggests_the_statement_boundary() {
     let (source_path, output) = run_check_temp_source(
         "non_callable_osv_verb",
         r#"fun main: () -> Int32 = {
-    val first = 1;
-    val second = 2;
-    first
-    second
+    val first = 1
+    val second = 2
+    first second
 }
 "#,
     );
@@ -918,7 +917,7 @@ fn cli_non_callable_osv_verb_suggests_the_statement_boundary() {
         "stderr should explain the explicit statement boundary, got: {stderr}"
     );
     assert!(
-        stderr.contains("at line 5, column 5") && stderr.contains("^ non-callable OSV verb"),
+        stderr.contains("at line 4, column 11") && stderr.contains("^ non-callable OSV verb"),
         "stderr should point to the callable-shaped continuation, got: {stderr}"
     );
 

@@ -7,9 +7,9 @@ let activeTab = 'output';
 async function initWasm() {
     try {
         wasmModule = await init();
-        updateStatus('Compiler and runtime ready. Press Run or Ctrl/⌘ + Enter.', 'success');
+        updateStatus('v0.1.0 Core Wasm compiler and runtime ready. Press Run or Ctrl/⌘ + Enter.', 'success');
         setOutput('output', 'Ready to run.');
-        setOutput('wasm', 'Ready to compile.');
+        setOutput('wasm', 'Ready to generate Core WebAssembly text.');
     } catch (error) {
         console.error('Failed to initialize WASM module:', error);
         updateStatus(`Failed to initialize compiler: ${error.message}`, 'error');
@@ -202,13 +202,13 @@ async function compile() {
 
     try {
         setButtonsDisabled(true);
-        updateStatus('Compiling the full pipeline…', 'working');
+        updateStatus('Compiling the v0.1.0 Core Wasm pipeline…', 'working');
         const result = compile_restrict_lang(sourceValue());
 
         if (result.success) {
             applyCompilationOutputs(result);
             showTab('wasm');
-            updateStatus('Compilation succeeded.', 'success');
+            updateStatus('Core Wasm compilation succeeded.', 'success');
         } else {
             setOutput('error', formatCompilerDiagnostic(result.error, sourceValue()), true);
             if (result.tokens) {
@@ -290,7 +290,7 @@ async function parseOnly() {
 
 function clearOutput() {
     setOutput('output', 'Ready to run.');
-    setOutput('wasm', 'Ready to compile.');
+    setOutput('wasm', 'Ready to generate Core WebAssembly text.');
     setOutput('tokens', 'No tokens yet.');
     setOutput('ast', 'No AST yet.');
     setOutput('error', 'No errors.');
@@ -311,7 +311,7 @@ function showTab(tabName) {
     });
 
     activeTab = tabName;
-    const labels = { output: 'Program output', wasm: 'Wasm output', tokens: 'Token output', ast: 'AST output', error: 'Error output' };
+    const labels = { output: 'Program output', wasm: 'Core WAT output', tokens: 'Token output', ast: 'AST output', error: 'Error output' };
     document.getElementById('activeOutputLabel').textContent = labels[tabName];
 }
 

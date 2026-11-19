@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Playground · Restrict Language</title>
-  <meta name="description" content="Run, compile, tokenize, and parse Restrict Language locally in your browser.">
+  <title>Restrict v0.1.0 Playground</title>
+  <meta name="description" content="Run current Restrict v0.1.0 language examples as Core WebAssembly locally in your browser.">
   <meta name="theme-color" content="#ff6b35">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <style>
@@ -58,6 +58,11 @@
     .eyebrow { margin: 0 0 7px; color: var(--logo-deep); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
     h1 { margin: 0; font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1; letter-spacing: -0.045em; }
     .intro-copy { max-width: 640px; margin: 12px 0 0; color: var(--muted); }
+    .surface-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+    .surface-summary li { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--muted); font-size: 0.7rem; }
+    .surface-summary strong { color: var(--ink); }
+    .surface-summary a { color: inherit; text-decoration: none; }
+    .surface-summary a:hover { color: var(--logo-deep); }
     .privacy-note { display: flex; max-width: 360px; align-items: center; gap: 10px; color: var(--muted); font-size: 0.82rem; }
     .privacy-note::before { content: ""; flex: 0 0 auto; width: 8px; height: 8px; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 5px rgba(38, 117, 71, 0.1); }
 
@@ -186,9 +191,14 @@
   <main class="playground-shell">
     <section class="playground-intro">
       <div>
-        <p class="eyebrow">Browser compiler</p>
-        <h1>See every stage.</h1>
-        <p class="intro-copy">Write Restrict, run it locally, then inspect program output, WebAssembly, tokens, the parsed tree, or an exact diagnostic.</p>
+        <p class="eyebrow">v0.1.0 · Core Wasm playground</p>
+        <h1>Compose. Run. Inspect.</h1>
+        <p class="intro-copy">Try the current Restrict language surface, run it locally, then inspect program output, generated Core WebAssembly text, tokens, the parsed tree, or an exact diagnostic.</p>
+        <ul class="surface-summary" aria-label="Playground execution surface">
+          <li><strong>Language</strong> v0.1.0</li>
+          <li><strong>Runtime</strong> Core Wasm + WASI Preview 1</li>
+          <li><a href="../docs/en/advanced/interop.html"><strong>Components</strong> build with Warder</a></li>
+        </ul>
       </div>
       <p class="privacy-note">Compilation and execution stay in this browser. Source is only added to a URL when you choose Share.</p>
     </section>
@@ -229,13 +239,13 @@
 
       <div class="workspace-panel">
         <div class="panel-heading">
-          <div class="panel-title"><strong>Inspector</strong><small>Program and compiler output stay in this browser.</small></div>
+          <div class="panel-title"><strong>Inspector</strong><small>Program output and compiler stages stay in this browser.</small></div>
           <button class="tool-button" type="button" id="copyOutputBtn">Copy output</button>
         </div>
         <div class="status-bar" id="compilerStatus" role="status" aria-live="polite" data-tone="working"><span class="status-dot" aria-hidden="true"></span><span id="statusText">Loading compiler…</span></div>
         <div class="output-tabs" role="tablist" aria-label="Program and compiler results">
           <button class="tab" type="button" id="tab-output" role="tab" aria-selected="true" aria-controls="output" data-tab="output">Output</button>
-          <button class="tab" type="button" id="tab-wasm" role="tab" aria-selected="false" aria-controls="wasm" data-tab="wasm" tabindex="-1">Wasm</button>
+          <button class="tab" type="button" id="tab-wasm" role="tab" aria-selected="false" aria-controls="wasm" data-tab="wasm" tabindex="-1">Core WAT</button>
           <button class="tab" type="button" id="tab-tokens" role="tab" aria-selected="false" aria-controls="tokens" data-tab="tokens" tabindex="-1">Tokens</button>
           <button class="tab" type="button" id="tab-ast" role="tab" aria-selected="false" aria-controls="ast" data-tab="ast" tabindex="-1">AST</button>
           <button class="tab" type="button" id="tab-error" role="tab" aria-selected="false" aria-controls="error" data-tab="error" tabindex="-1">Errors</button>
@@ -247,11 +257,11 @@
           <div id="ast" class="output-content" role="tabpanel" aria-labelledby="tab-ast" hidden><pre id="astOutput">No AST yet.</pre></div>
           <div id="error" class="output-content" role="tabpanel" aria-labelledby="tab-error" hidden><pre id="errorOutput">No errors.</pre></div>
         </div>
-        <div class="output-footer"><span>Compiles and runs locally with WebAssembly and a browser WASI bridge.</span><span id="activeOutputLabel">Program output</span></div>
+        <div class="output-footer"><span>Runs Core Wasm with a browser WASI Preview 1 bridge. Component packages use Warder.</span><span id="activeOutputLabel">Program output</span></div>
       </div>
     </section>
 
-    <footer class="playground-footer"><span>Restrict Language · v0.0.1</span><span><a href="../docs/en/reference/release-surface.html">Release surface</a> · <a href="https://github.com/Ischca/restrict_lang/issues">Report an issue</a></span></footer>
+    <footer class="playground-footer"><span>Restrict Language · v0.1.0</span><span><a href="../docs/en/advanced/wasm.html">WebAssembly surface</a> · <a href="https://github.com/Ischca/restrict_lang/releases/tag/v0.1.0">Release notes</a> · <a href="https://github.com/Ischca/restrict_lang/issues">Report an issue</a></span></footer>
   </main>
 
   <script src="./restrict-highlight.js"></script>

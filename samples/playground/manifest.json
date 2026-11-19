@@ -5,8 +5,12 @@
       "title": "Start here"
     },
     {
-      "id": "current",
-      "title": "Current compiler"
+      "id": "composition",
+      "title": "Composition and scopes"
+    },
+    {
+      "id": "types",
+      "title": "Types and contracts"
     },
     {
       "id": "diagnostics",
@@ -33,18 +37,45 @@
       "expectedOutput": "42\n"
     },
     {
+      "id": "completedValues",
+      "title": "Continue a completed value",
+      "group": "composition",
+      "description": "Feed a completed match directly through two typed OSV functions.",
+      "file": "completed_values.rl",
+      "kind": "run",
+      "expectedOutput": "36\n"
+    },
+    {
       "id": "scopedCollections",
       "title": "Map through a scope",
-      "group": "start",
+      "group": "composition",
       "description": "Name map's scoped value with a lambda binder, then name both values in a fold scope.",
       "file": "scoped_collections.rl",
       "kind": "run",
       "expectedOutput": "43\n"
     },
     {
+      "id": "typedContext",
+      "title": "Bind a typed context",
+      "group": "composition",
+      "description": "Provide typed capabilities to one lexical body and continue its completed value into println.",
+      "file": "typed_context.rl",
+      "kind": "run",
+      "expectedOutput": "42\n"
+    },
+    {
+      "id": "fixedArray",
+      "title": "Read a fixed-length Array",
+      "group": "types",
+      "description": "Declare an exact Array<T, N> length and read one element by index.",
+      "file": "fixed_array.rl",
+      "kind": "run",
+      "expectedOutput": "20\n"
+    },
+    {
       "id": "records",
       "title": "Build a record",
-      "group": "start",
+      "group": "types",
       "description": "Construct a record with colon fields and pass it to a function.",
       "file": "records.rl",
       "kind": "run",
@@ -53,7 +84,7 @@
     {
       "id": "optionMatch",
       "title": "Match an option",
-      "group": "start",
+      "group": "types",
       "description": "Handle both Some and None with an exhaustive match.",
       "file": "option_match.rl",
       "kind": "run",
@@ -62,7 +93,7 @@
     {
       "id": "resultError",
       "title": "Result with a custom error",
-      "group": "current",
+      "group": "types",
       "description": "Carry a domain-specific enum through Result and turn the error into useful output.",
       "file": "result_error.rl",
       "kind": "run",
@@ -71,7 +102,7 @@
     {
       "id": "formContract",
       "title": "Generic form contract",
-      "group": "current",
+      "group": "types",
       "description": "Follow a form from its contract, through a concrete adoption, into an explicit generic bound.",
       "file": "form_contract.rl",
       "kind": "run",
@@ -80,7 +111,7 @@
     {
       "id": "displayTypes",
       "title": "Display across types",
-      "group": "current",
+      "group": "types",
       "description": "Use one output function for prelude types and a record that explicitly adopts Display.",
       "file": "display_types.rl",
       "kind": "run",

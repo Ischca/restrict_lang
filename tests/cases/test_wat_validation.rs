@@ -1028,12 +1028,12 @@ fun summarize_slice: (slice: ReleaseSlice) -> Int32 = {
     let wat = compile_to_wat(source)
         .unwrap_or_else(|err| panic!("nested record field patterns should compile: {err}"));
     assert!(
-        wat.contains("local.set $record_tmp_0"),
-        "outer record pattern should preserve its parent in a pattern scratch local:\n{wat}"
+        wat.contains("local.set $__pb0_field_0_0"),
+        "outer record pattern should preserve its parent field in a step-0 scratch local:\n{wat}"
     );
     assert!(
-        wat.contains("local.set $record_tmp_1"),
-        "nested record pattern should use a distinct scratch local:\n{wat}"
+        wat.contains("local.set $__pb0_field_1_0"),
+        "nested record pattern should use a distinct step-1 scratch local:\n{wat}"
     );
 
     let wasm = wat::parse_str(&wat).unwrap_or_else(|err| {

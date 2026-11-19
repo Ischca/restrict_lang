@@ -853,27 +853,44 @@ fun main: () -> Int32 = {
 }
 
 #[test]
-fn resolver_rejects_std_aggregator_import_with_v001_message() {
+fn resolver_resolves_embedded_std_modules_and_rejects_unknown_or_planned_std_imports() {
     let root = parse_complete(
         r#"
 import std.prelude
 
 fun main: () -> Int32 = {
-    1 |> identity
+    1 |> identity_val
 }
 "#,
     );
 
     let mut resolver = ModuleResolver::new();
-    let err = resolver
+    let resolved = resolver
         .resolve_program_imports(root)
-        .expect_err("std source aggregators are outside the v0.0.1 module surface");
+        .expect("embedded std.prelude import should resolve");
+    assert!(resolved.imports.is_empty());
 
-    assert!(
-        err.to_string()
-            .contains("standard-library source imports are unsupported in v0.0.1"),
-        "resolver error should explain the std import boundary, got: {err}"
-    );
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&resolved)
+        .expect("resolved std.prelude program should type check");
+
+    for (import_stmt, expected_fragment) in [
+        ("import std.unknown", "Unknown standard library module"),
+        ("import std.http.*", "planned capability profile"),
+        ("import std.database.*", "planned capability profile"),
+        ("import std.filesystem.*", "planned capability profile"),
+    ] {
+        let bad_root = parse_complete(&format!("{import_stmt}\nfun main: () -> Int32 = {{ 0 }}\n"));
+        let mut r = ModuleResolver::new();
+        let err = r
+            .resolve_program_imports(bad_root)
+            .expect_err("unknown or planned std module should fail cleanly");
+        assert!(
+            err.to_string().contains(expected_fragment),
+            "{import_stmt} error should contain {expected_fragment:?}, got: {err}"
+        );
+    }
 }
 
 #[test]

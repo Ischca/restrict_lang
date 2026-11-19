@@ -70,6 +70,10 @@ pub enum Token {
     Else,
     /// `while` keyword for loops
     While,
+    /// `break` keyword for breaking out of loops
+    Break,
+    /// `continue` keyword for advancing to the next loop iteration
+    Continue,
     /// `match` keyword for pattern matching
     Match,
     /// `async` keyword for asynchronous functions
@@ -186,6 +190,8 @@ impl fmt::Display for Token {
             Token::Then => write!(f, "then"),
             Token::Else => write!(f, "else"),
             Token::While => write!(f, "while"),
+            Token::Break => write!(f, "break"),
+            Token::Continue => write!(f, "continue"),
             Token::Match => write!(f, "match"),
             Token::Async => write!(f, "async"),
             Token::Return => write!(f, "return"),
@@ -283,6 +289,8 @@ fn keyword(input: &str) -> IResult<&str, Token> {
         "then" => Token::Then,
         "else" => Token::Else,
         "while" => Token::While,
+        "break" => Token::Break,
+        "continue" => Token::Continue,
         "match" => Token::Match,
         "async" => Token::Async,
         "return" => Token::Return,
@@ -427,21 +435,29 @@ fn string_lit(input: &str) -> IResult<&str, Token> {
     };
 
     let mut value = String::new();
-    let mut escaped = false;
-    for (idx, ch) in rest.char_indices() {
-        if escaped {
-            value.push(
-                unescape_char(ch)
-                    .ok_or_else(|| lexer_error(&rest[idx..], nom::error::ErrorKind::Escaped))?,
-            );
-            escaped = false;
-            continue;
-        }
-
+    let mut idx = 0;
+    while idx < rest.len() {
+        let ch = rest[idx..]
+            .chars()
+            .next()
+            .expect("idx is within rest bounds");
         match ch {
-            '\\' => escaped = true,
+            '\\' => {
+                let escape_start = idx + ch.len_utf8();
+                let Some((escaped, consumed)) = parse_escape_sequence(&rest[escape_start..]) else {
+                    return Err(lexer_error(
+                        &rest[escape_start.min(rest.len())..],
+                        nom::error::ErrorKind::Escaped,
+                    ));
+                };
+                value.push(escaped);
+                idx = escape_start + consumed;
+            }
             '"' => return Ok((&rest[idx + ch.len_utf8()..], Token::StringLit(value))),
-            _ => value.push(ch),
+            _ => {
+                value.push(ch);
+                idx += ch.len_utf8();
+            }
         }
     }
 
@@ -453,18 +469,19 @@ fn char_lit(input: &str) -> IResult<&str, Token> {
         return Err(lexer_error(input, nom::error::ErrorKind::Char));
     };
 
-    let mut chars = rest.char_indices();
-    let Some((_, first)) = chars.next() else {
+    let Some(first) = rest.chars().next() else {
         return Err(lexer_error(input, nom::error::ErrorKind::Char));
     };
 
     let (value, consumed) = if first == '\\' {
-        let Some((escape_idx, escape)) = chars.next() else {
-            return Err(lexer_error(input, nom::error::ErrorKind::Escaped));
+        let escape_start = first.len_utf8();
+        let Some((escaped, escape_len)) = parse_escape_sequence(&rest[escape_start..]) else {
+            return Err(lexer_error(
+                &rest[escape_start.min(rest.len())..],
+                nom::error::ErrorKind::Escaped,
+            ));
         };
-        let value = unescape_char(escape)
-            .ok_or_else(|| lexer_error(&rest[escape_idx..], nom::error::ErrorKind::Escaped))?;
-        (value, escape_idx + escape.len_utf8())
+        (escaped, escape_start + escape_len)
     } else {
         (first, first.len_utf8())
     };
@@ -477,14 +494,29 @@ fn char_lit(input: &str) -> IResult<&str, Token> {
     Ok((after_quote, Token::CharLit(value)))
 }
 
-fn unescape_char(ch: char) -> Option<char> {
+fn parse_escape_sequence(input: &str) -> Option<(char, usize)> {
+    let ch = input.chars().next()?;
+    let ch_len = ch.len_utf8();
     match ch {
-        'n' => Some('\n'),
-        't' => Some('\t'),
-        'r' => Some('\r'),
-        '\\' => Some('\\'),
-        '"' => Some('"'),
-        '\'' => Some('\''),
+        'n' => Some(('\n', ch_len)),
+        't' => Some(('\t', ch_len)),
+        'r' => Some(('\r', ch_len)),
+        '0' => Some(('\0', ch_len)),
+        '\\' => Some(('\\', ch_len)),
+        '"' => Some(('"', ch_len)),
+        '\'' => Some(('\'', ch_len)),
+        'x' => {
+            let after_x = &input[ch_len..];
+            if after_x.len() < 2 {
+                return None;
+            }
+            let hex = after_x.get(..2)?;
+            if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            let byte = u8::from_str_radix(hex, 16).ok()?;
+            Some((char::from(byte), ch_len + 2))
+        }
         _ => None,
     }
 }

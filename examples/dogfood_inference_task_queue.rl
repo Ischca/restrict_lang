@@ -77,7 +77,7 @@ fun score_from_fields: (
     estimate: Int32,
     blocked: Boolean
 ) -> Int32 = {
-    val blocked_penalty = (blocked, 40) points_when;
+    val blocked_penalty = (blocked, 40) points_when
 
     priority * 10 - estimate - blocked_penalty
 }
@@ -97,7 +97,7 @@ fun task_ready: (task: Task, max_estimate: Int32) -> Boolean = {
         estimate,
         blocked,
         owner
-    } = task;
+    } = task
 
     (blocked, estimate, max_estimate) ready_from_fields
 }
@@ -113,11 +113,11 @@ fun task_card: (
         estimate,
         blocked,
         owner
-    } = task;
-    val ready = (blocked, estimate, max_estimate) ready_from_fields;
-    val score = (priority, estimate, blocked) score_from_fields;
-    val owner_id = (owner, fallback_owner) choose_value;
-    val route = (ready, id) route_for;
+    } = task
+    val ready = (blocked, estimate, max_estimate) ready_from_fields
+    val score = (priority, estimate, blocked) score_from_fields
+    val owner_id = (owner, fallback_owner) choose_value
+    val route = (ready, id) route_for
 
     TaskCard {
         id: id,
@@ -166,22 +166,22 @@ fun add_task: (
         blocked_count,
         first_unowned,
         alert_codes
-    } = state;
+    } = state
     val Task {
         id,
         priority,
         estimate,
         blocked,
         owner
-    } = task;
-    val score = (priority, estimate, blocked) score_from_fields;
-    val ready = (blocked, estimate, max_estimate) ready_from_fields;
-    val over_threshold = score >= alert_threshold;
+    } = task
+    val score = (priority, estimate, blocked) score_from_fields
+    val ready = (blocked, estimate, max_estimate) ready_from_fields
+    val over_threshold = score >= alert_threshold
     val next_alerts = over_threshold then {
         (alert_codes, id + 700) list_append
     } else {
         alert_codes
-    };
+    }
 
     QueueState {
         total_score: total_score + score,
@@ -213,22 +213,22 @@ fun plan_queue: (
         max_estimate,
         alert_threshold,
         fallback_owner
-    } = policy;
-    val ready_tasks = (card_tasks, |task| (task, max_estimate) task_ready) filter;
-    val cards = (ready_tasks, |task| (task, max_estimate, fallback_owner) task_card) map;
-    val initial = () initial_state;
+    } = policy
+    val ready_tasks = (card_tasks, |task| (task, max_estimate) task_ready) filter
+    val cards = (ready_tasks, |task| (task, max_estimate, fallback_owner) task_card) map
+    val initial = () initial_state
     val state = (
         audit_tasks,
         initial,
         |current, task| (current, task, max_estimate, alert_threshold) add_task
-    ) fold;
+    ) fold
     val QueueState {
         total_score,
         ready_count,
         blocked_count,
         first_unowned,
         alert_codes
-    } = state;
+    } = state
 
     QueuePlan {
         total_score: total_score,
@@ -257,7 +257,7 @@ fun main: () -> QueuePlan = {
             blocked: true,
             owner: () Option::None
         }
-    ];
+    ]
     val card_tasks: List<Task> = [
         Task {
             id: 101,
@@ -273,12 +273,12 @@ fun main: () -> QueuePlan = {
             blocked: false,
             owner: () Option::None
         }
-    ];
+    ]
     val policy = QueuePolicy {
         max_estimate: 8,
         alert_threshold: 70,
         fallback_owner: 7
-    };
+    }
 
     (audit_tasks, card_tasks, policy) plan_queue
 }

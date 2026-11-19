@@ -86,8 +86,8 @@ fun move_audit_notes: (notes: List<Int32>) -> List<Int32> = {
 }
 
 fun owner_or_default: (owner: Option<Int32>, fallback_owner: Int32) -> Int32 = {
-    val active_owner = (owner, |person| person > 0) filter;
-    val normalized_owner = (active_owner, |person| person + 0) map;
+    val active_owner = (owner, |person| person > 0) filter
+    val normalized_owner = (active_owner, |person| person + 0) map
 
     (normalized_owner, fallback_owner) choose_value
 }
@@ -113,8 +113,8 @@ fun score_fields: (
     tag_score: Int32,
     reopen_count: Int32
 ) -> Int32 = {
-    val wait_points = (wait_minutes, wait_limit) wait_overage;
-    val vip_points = (tier == vip_tier, 25) points_when;
+    val wait_points = (wait_minutes, wait_limit) wait_overage
+    val vip_points = (tier == vip_tier, 25) points_when
 
     severity * 12 + wait_points + vip_points + tag_score + reopen_count * 9
 }
@@ -153,8 +153,8 @@ fun should_escalate: (
         owner,
         tags,
         reopen_count
-    } = ticket;
-    val tag_score = tags |> sum_tags;
+    } = ticket
+    val tag_score = tags |> sum_tags
     val score = (
         severity,
         wait_minutes,
@@ -163,7 +163,7 @@ fun should_escalate: (
         vip_tier,
         tag_score,
         reopen_count
-    ) score_fields;
+    ) score_fields
 
     score >= severity_threshold
 }
@@ -183,8 +183,8 @@ fun candidate_for: (
         owner,
         tags,
         reopen_count
-    } = ticket;
-    val tag_score = tags |> sum_tags;
+    } = ticket
+    val tag_score = tags |> sum_tags
     val score = (
         severity,
         wait_minutes,
@@ -193,10 +193,10 @@ fun candidate_for: (
         vip_tier,
         tag_score,
         reopen_count
-    ) score_fields;
-    val urgent = score >= severity_threshold;
-    val owner_id = (owner, fallback_owner) owner_or_default;
-    val route = (urgent, id, score) route_ticket;
+    ) score_fields
+    val urgent = score >= severity_threshold
+    val owner_id = (owner, fallback_owner) owner_or_default
+    val route = (urgent, id, score) route_ticket
 
     SupportCandidate {
         id: id,
@@ -256,7 +256,7 @@ fun fold_ticket: (
         first_unowned,
         escalation_ids,
         audit_notes
-    } = state;
+    } = state
     val SupportTicket {
         id,
         severity,
@@ -265,8 +265,8 @@ fun fold_ticket: (
         owner,
         tags,
         reopen_count
-    } = ticket;
-    val tag_score = tags |> sum_tags;
+    } = ticket
+    val tag_score = tags |> sum_tags
     val score = (
         severity,
         wait_minutes,
@@ -275,19 +275,19 @@ fun fold_ticket: (
         vip_tier,
         tag_score,
         reopen_count
-    ) score_fields;
-    val urgent = score >= severity_threshold;
-    val stale = wait_minutes > wait_limit;
+    ) score_fields
+    val urgent = score >= severity_threshold
+    val stale = wait_minutes > wait_limit
     val next_escalation_ids = urgent then {
         (escalation_ids, id) list_append
     } else {
         escalation_ids
-    };
+    }
     val next_audit_notes = score >= audit_threshold then {
         (audit_notes, id + 600) list_append
     } else {
         audit_notes
-    };
+    }
 
     SupportState {
         total_score: total_score + score,
@@ -311,24 +311,24 @@ fun plan_support_escalation: (
         vip_tier,
         fallback_owner,
         audit_threshold
-    } = policy;
-    val moved_seed_notes = seed_notes |> move_audit_notes;
-    val moved_candidates = candidate_tickets |> move_ticket_stream;
-    val normalized_candidates = (moved_candidates, |ticket| ticket |> move_ticket) map;
+    } = policy
+    val moved_seed_notes = seed_notes |> move_audit_notes
+    val moved_candidates = candidate_tickets |> move_ticket_stream
+    val normalized_candidates = (moved_candidates, |ticket| ticket |> move_ticket) map
     val selected_tickets = (
         normalized_candidates,
         |ticket| (ticket, wait_limit, severity_threshold, vip_tier) should_escalate
-    ) filter;
+    ) filter
     val candidates = (
         selected_tickets,
         |ticket| (ticket, wait_limit, severity_threshold, vip_tier, fallback_owner) candidate_for
-    ) map;
-    val initial = moved_seed_notes |> initial_state;
+    ) map
+    val initial = moved_seed_notes |> initial_state
     val state = (
         audit_tickets,
         initial,
         |current, ticket| (current, ticket, wait_limit, severity_threshold, vip_tier, audit_threshold) fold_ticket
-    ) fold;
+    ) fold
     val SupportState {
         total_score,
         urgent_count,
@@ -336,8 +336,8 @@ fun plan_support_escalation: (
         first_unowned,
         escalation_ids,
         audit_notes
-    } = state;
-    val route = (urgent_count, total_score) route_plan;
+    } = state
+    val route = (urgent_count, total_score) route_plan
 
     EscalationPlan {
         total_score: total_score,
@@ -372,7 +372,7 @@ fun main: () -> EscalationPlan = {
             tags: [2],
             reopen_count: 0
         }
-    ];
+    ]
     val candidate_tickets: List<SupportTicket> = [
         SupportTicket {
             id: 801,
@@ -392,15 +392,15 @@ fun main: () -> EscalationPlan = {
             tags: [1],
             reopen_count: 0
         }
-    ];
+    ]
     val policy = EscalationPolicy {
         wait_limit: 60,
         severity_threshold: 80,
         vip_tier: 1,
         fallback_owner: 900,
         audit_threshold: 70
-    };
-    val seed_notes = [500];
+    }
+    val seed_notes = [500]
 
     (audit_tickets, candidate_tickets, policy, seed_notes) plan_support_escalation
 }

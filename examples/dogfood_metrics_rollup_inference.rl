@@ -74,7 +74,7 @@ fun slot_choose: <T>(slot: MetricSlot<T>) -> T = {
     val MetricSlot {
         value,
         fallback
-    } = slot;
+    } = slot
 
     (fallback, value) choose_value
 }
@@ -85,7 +85,7 @@ fun sample_has_previous: (sample: MetricSample) -> Boolean = {
         current,
         previous,
         weight
-    } = sample;
+    } = sample
 
     previous match {
         Some(value) => {
@@ -110,7 +110,7 @@ fun route_sample: (
 }
 
 fun delta_from_previous: (current: Int32, previous: Option<Int32>) -> Int32 = {
-    val baseline = (previous, current) choose_value;
+    val baseline = (previous, current) choose_value
 
     current - baseline
 }
@@ -126,9 +126,9 @@ fun score_sample: (
         current,
         previous,
         weight
-    } = sample;
-    val delta = (current, previous) delta_from_previous;
-    val overloaded = current >= critical_limit;
+    } = sample
+    val delta = (current, previous) delta_from_previous
+    val overloaded = current >= critical_limit
     val healthy = overloaded match {
         true => {
             false
@@ -136,8 +136,8 @@ fun score_sample: (
         false => {
             true
         }
-    };
-    val route = (healthy, key, fallback_owner) route_sample;
+    }
+    val route = (healthy, key, fallback_owner) route_sample
 
     MetricScore {
         key: key,
@@ -205,22 +205,22 @@ fun fold_sample: (
         critical_count,
         first_missing_previous,
         warning_keys
-    } = state;
+    } = state
     val MetricSample {
         key,
         current,
         previous,
         weight
-    } = sample;
-    val warned = current >= warning_limit;
-    val critical = current >= critical_limit;
-    val delta = (current, previous) delta_from_previous;
-    val weighted = current * weight + delta;
+    } = sample
+    val warned = current >= warning_limit
+    val critical = current >= critical_limit
+    val delta = (current, previous) delta_from_previous
+    val weighted = current * weight + delta
     val next_warning_keys = warned then {
         (warning_keys, key) list_append
     } else {
         warning_keys
-    };
+    }
 
     MetricRollupState {
         total_weighted: total_weighted + weighted,
@@ -240,26 +240,26 @@ fun rollup_metrics: (
         warning_limit,
         critical_limit,
         owner_hint
-    } = policy;
-    val fallback_owner = owner_hint |> slot_choose;
-    val usable_samples = (score_samples, sample_has_previous) filter;
+    } = policy
+    val fallback_owner = owner_hint |> slot_choose
+    val usable_samples = (score_samples, sample_has_previous) filter
     val scored = (
         usable_samples,
         |sample| (sample, warning_limit, critical_limit, fallback_owner) score_sample
-    ) map;
-    val initial = () initial_state;
+    ) map
+    val initial = () initial_state
     val state = (
         audit_samples,
         initial,
         |current, sample| (current, sample, warning_limit, critical_limit) fold_sample
-    ) fold;
+    ) fold
     val MetricRollupState {
         total_weighted,
         warning_count,
         critical_count,
         first_missing_previous,
         warning_keys
-    } = state;
+    } = state
 
     MetricReport {
         total_weighted: total_weighted,
@@ -286,7 +286,7 @@ fun main: () -> MetricReport = {
             previous: () Option::None,
             weight: 3
         }
-    ];
+    ]
     val score_samples: List<MetricSample> = [
         MetricSample {
             key: 21,
@@ -300,7 +300,7 @@ fun main: () -> MetricReport = {
             previous: () Option::None,
             weight: 1
         }
-    ];
+    ]
     val policy = MetricPolicy {
         warning_limit: 75,
         critical_limit: 90,
@@ -308,7 +308,7 @@ fun main: () -> MetricReport = {
             value: 404,
             fallback: () Option::None
         }
-    };
+    }
 
     (audit_samples, score_samples, policy) rollup_metrics
 }

@@ -43,12 +43,6 @@ pub async fn doctor_check() -> Result<()> {
 
     check_dependency_lock(&root, &manifest, &mut issues);
 
-    // Check for unfrozen public APIs
-    check_unfrozen_apis(&root, &mut warnings).await?;
-
-    // Check for circular dependencies in local files
-    check_circular_deps(&root, &mut warnings).await?;
-
     // Check cache directory
     let cache_dir = root.join(".restrict-cache");
     if cache_dir.exists() {
@@ -63,7 +57,7 @@ pub async fn doctor_check() -> Result<()> {
     }
 
     // Check for required tools
-    check_required_tools(&mut warnings)?;
+    check_required_tools(&root, &mut warnings);
 
     // Print results
     println!("{}", "=== Diagnostic Results ===".bold());
@@ -172,41 +166,10 @@ fn check_dependency_lock(root: &Path, manifest: &Manifest, issues: &mut Vec<Stri
     }
 }
 
-async fn check_unfrozen_apis(_root: &std::path::Path, warnings: &mut Vec<String>) -> Result<()> {
-    // TODO: Implement actual check for unfrozen public APIs
-    // This would analyze the AST to find public functions that use mutable prototypes
-    warnings.push(
-        "Public API freeze analysis is experimental and out-of-scope for v0.0.1; this doctor check is skipped"
-            .to_string(),
-    );
-    Ok(())
-}
-
-async fn check_circular_deps(_root: &std::path::Path, warnings: &mut Vec<String>) -> Result<()> {
-    // TODO: Implement circular dependency detection in source files
-    // This would build a dependency graph of imports and check for cycles
-    warnings.push(
-        "Circular dependency analysis is experimental and out-of-scope for v0.0.1; this doctor check is skipped"
-            .to_string(),
-    );
-    Ok(())
-}
-
-fn check_required_tools(warnings: &mut Vec<String>) -> Result<()> {
-    // Check for restrict_lang compiler
-    if which::which("restrict_lang").is_err() {
-        warnings.push("'restrict_lang' compiler not found in PATH".to_string());
+fn check_required_tools(root: &Path, warnings: &mut Vec<String>) {
+    if let Err(message) = super::locate_restrict_lang_bin(Some(root)) {
+        warnings.push(message);
     }
-
-    // Check for WASM runtime
-    let has_wasmtime = which::which("wasmtime").is_ok();
-    let has_wasmer = which::which("wasmer").is_ok();
-
-    if !has_wasmtime && !has_wasmer {
-        warnings.push("No WASM runtime found (wasmtime or wasmer recommended)".to_string());
-    }
-
-    Ok(())
 }
 
 fn calculate_dir_size(path: &std::path::Path) -> Result<u64> {

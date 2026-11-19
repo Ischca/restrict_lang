@@ -42,7 +42,7 @@ fun bool_points: (flag: Boolean, points: Int32) -> Int32 = {
 }
 
 fun is_ready: (task: Task) -> Boolean = {
-    val Task { id, effort, impact, blocked, owner } = task;
+    val Task { id, effort, impact, blocked, owner } = task
     blocked match {
         true => { false }
         false => { true }
@@ -50,8 +50,8 @@ fun is_ready: (task: Task) -> Boolean = {
 }
 
 fun score_task: (task: Task) -> Int32 = {
-    val Task { id, effort, impact, blocked, owner } = task;
-    val blocked_penalty = (blocked, 30) bool_points;
+    val Task { id, effort, impact, blocked, owner } = task
+    val blocked_penalty = (blocked, 30) bool_points
     impact * 10 - effort - blocked_penalty
 }
 
@@ -60,7 +60,7 @@ fun score_one: (task: Task) -> Int32 = {
 }
 
 fun score_candidates: (tasks: List<Task>) -> List<Int32> = {
-    val ready = (tasks, |task| task |> is_ready) filter;
+    val ready = (tasks, |task| task |> is_ready) filter
     (ready, |task| task |> score_one) map
 }
 
@@ -81,16 +81,16 @@ fun first_unowned_task: (
 }
 
 fun add_task: (state: PlanningState, task: Task) -> PlanningState = {
-    val PlanningState { ready_effort, ready_impact, blocked_count, first_unowned } = state;
-    val Task { id, effort, impact, blocked, owner } = task;
+    val PlanningState { ready_effort, ready_impact, blocked_count, first_unowned } = state
+    val Task { id, effort, impact, blocked, owner } = task
     val ready_effort_delta = blocked match {
         true => { 0 }
         false => { effort }
-    };
+    }
     val ready_impact_delta = blocked match {
         true => { 0 }
         false => { impact }
-    };
+    }
 
     PlanningState {
         ready_effort: ready_effort + ready_effort_delta,
@@ -110,11 +110,11 @@ fun build_plan: (
         ready_impact: 0,
         blocked_count: 0,
         first_unowned: () Option::None
-    };
-    val state = (tasks, initial, |current, task| (current, task) add_task) fold;
-    val PlanningState { ready_effort, ready_impact, blocked_count, first_unowned } = state;
-    val escalation_codes = ([], fallback_codes) choose_first;
-    val unowned_task = (() Option::None, first_unowned) choose_first;
+    }
+    val state = (tasks, initial, |current, task| (current, task) add_task) fold
+    val PlanningState { ready_effort, ready_impact, blocked_count, first_unowned } = state
+    val escalation_codes = ([], fallback_codes) choose_first
+    val unowned_task = (() Option::None, first_unowned) choose_first
 
     SprintPlan {
         score: ready_impact * 10 - ready_effort,
@@ -142,8 +142,8 @@ fun main: () -> SprintPlan = {
             blocked: false,
             owner: () Option::None
         }
-    ];
-    val candidate_scores = scoring_tasks |> score_candidates;
+    ]
+    val candidate_scores = scoring_tasks |> score_candidates
 
     val planning_tasks: List<Task> = [
         Task {
@@ -160,8 +160,8 @@ fun main: () -> SprintPlan = {
             blocked: true,
             owner: () Option::None
         }
-    ];
-    val fallback_codes = [700, 701];
+    ]
+    val fallback_codes = [700, 701]
 
     (planning_tasks, candidate_scores, fallback_codes) build_plan
 }

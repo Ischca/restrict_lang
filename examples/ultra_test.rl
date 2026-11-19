@@ -12,13 +12,13 @@ record CheckSummary {
 }
 
 fun above_limit: (check: Check) -> Boolean = {
-    val Check { value, limit } = check;
+    val Check { value, limit } = check
     value > limit
 }
 
 fun score_check: (check: Check) -> CheckSummary = {
-    val Check { value, limit } = check;
-    val passed = value > limit;
+    val Check { value, limit } = check
+    val passed = value > limit
 
     CheckSummary {
         passed: passed,
@@ -27,8 +27,8 @@ fun score_check: (check: Check) -> CheckSummary = {
 }
 
 fun merge_summary: (left: CheckSummary, right: CheckSummary) -> CheckSummary = {
-    val CheckSummary { passed: left_passed, score: left_score } = left;
-    val CheckSummary { passed: right_passed, score: right_score } = right;
+    val CheckSummary { passed: left_passed, score: left_score } = left
+    val CheckSummary { passed: right_passed, score: right_score } = right
 
     CheckSummary {
         passed: left_passed && right_passed,
@@ -37,11 +37,11 @@ fun merge_summary: (left: CheckSummary, right: CheckSummary) -> CheckSummary = {
 }
 
 fun main: () -> Int32 = {
-    val first = Check { value: 9, limit: 4 };
-    val second = Check { value: 7, limit: 3 };
-    val first_summary = first |> score_check;
-    val second_summary = second |> score_check;
-    val summary = (first_summary, second_summary) merge_summary;
+    val first = Check { value: 9, limit: 4 }
+    val second = Check { value: 7, limit: 3 }
+    val first_summary = first |> score_check
+    val second_summary = second |> score_check
+    val summary = (first_summary, second_summary) merge_summary
 
     summary.score
 }

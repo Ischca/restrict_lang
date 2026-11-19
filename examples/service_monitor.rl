@@ -55,9 +55,9 @@ fun add_probe: (state: ServiceRollup, probe: ServiceProbe) -> ServiceRollup = {
         failed_count,
         stale_count,
         first_unowned
-    } = state;
-    val ServiceProbe { id, latency_ms, failures, stale, owner } = probe;
-    val failed = failures > 0 || latency_ms > 800;
+    } = state
+    val ServiceProbe { id, latency_ms, failures, stale, owner } = probe
+    val failed = failures > 0 || latency_ms > 800
 
     ServiceRollup {
         total_latency: total_latency + latency_ms,
@@ -87,7 +87,7 @@ fun evidence_codes: (
 }
 
 fun severity_from: (failed_count: Int32, stale_count: Int32) -> Int32 = {
-    val clean = failed_count == 0 && stale_count == 0;
+    val clean = failed_count == 0 && stale_count == 0
 
     !clean then {
         failed_count * 10 + stale_count * 3
@@ -110,10 +110,10 @@ fun finish_alert: (rollup: ServiceRollup, quiet: Boolean) -> ServiceAlert = {
         failed_count,
         stale_count,
         first_unowned
-    } = rollup;
-    val severity = (failed_count, stale_count) severity_from;
-    val page = severity >= 10 && !quiet;
-    val evidence_result = (failed_count, stale_count) evidence_codes;
+    } = rollup
+    val severity = (failed_count, stale_count) severity_from
+    val page = severity >= 10 && !quiet
+    val evidence_result = (failed_count, stale_count) evidence_codes
 
     evidence_result match {
         Ok(codes) => {
@@ -143,7 +143,7 @@ fun main: () -> ServiceAlert = {
         failed_count: 0,
         stale_count: 0,
         first_unowned: () Option::None
-    };
+    }
     val probes: List<ServiceProbe> = [
         ServiceProbe {
             id: 10,
@@ -159,16 +159,16 @@ fun main: () -> ServiceAlert = {
             stale: true,
             owner: () Option::None
         }
-    ];
-    val rollup = (probes, initial, |state, probe| (state, probe) add_probe) fold;
-    val alert = (rollup, false) finish_alert;
+    ]
+    val rollup = (probes, initial, |state, probe| (state, probe) add_probe) fold
+    val alert = (rollup, false) finish_alert
     val ServiceAlert {
         severity,
         page,
         first_unowned,
         evidence,
         message
-    } = alert;
+    } = alert
 
     ServiceAlert {
         severity: severity,

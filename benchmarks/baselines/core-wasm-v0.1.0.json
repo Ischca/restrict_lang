@@ -13,8 +13,8 @@
     "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)"
   },
   "provenance": {
-    "sourceRevision": "2d14681db010e5f465eff638b20d6edc6376d6cb",
-    "generatedAtUnixSeconds": 1786371548,
+    "sourceRevision": "d05505a9eb8d9134bd93704200698581447b9edf",
+    "generatedAtUnixSeconds": 1795067428,
     "timingHost": {
       "os": "macos",
       "architecture": "aarch64",
@@ -32,19 +32,19 @@
       "expected": 599990000,
       "arenaBytes": 65536,
       "rawArtifact": {
-        "wasmSha256": "134c3d8dc570cb7c1f2139fa12b59b0f980dd334f2b69edbf24dae41672c5940",
-        "wasmBytes": 25319,
-        "zstdBytes": 4897
+        "wasmSha256": "6e32f379d59cc54c6abf23c31fc24884455732f01bb65730d661bd55ef9232c1",
+        "wasmBytes": 30792,
+        "zstdBytes": 6984
       },
       "optimizedArtifact": {
-        "wasmSha256": "8304180795fca0753d2e47df9615f128b0e9db1fa549ec70c9b94d2fad208cfc",
-        "wasmBytes": 1397,
-        "zstdBytes": 750
+        "wasmSha256": "2e95da7ebe83c76f6f40cb799faf7ece7c48ab45adbf2aa09430cdcd523442a0",
+        "wasmBytes": 1413,
+        "zstdBytes": 762
       },
       "instrumentedArtifact": {
-        "wasmSha256": "8fe0ab1449a473dca0c7e5a4a28c86cad1fb233d1bdb62dbbc7ceb7ab9274a6e",
-        "wasmBytes": 1734,
-        "zstdBytes": 848
+        "wasmSha256": "c28472bf4ea9fa5b1dbbbf687e274f1a666a52ed5cc572906153b9fd7c9c8910",
+        "wasmBytes": 1750,
+        "zstdBytes": 856
       },
       "releaseReproducible": true,
       "memory": {
@@ -58,10 +58,10 @@
       "warmupIterations": 10,
       "iterations": 100,
       "timingReference": {
-        "optimizedCompileNs": 8837125,
-        "runtimeCompileNs": 312750,
-        "coldInstantiationNs": 14959,
-        "medianNs": 89000
+        "optimizedCompileNs": 7587167,
+        "runtimeCompileNs": 69666,
+        "coldInstantiationNs": 10708,
+        "medianNs": 94667
       }
     },
     {
@@ -73,9 +73,9 @@
       "expected": 75025,
       "arenaBytes": 65536,
       "rawArtifact": {
-        "wasmSha256": "3f18ab6281f0c18103168972b433eaadbf88e5e397b4e32f519e68572a4e2f98",
-        "wasmBytes": 26083,
-        "zstdBytes": 5033
+        "wasmSha256": "36107a2545fa4af17e765cf28000759ebc500cc9a6acd836ad78e84ddc8a2bb9",
+        "wasmBytes": 31540,
+        "zstdBytes": 7105
       },
       "optimizedArtifact": {
         "wasmSha256": "fdd75a7a9a6e6be9148cadb2d4bbdfa94901fd1b29aa4e0740e1d449ab80d646",
@@ -99,10 +99,10 @@
       "warmupIterations": 5,
       "iterations": 30,
       "timingReference": {
-        "optimizedCompileNs": 8505125,
-        "runtimeCompileNs": 36125,
-        "coldInstantiationNs": 7666,
-        "medianNs": 3691667
+        "optimizedCompileNs": 5172750,
+        "runtimeCompileNs": 33875,
+        "coldInstantiationNs": 5792,
+        "medianNs": 3572208
       }
     },
     {
@@ -114,19 +114,19 @@
       "expected": 1599850000,
       "arenaBytes": 1048576,
       "rawArtifact": {
-        "wasmSha256": "d122dbc5c9ca8b5603b80e0c29c12ac863e0ec73724720e0841040f82ba8c9ed",
-        "wasmBytes": 26171,
-        "zstdBytes": 5080
+        "wasmSha256": "6e3867d1c33331e8fd4cb765ca3c46b423e39185c60dcab29627dfd9547be074",
+        "wasmBytes": 31645,
+        "zstdBytes": 7163
       },
       "optimizedArtifact": {
-        "wasmSha256": "ffe6e609d467315a44d26dbf57a9121d38e43403c594f7e268397f4a726e867b",
-        "wasmBytes": 2450,
-        "zstdBytes": 1059
+        "wasmSha256": "e9a3157610c73471d5c9e0760c7aa416c44fbc4ac88106db178dd12925f6c6ee",
+        "wasmBytes": 2467,
+        "zstdBytes": 1068
       },
       "instrumentedArtifact": {
-        "wasmSha256": "a0ddf6a385fb01991e6d95a46bda0ee6e20752db854857c358ce073acdc0ab88",
-        "wasmBytes": 2816,
-        "zstdBytes": 1171
+        "wasmSha256": "8707c2c4f212ab9825616a894230d0292522aff7a1b687a82be0baebfdde6e08",
+        "wasmBytes": 2833,
+        "zstdBytes": 1180
       },
       "releaseReproducible": true,
       "memory": {
@@ -140,10 +140,10 @@
       "warmupIterations": 10,
       "iterations": 100,
       "timingReference": {
-        "optimizedCompileNs": 13603708,
-        "runtimeCompileNs": 44875,
-        "coldInstantiationNs": 72292,
-        "medianNs": 516125
+        "optimizedCompileNs": 5383625,
+        "runtimeCompileNs": 40792,
+        "coldInstantiationNs": 109417,
+        "medianNs": 486125
       }
     },
     {
@@ -155,19 +155,19 @@
       "expected": 54400,
       "arenaBytes": 1048576,
       "rawArtifact": {
-        "wasmSha256": "b8a3cc79cda4c92d178a35274fdb6a322b046e2fd9a16dba2a281c2023674456",
-        "wasmBytes": 28401,
-        "zstdBytes": 5541
+        "wasmSha256": "3c4ee2d2622a594e536c25f6c8ce60b6ecbee293686492b7acb40c053a906d70",
+        "wasmBytes": 33874,
+        "zstdBytes": 7596
       },
       "optimizedArtifact": {
-        "wasmSha256": "dc878a082c9c58fafa79b28524974f353832bfc2ebc9eab2054caacde309931b",
-        "wasmBytes": 4722,
-        "zstdBytes": 1506
+        "wasmSha256": "047833a1f5589ac724cf1b38405f33918d7e49ea0de5e4f3756e9fb3fec94bd7",
+        "wasmBytes": 4738,
+        "zstdBytes": 1519
       },
       "instrumentedArtifact": {
-        "wasmSha256": "bcf493e7c50eeae321c8afdcaa9ff5eb60f0e7134bba5502136060c60b9c6fab",
-        "wasmBytes": 5088,
-        "zstdBytes": 1622
+        "wasmSha256": "4e1b9e48eea3759eb083711f09b7403b2bf1eef205b6f2c7beaa0d4556c579c4",
+        "wasmBytes": 5104,
+        "zstdBytes": 1635
       },
       "releaseReproducible": true,
       "memory": {
@@ -186,10 +186,10 @@
       "warmupIterations": 5,
       "iterations": 30,
       "timingReference": {
-        "optimizedCompileNs": 13803125,
-        "runtimeCompileNs": 57125,
-        "coldInstantiationNs": 15542,
-        "medianNs": 494709
+        "optimizedCompileNs": 5331875,
+        "runtimeCompileNs": 47125,
+        "coldInstantiationNs": 15250,
+        "medianNs": 482041
       }
     }
   ]

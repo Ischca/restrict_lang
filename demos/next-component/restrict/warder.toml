@@ -1,0 +1,26 @@
+manifest-version = 1
+
+[package]
+name = "restrict-next-demo"
+version = "0.1.0"
+entry = "src/main.rl"
+edition = "2025"
+
+[dependencies]
+domain = { path = "packages/domain" }
+
+[build]
+target = "wasm32"
+optimize = true
+output = "dist/"
+
+[component]
+schema = 1
+package = "demo:restrict-next-demo@0.1.0"
+world = "restrict-next-demo"
+abi = "canonical-v1-sync"
+
+[[component.exports]]
+interface = "pricing"
+source = "quote"
+name = "quote"

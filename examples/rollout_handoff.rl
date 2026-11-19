@@ -16,7 +16,7 @@ record RolloutDecision {
 }
 
 fun keep_signal: (signal: RolloutSignal) = {
-    val selected = signal;
+    val selected = signal
     selected
 }
 
@@ -25,7 +25,7 @@ fun forwarded_budget: (signal: RolloutSignal) -> Int32 = {
 }
 
 fun decide: (signal: RolloutSignal) = {
-    val RolloutSignal { id, region, error_budget, canary_passed } = signal;
+    val RolloutSignal { id, region, error_budget, canary_passed } = signal
     val canary_penalty = canary_passed match {
         true => {
             0
@@ -33,8 +33,8 @@ fun decide: (signal: RolloutSignal) = {
         false => {
             20
         }
-    };
-    val score = error_budget + canary_penalty;
+    }
+    val score = error_budget + canary_penalty
 
     RolloutDecision {
         risk_score: score,
@@ -49,16 +49,16 @@ fun main: () -> Int32 = {
         region: "global",
         error_budget: 18,
         canary_passed: true
-    };
-    val budget = budget_signal |> forwarded_budget;
+    }
+    val budget = budget_signal |> forwarded_budget
 
     val decision_signal = RolloutSignal {
         id: 43,
         region: "regional",
         error_budget: 25,
         canary_passed: false
-    };
-    val decision = decision_signal |> decide;
+    }
+    val decision = decision_signal |> decide
 
     budget + decision.risk_score
 }

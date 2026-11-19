@@ -132,12 +132,24 @@ For import-free compute modules, select the host-neutral benchmark target:
   --instrument-memory compute.rl
 ```
 
-`wasm-core` rejects host I/O. The default `wasip1` profile supports the current
-`print` and `println` surface. `--release` removes unreachable generated code;
-the default artifact remains unoptimized for compiler debugging.
-`--instrument-memory` exports arena peak, allocation, live-byte, and reset
-metrics for diagnostics; benchmark timing should continue to use the ordinary
-release artifact.
+`wasm-core` rejects host I/O (`print`, `println`, `eprint`, `eprintln`,
+`print_int`, `print_float`, `cli_args`, `env_get`, `stdin_read_all`, and
+`exit`). The default `wasip1` profile supports console I/O and on-demand WASI
+Preview 1 CLI arguments, environment lookup, stdin reading, and exit codes.
+`--release` removes unreachable generated code; the default artifact remains
+unoptimized for compiler debugging. `--instrument-memory` exports arena peak,
+allocation, live-byte, and reset metrics for diagnostics; benchmark timing
+should continue to use the ordinary release artifact.
+
+For formatting and Warder projects:
+- `restrict_lang --fmt [--check] <file.rl>` and `warder fmt [--check]` format
+  Restrict sources while preserving comments;
+- `warder check` validates a project without emitting artifacts, and
+  `warder clean` removes generated build outputs;
+- `warder run` executes Core Wasm / WASI Preview 1 artifacts in-process via
+  its embedded `wasmi` runner (forwarding CLI args after `--`, env, and stdin);
+- `warder build` supports `project.*` module resolution and optional
+  `[build] arena-bytes` in `warder.toml`.
 
 ## ✨ Features
 
@@ -161,14 +173,16 @@ form surface while retaining the ABI boundaries below.
 - Closed, non-generic, non-recursive user-defined `enum` declarations are
   supported. Variants have zero or one payload, constructors use qualified
   `Type::Variant` names in OSV order, patterns use the same qualified names,
-  and matches must be exhaustive. `pub enum` is source-module metadata only:
+  and matches must be exhaustive. Concrete closed enums may adopt forms via
+  `MyEnum takes Form { ... }` (including `Display`), and payload-free enums
+  are Copy and support `==` / `!=`. `pub enum` is source-module metadata only:
   user enums have no host WebAssembly ABI.
-- The v0.0.1 compiler supports non-generic, method-only `form`
-  contracts, concrete record `takes` declarations, and `<T of A + B>` generic
+- The compiler supports non-generic, method-only `form` contracts, concrete
+  record and closed-enum `takes` declarations, and `<T of A + B>` generic
   bounds. Dispatch is static and monomorphized. Associated types, generic or
-  conditional adoptions, defaults, enum adoptions, and dynamic dispatch remain
-  future work. The current `Container` behavior used by `map` and `filter`
-  remains compiler-internal.
+  conditional adoptions, defaults, and dynamic dispatch remain future work. The
+  current `Container` behavior used by `map`, `filter`, and `fold` (for `List`,
+  `Option`, and `Range<Int32>`) remains compiler-internal.
 - Ordinary Core exports of generic functions still have no stable ABI and are
   rejected by v0.0.1 release-surface validation before `--check` success or
   code generation. The explicit B1 Component path may publish a generic
@@ -206,8 +220,8 @@ fun add: (x: Int32, y: Int32) -> Int32 = {
 
 fun main: () -> Int32 = {
     val result = (10, 20) add
-    "Result: " println;
-    result println;
+    "Result: " println
+    result println
     result
 }
 ```
@@ -224,8 +238,8 @@ val message = "hello"
 val next = message
 
 // Mutable bindings can be reassigned
-mut val counter = 0;
-counter = counter + 1;
+mut val counter = 0
+counter = counter + 1
 counter = counter + 1
 ```
 
@@ -258,27 +272,22 @@ val process_data = data
     |> save_to_database
 ```
 
-Line breaks are whitespace, so a direct OSV call may span lines. A literal or
-other value that cannot be a verb naturally starts a new expression:
+Direct OSV calls (`value function`) are line-bounded: they attach on the same
+line, so multi-line Restrict code is semicolon-free by default:
 
 ```restrict
-"first" println
-"second" println
-```
-
-Use `;` when the next callable-shaped expression must not extend the current
-OSV chain. This most often appears when a named intermediate is declared and
-then used by the block's final expression:
-
-```restrict
-val message = "ready";
+val message = "ready"
 message println
 ```
 
-That semicolon is intentional when `val` stages a named intermediate before a
-separate identifier-started expression. If the name is only needed inside a
-higher-order transformation, open a scoped verb clause and name its lambda
-input instead:
+Multi-line pipelines continue explicitly with `|>` (or infix operators,
+`.field` / `.clone`, and `then` / `else` / `match` / `while`). Semicolons (`;`)
+remain optional and are used only for placing multiple statements on one line
+(`val a = 1; a println`) or explicitly discarding a block's final expression as
+`()`.
+
+Scoped verb clauses keep higher-order transformations concise without extra
+bindings:
 
 ```restrict
 values map { |value|
@@ -286,8 +295,10 @@ values map { |value|
 }
 ```
 
-This keeps the transformation semicolon-free without making line breaks carry
-statement semantics.
+Restrict also standardizes on **`UpperCamelCase`** for types, constructors,
+forms, and contexts (`Option::Some`, `UserProfile`), and **`snake_case`** for
+functions, methods, variables, fields, modules, and lifetimes (`parse_int`,
+`user_id`). See [Naming and Syntax Decisions](docs/NAMING_AND_SYNTAX_DECISIONS.md).
 
 ### Lambda Expressions and Closures
 
@@ -337,9 +348,10 @@ positive match {
 ```
 
 The anonymous form is an immediate unary lambda application: it evaluates the
-left value once, evaluates the body once, and returns the body result. Use `;`
-when a following callable-shaped expression should start a separate expression.
-By contrast, `List` callbacks may run many times, so their inline scopes may
+left value once, evaluates the body once, and returns the body result. Direct
+OSV and anonymous scopes are line-bounded, so a following line starts a new
+statement naturally without `;` (use `|>` to continue across lines). By
+contrast, `List` callbacks may run many times, so their inline scopes may
 capture only immutable Copy values; `Option` callbacks run at most once.
 
 ### Pattern Matching
@@ -498,9 +510,9 @@ fun main: () -> () = {
 }
 ```
 
-Passing a non-Copy record as `self` consumes it under the ordinary affine
-rules. Forms with associated types, generic or conditional `takes`, default
-methods, enum adoptions, and dynamic dispatch are not in this initial slice.
+Passing a non-Copy record or payload enum as `self` consumes it under the
+ordinary affine rules. Forms with associated types, generic or conditional
+`takes`, default methods, and dynamic dispatch are not in this initial slice.
 
 ### Arena Memory Management
 
@@ -508,7 +520,7 @@ methods, enum adoptions, and dynamic dispatch are not in this initial slice.
 // Arena context with scoped temporary heap allocation
 fun process_batch: () -> Int32 = {
     with Arena { } {
-        val big_list = [1, 2, 3, 4, 5];
+        val big_list = [1, 2, 3, 4, 5]
         big_list |> list_count
     }
 }
@@ -525,9 +537,11 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - **[Quick Start](docs/public/en/getting-started/quick-start.md)** - Build and run a first v0.0.1 project
 - **[Language Guide](docs/public/en/guide/README.md)** - Current release-facing syntax and design rules
+- **[Naming and Syntax Decisions](docs/NAMING_AND_SYNTAX_DECISIONS.md)** - Official `UpperCamelCase` / `snake_case` rules and semicolon-free OSV design
 - **[Release Surface](docs/public/en/reference/release-surface.md)** - Current v0.0.1 language and host ABI boundaries
 - **[v0.1 Component ABI Scope](docs/V010_SYNCHRONOUS_COMPONENT_ABI.md)** - Implemented B1 boundary, intentional limits, and v0.2 async split
 - **[Examples](examples/)** - Sample programs and use cases
+- **[Next.js Component demo](demos/next-component/)** - Server-rendered React and a form calling Restrict pricing rules through the synchronous Component ABI
 
 ## 🏗️ Implementation Status
 
@@ -548,8 +562,13 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [x] Result types with expected-type inference
 - [x] Closed user-defined enums with qualified constructors and exhaustive matching
 - [x] Type-directed `impl` method dispatch through grouped OSV calls
-- [x] Method-only forms, concrete record adoptions, `of` bounds, and static form dispatch
-- [x] Display-polymorphic `print` and `println`
+- [x] Method-only forms, concrete record and closed-enum adoptions, `of` bounds, and static form dispatch
+- [x] Payload-free user enum `==` / `!=` equality and Copy semantics
+- [x] Display-polymorphic `print` and `println`, plus on-demand `wasip1` `cli_args`, `env_get`, `stdin_read_all`, `exit`, and stderr `panic`/`assert` diagnostics
+- [x] Bundled standard library (`import std.{prelude,math,option,result,list,string,char,map,io,lib}`) and practical String, Math, Char, Array, and Range builtins
+- [x] Loop `break`/`continue`, early `return`, `Range<Int32>` `map`/`filter`/`fold`, `\0`/`\xHH` escapes, `Char` relational ops and `Char as Int32`
+- [x] Consumed-`val` `.clone { ... }` affine field transfer and chained Copy field reads
+- [x] Token- and comment-preserving formatter (`restrict_lang --fmt`, `warder fmt`) and Warder DX (`warder check`, `warder clean`, embedded `wasmi` `warder run`, `project.*`, `build.arena-bytes`)
 - [x] Source import resolution through the CLI
 - [x] Direct local Warder source packages selected from the root
   `warder.toml`, with no leaf manifests
@@ -569,7 +588,7 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 - [ ] Temporal Affine Types (TAT) outside the default v0.0.1 gate
 - [ ] Generic, recursive, and host-ABI user enum support beyond the current closed enum slice
 - [ ] Registry, Git, foreign-WASM, and transitive Warder dependency resolution
-- [ ] Source-level import aliases, re-exports, and std aggregators
+- [ ] Source-level import aliases, re-exports, and capability-profile `std.{filesystem,http,database}` modules
 - [ ] Core-Wasm ABI for exported generic functions and host-visible record values
 - [ ] Rich external-WIT implementation/export, external-WIT resources, rich
   resource signatures, `many` callables, and generic nominal Component types
@@ -588,21 +607,23 @@ affine checking, type inference, pattern matching, and WebAssembly codegen.
 
 - Pattern guards and tuple patterns are future/design gaps; v0.0.1 covers
   Option, Result, List, Record, nested, and spread record patterns
-- Source-file imports and root-configuration-bound namespaces for direct local
-  Warder source packages are implemented. A managed repository has one
-  `warder.toml` and one generated `warder.lock`; local packages need only
-  `src/lib.rl`. Commit `warder.lock` when it is generated; do not hand-edit it.
-  Source `import ... as`, re-exports, std aggregators,
+- Source-file imports, bundled pure-Restrict `std.*` modules, and
+  root-configuration-bound namespaces for direct local Warder source packages
+  are implemented. A managed repository has one `warder.toml` and one generated
+  `warder.lock`; local packages need only `src/lib.rl`. Commit `warder.lock`
+  when it is generated; do not hand-edit it. Source `import ... as`,
+  re-exports, capability-profile `std.{filesystem,http,database}` modules,
   non-local/transitive resolution, and a multi-publish workspace graph remain
   future work
 - String interpolation is not part of the v0.0.1 syntax; use concatenation today
-- Closed user-defined enums are supported after v0.0.1, including use as the
-  error type in `Result<T, CustomError>`. Generic and recursive user enums,
-  direct host enum ABI, and `?` propagation syntax remain future work
+- Closed user-defined enums are supported after v0.0.1, including concrete
+  `takes` adoptions, payload-free `==`/`!=`, and use as the error type in
+  `Result<T, CustomError>`. Generic and recursive user enums, direct host enum
+  ABI, and `?` propagation syntax remain future work
 - Source forms are intentionally narrow: non-generic method contracts and
-  concrete non-generic record adoptions only. `takes` is not independently
-  public, and associated types, generic/conditional adoptions, defaults,
-  dynamic dispatch, and enum adoptions remain future work
+  concrete non-generic record or closed-enum adoptions only. `takes` is not
+  independently public, and associated types, generic/conditional adoptions,
+  defaults, and dynamic dispatch remain future work
 - Ordinary Core exports of generic functions remain unsupported; explicit B1
   Component exports require finite concrete function instances. Generic
   nominal Component types and direct Core record exports remain unsupported

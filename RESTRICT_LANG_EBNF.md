@@ -9,12 +9,19 @@ any_char        = [\u0001-\u10FFFF] ;  (* any Unicode char except NUL *)
                                        (* lexer implements Unicode categories: L*, N*, etc. *)
 
 (* Whitespace and Comments *)
-space           = " " | "\t" | "\r" | "\n" ;
+inline_space    = " " | "\t" ;
+newline         = "\r\n" | "\n" | "\r" ;
+space           = inline_space | newline ;
 line_comment    = "//" { any_char ^ "\n" } "\n" ;
 block_comment   = "/*" { any_char ^ "*/" } "*/" ;  (* no nested comments *)
+inline_comment  = "/*" { any_char ^ ( "*/" | "\n" | "\r" ) } "*/" ;
+inline_gap      = { inline_space | inline_comment } ;  (* same-line gap; never crosses newline *)
 lexeme_gap      = { space | line_comment | block_comment } ;  (* ZeroOrMore *)
 
 (* Identifiers and Keywords *)
+(* Conventions (see docs/NAMING_AND_SYNTAX_DECISIONS.md):
+   - UpperCamelCase: types, records, enums, forms, contexts, variant constructors
+   - snake_case: functions, methods, variables, parameters, fields, modules, lifetimes *)
 letter          = "a".."z" | "A".."Z" ;
 digit           = "0".."9" ;
 ident_start     = letter | "_" ;
@@ -23,7 +30,8 @@ identifier      = ident_start { ident_continue } ;
 
 keyword         = "fun" | "val" | "mut" | "record" | "context" | "enum" | "impl"
                 | "form" | "takes" | "of"
-                | "match" | "then" | "else" | "temporal" | "where" | "within"
+                | "match" | "then" | "else" | "while" | "break" | "continue"
+                | "return" | "temporal" | "where" | "within"
                 | "spawn" | "await" | "clone" | "freeze" | "pub" | "import"
                 | "export" | "as" | "fatal" | "true" | "false" | "Some" | "None"
                 | "with" | "lifetime" ;
@@ -39,7 +47,7 @@ float_literal   = decimal_digit { decimal_digit | "_" } "." decimal_digit { deci
                   [ ("e" | "E") [ "+" | "-" ] decimal_digit { decimal_digit } ] ;
 
 (* String and Character Literals *)
-escape_seq      = "\\" ( "n" | "r" | "t" | "\\" | "\"" | "'" ) ;
+escape_seq      = "\\" ( "n" | "r" | "t" | "\\" | "\"" | "'" | "0" | "x" hex_digit hex_digit ) ;
 string_literal  = "\"" { any_char ^ "\"" ^ "\\" | escape_seq } "\"" ;
 char_literal    = "'"  ( any_char ^ "'" ^ "\\" | escape_seq ) "'" ;
 
@@ -88,7 +96,23 @@ where_clause        = "where" temporal_constraint { "," temporal_constraint } ;
 (* Expression Hierarchy - Lowest to Highest Precedence *)
 expression          = pipe_expr ;
 
-pipe_expr           = logical_or_expr { pipe_op logical_or_expr } ;
+pipe_expr           = logical_or_expr { lexeme_gap pipe_op lexeme_gap pipe_stage } ;
+                                                  (* explicit multi-line continuation via |> *)
+
+pipe_stage          = scope_block                              (* anonymous exact-once scope: one binder *)
+                    | postfix_expr inline_gap scope_block
+                      { inline_gap postfix_expr inline_gap scope_block }
+                                                               (* scoped verb clause(s) *)
+                    | logical_or_expr ;                        (* plain verb *)
+
+scope_block         = "{" [ "|" [ param_list ] "|" ] { statement } [ expression ] "}" ;
+                      (* unheaded: binds the contextual focus `it` *)
+
+arg_tuple_pipe      = "(" expression "," expression { "," expression } ")"
+                      lexeme_gap pipe_op lexeme_gap postfix_expr
+                      { inline_gap scope_block } ;
+                      (* (a, b) |> verb == (a, b) verb; binds at call_expr precedence *)
+                      (* an argument tuple is not a value and cannot feed a scope_block *)
 
 logical_or_expr     = logical_and_expr { logical_or_op logical_and_expr } ;
 
@@ -102,8 +126,10 @@ additive_expr       = multiplicative_expr { additive_op multiplicative_expr } ;
 
 multiplicative_expr = call_expr { multiplicative_op call_expr } ;
 
-call_expr           = unary_expr [ call_expr ] ;  (* right associative for OSV *)
-                                                  (* a b c parses as a (b c) *)
+call_expr           = arg_tuple_pipe
+                    | unary_expr [ inline_gap call_expr ] ;  (* right associative for OSV *)
+                                                  (* line-bounded: does not cross newlines *)
+                                                  (* a b c parses as a (b c) on one line *)
 
 unary_expr          = [ unary_op ] postfix_expr ;
 
@@ -126,6 +152,10 @@ primary_expr        = literal
                     | block_expr
                     | match_expr
                     | then_else_expr
+                    | while_expr
+                    | break_expr
+                    | continue_expr
+                    | return_expr
                     | record_literal
                     | scope_expr ;
 
@@ -148,9 +178,14 @@ param               = identifier [ ":" type ] ;
 block_expr          = "{" { statement } [ expression ] "}" ;
                       (* implicit Unit if no final expression *)
 
-(* Conditional Expression *)
+(* Conditional, Loop, and Return Expressions *)
 then_else_expr      = expression lexeme_gap "then" lexeme_gap block_expr
                       lexeme_gap "else" lexeme_gap block_expr ;
+while_expr          = expression lexeme_gap "while" lexeme_gap block_expr ;
+break_expr          = "break" ;
+continue_expr       = "continue" ;
+return_expr         = "return" [ inline_gap expression ] ;
+                      (* bare return followed by newline, "}", ";", or EOF returns () *)
 
 (* Match Expression *)
 match_expr          = expression "match" "{" match_arm { match_arm } "}" ;
@@ -194,7 +229,9 @@ scope_value         = identifier                      (* context name *)
 statement           = val_decl
                     | assignment
                     | temporal_decl
-                    | expression [ ";" ] ;  (* semicolon optional *)
+                    | expression [ ";" ] ;  (* semicolon optional; multi-line code is *)
+                                           (* semicolon-free; ";" separates same-line *)
+                                           (* statements or discards final block value *)
                                            (* type checker enforces purity *)
 
 val_decl            = [ "mut" ] "val" identifier [ ":" type ] "=" expression ;
@@ -262,8 +299,9 @@ form_method_decl    = "fun" identifier ":" "("
                       "self" ":" "Self" { "," param_def } ")"
                       "->" type [ "," ] ;
 
-(* An adoption targets a concrete, non-generic record. The implementation
-   repeats each complete signature, replacing Self with the target record. *)
+(* An adoption targets a concrete, non-generic record or closed user-defined enum.
+   The implementation repeats each complete signature, replacing Self with the
+   target type. *)
 takes_decl          = identifier "takes" identifier "{"
                       takes_method_decl { takes_method_decl } "}" ;
 
@@ -324,14 +362,17 @@ restrict_program    = program ;
 - `type`: Type aliases
 
 Source-level associated form types, generic forms, generic or conditional
-`takes`, default form methods, enum adoptions, and dynamic dispatch are also
+`takes`, default form methods, and dynamic dispatch are also
 reserved for future extensions.
 
 ### Edge Cases and Clarifications
 - Nested comments not supported: `/* /* */ */` is invalid
 - OSV precedence: `a + b c` parses as `(a + b) c`
+- Line-bounded direct OSV: bare direct OSV (`a b`), scoped verb attachment, and anonymous scopes (`expr { ... }`) attach on the same line (`inline_gap`); multi-line pipelines continue explicitly via `|>`, infix operators, `.field` / `.clone`, or `then` / `else` / `match` / `while`
+- Pipe stages: `|>` is the multi-line spelling of every application form — `value |> verb`, `(a, b) |> verb`, `value |> verb { ... }`, and `value |> { ... }` elaborate to the same calls as their same-line spellings
 - Postfix chain: `x.field.clone await` applies left-to-right
-- Pure expressions: `x + y;` allowed only if type checker confirms no side effects
+- Pure expressions: `x + y` (or `x + y;` when discarding the value or placing multiple statements on one line) is allowed only if type checker confirms no side effects
+- Naming conventions: `UpperCamelCase` for nominal types, forms, contexts, and variant constructors; `snake_case` for functions, methods, variables, fields, modules, and lifetimes (see `docs/NAMING_AND_SYNTAX_DECISIONS.md`)
 
 ### Testing Considerations
 - Complex OSV chains: `Database { temporal ~t { a |> b c } }`

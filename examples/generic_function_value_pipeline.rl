@@ -25,12 +25,12 @@ fun apply_first: <T, U>(f: T -> U, value: T) -> U = {
 }
 
 fun main: () -> ScoreSummary = {
-    val raw_scores = [1.5, 2.5, 3.5];
-    val fallback_scores: List<Float64> = () empty_values;
-    val source_scores = (raw_scores, fallback_scores) choose_first;
-    val normalized = (source_scores, keep) map;
-    val first_score = 1.5 |> keep;
-    val adjusted_score = (|score| score + 0.25, first_score) apply_first;
+    val raw_scores = [1.5, 2.5, 3.5]
+    val fallback_scores: List<Float64> = () empty_values
+    val source_scores = (raw_scores, fallback_scores) choose_first
+    val normalized = (source_scores, keep) map
+    val first_score = 1.5 |> keep
+    val adjusted_score = (|score| score + 0.25, first_score) apply_first
 
     ScoreSummary {
         normalized: normalized,

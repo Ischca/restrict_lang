@@ -12,7 +12,7 @@ fun add_int64: (total: Int64, value: Int64) -> Int64 = {
 }
 
 fun billable_delta_score: (deltas: List<Int64>) -> Int64 = {
-    val zero: Int64 = 0;
+    val zero: Int64 = 0
     (deltas, zero, add_int64) fold
 }
 
@@ -24,14 +24,14 @@ export fun dogfood_nested_result_list_score: () -> Int64 = {
             6_000_000_000,
             7_000_000_000
         ]) Result::Ok
-    };
+    }
 
     batch.meter_deltas match {
         Ok(deltas) => {
             deltas |> billable_delta_score
         }
         Err(message) => {
-            val zero: Int64 = 0;
+            val zero: Int64 = 0
             zero
         }
     }

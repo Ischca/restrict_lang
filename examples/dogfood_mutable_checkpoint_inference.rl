@@ -1,13 +1,13 @@
 fun latest_checkpoint_id: () -> Int64 = {
-    mut val checkpoint_ids = [];
-    checkpoint_ids = (checkpoint_ids, 10000000000) list_append;
-    checkpoint_ids = (checkpoint_ids, 20000000000) list_append;
+    mut val checkpoint_ids = []
+    checkpoint_ids = (checkpoint_ids, 10000000000) list_append
+    checkpoint_ids = (checkpoint_ids, 20000000000) list_append
     (checkpoint_ids, 1) list_get
 }
 
 fun selected_ratio: () -> Float64 = {
-    mut val ratio = () Option::None;
-    ratio = (1.5) Option::Some;
+    mut val ratio = () Option::None
+    ratio = (1.5) Option::Some
 
     ratio match {
         Some(value) => {

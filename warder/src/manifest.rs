@@ -169,6 +169,12 @@ pub struct Build {
     pub optimize: bool,
     #[serde(default = "default_output")]
     pub output: String,
+    #[serde(
+        rename = "arena-bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub arena_bytes: Option<u32>,
 }
 
 impl Default for Build {
@@ -177,6 +183,7 @@ impl Default for Build {
             target: default_target(),
             optimize: default_optimize(),
             output: default_output(),
+            arena_bytes: None,
         }
     }
 }
@@ -253,6 +260,11 @@ impl Manifest {
                 self.manifest_version,
                 MANIFEST_VERSION
             );
+        }
+        if let Some(arena_bytes) = self.build.arena_bytes {
+            if arena_bytes < 8 || !arena_bytes.is_multiple_of(4) {
+                anyhow::bail!("build.arena-bytes must be at least 8 bytes and a multiple of 4");
+            }
         }
         if let Some(component) = &self.component {
             component.validate(&self.package)?;
@@ -1165,6 +1177,38 @@ abi = "canonical-v1-sync"
 
         assert!(error.to_string().contains("non-regular Warder manifest"));
         assert_eq!(std::fs::read_to_string(outside).unwrap(), "keep\n");
+    }
+
+    #[test]
+    fn build_arena_bytes_parses_and_validates() {
+        let mut manifest: Manifest = toml::from_str(
+            r#"manifest-version = 1
+
+[package]
+name = "app"
+version = "0.1.0"
+
+[build]
+arena-bytes = 65536
+"#,
+        )
+        .unwrap();
+        manifest.validate().unwrap();
+        assert_eq!(manifest.build.arena_bytes, Some(65536));
+
+        manifest.build.arena_bytes = Some(4);
+        assert!(manifest
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("at least 8 bytes"));
+
+        manifest.build.arena_bytes = Some(10);
+        assert!(manifest
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("multiple of 4"));
     }
 }
 

@@ -1,22 +1,106 @@
 use std::fs;
 use std::path::Path;
 
-use restrict_lang::parse_program;
+use restrict_lang::module::ModuleResolver;
+use restrict_lang::{
+    check_v001_release_surface, parse_program, TypeChecker, WasmCodeGen, WasmTargetProfile,
+};
+
+const SHIPPED_STD_MODULES: &[&str] = &[
+    "lib", "prelude", "char", "math", "option", "result", "list", "map", "string", "io",
+];
+
+const PLANNED_CAPABILITY_PROFILES: &[&str] =
+    &["std/database.rl", "std/filesystem.rl", "std/http.rl"];
+
+const REFERENCE_ONLY_SOURCES: &[&str] = &["std/test_module.rl", "stdlib/src/IO.rl"];
 
 #[test]
-fn std_reference_sources_are_explicit_parseable_indexes() {
-    for path in std_reference_sources() {
-        let source = read_workspace_file(&path);
-
+fn shipped_std_modules_compile_through_typecheck_release_surface_and_wasm_codegen() {
+    for module_name in SHIPPED_STD_MODULES {
+        let source_path = format!("std/{module_name}.rl");
+        let module_source = read_workspace_file(&source_path);
+        let (remaining, _) = parse_program(&module_source)
+            .unwrap_or_else(|err| panic!("{source_path} should parse: {err:?}"));
         assert!(
-            source.contains("not the runtime implementation"),
-            "{path} should say that runtime std behavior is compiler-registered"
-        );
-        assert!(
-            source.contains("compiler"),
-            "{path} should point readers to the compiler-owned implementation"
+            remaining.trim().is_empty(),
+            "{source_path} should parse completely, remaining: {remaining:?}"
         );
 
+        let driver =
+            format!("import std.{module_name}.*\n\nexport fun main: () -> Int32 = {{\n    1\n}}\n");
+        let (_, program) = parse_program(&driver)
+            .unwrap_or_else(|err| panic!("driver for std.{module_name} should parse: {err:?}"));
+
+        let mut resolver = ModuleResolver::new();
+        let resolved = resolver
+            .resolve_program_imports(program)
+            .unwrap_or_else(|err| panic!("std.{module_name} should resolve: {err}"));
+
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&resolved)
+            .unwrap_or_else(|err| panic!("std.{module_name} should typecheck: {err}"));
+
+        check_v001_release_surface(&resolved, &checker)
+            .unwrap_or_else(|err| panic!("std.{module_name} should pass release surface: {err}"));
+
+        let profile = if *module_name == "io" {
+            WasmTargetProfile::WasiP1
+        } else {
+            WasmTargetProfile::WasmCore
+        };
+        let mut codegen = WasmCodeGen::new().with_target_profile(profile);
+        let wat = codegen
+            .generate(&resolved)
+            .unwrap_or_else(|err| panic!("std.{module_name} should generate WAT: {err}"));
+
+        let wasm = wat::parse_str(&wat)
+            .unwrap_or_else(|err| panic!("std.{module_name} WAT should parse: {err}\n{wat}"));
+        wasmparser::Validator::new()
+            .validate_all(&wasm)
+            .unwrap_or_else(|err| panic!("std.{module_name} Wasm should validate: {err}\n{wat}"));
+    }
+}
+
+#[test]
+fn std_namespace_remains_reserved_and_unknown_or_planned_modules_fail_cleanly() {
+    let mut resolver = ModuleResolver::new();
+    let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+    let root_err = resolver
+        .add_package_root("std".to_string(), std_dir)
+        .expect_err("--module-root std=... must remain rejected");
+    assert!(
+        root_err.to_string().contains("reserved"),
+        "expected reserved namespace error, got: {root_err}"
+    );
+
+    for (module_name, expected_fragment) in [
+        ("foo", "Unknown standard library module"),
+        ("http", "planned capability profile"),
+        ("database", "planned capability profile"),
+        ("filesystem", "planned capability profile"),
+    ] {
+        let driver = format!("import std.{module_name}.*\nfun main: () -> Int32 = {{ 0 }}\n");
+        let (_, program) = parse_program(&driver).expect("driver should parse");
+        let mut r = ModuleResolver::new();
+        let err = r
+            .resolve_program_imports(program)
+            .expect_err(&format!("import std.{module_name}.* should fail"));
+        assert!(
+            err.to_string().contains(expected_fragment),
+            "import std.{module_name}.* error should contain {expected_fragment:?}, got: {err}"
+        );
+    }
+}
+
+#[test]
+fn planned_capability_profiles_and_reference_indexes_stay_comment_only() {
+    for path in PLANNED_CAPABILITY_PROFILES
+        .iter()
+        .chain(REFERENCE_ONLY_SOURCES.iter())
+    {
+        let source = read_workspace_file(path);
         let (remaining, _program) =
             parse_program(&source).unwrap_or_else(|err| panic!("{path} should parse: {err:?}"));
         assert!(
@@ -27,20 +111,35 @@ fn std_reference_sources_are_explicit_parseable_indexes() {
         for (line_number, line) in source.lines().enumerate() {
             assert!(
                 line.trim().is_empty() || line.trim_start().starts_with("//"),
-                "{path}:{} should stay a comment-only reference index",
+                "{path}:{} should stay a comment-only file",
                 line_number + 1
             );
         }
     }
+
+    for path in PLANNED_CAPABILITY_PROFILES {
+        let source = read_workspace_file(path);
+        assert!(
+            source.contains("planned capability-profile"),
+            "{path} should clearly document itself as a planned capability profile"
+        );
+    }
+
+    for path in REFERENCE_ONLY_SOURCES {
+        let source = read_workspace_file(path);
+        assert!(
+            source.contains("not the runtime implementation") && source.contains("compiler"),
+            "{path} should point readers to the compiler-owned implementation"
+        );
+        assert_no_stale_release_words(path, &source);
+    }
 }
 
 #[test]
-fn std_reference_sources_do_not_reintroduce_stale_syntax() {
-    for path in std_reference_sources() {
+fn std_sources_do_not_reintroduce_stale_syntax() {
+    let all_sources = checked_in_reference_sources();
+    for path in all_sources {
         let source = read_workspace_file(&path);
-
-        assert_no_stale_release_words(&path, &source);
-
         assert!(
             !source.contains("fun<"),
             "{path} should not use legacy generic function syntax"
@@ -55,17 +154,19 @@ fn std_reference_sources_do_not_reintroduce_stale_syntax() {
                 "{path} should not document function-first IO call `{io_name}(...)`"
             );
         }
-        assert!(
-            !source.contains("fun ") && !source.contains("fun<"),
-            "{path} should stay a source-comment reference index"
-        );
+        for stale_kw in ["TODO", "FIXME", "let", "fn"] {
+            assert!(
+                !contains_word_case_insensitive(&source, stale_kw),
+                "{path} should not contain stale keyword `{stale_kw}`"
+            );
+        }
     }
 }
 
 #[test]
 fn legacy_stdlib_sources_do_not_advertise_non_v001_io() {
-    for path in std_reference_sources() {
-        let source = read_workspace_file(&path);
+    for path in REFERENCE_ONLY_SOURCES {
+        let source = read_workspace_file(path);
 
         for phrase in ["read_line", "stdin", "standard input"] {
             assert!(
@@ -123,10 +224,6 @@ fn std_readme_uses_current_v001_call_and_import_surface() {
     let source = read_workspace_file("std/README.md");
 
     assert!(
-        !source.contains("import std."),
-        "std/README.md should not imply package-level std aggregators"
-    );
-    assert!(
         !source.contains(" as "),
         "std/README.md should not imply import aliases"
     );
@@ -141,22 +238,31 @@ fn std_readme_uses_current_v001_call_and_import_surface() {
 
 #[test]
 fn every_std_source_file_has_hygiene_coverage() {
-    let covered = std_reference_sources();
+    let mut covered = SHIPPED_STD_MODULES
+        .iter()
+        .map(|name| format!("std/{name}.rl"))
+        .collect::<Vec<_>>();
+    covered.extend(PLANNED_CAPABILITY_PROFILES.iter().map(|p| (*p).to_string()));
+    covered.extend(REFERENCE_ONLY_SOURCES.iter().map(|p| (*p).to_string()));
+
+    let checked_in = checked_in_reference_sources();
     assert!(
-        !covered.is_empty(),
+        !checked_in.is_empty(),
         "std source hygiene should cover checked-in std/*.rl and stdlib/**/*.rl files"
     );
 
-    for path in checked_in_reference_sources() {
+    for path in &checked_in {
         assert!(
-            covered.contains(&path),
+            covered.contains(path),
             "{path} should be covered by std source hygiene"
         );
     }
-}
-
-fn std_reference_sources() -> Vec<String> {
-    checked_in_reference_sources()
+    for path in &covered {
+        assert!(
+            checked_in.contains(path),
+            "{path} is listed in std hygiene coverage but missing from workspace"
+        );
+    }
 }
 
 fn checked_in_reference_sources() -> Vec<String> {

@@ -35,11 +35,11 @@ export fun evaluate_release: (input: ReleaseInput, default_owner: Int32) -> Rele
         failing_checks,
         risk_signals,
         manual_owner
-    } = input;
-    val signal_scores = (risk_signals, score_signal) map;
-    val signal_total = (signal_scores, 0, add_signal_score) fold;
-    val score = signal_total + (failing_checks * 10) - lead_time_days;
-    val owner = (manual_owner, default_owner) choose_owner;
+    } = input
+    val signal_scores = (risk_signals, score_signal) map
+    val signal_total = (signal_scores, 0, add_signal_score) fold
+    val score = signal_total + (failing_checks * 10) - lead_time_days
+    val owner = (manual_owner, default_owner) choose_owner
 
     ReleaseVerdict {
         score: score,

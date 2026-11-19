@@ -63,10 +63,10 @@ export fun decide_review: (
             stale_penalty,
             canary_penalty,
             exposure_penalty
-        } = limits;
-        val review_penalty = (review, failure_penalty, stale_penalty) policy_penalty;
-        val rollout_penalty = (rollout, canary_penalty, exposure_penalty) policy_penalty;
-        val raw_score = base_score - review_penalty - rollout_penalty;
+        } = limits
+        val review_penalty = (review, failure_penalty, stale_penalty) policy_penalty
+        val rollout_penalty = (rollout, canary_penalty, exposure_penalty) policy_penalty
+        val raw_score = base_score - review_penalty - rollout_penalty
 
         raw_score >= minimum_score then {
             raw_score

@@ -26,8 +26,8 @@ fun sample_penalty: (sampled: Boolean) -> Int32 = {
 fun classify_feature: (signal: FeatureSignal) = {
     signal match {
         FeatureSignal { enabled: true, sampled, error_budget, ..._ } => {
-            val penalty = sampled |> sample_penalty;
-            val priority = error_budget + penalty;
+            val penalty = sampled |> sample_penalty
+            val priority = error_budget + penalty
 
             FeatureDecision {
                 priority: priority,
@@ -55,16 +55,16 @@ fun main: () -> Int32 = {
         enabled: true,
         sampled: true,
         error_budget: 18
-    };
-    val live_priority = live_signal |> decision_priority;
+    }
+    val live_priority = live_signal |> decision_priority
 
     val paused_signal = FeatureSignal {
         feature_id: 8,
         enabled: false,
         sampled: false,
         error_budget: 3
-    };
-    val paused = paused_signal |> classify_feature;
+    }
+    val paused = paused_signal |> classify_feature
 
     live_priority + paused.priority
 }

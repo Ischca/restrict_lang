@@ -50,24 +50,24 @@ fun make_policy: (risk_weight: Int32) -> Int32 -> Change -> Int32 = {
                 impact,
                 tests_added,
                 owner_confirmed
-            } = change;
+            } = change
 
-            val risk_score = risk * risk_weight;
-            val impact_score = impact * impact_weight;
-            val owner_score = (owner_confirmed, 10) bool_points;
-            val missing_tests = tests_added |> test_penalty;
+            val risk_score = risk * risk_weight
+            val impact_score = impact * impact_weight
+            val owner_score = (owner_confirmed, 10) bool_points
+            val missing_tests = tests_added |> test_penalty
 
             risk_score + impact_score + owner_score - missing_tests
-        };
+        }
 
         score_change
-    };
+    }
 
     with_impact
 }
 
 fun decide_review: (policy: Change -> Int32, change: Change) -> ReviewDecision = {
-    val score = change |> policy;
+    val score = change |> policy
 
     ReviewDecision {
         score: score,
@@ -77,14 +77,14 @@ fun decide_review: (policy: Change -> Int32, change: Change) -> ReviewDecision =
 }
 
 fun main: () -> ReviewDecision = {
-    val impact_policy = 12 |> make_policy;
-    val score_policy = 7 |> impact_policy;
+    val impact_policy = 12 |> make_policy
+    val score_policy = 7 |> impact_policy
     val change = Change {
         risk: 6,
         impact: 5,
         tests_added: 1,
         owner_confirmed: true
-    };
+    }
 
     (score_policy, change) decide_review
 }

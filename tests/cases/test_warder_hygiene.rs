@@ -121,7 +121,7 @@ fn warder_test_executes_public_boolean_wasm_exports() {
         "pub fun test_name: () -> Boolean",
         "wasmparser::Validator::new()",
         "get_typed_func::<(), i32>",
-        "Store::new(&engine, TestIo::default())",
+        "Store::new(&engine, WasiState::captured())",
     ] {
         assert!(
             source.contains(marker),
@@ -217,11 +217,21 @@ fn warder_wrap_experimental_paths_are_release_scoped() {
 }
 
 #[test]
-fn warder_doctor_skipped_checks_are_release_scoped() {
+fn warder_doctor_does_not_emit_skipped_stub_warnings() {
     let source = read_workspace_file("warder/src/commands/doctor.rs");
 
-    assert_release_readiness_message(&source, "Public API freeze analysis");
-    assert_release_readiness_message(&source, "Circular dependency analysis");
+    assert!(
+        !source.contains("Public API freeze analysis"),
+        "`warder doctor` should not emit the removed Public API freeze stub warning"
+    );
+    assert!(
+        !source.contains("Circular dependency analysis"),
+        "`warder doctor` should not emit the removed Circular dependency stub warning"
+    );
+    assert!(
+        !source.contains("this doctor check is skipped"),
+        "`warder doctor` should not emit noisy always-skipped warnings"
+    );
 }
 
 #[test]

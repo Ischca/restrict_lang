@@ -87,11 +87,11 @@ fun plan_profile: (profile: LiteralProfile) -> LiteralPlan = {
         base,
         samples,
         owner
-    } = profile;
-    val sample_score = samples |> sum_samples;
-    val owner_id = (owner, 0x2A) choose_value;
-    val score = base + score_bias + sample_score + (separator |> escape_bonus) + (scale |> scale_bonus) + owner_id;
-    val route = score |> route_score;
+    } = profile
+    val sample_score = samples |> sum_samples
+    val owner_id = (owner, 0x2A) choose_value
+    val score = base + score_bias + sample_score + (separator |> escape_bonus) + (scale |> scale_bonus) + owner_id
+    val route = score |> route_score
 
     LiteralPlan {
         score: score,
@@ -109,7 +109,7 @@ fun main: () -> LiteralPlan = {
         base: 0xFF,
         samples: [1_000, 2, 3],
         owner: () Option::None
-    };
+    }
 
     profile |> plan_profile
 }

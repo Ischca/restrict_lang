@@ -1,10 +1,9 @@
-// Standard Library: Database reference surface
+// Standard Library: Database capability profile
 //
-// This file is not the runtime implementation. The current compiler has no
-// compiler-registered database surface in v0.0.1.
-// Keep this file as a canonical, source-adjacent index for readers and tests.
+// This file is a planned capability-profile specification and is not an active
+// pure-Restrict module in this release.
+// Importing `std.database` fails with an explicit capability-profile
+// diagnostic.
 //
-// Current compiler-registered surface:
-// - none
-//
-// Database capabilities are outside the compiler-registered v0.0.1 surface.
+// Database connections, queries, and transactions require explicit host
+// capabilities outside the default pure-Restrict surface.

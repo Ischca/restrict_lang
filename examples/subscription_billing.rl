@@ -23,7 +23,7 @@ record Invoice {
 }
 
 fun default_credits: () -> List<Int32> = {
-    val credits = [];
+    val credits = []
     credits
 }
 
@@ -57,17 +57,17 @@ fun first_credit: (credits: List<Int32>) -> Int32 = {
 }
 
 fun compute_invoice: (plan: Plan, usage: Usage) -> Invoice = {
-    val Plan { base, per_seat, trial } = plan;
-    val Usage { seats, incidents, coupon, credits } = usage;
+    val Plan { base, per_seat, trial } = plan
+    val Usage { seats, incidents, coupon, credits } = usage
 
-    val seat_total = seats * per_seat;
-    val subtotal = base + seat_total;
-    val fallback: () -> Int32 = || 0;
-    val discount = (coupon, fallback) coupon_discount;
-    val trial_discount = trial |> trial_credit;
-    val surcharge = incidents |> incident_surcharge;
-    val credit = credits |> first_credit;
-    val total = subtotal + surcharge - discount - trial_discount - credit;
+    val seat_total = seats * per_seat
+    val subtotal = base + seat_total
+    val fallback: () -> Int32 = || 0
+    val discount = (coupon, fallback) coupon_discount
+    val trial_discount = trial |> trial_credit
+    val surcharge = incidents |> incident_surcharge
+    val credit = credits |> first_credit
+    val total = subtotal + surcharge - discount - trial_discount - credit
 
     Invoice {
         subtotal: subtotal,
@@ -82,14 +82,14 @@ fun main: () -> Int32 = {
         base: 100,
         per_seat: 12,
         trial: true
-    };
-    val credits = () default_credits;
+    }
+    val credits = () default_credits
     val usage = Usage {
         seats: 18,
         incidents: 1,
         coupon: () Option::None,
         credits: credits
-    };
-    val invoice = (plan, usage) compute_invoice;
+    }
+    val invoice = (plan, usage) compute_invoice
     invoice.total
 }

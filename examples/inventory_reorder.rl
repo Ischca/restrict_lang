@@ -17,7 +17,7 @@ fun validate_item: (item: StockItem) -> Result<StockItem, Int32> = {
 }
 
 fun reorder_delay: (item: StockItem) -> Int32 = {
-    val available = item.on_hand - item.reserved;
+    val available = item.on_hand - item.reserved
 
     available < item.reorder_point then {
         item.lead_days + 1
@@ -27,7 +27,7 @@ fun reorder_delay: (item: StockItem) -> Int32 = {
 }
 
 fun plan_item: (item: StockItem) -> Int32 = {
-    val checked = item |> validate_item;
+    val checked = item |> validate_item
 
     checked match {
         Ok(valid_item) => {
@@ -45,7 +45,7 @@ fun main: () -> Int32 = {
         reserved: 7,
         reorder_point: 8,
         lead_days: 3
-    };
+    }
 
     item |> plan_item
 }

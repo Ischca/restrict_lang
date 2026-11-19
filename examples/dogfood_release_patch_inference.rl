@@ -52,18 +52,18 @@ fun patch_release: (base: ReleaseSnapshot, review: ReviewInput) = {
         new_findings,
         reviewer,
         freeze_rollout
-    } = review;
-    val risk_score = new_findings * 9;
-    val passing_checks = checks_delta + 3;
-    val hold_owner = (reviewer, freeze_rollout) hold_owner_for;
-    val route = (risk_score, freeze_rollout) route_for;
+    } = review
+    val risk_score = new_findings * 9
+    val passing_checks = checks_delta + 3
+    val hold_owner = (reviewer, freeze_rollout) hold_owner_for
+    val route = (risk_score, freeze_rollout) route_for
     val patched = base.clone {
         risk_score: risk_score,
         passing_checks: passing_checks,
         hold_owner: hold_owner,
         audit_codes: [],
         route: route
-    };
+    }
 
     patched freeze
 }
@@ -77,14 +77,14 @@ fun main: () -> Int32 = {
         hold_owner: () Option::None,
         audit_codes: [100],
         route: (0) Result::Ok
-    };
+    }
     val review = ReviewInput {
         checks_delta: 2,
         new_findings: 1,
         reviewer: (42) Option::Some,
         freeze_rollout: false
-    };
-    val patched = (base, review) patch_release;
+    }
+    val patched = (base, review) patch_release
     val ReleaseSnapshot {
         build_id,
         risk_score,
@@ -93,8 +93,8 @@ fun main: () -> Int32 = {
         hold_owner,
         audit_codes,
         route
-    } = patched;
-    val audit_score = (audit_codes, 0, add_int) fold;
+    } = patched
+    val audit_score = (audit_codes, 0, add_int) fold
     val owner_score = hold_owner match {
         Some(owner) => {
             owner
@@ -102,7 +102,7 @@ fun main: () -> Int32 = {
         None => {
             0
         }
-    };
+    }
     val route_score = route match {
         Ok(score) => {
             score
@@ -110,7 +110,7 @@ fun main: () -> Int32 = {
         Err(shortfall) => {
             0 - shortfall
         }
-    };
+    }
 
     build_id + risk_score + required_checks + passing_checks + owner_score + audit_score + route_score
 }

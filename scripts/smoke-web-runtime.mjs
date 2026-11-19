@@ -42,10 +42,15 @@ async function runProgram(source, label) {
         }
     };
 
-    const instantiated = await WebAssembly.instantiate(wat_to_wasm(compilation.output), imports);
-    programInstance = instantiated.instance;
-    assert.equal(typeof programInstance.exports._start, 'function', `${label} should export _start`);
-    programInstance.exports._start();
+    try {
+        const instantiated = await WebAssembly.instantiate(wat_to_wasm(compilation.output), imports);
+        programInstance = instantiated.instance;
+        assert.equal(typeof programInstance.exports._start, 'function', `${label} should export _start`);
+        programInstance.exports._start();
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${label}: browser execution failed: ${message}`);
+    }
 
     const outputLength = outputChunks.reduce((total, chunk) => total + chunk.length, 0);
     const outputBytes = new Uint8Array(outputLength);

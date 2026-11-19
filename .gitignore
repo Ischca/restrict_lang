@@ -1,5 +1,10 @@
 /target
 
+# Local JavaScript package store and incremental build state
+.pnpm-store/
+node_modules/
+*.tsbuildinfo
+
 # Generated files
 test/*.wat
 examples/*.wat

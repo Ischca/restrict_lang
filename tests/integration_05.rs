@@ -56,6 +56,8 @@ mod test_pattern_exhaustiveness_examples;
 mod test_pattern_matching_basic;
 #[path = "cases/test_pattern_matching_complete.rs"]
 mod test_pattern_matching_complete;
+#[path = "cases/test_practical_builtins.rs"]
+mod test_practical_builtins;
 #[path = "cases/test_practical_runtime_examples.rs"]
 mod test_practical_runtime_examples;
 #[path = "cases/test_prototype_clone_parser.rs"]

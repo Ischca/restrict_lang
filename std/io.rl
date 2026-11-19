@@ -1,22 +1,21 @@
-// Standard Library: IO reference surface
+// Standard Library: IO
 //
-// This file is not the runtime implementation. The current compiler registers
-// IO symbols directly in the Rust type checker and WebAssembly codegen.
-// Keep this file as a canonical, source-adjacent index for readers and tests.
+// Pure-Restrict formatting and console output helpers complementing
+// compiler-registered IO builtins (print, println, print_int, print_float,
+// eprint, eprintln, display).
 //
-// Current compiler-registered surface:
-// - println: (String) -> ()
-// - print: (String) -> ()
-// - print_int: (Int32) -> ()
-// - print_float: (Float64) -> ()
-// - eprint: (String) -> ()
-// - eprintln: (String) -> ()
-//
-// Canonical call shapes:
-// - "hello" |> println
-// - "hello" |> print
-// - 42 |> print_int
-// - 3.14 |> print_float
-// - "error" |> eprintln
-//
-// Input-reading and file APIs are absent from the compiler-registered v0.0.1 surface.
+// Console output helpers (`println_kv`, `eprintln_labeled`) target the
+// `wasip1` profile; `format_kv` is pure and works in both `wasip1` and
+// `wasm-core`.
+
+pub fun format_kv: <T of Display>(key: String, value: T) -> String = {
+    (key + ": ") + (value |> display)
+}
+
+pub fun println_kv: <T of Display>(key: String, value: T) -> () = {
+    ((key, value) format_kv) |> println
+}
+
+pub fun eprintln_labeled: (label: String, message: String) -> () = {
+    ((label + ": ") + message) |> eprintln
+}

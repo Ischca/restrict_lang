@@ -9,7 +9,7 @@ struct EmbeddedExample {
 }
 
 #[test]
-fn embedded_web_examples_use_v001_public_syntax() {
+fn embedded_web_examples_use_v010_public_syntax() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let examples = embedded_web_examples(root);
 
@@ -152,6 +152,59 @@ fn playground_separates_generic_forms_from_display_output() {
     assert!(
         app.contains("populateExampleSelect") && app.contains("optionGroup.label = group.title"),
         "playground should build grouped example options from the generated catalog"
+    );
+}
+
+#[test]
+fn playground_tracks_v010_language_and_core_host_boundary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let html = read_fixture(root, "web/index.html");
+    let app = read_fixture(root, "web/app.js");
+    let readme = read_fixture(root, "web/README.md");
+    let manifest = read_fixture(root, "samples/playground/manifest.json");
+    let completed = read_fixture(root, "samples/playground/completed_values.rl");
+    let fixed_array = read_fixture(root, "samples/playground/fixed_array.rl");
+    let typed_context = read_fixture(root, "samples/playground/typed_context.rl");
+
+    for required in [
+        "v0.1.0 · Core Wasm playground",
+        "Core Wasm + WASI Preview 1",
+        "Components</strong> build with Warder",
+        ">Core WAT</button>",
+        "Restrict Language · v0.1.0",
+    ] {
+        assert!(
+            html.contains(required),
+            "playground should expose the current boundary marker `{required}`"
+        );
+    }
+    assert!(
+        !html.contains("Restrict Language · v0.0.1"),
+        "playground footer should not advertise the superseded version"
+    );
+
+    for required in ["completedValues", "fixedArray", "typedContext"] {
+        assert!(
+            manifest.contains(required),
+            "v0.1.0 playground manifest should include `{required}`"
+        );
+    }
+    for (source, required) in [
+        (&completed, "} square show"),
+        (&fixed_array, "Array<Int32, 3>"),
+        (&typed_context, "with Pricing { base: 40, bonus: 2 }"),
+    ] {
+        assert!(
+            source.contains(required),
+            "v0.1.0 playground sample should include `{required}`"
+        );
+    }
+
+    assert!(
+        app.contains("Core WAT output")
+            && app.contains("v0.1.0 Core Wasm compiler and runtime ready")
+            && readme.contains("The v0.1.0 synchronous WIT and Component Model path"),
+        "playground implementation and README should distinguish Core browser execution from Component packaging"
     );
 }
 

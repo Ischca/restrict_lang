@@ -20,11 +20,11 @@ fun fulfillment_decision: (
     amount: Int32,
     approved: Boolean
 ) -> Int32 = {
-    val stock = (requested, available) validate_stock;
+    val stock = (requested, available) validate_stock
 
     stock match {
         Ok(quantity) => {
-            val payment = (amount, approved) authorize_payment;
+            val payment = (amount, approved) authorize_payment
 
             payment match {
                 Ok(total) => {

@@ -70,6 +70,8 @@ const STALE_FUNCTION_DECL_ERROR: &str =
     "stale function declaration syntax is not valid Restrict; write `fun name: (param: Type, ...) = { ... }` and use `()` for no parameters";
 const ANONYMOUS_SCOPE_ARITY_ERROR: &str =
     "anonymous exact-once scopes require exactly one value binder; use `{ it ... }` or `{ |value| ... }`";
+const ARGUMENT_TUPLE_SCOPE_ERROR: &str =
+    "an argument tuple such as `(a, b)` is not a value and cannot open an anonymous scope; pipe it to a verb such as `(a, b) |> add` or `(values, 0) |> fold { |sum, value| ... }`";
 
 /// Expects a specific token and consumes it.
 ///
@@ -79,7 +81,6 @@ fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> 
         let original_input = input;
         let (input, token) = lex_token(input)?;
         if token == expected {
-            let (input, _) = skip(input)?; // Skip trailing whitespace after token
             Ok((input, ()))
         } else {
             // Return error with the original input to allow backtracking
@@ -89,6 +90,14 @@ fn expect_token<'a>(expected: Token) -> impl Fn(&'a str) -> ParseResult<'a, ()> 
             )))
         }
     }
+}
+
+fn has_newline_before_next_token(input: &str) -> bool {
+    let Ok((rest, _)) = skip(input) else {
+        return false;
+    };
+    let consumed = &input[..input.len() - rest.len()];
+    consumed.contains('\n') || consumed.contains('\r')
 }
 
 fn user_syntax_failure<'a, T>(message: &'static str) -> ParseResult<'a, T> {
@@ -794,6 +803,10 @@ fn atom_expr(input: &str) -> ParseResult<'_, Expr> {
     alt((
         literal,
         unit_expr,
+        map(expect_token(Token::Break), |_| Expr::new(ExprKind::Break)),
+        map(expect_token(Token::Continue), |_| {
+            Expr::new(ExprKind::Continue)
+        }),
         lambda_expr, // Try lambda before other expressions that use |
         stale_option_value_expr,
         list_lit, // Try list literal before record
@@ -1387,10 +1400,11 @@ fn binary_precedence(op: &BinaryOp) -> u8 {
 }
 
 fn pipe_op(input: &str) -> ParseResult<'_, PipeOp> {
-    let (input, token) = lex_token(input)?;
+    let newline_before = has_newline_before_next_token(input);
+    let (after, token) = lex_token(input)?;
     match token {
-        Token::Pipe => Ok((input, PipeOp::Pipe)),
-        Token::Bar => Ok((input, PipeOp::Bar)),
+        Token::Pipe => Ok((after, PipeOp::Pipe)),
+        Token::Bar if !newline_before => Ok((after, PipeOp::Bar)),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Tag,
@@ -1427,6 +1441,12 @@ fn binary_expr_min_precedence(input: &str, min_precedence: u8) -> ParseResult<'_
     let (mut input, mut left) = call_expr(input)?;
 
     while let Ok((after_op, op)) = binary_op(input) {
+        if matches!(op, BinaryOp::Sub)
+            && has_newline_before_next_token(input)
+            && !after_op.starts_with(char::is_whitespace)
+        {
+            break;
+        }
         let precedence = binary_precedence(&op);
         if precedence < min_precedence {
             break;
@@ -1445,17 +1465,88 @@ fn binary_expr_min_precedence(input: &str, min_precedence: u8) -> ParseResult<'_
 }
 
 fn pipe_expr(input: &str) -> ParseResult<'_, Expr> {
-    let (input, first) = binary_expr(input)?;
-    let (input, pipes) = many0(tuple((pipe_op, pipe_target)))(input)?;
+    let (mut input, mut expr) = binary_expr(input)?;
 
-    let expr = pipes.into_iter().fold(first, |acc, (op, target)| {
+    while let Ok((after_op, op)) = pipe_op(input) {
+        match pipe_stage(after_op, op, &expr) {
+            Ok((after_stage, stage)) => {
+                expr = stage;
+                input = after_stage;
+            }
+            // Leave an unparseable stage unconsumed so the enclosing parser
+            // reports the error at the pipe, exactly as before.
+            Err(nom::Err::Error(_)) => break,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok((input, expr))
+}
+
+/// Parse the stage that follows a pipe operator and apply it to `object`.
+///
+/// `|>` is the multi-line spelling of every same-line application form, so a
+/// stage is one of:
+///
+/// ```restrict
+/// value |> verb                 // plain pipe
+/// value |> verb { it + 1 }      // scoped verb clause: `value verb { ... }`
+/// value |> { it + 1 }           // anonymous scope:    `value { ... }`
+/// ```
+///
+/// The scoped forms elaborate to the same calls as their same-line spellings.
+fn pipe_stage<'a>(input: &'a str, op: PipeOp, object: &Expr) -> ParseResult<'a, Expr> {
+    if matches!(op, PipeOp::Pipe) {
+        if matches!(lex_token(input), Ok((_, Token::LBrace))) {
+            return anonymous_scope_application(input, object.clone());
+        }
+
+        if let Ok((after_verb, verb)) = simple_expr(input) {
+            if is_scoped_verb_target(&verb)
+                && !has_newline_before_next_token(after_verb)
+                && matches!(lex_token(after_verb), Ok((_, Token::LBrace)))
+            {
+                return scoped_clause_suffixes(
+                    after_verb,
+                    Expr::new(ExprKind::Call(CallExpr {
+                        function: Box::new(verb),
+                        args: vec![Box::new(object.clone())],
+                    })),
+                );
+            }
+        }
+    }
+
+    let (input, target) = pipe_target(input)?;
+    Ok((
+        input,
         Expr::new(ExprKind::Pipe(PipeExpr {
-            expr: Box::new(acc),
+            expr: Box::new(object.clone()),
             op,
             target,
-        }))
-    });
-    Ok((input, expr))
+        })),
+    ))
+}
+
+/// Apply an anonymous exact-once scope to `object`.
+///
+/// `object { it * it }` and `object |> { it * it }` both elaborate to the
+/// immediate application of a unary lambda.
+fn anonymous_scope_application<'a>(input: &'a str, object: Expr) -> ParseResult<'a, Expr> {
+    let (input, scope) = scoped_lambda_block(input)?;
+    let ExprKind::Lambda(lambda) = &scope.kind else {
+        unreachable!("scoped lambda parser must produce a lambda expression")
+    };
+    if lambda.params.len() != 1 {
+        return user_syntax_failure(ANONYMOUS_SCOPE_ARITY_ERROR);
+    }
+    Ok((
+        input,
+        Expr::new(ExprKind::Call(CallExpr {
+            function: Box::new(scope),
+            args: vec![Box::new(object)],
+        })),
+    ))
 }
 
 fn pipe_target(input: &str) -> ParseResult<'_, PipeTarget> {
@@ -1497,6 +1588,7 @@ fn can_be_direct_osv_verb(expr: &Expr) -> bool {
 /// so `values map { ... } filter { ... }` is left associative.
 fn scoped_clause_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult<'a, Expr> {
     if !matches!(&expr.kind, ExprKind::Call(_))
+        || has_newline_before_next_token(input)
         || !matches!(lex_token(input), Ok((_, Token::LBrace)))
     {
         return Ok((input, expr));
@@ -1510,8 +1602,12 @@ fn scoped_clause_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult
     expr = Expr::new(ExprKind::Call(call));
     input = after_scope;
 
-    while let Ok((after_target, target)) = simple_expr(input) {
+    while !has_newline_before_next_token(input) {
+        let Ok((after_target, target)) = simple_expr(input) else {
+            break;
+        };
         if !is_scoped_verb_target(&target)
+            || has_newline_before_next_token(after_target)
             || !matches!(lex_token(after_target), Ok((_, Token::LBrace)))
         {
             break;
@@ -1537,6 +1633,33 @@ fn call_expr(input: &str) -> ParseResult<'_, Expr> {
                 separated_list0(expect_token(Token::Comma), expression),
                 expect_token(Token::RParen),
             )(input)?;
+
+            // `(a, b) |> verb` is the multi-line spelling of `(a, b) verb`.
+            // An argument tuple is not a value, so the pipe only supplies its
+            // verb; a single parenthesized expression stays an ordinary value
+            // and is piped by `pipe_expr`.
+            if args.len() >= 2 {
+                if let Ok((after_op, PipeOp::Pipe)) = pipe_op(input) {
+                    if matches!(lex_token(after_op), Ok((_, Token::LBrace))) {
+                        return user_syntax_failure(ARGUMENT_TUPLE_SCOPE_ERROR);
+                    }
+                    let (after_verb, func) = simple_expr(after_op)?;
+                    return scoped_clause_suffixes(
+                        after_verb,
+                        Expr::new(ExprKind::Call(CallExpr {
+                            function: Box::new(func),
+                            args: args.into_iter().map(Box::new).collect(),
+                        })),
+                    );
+                }
+            }
+
+            if has_newline_before_next_token(input) {
+                return Err(nom::Err::Error(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Tag,
+                )));
+            }
 
             if let Ok((_, tok)) = lex_token(input) {
                 if starts_infix_or_pipe(&tok) || matches!(tok, Token::Not) {
@@ -1564,12 +1687,13 @@ fn call_expr(input: &str) -> ParseResult<'_, Expr> {
             // The Restrict Language enforces OSV (Object-Subject-Verb) word order.
             // Traditional syntax like func(args) or obj.method(args) is FORBIDDEN.
             // Only OSV syntax is allowed: (args) func, args func, args |> func
-            // Check for a following parenthesized argument list after optional
-            // whitespace. Traditional calls like `func(args)`, `func (args)`,
-            // and `obj.method (args)` are rejected; calls must use OSV order.
+            // Check for a following parenthesized argument list on the same line.
+            // Traditional calls like `func(args)`, `func (args)`, and
+            // `obj.method (args)` are rejected; calls must use OSV order.
             match &first.kind {
                 ExprKind::Ident(_) | ExprKind::FieldAccess(_, _) | ExprKind::VariantRef(_)
-                    if input.trim_start().starts_with('(') =>
+                    if !has_newline_before_next_token(input)
+                        && matches!(lex_token(input), Ok((_, Token::LParen | Token::Unit))) =>
                 {
                     if matches!(&first.kind, ExprKind::Ident(name) if name == "Ok" || name == "Err")
                     {
@@ -1581,10 +1705,16 @@ fn call_expr(input: &str) -> ParseResult<'_, Expr> {
                 _ => {}
             }
 
-            // Parse the maximal whitespace-adjacent OSV expression. Newlines
-            // are ordinary whitespace; an explicit separator or a value that
-            // cannot syntactically act as a verb ends the call chain.
+            // Parse same-line whitespace-adjacent OSV calls. A newline ends the
+            // direct OSV chain so the next line starts a fresh statement without
+            // needing `;` (explicit multi-line chaining uses `|>`).
             let (input, rest) = many0(|input| {
+                if has_newline_before_next_token(input) {
+                    return Err(nom::Err::Error(nom::error::Error::new(
+                        input,
+                        nom::error::ErrorKind::Tag,
+                    )));
+                }
                 // Peek at the next token
                 if let Ok((_, tok)) = lex_token(input) {
                     // Don't parse if it starts with an infix operator.
@@ -1705,7 +1835,24 @@ enum PostfixOp {
     Freeze,
 }
 
+fn return_expr(input: &str) -> ParseResult<'_, Expr> {
+    let (input, _) = expect_token(Token::Return)(input)?;
+    if has_newline_before_next_token(input)
+        || matches!(
+            lex_token(input),
+            Ok((_, Token::RBrace | Token::Semicolon | Token::Eof))
+        )
+    {
+        return Ok((input, Expr::new(ExprKind::Return(None))));
+    }
+    let (input, value) = expression(input)?;
+    Ok((input, Expr::new(ExprKind::Return(Some(Box::new(value))))))
+}
+
 fn expression(input: &str) -> ParseResult<'_, Expr> {
+    if matches!(lex_token(input), Ok((_, Token::Return))) {
+        return return_expr(input);
+    }
     let (input, expr) = then_expr(input)?;
     application_suffixes(input, expr)
 }
@@ -1720,28 +1867,19 @@ fn expression(input: &str) -> ParseResult<'_, Expr> {
 fn application_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult<'a, Expr> {
     loop {
         if let Ok((after_op, op)) = pipe_op(input) {
-            let (after_target, target) = pipe_target(after_op)?;
-            expr = Expr::new(ExprKind::Pipe(PipeExpr {
-                expr: Box::new(expr),
-                op,
-                target,
-            }));
-            input = after_target;
+            let (after_stage, stage) = pipe_stage(after_op, op, &expr)?;
+            expr = stage;
+            input = after_stage;
             continue;
         }
 
+        if has_newline_before_next_token(input) {
+            break;
+        }
+
         if matches!(lex_token(input), Ok((_, Token::LBrace))) {
-            let (after_scope, scope) = scoped_lambda_block(input)?;
-            let ExprKind::Lambda(lambda) = &scope.kind else {
-                unreachable!("scoped lambda parser must produce a lambda expression")
-            };
-            if lambda.params.len() != 1 {
-                return user_syntax_failure(ANONYMOUS_SCOPE_ARITY_ERROR);
-            }
-            expr = Expr::new(ExprKind::Call(CallExpr {
-                function: Box::new(scope),
-                args: vec![Box::new(expr)],
-            }));
+            let (after_scope, applied) = anonymous_scope_application(input, expr)?;
+            expr = applied;
             input = after_scope;
             continue;
         }
@@ -2465,6 +2603,114 @@ mod tests {
         );
     }
 
+    fn parse_complete_expression(source: &str) -> Expr {
+        let (remaining, expr) = expression(source).unwrap();
+        assert!(
+            remaining.trim().is_empty(),
+            "unparsed input after `{source}`: {remaining:?}"
+        );
+        expr
+    }
+
+    #[test]
+    fn test_pipe_spells_scoped_verb_clause_across_lines() {
+        assert_eq!(
+            parse_complete_expression("values\n    |> map { it + 1 }"),
+            parse_complete_expression("values map { it + 1 }"),
+        );
+        assert_eq!(
+            parse_complete_expression("values\n    |> map { it + 1 } filter { it > 2 }"),
+            parse_complete_expression("values map { it + 1 } filter { it > 2 }"),
+        );
+        assert_eq!(
+            parse_complete_expression("values\n    |> map { it + 1 }\n    |> filter { it > 2 }"),
+            parse_complete_expression("values map { it + 1 } filter { it > 2 }"),
+        );
+    }
+
+    #[test]
+    fn test_pipe_spells_anonymous_scope_across_lines() {
+        assert_eq!(
+            parse_complete_expression("value\n    |> { it * it }"),
+            parse_complete_expression("value { it * it }"),
+        );
+        assert_eq!(
+            parse_complete_expression("values map { it + 1 }\n    |> { |mapped| mapped print }"),
+            parse_complete_expression("values map { it + 1 } { |mapped| mapped print }"),
+        );
+    }
+
+    #[test]
+    fn test_pipe_spells_argument_tuple_call_across_lines() {
+        assert_eq!(
+            parse_complete_expression("(left, right)\n    |> add"),
+            parse_complete_expression("(left, right) add"),
+        );
+        assert_eq!(
+            parse_complete_expression("(values, 0)\n    |> fold { |sum, value| sum + value }"),
+            parse_complete_expression("(values, 0) fold { |sum, value| sum + value }"),
+        );
+        assert_eq!(
+            parse_complete_expression("(left, right) |> add |> double"),
+            parse_complete_expression("((left, right) add) |> double"),
+        );
+    }
+
+    #[test]
+    fn test_scope_stage_opens_where_a_second_argument_appears() {
+        let expr =
+            parse_complete_expression("values\n    |> map { it + 1 }\n    |> { (it, 0) |> fold { |sum, value| sum + value } }");
+
+        let ExprKind::Call(anonymous_call) = expr.kind else {
+            panic!("expected the final stage to be an anonymous scope");
+        };
+        let ExprKind::Lambda(scope) = &anonymous_call.function.kind else {
+            panic!("expected an anonymous scope lambda");
+        };
+        assert!(scope.implicit_focus);
+        assert!(
+            matches!(anonymous_call.args[0].kind, ExprKind::Call(ref map_call)
+            if matches!(map_call.function.kind, ExprKind::Ident(ref name) if name == "map"))
+        );
+    }
+
+    #[test]
+    fn test_plain_pipe_stages_stay_pipe_expressions() {
+        assert!(matches!(
+            parse_complete_expression("value |> increment").kind,
+            ExprKind::Pipe(_)
+        ));
+        assert!(matches!(
+            parse_complete_expression("(value) |> increment").kind,
+            ExprKind::Pipe(_)
+        ));
+        // A brace on the next line is a new statement, not a scope.
+        let (remaining, expr) = expression("value |> increment\n{ 1 }").unwrap();
+        assert!(matches!(expr.kind, ExprKind::Pipe(_)));
+        assert!(remaining.trim_start().starts_with('{'));
+    }
+
+    #[test]
+    fn test_pipe_scope_stage_rejects_wrong_binder_count() {
+        for source in [
+            "value |> { || 1 }",
+            "value |> { |left, right| left + right }",
+        ] {
+            let Err(nom::Err::Failure(error)) = expression(source) else {
+                panic!("expected an anonymous-scope arity failure for `{source}`");
+            };
+            assert_eq!(error.input, ANONYMOUS_SCOPE_ARITY_ERROR);
+        }
+    }
+
+    #[test]
+    fn test_argument_tuple_cannot_open_anonymous_scope() {
+        let Err(nom::Err::Failure(error)) = expression("(left, right) |> { it }") else {
+            panic!("expected an argument-tuple scope failure");
+        };
+        assert_eq!(error.input, ARGUMENT_TUPLE_SCOPE_ERROR);
+    }
+
     #[test]
     fn test_semicolon_ends_completed_value_application_chain() {
         let source = "ready match { true => { 1 } false => { 0 } }; print";
@@ -2614,7 +2860,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bare_osv_call_ignores_newlines() {
+    fn test_bare_osv_call_stops_at_newline() {
         let source = r#"
             fun main: () = {
                 "Hello, Restrict!"
@@ -2627,14 +2873,36 @@ mod tests {
         let TopDecl::Function(main) = &program.declarations[0] else {
             panic!("expected main function");
         };
-        let Some(ExprKind::Call(call)) = main.body.expr.as_deref().map(|expr| &expr.kind) else {
-            panic!("expected the newline-separated bare OSV form to remain one call");
+        assert_eq!(main.body.statements.len(), 1);
+        assert!(matches!(
+            &main.body.statements[0],
+            Stmt::Expr(expr)
+                if matches!(&expr.kind, ExprKind::StringLit(ref value) if value == "Hello, Restrict!")
+        ));
+        assert!(matches!(
+            main.body.expr.as_deref().map(|expr| &expr.kind),
+            Some(ExprKind::Ident(ref name)) if name == "println"
+        ));
+
+        let same_line = r#"
+            fun main: () = {
+                "Hello, Restrict!" println
+            }
+        "#;
+        let (remaining, same_line_program) = parse_program(same_line).unwrap();
+        assert!(remaining.trim().is_empty());
+        let TopDecl::Function(same_line_main) = &same_line_program.declarations[0] else {
+            panic!("expected main function");
+        };
+        let Some(ExprKind::Call(call)) = same_line_main.body.expr.as_deref().map(|expr| &expr.kind)
+        else {
+            panic!("expected same-line bare OSV form to remain one call");
         };
         assert!(matches!(call.function.kind, ExprKind::Ident(ref name) if name == "println"));
         assert!(
             matches!(call.args[0].kind, ExprKind::StringLit(ref value) if value == "Hello, Restrict!")
         );
-        assert!(main.body.statements.is_empty());
+        assert!(same_line_main.body.statements.is_empty());
     }
 
     #[test]
@@ -2694,7 +2962,7 @@ mod tests {
     }
 
     #[test]
-    fn test_binding_value_continues_until_an_explicit_semicolon() {
+    fn test_binding_value_ends_at_newline() {
         let source = r#"
             fun main: () = {
                 val result = 41
@@ -2710,12 +2978,123 @@ mod tests {
         let Stmt::Binding(binding) = &main.body.statements[0] else {
             panic!("expected result binding");
         };
+        assert!(matches!(&binding.value.kind, ExprKind::IntLit(41)));
         assert!(matches!(
-            &binding.value.kind,
-            ExprKind::Call(call)
-                if matches!(call.function.kind, ExprKind::Ident(ref name) if name == "increment")
+            main.body.expr.as_deref().map(|expr| &expr.kind),
+            Some(ExprKind::Ident(ref name)) if name == "increment"
         ));
-        assert!(main.body.expr.is_none());
+    }
+
+    #[test]
+    fn test_multiline_pipe_continues_across_newlines_while_direct_osv_stops() {
+        let source = r#"
+            fun main: () -> Int32 = {
+                val x = 10
+                x
+                    |> add_one
+                    |> double
+            }
+        "#;
+        let (remaining, program) = parse_program(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let TopDecl::Function(main) = &program.declarations[0] else {
+            panic!("expected main function");
+        };
+        assert_eq!(main.body.statements.len(), 1);
+        assert!(matches!(
+            main.body.expr.as_deref().map(|expr| &expr.kind),
+            Some(ExprKind::Pipe(_))
+        ));
+    }
+
+    #[test]
+    fn test_bare_return_ends_at_newline() {
+        let source = r#"
+            fun main: () = {
+                return
+                42
+            }
+        "#;
+        let (remaining, program) = parse_program(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let TopDecl::Function(main) = &program.declarations[0] else {
+            panic!("expected main function");
+        };
+        assert_eq!(main.body.statements.len(), 1);
+        assert!(matches!(
+            &main.body.statements[0],
+            Stmt::Expr(expr) if matches!(expr.kind, ExprKind::Return(None))
+        ));
+        assert!(matches!(
+            main.body.expr.as_deref().map(|expr| &expr.kind),
+            Some(ExprKind::IntLit(42))
+        ));
+    }
+
+    #[test]
+    fn test_scoped_clauses_and_control_blocks_stop_at_newline() {
+        let source = r#"
+            fun main: () -> Int32 = {
+                mut val idx = 0
+                (idx < 3) then {
+                    idx = idx + 1
+                }
+                idx = idx + 1
+                idx
+            }
+        "#;
+        let (remaining, program) = parse_program(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let TopDecl::Function(main) = &program.declarations[0] else {
+            panic!("expected main function");
+        };
+        assert_eq!(main.body.statements.len(), 3);
+        assert!(
+            matches!(&main.body.statements[1], Stmt::Expr(e) if matches!(e.kind, ExprKind::Then(_)))
+        );
+        assert!(matches!(&main.body.statements[2], Stmt::Assignment(_)));
+
+        let scoped_nl = r#"
+            fun main: () = {
+                values map { it + 1 }
+                filter { it > 2 }
+            }
+        "#;
+        let (remaining, scoped_prog) = parse_program(scoped_nl).unwrap();
+        assert!(remaining.trim().is_empty());
+        let TopDecl::Function(scoped_main) = &scoped_prog.declarations[0] else {
+            panic!("expected main function");
+        };
+        assert_eq!(scoped_main.body.statements.len(), 1);
+    }
+
+    #[test]
+    fn test_next_line_parens_and_unary_minus_do_not_merge_across_newline() {
+        let source = r#"
+            fun main: (a: Int32) -> Int32 = {
+                val ready = is_ready
+                (ready) then {
+                    val x = 1
+                    -a
+                } else {
+                    0
+                }
+            }
+        "#;
+        let (remaining, program) = parse_program(source).unwrap();
+        assert!(remaining.trim().is_empty());
+        let TopDecl::Function(main) = &program.declarations[0] else {
+            panic!("expected main function");
+        };
+        assert_eq!(main.body.statements.len(), 1);
+        let Some(ExprKind::Then(then_expr)) = main.body.expr.as_deref().map(|e| &e.kind) else {
+            panic!("expected then expression");
+        };
+        assert_eq!(then_expr.then_block.statements.len(), 1);
+        assert!(matches!(
+            then_expr.then_block.expr.as_deref().map(|e| &e.kind),
+            Some(ExprKind::Unary(u)) if matches!(u.op, UnaryOp::Neg)
+        ));
     }
 
     #[test]

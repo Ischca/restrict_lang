@@ -49,8 +49,8 @@ fun score_signal: (signal: ReviewSignal) -> Int32 = {
         severity,
         confidence,
         reviewer
-    } = signal;
-    val reviewer_bonus = reviewer |> reviewer_score;
+    } = signal
+    val reviewer_bonus = reviewer |> reviewer_score
 
     (severity * confidence) + reviewer_bonus
 }
@@ -81,13 +81,13 @@ fun summarize_review: (batch: ReviewBatch) -> ReviewSummary = {
         manual_override,
         fallback_owner,
         launch_risk_limit
-    } = batch;
-    val risks = (signals, score_signal) map;
-    val meaningful_risks = (risks, |risk| risk > 0) filter;
-    val total_risk = (meaningful_risks, 0, add_risk) fold;
-    val owner = (manual_override, fallback_owner) choose_value;
-    val approved = total_risk < launch_risk_limit;
-    val escalation = (approved, owner) escalation_code;
+    } = batch
+    val risks = (signals, score_signal) map
+    val meaningful_risks = (risks, |risk| risk > 0) filter
+    val total_risk = (meaningful_risks, 0, add_risk) fold
+    val owner = (manual_override, fallback_owner) choose_value
+    val approved = total_risk < launch_risk_limit
+    val escalation = (approved, owner) escalation_code
 
     ReviewSummary {
         owner: owner,
@@ -109,13 +109,13 @@ fun main: () -> ReviewSummary = {
             confidence: 2,
             reviewer: () Option::None
         }
-    ];
+    ]
     val batch = ReviewBatch {
         signals: signals,
         manual_override: () Option::None,
         fallback_owner: 42,
         launch_risk_limit: 30
-    };
+    }
 
     batch |> summarize_review
 }

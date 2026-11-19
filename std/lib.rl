@@ -1,17 +1,27 @@
-// Standard Library: root reference surface
+// Standard Library: Root Index
 //
-// This file is not the runtime implementation. The current compiler registers
-// std symbols directly in the Rust type checker and WebAssembly codegen.
-// Keep this file as a canonical v0.0.1, source-adjacent index for readers and
-// tests.
+// Bundled pure-Restrict standard library modules:
+// - std.prelude: identity_val, boolean and comparison helpers
+// - std.char: ASCII classification, case conversion, and digit values
+// - std.math: clamp, signum, gcd, lcm, parity, Int64 and Float64 helpers
+// - std.option: option_or, option_unwrap_or_else, option_and_then, option_ok_or,
+//   option_flatten, option_zip_with
+// - std.result: result_is_ok, result_is_err, result_unwrap_or,
+//   result_unwrap_or_else, result_map, result_map_err, result_and_then,
+//   result_ok, result_err
+// - std.list: IndexedInt, list_any, list_all, list_find, list_take, list_drop,
+//   list_range, list_sum, list_sum_i64, list_sum_f, list_product,
+//   list_enumerate_from, list_zip_with
+// - std.map: StringMap<V> and IntMap<V> associative containers
+// - std.string: string_is_empty, string_non_empty, string_repeat,
+//   string_join_simple, string_lines, string_words, string_replace,
+//   string_pad_left, string_pad_right, string_to_upper_ascii,
+//   string_to_lower_ascii
+// - std.io: format_kv, println_kv, eprintln_labeled
 //
-// Current checked-in reference modules:
-// - prelude: automatically available compiler-registered helpers
-// - io: compiler-registered console output helpers
-// - string: source-level string operations and lowered runtime helpers
-// - math: compiler-registered numeric helpers
-// - list: compiler-registered list helpers
-// - option: compiler-registered Option helpers
-//
-// The compiler-registered v0.0.1 surface has no parseable source import/export
-// aggregator. This file is an index of the current reference modules.
+// Host capability modules outside the pure-Restrict v0.1.0 default surface:
+// - std.filesystem, std.http, std.database
+
+pub fun std_version: () -> String = {
+    "0.1.0"
+}

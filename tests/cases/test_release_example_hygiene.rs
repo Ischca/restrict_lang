@@ -47,6 +47,7 @@ const RELEASE_EXAMPLES: &[&str] = &[
     "examples/modular_release_gate.rl",
     "examples/modular_release_import_surface.rl",
     "examples/modular_policy_context_gate.rl",
+    "examples/practical_log_analyzer.rl",
     "examples/modules/release_policy.rl",
     "examples/modules/release_scores.rl",
     "examples/modules/policy_context.rl",

@@ -1790,6 +1790,23 @@ impl TypeChecker {
                     ("value".to_string(), TypedType::TypeParam("T".to_string())),
                 ],
                 return_type: TypedType::Unit,
+                type_params: vec![element_type_param.clone()],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // array_length function
+        self.functions.insert(
+            "array_length".to_string(),
+            FunctionDef {
+                params: vec![(
+                    "array".to_string(),
+                    TypedType::Array(
+                        Box::new(TypedType::TypeParam("T".to_string())),
+                        ArrayLength::AnyInternal,
+                    ),
+                )],
+                return_type: TypedType::Int32,
                 type_params: vec![element_type_param],
                 temporal_constraints: vec![],
             },
@@ -1820,6 +1837,9 @@ impl TypeChecker {
         self.register_std_math();
         self.register_std_list();
         self.register_std_option();
+        self.register_std_string();
+        self.register_std_char();
+        self.register_std_range();
         self.register_std_io();
         self.register_std_forms();
         self.register_std_prelude();
@@ -1929,6 +1949,18 @@ impl TypeChecker {
                 temporal_constraints: vec![],
             },
         );
+
+        for name in ["sqrt", "floor", "ceil", "round", "trunc"] {
+            self.functions.insert(
+                name.to_string(),
+                FunctionDef {
+                    params: vec![("x".to_string(), TypedType::Float64)],
+                    return_type: TypedType::Float64,
+                    type_params: vec![],
+                    temporal_constraints: vec![],
+                },
+            );
+        }
     }
 
     fn register_std_list(&mut self) {
@@ -2122,6 +2154,159 @@ impl TypeChecker {
         );
     }
 
+    fn register_std_string(&mut self) {
+        let mut insert_fn = |name: &str, params: Vec<(&str, TypedType)>, return_type: TypedType| {
+            self.functions.insert(
+                name.to_string(),
+                FunctionDef {
+                    params: params
+                        .into_iter()
+                        .map(|(param, ty)| (param.to_string(), ty))
+                        .collect(),
+                    return_type,
+                    type_params: vec![],
+                    temporal_constraints: vec![],
+                },
+            );
+        };
+
+        insert_fn(
+            "string_length",
+            vec![("s", TypedType::String)],
+            TypedType::Int32,
+        );
+        insert_fn(
+            "string_byte_length",
+            vec![("s", TypedType::String)],
+            TypedType::Int32,
+        );
+        insert_fn(
+            "string_byte_at",
+            vec![("s", TypedType::String), ("index", TypedType::Int32)],
+            TypedType::Option(Box::new(TypedType::Int32)),
+        );
+        insert_fn(
+            "string_slice",
+            vec![
+                ("s", TypedType::String),
+                ("start", TypedType::Int32),
+                ("end", TypedType::Int32),
+            ],
+            TypedType::Option(Box::new(TypedType::String)),
+        );
+        insert_fn(
+            "string_index_of",
+            vec![
+                ("haystack", TypedType::String),
+                ("needle", TypedType::String),
+            ],
+            TypedType::Option(Box::new(TypedType::Int32)),
+        );
+        insert_fn(
+            "string_contains",
+            vec![
+                ("haystack", TypedType::String),
+                ("needle", TypedType::String),
+            ],
+            TypedType::Boolean,
+        );
+        insert_fn(
+            "string_starts_with",
+            vec![("s", TypedType::String), ("prefix", TypedType::String)],
+            TypedType::Boolean,
+        );
+        insert_fn(
+            "string_ends_with",
+            vec![("s", TypedType::String), ("suffix", TypedType::String)],
+            TypedType::Boolean,
+        );
+        insert_fn(
+            "string_trim",
+            vec![("s", TypedType::String)],
+            TypedType::String,
+        );
+        insert_fn(
+            "string_split",
+            vec![("text", TypedType::String), ("sep", TypedType::String)],
+            TypedType::List(Box::new(TypedType::String)),
+        );
+        insert_fn(
+            "string_join",
+            vec![
+                ("parts", TypedType::List(Box::new(TypedType::String))),
+                ("sep", TypedType::String),
+            ],
+            TypedType::String,
+        );
+        insert_fn(
+            "string_parse_int",
+            vec![("s", TypedType::String)],
+            TypedType::Option(Box::new(TypedType::Int32)),
+        );
+        insert_fn(
+            "string_parse_int64",
+            vec![("s", TypedType::String)],
+            TypedType::Option(Box::new(TypedType::Int64)),
+        );
+        insert_fn(
+            "string_parse_float",
+            vec![("s", TypedType::String)],
+            TypedType::Option(Box::new(TypedType::Float64)),
+        );
+    }
+
+    fn register_std_char(&mut self) {
+        self.functions.insert(
+            "char_code".to_string(),
+            FunctionDef {
+                params: vec![("c".to_string(), TypedType::Char)],
+                return_type: TypedType::Int32,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+        self.functions.insert(
+            "char_from_code".to_string(),
+            FunctionDef {
+                params: vec![("code".to_string(), TypedType::Int32)],
+                return_type: TypedType::Option(Box::new(TypedType::Char)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+    }
+
+    fn register_std_range(&mut self) {
+        let range_ty = Self::range_int32_type();
+        self.functions.insert(
+            "range_start".to_string(),
+            FunctionDef {
+                params: vec![("range".to_string(), range_ty.clone())],
+                return_type: TypedType::Int32,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+        self.functions.insert(
+            "range_end".to_string(),
+            FunctionDef {
+                params: vec![("range".to_string(), range_ty.clone())],
+                return_type: TypedType::Int32,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+        self.functions.insert(
+            "range_to_list".to_string(),
+            FunctionDef {
+                params: vec![("range".to_string(), range_ty)],
+                return_type: TypedType::List(Box::new(TypedType::Int32)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+    }
+
     fn register_std_io(&mut self) {
         // Display-polymorphic print function.
         self.functions.insert(
@@ -2184,6 +2369,50 @@ impl TypeChecker {
             FunctionDef {
                 params: vec![("s".to_string(), TypedType::String)],
                 return_type: TypedType::Unit,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // exit function (WasiP1)
+        self.functions.insert(
+            "exit".to_string(),
+            FunctionDef {
+                params: vec![("code".to_string(), TypedType::Int32)],
+                return_type: TypedType::Unit,
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // cli_args function (WasiP1, on-demand)
+        self.functions.insert(
+            "cli_args".to_string(),
+            FunctionDef {
+                params: vec![],
+                return_type: TypedType::List(Box::new(TypedType::String)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // env_get function (WasiP1, on-demand)
+        self.functions.insert(
+            "env_get".to_string(),
+            FunctionDef {
+                params: vec![("key".to_string(), TypedType::String)],
+                return_type: TypedType::Option(Box::new(TypedType::String)),
+                type_params: vec![],
+                temporal_constraints: vec![],
+            },
+        );
+
+        // stdin_read_all function (WasiP1, on-demand)
+        self.functions.insert(
+            "stdin_read_all".to_string(),
+            FunctionDef {
+                params: vec![],
+                return_type: TypedType::String,
                 type_params: vec![],
                 temporal_constraints: vec![],
             },
@@ -3994,10 +4223,21 @@ impl TypeChecker {
     }
 
     fn lookup_var_for_assignment(&mut self, name: &str) -> Result<(TypedType, bool), TypeError> {
-        // Look up variable without marking it as used (for assignment target)
+        // Look up variable without marking it as used (for assignment target).
+        // Reject mutating outer `mut val` bindings across a lambda boundary,
+        // since lambdas capture outer bindings by value.
+        let mut crossed_lambda_boundary = false;
         for scope in self.var_env.iter().rev() {
             if let Some(var) = scope.get(name) {
+                if crossed_lambda_boundary && var.mutable {
+                    return Err(TypeError::UnsupportedFeature(format!(
+                        "cannot mutate captured variable '{name}' inside a lambda"
+                    )));
+                }
                 return Ok((var.ty.clone(), var.mutable));
+            }
+            if scope.contains_key("$lambda_boundary") {
+                crossed_lambda_boundary = true;
             }
         }
         Err(TypeError::UndefinedVariable(name.to_string()))
@@ -4272,7 +4512,7 @@ impl TypeChecker {
         }
 
         let record_name = match &receiver_ty {
-            TypedType::Record { name, .. } => name.clone(),
+            TypedType::Record { name, .. } | TypedType::Enum { name } => name.clone(),
             TypedType::Temporal { base_type, .. } => match base_type.as_ref() {
                 TypedType::Record { name, .. } => name.clone(),
                 _ => return Ok(None),
@@ -4340,7 +4580,7 @@ impl TypeChecker {
             return false;
         };
         match receiver_ty {
-            TypedType::Record { name, .. } => self
+            TypedType::Record { name, .. } | TypedType::Enum { name } => self
                 .methods
                 .get(&name)
                 .is_some_and(|methods| methods.contains_key(method_name)),
@@ -4380,9 +4620,13 @@ impl TypeChecker {
         };
 
         match receiver_ty {
-            TypedType::Record { name, .. } => adopted_form_has_method(&name),
+            TypedType::Record { name, .. } | TypedType::Enum { name } => {
+                adopted_form_has_method(&name)
+            }
             TypedType::Temporal { base_type, .. } => match *base_type {
-                TypedType::Record { name, .. } => adopted_form_has_method(&name),
+                TypedType::Record { name, .. } | TypedType::Enum { name } => {
+                    adopted_form_has_method(&name)
+                }
                 _ => false,
             },
             TypedType::TypeParam(name) => {
@@ -5409,6 +5653,14 @@ impl TypeChecker {
                     unannotated_names,
                 ));
             }
+            ExprKind::Return(Some(inner)) => {
+                deps.extend(self.collect_unannotated_function_deps_in_expr(
+                    inner,
+                    bound_vars,
+                    unannotated_names,
+                ));
+            }
+            ExprKind::Break | ExprKind::Continue | ExprKind::Return(None) => {}
             ExprKind::Block(block) => {
                 deps.extend(self.collect_unannotated_function_deps_in_block(
                     block,
@@ -5927,19 +6179,21 @@ impl TypeChecker {
         }
         if self._contexts.contains(&takes.target) {
             return Err(TypeError::UnsupportedFeature(format!(
-                "takes target '{}' must be a concrete record; contexts cannot adopt forms",
+                "takes target '{}' must be a concrete record or enum; contexts cannot adopt forms",
                 takes.target
             )));
         }
-        let record = self.records.get(&takes.target).ok_or_else(|| {
-            TypeError::UnsupportedFeature(format!(
-                "takes target '{}' must be a concrete record declared in this program",
-                takes.target
-            ))
-        })?;
-        if !record.type_params.is_empty() {
+        let target_is_enum = self.enums.contains_key(&takes.target);
+        if let Some(record) = self.records.get(&takes.target) {
+            if !record.type_params.is_empty() {
+                return Err(TypeError::UnsupportedFeature(format!(
+                    "generic takes target '{}' is not supported in the initial form slice",
+                    takes.target
+                )));
+            }
+        } else if !target_is_enum {
             return Err(TypeError::UnsupportedFeature(format!(
-                "generic takes target '{}' is not supported in the initial form slice",
+                "takes target '{}' must be a concrete record or enum declared in this program",
                 takes.target
             )));
         }
@@ -5983,12 +6237,18 @@ impl TypeChecker {
             }
         }
 
-        let target_type = TypedType::Record {
-            name: takes.target.clone(),
-            type_args: vec![],
-            frozen: false,
-            hash: None,
-            parent_hash: None,
+        let target_type = if target_is_enum {
+            TypedType::Enum {
+                name: takes.target.clone(),
+            }
+        } else {
+            TypedType::Record {
+                name: takes.target.clone(),
+                type_args: vec![],
+                frozen: false,
+                hash: None,
+                parent_hash: None,
+            }
         };
         let mut staged = Vec::new();
         for function in &takes.functions {
@@ -6093,10 +6353,7 @@ impl TypeChecker {
     }
 
     fn check_takes_decl(&mut self, takes: &TakesDecl) -> Result<(), TypeError> {
-        self.check_impl_block(&ImplBlock {
-            target: takes.target.clone(),
-            functions: takes.functions.clone(),
-        })
+        self.check_receiver_methods(&takes.target, &takes.functions)
     }
 
     /// Check if the program needs lifetime inference
@@ -6321,12 +6578,35 @@ impl TypeChecker {
             .as_ref()
             .map(|return_type| self.convert_type(return_type))
             .transpose()?;
+        let tracked_return_type = expected_return_type
+            .clone()
+            .unwrap_or_else(|| self.type_var_generator.fresh_var());
+        self.insert_scope_sentinel("$return_type", tracked_return_type);
         let body_return_type =
             self.check_block_expr_with_expected(&func.body, expected_return_type.as_ref())?;
+        let tracked_return_after = self.peek_var_type("$return_type");
+
+        let body_return_type = if expected_return_type.is_none()
+            && Self::contains_inference_internal_type(&body_return_type)
+        {
+            tracked_return_after
+                .clone()
+                .filter(|ty| !Self::contains_inference_internal_type(ty))
+                .unwrap_or(body_return_type)
+        } else {
+            body_return_type
+        };
 
         if let Some(expected_return_type) = &expected_return_type {
             if !self.type_matches_expected(expected_return_type, &body_return_type) {
                 return Err(typed_type_mismatch(expected_return_type, &body_return_type));
+            }
+        } else if let Some(tracked) = tracked_return_after
+            .as_ref()
+            .filter(|ty| !Self::contains_inference_internal_type(ty))
+        {
+            if !self.type_matches_expected(tracked, &body_return_type) {
+                return Err(typed_type_mismatch(tracked, &body_return_type));
             }
         }
 
@@ -6623,6 +6903,7 @@ impl TypeChecker {
         }
 
         self.push_scope();
+        self.insert_scope_sentinel("$lambda_boundary", TypedType::Unit);
 
         for param in &lambda.params {
             let param_type = if let Some(type_annotation) = &param.type_annotation {
@@ -6638,6 +6919,10 @@ impl TypeChecker {
         } else {
             None
         };
+        let tracked_lambda_return = inferred_return_type
+            .clone()
+            .unwrap_or_else(|| self.type_var_generator.fresh_var());
+        self.insert_scope_sentinel("$return_type", tracked_lambda_return);
         let body_result =
             self.check_expr_with_expected(&lambda.body, inferred_return_type.as_ref());
         let param_types = lambda
@@ -7464,12 +7749,18 @@ impl TypeChecker {
         let mut param_types = Vec::new();
         for (i, param) in func.params.iter().enumerate() {
             let ty = if i == 0 && param.name == "self" {
-                TypedType::Record {
-                    name: target.to_string(),
-                    type_args: Vec::new(),
-                    frozen: false,
-                    hash: None,
-                    parent_hash: None,
+                if self.enums.contains_key(target) {
+                    TypedType::Enum {
+                        name: target.to_string(),
+                    }
+                } else {
+                    TypedType::Record {
+                        name: target.to_string(),
+                        type_args: Vec::new(),
+                        frozen: false,
+                        hash: None,
+                        parent_hash: None,
+                    }
                 }
             } else {
                 self.convert_type(&param.ty)?
@@ -7572,10 +7863,17 @@ impl TypeChecker {
             return Err(TypeError::UndefinedRecord(impl_block.target.clone()));
         }
 
-        // Clone the target to avoid borrow issues
-        let target = impl_block.target.clone();
+        self.check_receiver_methods(&impl_block.target, &impl_block.functions)
+    }
 
-        for func in &impl_block.functions {
+    fn check_receiver_methods(
+        &mut self,
+        target: &str,
+        functions: &[FunDecl],
+    ) -> Result<(), TypeError> {
+        let target = target.to_string();
+
+        for func in functions {
             // Check the method, but with special handling for 'self' parameter
             self.push_type_param_scope(&func.type_params);
             self.push_scope();
@@ -7590,12 +7888,35 @@ impl TypeChecker {
                 .as_ref()
                 .map(|return_type| self.convert_type(return_type))
                 .transpose()?;
+            let tracked_return_type = expected_return_type
+                .clone()
+                .unwrap_or_else(|| self.type_var_generator.fresh_var());
+            self.insert_scope_sentinel("$return_type", tracked_return_type);
             let body_return_type =
                 self.check_block_expr_with_expected(&func.body, expected_return_type.as_ref())?;
+            let tracked_return_after = self.peek_var_type("$return_type");
+
+            let body_return_type = if expected_return_type.is_none()
+                && Self::contains_inference_internal_type(&body_return_type)
+            {
+                tracked_return_after
+                    .clone()
+                    .filter(|ty| !Self::contains_inference_internal_type(ty))
+                    .unwrap_or(body_return_type)
+            } else {
+                body_return_type
+            };
 
             if let Some(expected_return_type) = &expected_return_type {
                 if !self.type_matches_expected(expected_return_type, &body_return_type) {
                     return Err(typed_type_mismatch(expected_return_type, &body_return_type));
+                }
+            } else if let Some(tracked) = tracked_return_after
+                .as_ref()
+                .filter(|ty| !Self::contains_inference_internal_type(ty))
+            {
+                if !self.type_matches_expected(tracked, &body_return_type) {
+                    return Err(typed_type_mismatch(tracked, &body_return_type));
                 }
             }
 
@@ -7787,6 +8108,9 @@ impl TypeChecker {
                 }
                 ExprKind::Then(then) => self.check_then_expr_with_expected(then, expected),
                 ExprKind::While(while_expr) => self.check_while_expr(while_expr),
+                ExprKind::Break => self.check_loop_control("break", expected),
+                ExprKind::Continue => self.check_loop_control("continue", expected),
+                ExprKind::Return(value) => self.check_return_expr(value.as_deref(), expected),
                 ExprKind::Match(match_expr) => {
                     self.check_match_expr_with_expected(match_expr, expected)
                 }
@@ -8104,7 +8428,19 @@ impl TypeChecker {
         Ok(())
     }
 
+    fn expr_is_unconsumed_mutable_lvalue(&self, expr: &Expr) -> bool {
+        let mut current = expr;
+        while let ExprKind::FieldAccess(inner, _) = &current.kind {
+            current = inner;
+        }
+        if let ExprKind::Ident(name) = &current.kind {
+            return self._peek_var(name).is_ok_and(|var| var.mutable);
+        }
+        false
+    }
+
     fn check_clone_expr(&mut self, clone_expr: &CloneExpr) -> Result<TypedType, TypeError> {
+        let base_unconsumed = self.expr_is_unconsumed_mutable_lvalue(&clone_expr.base);
         let base_ty = self.check_expr(&clone_expr.base)?;
 
         match &base_ty {
@@ -8135,9 +8471,12 @@ impl TypeChecker {
                         })
                         .collect()
                 };
-                let mut final_field_sources = field_types
+                // An owned/consumed base record transfers unmentioned non-Copy
+                // fields to the new record without aliasing. Only reject
+                // implicit reuse when the source remains live (e.g. `mut val`).
+                let mut field_sources_safe = field_types
                     .keys()
-                    .map(|field_name| (field_name.clone(), false))
+                    .map(|field_name| (field_name.clone(), !base_unconsumed))
                     .collect::<HashMap<_, _>>();
 
                 for field_init in &clone_expr.updates.fields {
@@ -8159,9 +8498,10 @@ impl TypeChecker {
                             if !self.type_matches_expected(expected_ty, &actual_ty) {
                                 return Err(typed_type_mismatch(expected_ty, &actual_ty));
                             }
-                            final_field_sources.insert(field_name.clone(), true);
+                            field_sources_safe.insert(field_name.clone(), true);
                         }
                         FieldInit::Spread(expr) => {
+                            let spread_unconsumed = self.expr_is_unconsumed_mutable_lvalue(expr);
                             let expr_ty = self.check_expr(expr)?;
 
                             match &expr_ty {
@@ -8174,7 +8514,8 @@ impl TypeChecker {
                                     let (_, spread_fields) =
                                         self.instantiated_record_fields(&expr_ty)?;
                                     for field_name in spread_fields.keys() {
-                                        final_field_sources.insert(field_name.clone(), false);
+                                        field_sources_safe
+                                            .insert(field_name.clone(), !spread_unconsumed);
                                     }
                                 }
                                 _ => {
@@ -8190,7 +8531,7 @@ impl TypeChecker {
                 self.reject_implicit_non_copy_record_fields(
                     name,
                     &field_types,
-                    &final_field_sources,
+                    &field_sources_safe,
                     "record clone",
                 )?;
                 Ok(TypedType::Record {
@@ -8686,10 +9027,15 @@ impl TypeChecker {
         checked_arg_types: &[Option<TypedType>],
     ) -> bool {
         match (func_name, arg_index) {
-            ("map" | "filter", 1) => matches!(
-                checked_arg_types.first().and_then(Option::as_ref),
-                Some(TypedType::List(_))
-            ),
+            ("map" | "filter", 1) => {
+                matches!(
+                    checked_arg_types.first().and_then(Option::as_ref),
+                    Some(TypedType::List(_))
+                ) || matches!(
+                    checked_arg_types.first().and_then(Option::as_ref),
+                    Some(TypedType::Record { name, .. }) if name == "Range"
+                )
+            }
             ("fold", 2) => true,
             _ => false,
         }
@@ -8866,12 +9212,15 @@ impl TypeChecker {
         }
 
         self.push_scope();
+        self.insert_scope_sentinel("$lambda_boundary", TypedType::Unit);
+        self.insert_scope_sentinel("$return_type", return_type.as_ref().clone());
         for (param, param_type) in lambda.params.iter().zip(params.iter()) {
             let param_type = self.resolve_lambda_param_type(param, param_type, substitution)?;
             self.bind_var(param.name.clone(), param_type, false)?;
         }
 
         let body_result = self.check_expr_with_expected(&lambda.body, Some(return_type.as_ref()));
+        let tracked_return_after = self.peek_var_type("$return_type");
         let observed_param_types = lambda
             .params
             .iter()
@@ -8883,6 +9232,12 @@ impl TypeChecker {
         let body_type = body_result?;
         for (param_type, observed_type) in params.iter().zip(observed_param_types.iter()) {
             unify_constraint(param_type, observed_type, substitution)?;
+        }
+        if let Some(tracked) = tracked_return_after
+            .as_ref()
+            .filter(|ty| !Self::contains_inference_internal_type(ty))
+        {
+            unify_constraint(return_type, tracked, substitution)?;
         }
         unify_constraint(return_type, &body_type, substitution)?;
 
@@ -9170,26 +9525,40 @@ impl TypeChecker {
     }
 
     fn check_field_access(&mut self, expr: &Expr, field: &str) -> Result<TypedType, TypeError> {
-        if let ExprKind::Ident(name) = &expr.kind {
-            let var = self._peek_var(name)?.clone();
-            let field_ty = self.record_field_type(&var.ty, field)?;
+        let mut chain = vec![(expr, field)];
+        let mut current = expr;
+        while let ExprKind::FieldAccess(inner, inner_field) = &current.kind {
+            chain.push((inner.as_ref(), inner_field.as_str()));
+            current = inner.as_ref();
+        }
 
-            if var.mutable {
-                return Ok(field_ty);
+        if let ExprKind::Ident(name) = &current.kind {
+            let var = self._peek_var(name)?.clone();
+            let mut cur_ty = var.ty.clone();
+            self.record_checked_expr_type(current, &cur_ty);
+            for (node, field_name) in chain.iter().rev() {
+                cur_ty = self.record_field_type(&cur_ty, field_name)?;
+                if node.id != expr.id {
+                    self.record_checked_expr_type(node, &cur_ty);
+                }
             }
 
-            if var.used {
+            if var.mutable {
+                return Ok(cur_ty);
+            }
+
+            if var.used || var.pending_inference_uses > 0 {
                 return Err(TypeError::AffineViolation(name.clone()));
             }
 
-            if self.is_copyable(&field_ty) {
-                return Ok(field_ty);
+            if self.is_copyable(&cur_ty) {
+                return Ok(cur_ty);
             }
 
-            // Accessing a non-copyable field moves ownership out of the record,
+            // Accessing a non-copyable leaf field moves ownership out of the record,
             // so the parent record is consumed under affine semantics.
             self.lookup_var(name)?;
-            return Ok(field_ty);
+            return Ok(cur_ty);
         }
 
         let ty = self.check_expr(expr)?;
@@ -9326,6 +9695,75 @@ impl TypeChecker {
                         return Err(TypeError::UnsupportedFeature(
                             "Internal error: spawn/await should be handled earlier".to_string(),
                         ));
+                    }
+                    if name == "filter"
+                        && call.args.len() == 2
+                        && matches!(
+                            self.infer_method_receiver_type_non_consuming(&call.args[0]),
+                            Some(TypedType::Record { name, .. }) if name == "Range"
+                        )
+                    {
+                        let range_filter = FunctionDef {
+                            params: vec![
+                                ("container".to_string(), Self::range_int32_type()),
+                                (
+                                    "predicate".to_string(),
+                                    TypedType::Function {
+                                        params: vec![TypedType::Int32],
+                                        return_type: Box::new(TypedType::Boolean),
+                                    },
+                                ),
+                            ],
+                            return_type: TypedType::List(Box::new(TypedType::Int32)),
+                            type_params: vec![],
+                            temporal_constraints: vec![],
+                        };
+                        return self.check_function_call_with_inference(
+                            &range_filter,
+                            call,
+                            expected_return,
+                        );
+                    }
+                    if name == "fold"
+                        && call.args.len() == 3
+                        && matches!(
+                            self.infer_method_receiver_type_non_consuming(&call.args[0]),
+                            Some(TypedType::Record { name, .. }) if name == "Range"
+                        )
+                    {
+                        let u_param = TypeParam {
+                            name: "U".to_string(),
+                            bounds: vec![],
+                            derivation_bound: None,
+                            of_forms: vec![],
+                            is_temporal: false,
+                        };
+                        let range_fold = FunctionDef {
+                            params: vec![
+                                ("range".to_string(), Self::range_int32_type()),
+                                ("initial".to_string(), TypedType::TypeParam("U".to_string())),
+                                (
+                                    "reducer".to_string(),
+                                    TypedType::Function {
+                                        params: vec![
+                                            TypedType::TypeParam("U".to_string()),
+                                            TypedType::Int32,
+                                        ],
+                                        return_type: Box::new(TypedType::TypeParam(
+                                            "U".to_string(),
+                                        )),
+                                    },
+                                ),
+                            ],
+                            return_type: TypedType::TypeParam("U".to_string()),
+                            type_params: vec![u_param],
+                            temporal_constraints: vec![],
+                        };
+                        return self.check_function_call_with_inference(
+                            &range_fold,
+                            call,
+                            expected_return,
+                        );
                     }
                     self.check_function_call_with_inference(&func_info, call, expected_return)
                 } else {
@@ -10458,21 +10896,29 @@ impl TypeChecker {
                 }
             }
             BinaryOp::Eq | BinaryOp::Ne => {
-                // Enum values use an internal pointer representation. Until
-                // structural tag/payload equality is specified and lowered,
-                // accepting equality here would silently compare allocation
-                // addresses rather than enum values.
-                if matches!(
-                    (&left_ty, &right_ty),
-                    (
-                        TypedType::Enum { name: left_name },
-                        TypedType::Enum { name: right_name }
-                    ) if left_name == right_name
-                ) {
-                    Err(TypeError::UnsupportedFeature(
-                        "user-defined enum equality is not supported; use match on qualified variants"
-                            .to_string(),
-                    ))
+                // Payload-free user enums have scalar tag semantics and support
+                // structural tag equality; payload-bearing enums require match.
+                if let (TypedType::Enum { name: left_name }, TypedType::Enum { name: right_name }) =
+                    (&left_ty, &right_ty)
+                {
+                    if left_name == right_name {
+                        let is_payload_free = self.enums.get(left_name).is_some_and(|enum_def| {
+                            enum_def.variants.values().all(|payload| payload.is_none())
+                        });
+                        if is_payload_free {
+                            Ok(TypedType::Boolean)
+                        } else {
+                            Err(TypeError::UnsupportedFeature(
+                                "user-defined enum equality is only supported for payload-free enums; use match on qualified variants"
+                                    .to_string(),
+                            ))
+                        }
+                    } else {
+                        Err(TypeError::TypeMismatch {
+                            expected: format_typed_type(&left_ty),
+                            found: format_typed_type(&right_ty),
+                        })
+                    }
                 } else if left_ty == right_ty {
                     Ok(TypedType::Boolean)
                 } else {
@@ -10483,13 +10929,14 @@ impl TypeChecker {
                 }
             }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                // Comparison operators require numeric types
+                // Comparison operators require numeric types or Char
                 match (&left_ty, &right_ty) {
-                    (TypedType::Int32, TypedType::Int32) => Ok(TypedType::Boolean),
-                    (TypedType::Int64, TypedType::Int64) => Ok(TypedType::Boolean),
-                    (TypedType::Float64, TypedType::Float64) => Ok(TypedType::Boolean),
+                    (TypedType::Int32, TypedType::Int32)
+                    | (TypedType::Int64, TypedType::Int64)
+                    | (TypedType::Float64, TypedType::Float64)
+                    | (TypedType::Char, TypedType::Char) => Ok(TypedType::Boolean),
                     _ => Err(TypeError::TypeMismatch {
-                        expected: "numeric types".to_string(),
+                        expected: "numeric types or Char operands".to_string(),
                         found: Self::format_type_pair(&left_ty, &right_ty),
                     }),
                 }
@@ -10539,7 +10986,9 @@ impl TypeChecker {
                 _ => None,
             },
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => match ty {
-                TypedType::Int32 | TypedType::Int64 | TypedType::Float64 => Some(ty),
+                TypedType::Int32 | TypedType::Int64 | TypedType::Float64 | TypedType::Char => {
+                    Some(ty)
+                }
                 _ => None,
             },
             BinaryOp::And | BinaryOp::Or => match ty {
@@ -10585,11 +11034,14 @@ impl TypeChecker {
         let source_ty = self.check_expr(&cast.expr)?;
         let target_ty = self.convert_type(&cast.target)?;
 
-        if Self::is_numeric_cast_type(&source_ty) && Self::is_numeric_cast_type(&target_ty) {
+        if (Self::is_numeric_cast_type(&source_ty) && Self::is_numeric_cast_type(&target_ty))
+            || (source_ty == TypedType::Char && target_ty == TypedType::Int32)
+        {
             Ok(target_ty)
         } else {
             Err(TypeError::TypeMismatch {
-                expected: "numeric cast between Int32, Int64, or Float64".to_string(),
+                expected: "numeric cast between Int32, Int64, or Float64, or Char as Int32"
+                    .to_string(),
                 found: format!(
                     "{} as {}",
                     format_typed_type(&source_ty),
@@ -11182,15 +11634,145 @@ impl TypeChecker {
             branch_envs.push(branch_base.clone());
         }
 
-        let (result_ty, branch_substitution) = Self::resolve_branch_result_type(
+        let (mut result_ty, branch_substitution) = Self::resolve_branch_result_type(
             branch_expected.expect("branch result expected type is always initialized"),
             &branch_types,
-            finalize_result,
+            finalize_result
+                && !(expected.is_none()
+                    && Self::then_all_branches_diverge(then)
+                    && Self::contains_inference_internal_type(
+                        branch_expected.expect("branch result expected type is always initialized"),
+                    )),
         )?;
+        if expected.is_none()
+            && Self::then_all_branches_diverge(then)
+            && Self::contains_inference_internal_type(&result_ty)
+        {
+            result_ty = TypedType::Unit;
+        }
 
         self.merge_branch_var_usage(branch_base, &branch_envs)?;
         self.apply_substitution_to_var_env(&branch_substitution)?;
         Ok(result_ty)
+    }
+
+    fn insert_scope_sentinel(&mut self, name: &str, ty: TypedType) {
+        if let Some(scope) = self.var_env.last_mut() {
+            scope.insert(
+                name.to_string(),
+                Variable {
+                    ty,
+                    mutable: false,
+                    used: false,
+                    deferred: None,
+                    deferred_alias_group_id: None,
+                    was_deferred_callable: false,
+                    repeated_callable_safety: None,
+                    callable_parameter: false,
+                    pending_inference_uses: 0,
+                    flexible_collection_literal: false,
+                },
+            );
+        }
+    }
+
+    fn expr_diverges(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => true,
+            ExprKind::Block(block) => Self::block_diverges(block),
+            ExprKind::Then(then) => Self::then_all_branches_diverge(then),
+            ExprKind::Match(match_expr) => {
+                !match_expr.arms.is_empty()
+                    && match_expr
+                        .arms
+                        .iter()
+                        .all(|arm| Self::block_diverges(&arm.body))
+            }
+            _ => false,
+        }
+    }
+
+    fn block_diverges(block: &BlockExpr) -> bool {
+        if let Some(expr) = &block.expr {
+            if Self::expr_diverges(expr) {
+                return true;
+            }
+        }
+        block.statements.iter().any(|stmt| match stmt {
+            Stmt::Expr(expr) => Self::expr_diverges(expr),
+            Stmt::Binding(_) | Stmt::Assignment(_) => false,
+        })
+    }
+
+    fn then_all_branches_diverge(then: &ThenExpr) -> bool {
+        Self::block_diverges(&then.then_block)
+            && then
+                .else_ifs
+                .iter()
+                .all(|(_, block)| Self::block_diverges(block))
+            && then.else_block.as_ref().is_some_and(Self::block_diverges)
+    }
+
+    fn check_loop_control(
+        &self,
+        keyword: &str,
+        expected: Option<&TypedType>,
+    ) -> Result<TypedType, TypeError> {
+        for scope in self.var_env.iter().rev() {
+            if scope.contains_key("$while_loop") {
+                return Ok(expected.cloned().unwrap_or(TypedType::Unit));
+            }
+            if scope.contains_key("$lambda_boundary") {
+                break;
+            }
+        }
+        Err(TypeError::UnsupportedFeature(format!(
+            "'{keyword}' can only be used inside a while loop"
+        )))
+    }
+
+    fn check_return_expr(
+        &mut self,
+        value: Option<&Expr>,
+        expected: Option<&TypedType>,
+    ) -> Result<TypedType, TypeError> {
+        let mut expected_return = None;
+        for scope in self.var_env.iter().rev() {
+            if let Some(var) = scope.get("$return_type") {
+                expected_return = Some(var.ty.clone());
+                break;
+            }
+            if scope.contains_key("$lambda_boundary") {
+                break;
+            }
+        }
+        let Some(expected_return) = expected_return else {
+            return Err(TypeError::UnsupportedFeature(
+                "'return' can only be used inside a function".to_string(),
+            ));
+        };
+
+        let actual_return = match value {
+            Some(expr) => {
+                let expected_hint = if Self::contains_inference_internal_type(&expected_return) {
+                    None
+                } else {
+                    Some(&expected_return)
+                };
+                self.check_expr_with_expected(expr, expected_hint)?
+            }
+            None => TypedType::Unit,
+        };
+
+        if Self::contains_inference_internal_type(&expected_return) {
+            let mut substitution = ConstraintSubstitution::new();
+            unify_constraint(&expected_return, &actual_return, &mut substitution)?;
+            self.apply_substitution_to_var_env(&substitution)?;
+        } else if !self.type_matches_expected(&expected_return, &actual_return) {
+            return Err(typed_type_mismatch(&expected_return, &actual_return));
+        }
+
+        Ok(expected.cloned().unwrap_or(TypedType::Unit))
     }
 
     fn check_while_expr(&mut self, while_expr: &WhileExpr) -> Result<TypedType, TypeError> {
@@ -11202,8 +11784,9 @@ impl TypeChecker {
             return Err(expected_type_mismatch("Boolean", &cond_type));
         }
 
-        // Check body in new scope
+        // Check body in new scope with loop marker for `break`/`continue`
         self.push_scope();
+        self.insert_scope_sentinel("$while_loop", TypedType::Unit);
         let body_result = self.check_block_expr(&while_expr.body);
         self.pop_scope();
         body_result?;
@@ -11315,11 +11898,21 @@ impl TypeChecker {
             }
         }
 
-        let (result_type, branch_substitution) = Self::resolve_branch_result_type(
+        let all_arms_diverge = match_expr
+            .arms
+            .iter()
+            .all(|arm| Self::block_diverges(&arm.body));
+        let (mut result_type, branch_substitution) = Self::resolve_branch_result_type(
             branch_expected.expect("branch result expected type is always initialized"),
             &branch_types,
-            finalize_result,
+            finalize_result && !(expected.is_none() && all_arms_diverge),
         )?;
+        if expected.is_none()
+            && all_arms_diverge
+            && Self::contains_inference_internal_type(&result_type)
+        {
+            result_type = TypedType::Unit;
+        }
 
         self.merge_branch_var_usage(branch_base, &branch_envs)?;
         self.apply_substitution_to_var_env(&branch_substitution)?;
@@ -12319,8 +12912,17 @@ impl TypeChecker {
             unreachable!("expected lambda context should be handled above")
         };
 
+        // Mark lambda boundary so outer `mut val` reassignment and outer loop
+        // control flow are rejected across closures, and track lambda return type.
+        self.insert_scope_sentinel("$lambda_boundary", TypedType::Unit);
+        let tracked_lambda_return = expected_return_type
+            .cloned()
+            .unwrap_or_else(|| self.type_var_generator.fresh_var());
+        self.insert_scope_sentinel("$return_type", tracked_lambda_return);
+
         // Type check the body with inferred parameter types
         let body_result = self.check_expr_with_expected(&lambda.body, expected_return_type);
+        let tracked_return_after = self.peek_var_type("$return_type");
         let observed_param_types = lambda
             .params
             .iter()
@@ -12343,6 +12945,14 @@ impl TypeChecker {
             } else {
                 expected_ret.clone()
             }
+        } else if let Some(tracked) = tracked_return_after
+            .as_ref()
+            .filter(|ty| !Self::contains_inference_internal_type(ty))
+        {
+            if !Self::contains_inference_internal_type(&body_type) {
+                unify_constraint(tracked, &body_type, &mut substitution)?;
+            }
+            tracked.clone()
         } else {
             body_type
         };
@@ -13472,7 +14082,13 @@ impl TypeChecker {
             ExprKind::Spawn(expr) => {
                 free_vars.extend(self.collect_free_variables(expr, bound_vars));
             }
-            ExprKind::VariantRef(_) => {}
+            ExprKind::Return(Some(expr)) => {
+                free_vars.extend(self.collect_free_variables(expr, bound_vars));
+            }
+            ExprKind::VariantRef(_)
+            | ExprKind::Break
+            | ExprKind::Continue
+            | ExprKind::Return(None) => {}
             // Literals have no free variables
             ExprKind::IntLit(_)
             | ExprKind::FloatLit(_)

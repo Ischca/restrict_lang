@@ -11,7 +11,7 @@ fun square: (value: Int32) -> Int32 = {
 }
 
 fun flow_score: (flow: Flow) -> Int32 = {
-    val Flow { input, output } = flow;
+    val Flow { input, output } = flow
     output >= input then {
         output - input
     } else {
@@ -20,9 +20,9 @@ fun flow_score: (flow: Flow) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val value = 6;
-    val output = value |> square;
-    val flow = Flow { input: value, output: output };
+    val value = 6
+    val output = value |> square
+    val flow = Flow { input: value, output: output }
 
     flow |> flow_score
 }

@@ -257,6 +257,11 @@ and anonymous scopes:
   through explicit continuation syntax: the pipe operator (`|>`), infix binary
   operators (`+`, `-`, `*`, `&&`, `||`, etc.), postfix `.field` / `.clone`, or
   control-flow keywords (`then`, `else`, `match`, `while`).
+- **`|>` continues every application form**: Each same-line application
+  spelling has a multi-line spelling through `|>`: a direct OSV call
+  (`value |> verb`), a tuple call (`(left, right) |> verb`), a scoped verb
+  clause (`value |> verb { ... }`), and an anonymous scope
+  (`value |> { ... }`). See Section 5.9.
 
 ```rust
 // Multi-line statements do not need semicolons
@@ -266,6 +271,11 @@ message println
 // Multi-line composition uses |>
 val answer = 41
     |> increment
+
+// Scoped clauses and anonymous scopes continue the same way
+val total = values
+    |> map { it + 1 }
+    |> { (it, 0) |> fold { |sum, value| sum + value } }
 ```
 
 Semicolons (`;`) remain valid and optional. They are used only when placing
@@ -472,6 +482,7 @@ x               // Variable reference
 value |> function           // Single argument via pipe
 value function              // Single argument via direct OSV
 (arg1, arg2) function       // Multiple arguments via tuple
+(arg1, arg2) |> function    // Multiple arguments via tuple, piped to the verb
 () function                 // No arguments via unit
 
 // ❌ COMPILE ERROR: Traditional function calls NOT supported
@@ -735,6 +746,76 @@ Rules:
 The braces after a completed value denote an anonymous scope. Nominal record
 construction remains `UpperCamelName { fields... }`; it is parsed as a record
 literal before it can be considered a continuation target.
+
+#### Pipe continuation of scoped clauses, anonymous scopes, and argument tuples
+
+Direct OSV, scoped verb clauses, and anonymous scopes are line-bounded
+(Section 1.6). `|>` is the multi-line spelling of each of them. The piped forms
+introduce no new semantics; each elaborates to exactly the same call as its
+same-line spelling:
+
+```rust
+values |> map { it + 1 }
+// same as: values map { it + 1 }
+
+value |> { it * it }
+// same as: value { it * it }
+
+(values, 0) |> fold { |sum, value| sum + value }
+// same as: (values, 0) fold { |sum, value| sum + value }
+
+(left, right) |> add
+// same as: (left, right) add
+```
+
+This lets a pipeline open a scope at the stage where a further argument first
+becomes relevant, instead of wrapping the whole pipeline in parentheses from
+its first line:
+
+```rust
+// Without a scope stage, the second argument of `fold` forces the grouping
+// back to the start of the expression:
+val bonus = (([0..entry_count], |i| i + 1) map, 0, |acc, x| acc + x) fold
+
+// With a scope stage, the pipeline keeps flowing and `0` appears where it is
+// needed:
+val bonus = [0..entry_count]
+    |> map { it + 1 }
+    |> { (it, 0) |> fold { |acc, x| acc + x } }
+
+// A scope stage is an ordinary block: it may prepare locals first, and it may
+// name its object.
+val report = entries
+    |> { |items|
+        val limit = 10
+        (items, limit) |> summarize_entries
+    }
+```
+
+Rules:
+
+- The token after `|>` is always a verb or an opening `{`. A value argument
+  never follows `|>` directly, so a pipe stage cannot be mistaken for a lambda
+  binder list.
+- `value |> verb { ... }` attaches the scope to `verb` when `{` opens on the
+  same line as the verb, exactly as `value verb { ... }` does. Further scoped
+  clauses may follow on that line (`values |> map { ... } filter { ... }`) or
+  on later lines through further pipes.
+- `value |> { ... }` is an anonymous exact-once scope and follows every rule of
+  the same-line form above, including the single-binder requirement.
+- An argument tuple `(a, b, ...)` with two or more elements is not a value.
+  `|>` after it only supplies the tuple's verb, so the call binds as tightly as
+  `(a, b) verb`, and `(a, b) |> add |> double` pipes the result of `add`. An
+  argument tuple cannot open an anonymous scope; `(a, b) |> { ... }` is a
+  syntax error because an anonymous scope takes exactly one object.
+- A single parenthesized expression remains an ordinary value:
+  `(1 + 2) |> double` is a plain pipe.
+- The nested implicit focus rule still applies. A scoped clause inside an
+  unheaded scope stage must name its binder, or the scope stage must name its
+  object: `|> { it map { |item| item + 1 } }` or
+  `|> { |items| items map { it + 1 } }`.
+- A `{` on the line after a pipe stage starts a new statement; it is not a
+  scope for that stage.
 
 ### 5.10 User-Defined Enum Construction
 
@@ -1511,6 +1592,10 @@ otherwise change their meaning (`(1 + 2) double`). Pipe starts from a complete
 expression, so `1 + 2 |> double` is parsed as `(1 + 2) |> double`.
 Likewise, a scoped verb clause is complete before a following pipe:
 `values map { it + 1 } |> list_count` pipes the mapped collection.
+A pipe stage may itself be a scoped verb clause or an anonymous scope
+(`value |> verb { ... }`, `value |> { ... }`); each receives the complete
+expression to the left of its `|>`. An argument tuple binds to the verb that
+follows its `|>` at grouped-call precedence, as specified in Section 5.9.
 An anonymous scope also receives the complete expression to its left, so
 `1 + 2 { |value| value * value }` applies the scope to `1 + 2`, not only to
 `2`.
@@ -1790,6 +1875,16 @@ fun main: () -> Int32 = {
     (shifted, 0) fold { |total, value|
         total + value
     }
+}
+```
+
+The same flow as a single multi-line pipeline:
+
+```rust
+fun main: () -> Int32 = {
+    [1, 2, 3]
+        |> map { it + 1 }
+        |> { (it, 0) |> fold { |total, value| total + value } }
 }
 ```
 

@@ -15539,14 +15539,32 @@ impl WasmCodeGen {
         type_params: &[String],
         substitution: &HashMap<String, Type>,
     ) -> Option<Type> {
+        self.infer_contextual_call_argument_source_type_with_bindings(
+            template,
+            arg,
+            type_params,
+            substitution,
+            &HashMap::new(),
+        )
+    }
+
+    fn infer_contextual_call_argument_source_type_with_bindings(
+        &self,
+        template: &Type,
+        arg: &Expr,
+        type_params: &[String],
+        substitution: &HashMap<String, Type>,
+        bindings: &HashMap<String, Type>,
+    ) -> Option<Type> {
         let contextual_template =
             Self::substitute_source_type_params_partial(template, type_params, substitution);
         match contextual_template {
             Type::Function(params, _) => {
-                let return_ty = self.infer_callable_return_source_type(arg, &params)?;
+                let return_ty =
+                    self.infer_callable_return_source_type_with_bindings(arg, &params, bindings)?;
                 Some(Type::Function(params, Box::new(return_ty)))
             }
-            _ => self.infer_expr_source_type(arg),
+            _ => self.infer_arg_source_type_with_bindings(arg, bindings),
         }
     }
 
@@ -17546,9 +17564,18 @@ impl WasmCodeGen {
                         return self
                             .infer_function_return_source_type_for_args(&target_name, &arg_tys);
                     }
+                    return None;
                 }
 
-                None
+                // Immediate application of a callable expression, such as the
+                // anonymous scope `value { |item| ... }`: the call has the
+                // type of the callable's body for these argument types.
+                let arg_tys = call
+                    .args
+                    .iter()
+                    .map(|arg| self.infer_expr_source_type(arg))
+                    .collect::<Option<Vec<_>>>()?;
+                self.infer_callable_return_source_type(&call.function, &arg_tys)
             }
             ExprKind::Pipe(pipe) => match &pipe.target {
                 PipeTarget::Ident(name) => {
@@ -17662,16 +17689,47 @@ impl WasmCodeGen {
     }
 
     fn infer_function_call_source_type(&self, name: &str, args: &[&Expr]) -> Option<Type> {
+        self.infer_function_call_source_type_with_bindings(name, args, &HashMap::new())
+    }
+
+    /// Infer an argument's source type while a callable body is typed ahead of
+    /// its code generation.
+    ///
+    /// Binders and earlier `val`s of that body are not active locals yet, so
+    /// they resolve through `bindings`. Without speculative bindings this is
+    /// plain `infer_expr_source_type`.
+    fn infer_arg_source_type_with_bindings(
+        &self,
+        expr: &Expr,
+        bindings: &HashMap<String, Type>,
+    ) -> Option<Type> {
+        if bindings.is_empty() {
+            self.infer_expr_source_type(expr)
+        } else {
+            self.infer_expr_source_type_with_bindings(expr, bindings)
+        }
+    }
+
+    fn infer_function_call_source_type_with_bindings(
+        &self,
+        name: &str,
+        args: &[&Expr],
+        bindings: &HashMap<String, Type>,
+    ) -> Option<Type> {
         if let Some(function_name) = self.lookup_generic_function_alias(name) {
-            return self.infer_function_call_source_type(&function_name, args);
+            return self.infer_function_call_source_type_with_bindings(
+                &function_name,
+                args,
+                bindings,
+            );
         }
 
         match name {
             "map" if args.len() == 2 => {
-                return self.infer_mapped_container_source_type(args[0], args[1])
+                return self.infer_mapped_container_source_type(args[0], args[1], bindings)
             }
             "filter" if args.len() == 2 => {
-                let container_ty = self.infer_expr_source_type(args[0])?;
+                let container_ty = self.infer_arg_source_type_with_bindings(args[0], bindings)?;
                 return match container_ty {
                     Type::Generic(name, params) if name == "Range" => {
                         Some(Type::Generic("List".to_string(), params))
@@ -17679,7 +17737,9 @@ impl WasmCodeGen {
                     other => Some(other),
                 };
             }
-            "fold" if args.len() == 3 => return self.infer_expr_source_type(args[1]),
+            "fold" if args.len() == 3 => {
+                return self.infer_arg_source_type_with_bindings(args[1], bindings)
+            }
             _ => {}
         }
 
@@ -17696,7 +17756,7 @@ impl WasmCodeGen {
 
         let mut substitution = HashMap::new();
         for (param_ty, arg_expr) in sig.params.iter().zip(args.iter()) {
-            if let Some(arg_ty) = self.infer_expr_source_type(arg_expr) {
+            if let Some(arg_ty) = self.infer_arg_source_type_with_bindings(arg_expr, bindings) {
                 Self::bind_source_type_params(
                     param_ty,
                     &arg_ty,
@@ -17706,11 +17766,12 @@ impl WasmCodeGen {
             }
         }
         for (param_ty, arg_expr) in sig.params.iter().zip(args.iter()) {
-            if let Some(arg_ty) = self.infer_contextual_call_argument_source_type(
+            if let Some(arg_ty) = self.infer_contextual_call_argument_source_type_with_bindings(
                 param_ty,
                 arg_expr,
                 &sig.type_params,
                 &substitution,
+                bindings,
             ) {
                 Self::bind_source_type_params(
                     param_ty,
@@ -17762,14 +17823,19 @@ impl WasmCodeGen {
         &self,
         container_expr: &Expr,
         mapper_expr: &Expr,
+        bindings: &HashMap<String, Type>,
     ) -> Option<Type> {
-        match self.infer_expr_source_type(container_expr)? {
+        match self.infer_arg_source_type_with_bindings(container_expr, bindings)? {
             Type::Generic(name, params)
                 if name == "List" || name == "Option" || name == "Range" =>
             {
                 let item_ty = params.first()?.clone();
                 let mapped_ty = self
-                    .infer_callable_return_source_type(mapper_expr, std::slice::from_ref(&item_ty))
+                    .infer_callable_return_source_type_with_bindings(
+                        mapper_expr,
+                        std::slice::from_ref(&item_ty),
+                        bindings,
+                    )
                     .unwrap_or(item_ty);
                 let out_container = if name == "Range" {
                     "List".to_string()
@@ -18177,9 +18243,9 @@ impl WasmCodeGen {
                         name,
                         bindings.contains_key(name),
                     ) {
-                        if let Some(return_ty) =
-                            self.infer_function_call_source_type(name, &arg_exprs)
-                        {
+                        if let Some(return_ty) = self.infer_function_call_source_type_with_bindings(
+                            name, &arg_exprs, bindings,
+                        ) {
                             return Some(return_ty);
                         }
                     }
@@ -18200,7 +18266,18 @@ impl WasmCodeGen {
                                 .and_then(|sig| sig.result.clone())
                         })
                 } else {
-                    None
+                    // Immediate application of a callable expression, such as
+                    // a nested anonymous scope `value { |item| ... }`.
+                    let arg_tys = call
+                        .args
+                        .iter()
+                        .map(|arg| self.infer_expr_source_type_with_bindings(arg, bindings))
+                        .collect::<Option<Vec<_>>>()?;
+                    self.infer_callable_return_source_type_with_bindings(
+                        &call.function,
+                        &arg_tys,
+                        bindings,
+                    )
                 }
             }
             ExprKind::Pipe(pipe) => {

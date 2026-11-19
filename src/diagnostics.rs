@@ -883,7 +883,44 @@ fn find_custom_parser_failure_offset(source: &str, detail: &str) -> Option<usize
         }
         return None;
     }
+    if detail.contains("an argument tuple such as") {
+        let bytes = source.as_bytes();
+        let mut i = 0;
+        while i < source.len() {
+            if mask[i] && bytes[i] == b'(' {
+                let end = skip_balanced(source, &mask, i, '(', ')');
+                if has_top_level_comma(source, &mask, i + 1, end.saturating_sub(1)) {
+                    let pipe = skip_non_code_ws(source, &mask, end);
+                    if source[pipe..].starts_with("|>") {
+                        let scope = skip_non_code_ws(source, &mask, pipe + 2);
+                        if source[scope..].starts_with('{') {
+                            return Some(scope);
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+        return None;
+    }
     None
+}
+
+/// Whether `source[start..end]` holds a comma outside any nested bracket.
+fn has_top_level_comma(source: &str, mask: &[bool], start: usize, end: usize) -> bool {
+    let mut depth = 0usize;
+    for (index, byte) in source.as_bytes()[start..end].iter().enumerate() {
+        if !mask[start + index] {
+            continue;
+        }
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn find_traditional_call_offset(source: &str, mask: &[bool]) -> Option<usize> {
@@ -1362,6 +1399,22 @@ fun make_quote: () -> Quote = {
         );
         assert!(message.contains("at line 2, column 8"), "{message}");
         assert!(message.contains("Option::None<Int32>"), "{message}");
+    }
+
+    #[test]
+    fn argument_tuple_scope_error_points_at_the_scope_after_the_tuple() {
+        // The single parenthesized value on line 2 is a valid scope object and
+        // must not be reported; only the two-element tuple on line 3 is.
+        let source = "fun main: () -> Int32 = {\n    val one = (1 + 2) |> { it }\n    (one, 2) |> { it }\n}\n";
+        let err = parse_program(source).expect_err("an argument tuple cannot open a scope");
+        let message = format_parse_error(source, err);
+
+        assert!(
+            message.contains("pipe it to a verb such as `(a, b) |> add`"),
+            "{message}"
+        );
+        assert!(message.contains("at line 3, column 17"), "{message}");
+        assert!(message.contains("    (one, 2) |> { it }"), "{message}");
     }
 
     #[test]

@@ -547,3 +547,74 @@ export fun run_unit_return: () -> () = {
         "ran\n"
     );
 }
+
+#[test]
+fn anonymous_scope_results_keep_their_type_when_bound_and_reused() {
+    // The scope body is typed before its code is generated, so names bound
+    // inside it (binders and earlier `val`s) must take part in that inference.
+    let source = r#"
+fun add: (a: Int32, b: Int32) -> Int32 = {
+    a + b
+}
+
+fun pick_first: <T>(left: T, right: T) -> T = {
+    left
+}
+
+export fun fold_seed_from_scope_local: () -> Int32 = {
+    val total = [1, 2, 3] map { it + 1 } { |shifted|
+        val seed = 0
+        (shifted, seed) fold { |sum, value| sum + value }
+    }
+    val pair = (total, 1) add
+    pair
+}
+
+export fun map_result_feeds_a_later_fold: () -> Int32 = {
+    val shifted = [1, 2, 3] { |items|
+        val offset = 10
+        items map { |item| item + offset }
+    }
+    val total = (shifted, 0) fold { |sum, value| sum + value }
+    (total, 0) add
+}
+
+export fun filter_result_feeds_a_later_fold: () -> Int32 = {
+    val kept = [1, 2, 3] { |items|
+        val floor = 1
+        items filter { |item| item > floor }
+    }
+    val total = (kept, 0) fold { |sum, value| sum + value }
+    (total, 0) add
+}
+
+export fun nested_scope_result_instantiates_a_generic: () -> Int32 = {
+    val nested = 4 { |base|
+        val bumped = base { |inner| inner + 1 }
+        (bumped, base) pick_first
+    }
+    (nested, 0) add
+}
+"#;
+
+    let label = "anonymous scope result inference";
+    // 2 + 3 + 4 = 9, then + 1
+    assert_eq!(
+        run_export_i32(label, source, "fold_seed_from_scope_local"),
+        10
+    );
+    // 11 + 12 + 13
+    assert_eq!(
+        run_export_i32(label, source, "map_result_feeds_a_later_fold"),
+        36
+    );
+    // 2 + 3
+    assert_eq!(
+        run_export_i32(label, source, "filter_result_feeds_a_later_fold"),
+        5
+    );
+    assert_eq!(
+        run_export_i32(label, source, "nested_scope_result_instantiates_a_generic"),
+        5
+    );
+}

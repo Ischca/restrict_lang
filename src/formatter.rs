@@ -706,6 +706,31 @@ fun compute: (x: Int32, y: Int32) -> Result<Int32, String> = {
     }
 
     #[test]
+    fn formats_pipe_scope_stages_idempotently() {
+        let input = r#"fun total:(values:List<Int32>)->Int32={
+values
+|>map{it+1}
+|>{
+val seed=0
+(it,seed)|>fold{|sum,value|sum+value}
+}
+}
+"#;
+        let expected = r#"fun total: (values: List<Int32>) -> Int32 = {
+    values
+    |> map { it + 1 }
+    |> {
+        val seed = 0
+        (it, seed) |> fold { |sum, value| sum + value }
+    }
+}
+"#;
+        let formatted = format_source(input).unwrap();
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted).unwrap(), formatted);
+    }
+
+    #[test]
     fn formats_semicolon_free_code_and_next_line_unary_minus_idempotently() {
         let input = r#"fun demo:(a:Int32)->Int32={
 val x=1

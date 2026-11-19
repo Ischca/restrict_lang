@@ -166,10 +166,14 @@ fun analyze_batch: (raw_log: String, max_lines: Int32) -> Int32 = {
     }
 
     val entry_count = entries |> list_length
-    val range_bonus = (([0..entry_count], | i | i + 1) map, 0, | acc, x | acc + x) fold
+    val range_bonus = [0..entry_count]
+    |> map { it + 1 }
+    |> { (it, 0) |> fold { |acc, x| acc + x } }
     val has_slow = (entries, | e | e.latency_ms >= 150) list_any
     val slow_bonus = has_slow then { 100 } else { 0 }
-    val auth_hits = ((counts, "auth") smap_get, 0) option_unwrap_or
+    val auth_hits = (counts, "auth")
+    |> smap_get
+    |> { (it, 0) |> option_unwrap_or }
     val service_kinds = counts |> smap_len
 
     entry_count * 1000 + service_kinds * 100 + auth_hits * 10 + range_bonus + slow_bonus

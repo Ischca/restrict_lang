@@ -63,6 +63,25 @@ pub enum TypeError {
         found: String,
     },
 
+    /// The left side of `??` is not an `Option`
+    FallbackLeftNotOption {
+        found: String,
+        is_result: bool,
+    },
+
+    /// The fallback of `??` does not have the payload type of the left `Option`
+    FallbackTypeMismatch {
+        payload: String,
+        found: String,
+    },
+
+    /// The result of `??` (the payload type) differs from the type expected
+    /// by the surrounding context, such as a `val` annotation
+    FallbackResultMismatch {
+        payload: String,
+        expected: String,
+    },
+
     /// Attempt to use a value that has already been consumed
     AffineViolation(String),
 
@@ -210,6 +229,34 @@ impl fmt::Display for TypeError {
                 "Type mismatch: expected {}, found {}",
                 sanitize_diagnostic_text(expected),
                 sanitize_diagnostic_text(found)
+            ),
+            TypeError::FallbackLeftNotOption { found, is_result } => {
+                write!(
+                    f,
+                    "`??` requires an `Option` value on its left, found `{}`",
+                    sanitize_diagnostic_text(found)
+                )?;
+                if *is_result {
+                    write!(
+                        f,
+                        "; `??` does not accept `Result`, so convert it first with `value |> result_ok ?? fallback`"
+                    )?;
+                }
+                Ok(())
+            }
+            TypeError::FallbackTypeMismatch { payload, found } => write!(
+                f,
+                "the fallback of `??` must be `{}`, the payload of the left `Option<{}>`, found `{}`",
+                sanitize_diagnostic_text(payload),
+                sanitize_diagnostic_text(payload),
+                sanitize_diagnostic_text(found)
+            ),
+            TypeError::FallbackResultMismatch { payload, expected } => write!(
+                f,
+                "`??` yields `{}`, the payload of the left `Option<{}>`, but `{}` is expected here",
+                sanitize_diagnostic_text(payload),
+                sanitize_diagnostic_text(payload),
+                sanitize_diagnostic_text(expected)
             ),
             TypeError::AffineViolation(name) => {
                 write!(
@@ -11837,6 +11884,23 @@ impl TypeChecker {
         // Check the scrutinee expression
         let scrutinee_type = self.check_expr(&match_expr.expr)?;
 
+        // `value ?? fallback` is expanded into this match by the parser, so
+        // report its failures in terms of `??` rather than the expansion.
+        let is_fallback = match_expr.origin == MatchOrigin::Fallback;
+        let fallback_payload = if is_fallback {
+            match &scrutinee_type {
+                TypedType::Option(payload) => Some((**payload).clone()),
+                other => {
+                    return Err(TypeError::FallbackLeftNotOption {
+                        found: format_typed_type(other),
+                        is_result: matches!(other, TypedType::Result(_, _)),
+                    })
+                }
+            }
+        } else {
+            None
+        };
+
         // Check that we have at least one arm
         if match_expr.arms.is_empty() {
             return Err(TypeError::TypeMismatch {
@@ -11857,14 +11921,43 @@ impl TypeChecker {
         } else {
             None
         };
-        let branch_expected = expected.or(inferred_result_type.as_ref());
+        // The fallback of `??` must have the payload type, so a known payload
+        // type guides the fallback expression the way an annotation would
+        // (`opt_int64 ?? 2` types `2` as `Int64`).
+        let payload_expected = fallback_payload.as_ref().filter(|payload| {
+            expected.is_none() && !Self::contains_inference_internal_type(payload)
+        });
+        let branch_expected = expected
+            .or(payload_expected)
+            .or(inferred_result_type.as_ref());
         let finalize_result = expected.is_none_or(|ty| !Self::contains_inference_internal_type(ty));
 
-        for arm in &match_expr.arms {
+        // When the context expects a type other than the payload, a failure
+        // belongs to that expectation and not to the fallback expression.
+        let result_conflict = match (&fallback_payload, expected) {
+            (Some(payload), Some(wanted))
+                if !Self::contains_inference_internal_type(payload)
+                    && !Self::contains_inference_internal_type(wanted)
+                    && payload != wanted =>
+            {
+                Some((format_typed_type(payload), format_typed_type(wanted)))
+            }
+            _ => None,
+        };
+        let result_conflict_error = || {
+            result_conflict
+                .as_ref()
+                .map(|(payload, wanted)| TypeError::FallbackResultMismatch {
+                    payload: payload.clone(),
+                    expected: wanted.clone(),
+                })
+        };
+
+        for (arm_index, arm) in match_expr.arms.iter().enumerate() {
             // Check pattern compatibility with scrutinee
             self.check_pattern(&arm.pattern, &scrutinee_type)?;
 
-            let (arm_type, arm_env) = self.check_branch_from_env(&branch_base, |checker| {
+            let checked = self.check_branch_from_env(&branch_base, |checker| {
                 checker.push_scope();
                 checker.bind_pattern_vars(&arm.pattern, &scrutinee_type)?;
 
@@ -11872,7 +11965,36 @@ impl TypeChecker {
 
                 checker.pop_scope();
                 result
-            })?;
+            });
+            let (arm_type, arm_env) = match (checked, &fallback_payload) {
+                // The fallback arm failed against the payload type. Check it
+                // again on its own (branch state is restored afterwards): if it
+                // is well-typed by itself, the failure is the payload mismatch.
+                // Otherwise the error belongs to the fallback expression.
+                (Err(TypeError::TypeMismatch { expected, found }), Some(payload))
+                    if arm_index == 1 =>
+                {
+                    let alone = self.check_branch_from_env(&branch_base, |checker| {
+                        checker.push_scope();
+                        let result = checker.check_block_expr_with_expected(&arm.body, None);
+                        checker.pop_scope();
+                        result
+                    });
+                    match alone {
+                        Ok((alone_type, _)) => {
+                            if let Some(err) = result_conflict_error() {
+                                return Err(err);
+                            }
+                            return Err(TypeError::FallbackTypeMismatch {
+                                payload: format_typed_type(payload),
+                                found: format_typed_type(&alone_type),
+                            });
+                        }
+                        Err(_) => return Err(TypeError::TypeMismatch { expected, found }),
+                    }
+                }
+                (result, _) => result?,
+            };
             branch_envs.push(arm_env);
             branch_types.push(arm_type);
         }
@@ -11906,7 +12028,16 @@ impl TypeChecker {
             branch_expected.expect("branch result expected type is always initialized"),
             &branch_types,
             finalize_result && !(expected.is_none() && all_arms_diverge),
-        )?;
+        )
+        .map_err(|err| match (&err, &fallback_payload, branch_types.get(1)) {
+            (TypeError::TypeMismatch { .. }, Some(payload), Some(fallback_type)) => {
+                result_conflict_error().unwrap_or_else(|| TypeError::FallbackTypeMismatch {
+                    payload: format_typed_type(payload),
+                    found: format_typed_type(fallback_type),
+                })
+            }
+            _ => err,
+        })?;
         if expected.is_none()
             && all_arms_diverge
             && Self::contains_inference_internal_type(&result_type)

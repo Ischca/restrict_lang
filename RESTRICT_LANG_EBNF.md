@@ -96,8 +96,20 @@ where_clause        = "where" temporal_constraint { "," temporal_constraint } ;
 (* Expression Hierarchy - Lowest to Highest Precedence *)
 expression          = pipe_expr ;
 
-pipe_expr           = logical_or_expr { lexeme_gap pipe_op lexeme_gap pipe_stage } ;
-                                                  (* explicit multi-line continuation via |> *)
+pipe_expr           = logical_or_expr { lexeme_gap pipe_op lexeme_gap pipe_stage
+                                      | lexeme_gap fallback_stage } ;
+                                                  (* explicit multi-line continuation via |> or ?? *)
+
+fallback_stage      = "??" lexeme_gap fallback_rhs ;
+                      (* same level as |>, left associative with it: a |> f ?? 0 |> g
+                         is ((a |> f) ?? 0) |> g; the left side must be Option<T> *)
+
+fallback_rhs        = ( logical_or_expr | "return" [ inline_gap expression ] | "break" | "continue" )
+                      [ lexeme_gap fallback_stage_chain ] ;
+fallback_stage_chain = "??" lexeme_gap fallback_rhs ;
+                      (* a directly following ?? nests to the right: a ?? b ?? 0 is a ?? (b ?? 0);
+                         a pipe ends the right side: a ?? b |> f ?? c is ((a ?? b) |> f) ?? c;
+                         write a pipe in the right side with parentheses: a ?? (key |> load) *)
 
 pipe_stage          = scope_block                              (* anonymous exact-once scope: one binder *)
                     | postfix_expr inline_gap scope_block
@@ -370,6 +382,7 @@ reserved for future extensions.
 - OSV precedence: `a + b c` parses as `(a + b) c`
 - Line-bounded direct OSV: bare direct OSV (`a b`), scoped verb attachment, and anonymous scopes (`expr { ... }`) attach on the same line (`inline_gap`); multi-line pipelines continue explicitly via `|>`, infix operators, `.field` / `.clone`, or `then` / `else` / `match` / `while`
 - Pipe stages: `|>` is the multi-line spelling of every application form — `value |> verb`, `(a, b) |> verb`, `value |> verb { ... }`, and `value |> { ... }` elaborate to the same calls as their same-line spellings
+- Fallback stage: `value ?? fallback` is a pipe-level stage for `Option<T>` values; the parser expands it to `value match { Some(v) => { v } None => { fallback } }`, so the fallback is evaluated only for `None` and the result has type `T`
 - Postfix chain: `x.field.clone await` applies left-to-right
 - Pure expressions: `x + y` (or `x + y;` when discarding the value or placing multiple statements on one line) is allowed only if type checker confirms no side effects
 - Naming conventions: `UpperCamelCase` for nominal types, forms, contexts, and variant constructors; `snake_case` for functions, methods, variables, fields, modules, and lifetimes (see `docs/NAMING_AND_SYNTAX_DECISIONS.md`)

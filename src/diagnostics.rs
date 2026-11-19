@@ -883,6 +883,51 @@ fn find_custom_parser_failure_offset(source: &str, detail: &str) -> Option<usize
         }
         return None;
     }
+    if detail.contains("`??` needs a fallback value on its right") {
+        // Point at the `??` that has nothing usable after it: end of input, a
+        // closing delimiter or separator, or a keyword that starts a
+        // declaration or clause.
+        const NOT_A_VALUE: [&str; 17] = [
+            "val", "fun", "record", "enum", "form", "context", "impl", "import", "export", "pub",
+            "mut", "then", "else", "match", "while", "with", "where",
+        ];
+        let bytes = source.as_bytes();
+        let mut first = None;
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if mask[i] && mask[i + 1] && bytes[i] == b'?' && bytes[i + 1] == b'?' {
+                first.get_or_insert(i);
+                // String literals are masked as non-code, so skip only
+                // whitespace and comments: a string is a valid fallback value.
+                let mut next = i + 2;
+                while next < bytes.len() {
+                    if bytes[next].is_ascii_whitespace() {
+                        next += 1;
+                    } else if source[next..].starts_with("//") {
+                        next += source[next..].find('\n').unwrap_or(source.len() - next);
+                    } else if source[next..].starts_with("/*") {
+                        next += source[next + 2..]
+                            .find("*/")
+                            .map_or(source.len() - next, |p| p + 4);
+                    } else {
+                        break;
+                    }
+                }
+                let missing = next >= bytes.len()
+                    || matches!(bytes[next], b')' | b']' | b'}' | b';' | b',')
+                    || NOT_A_VALUE
+                        .iter()
+                        .any(|word| starts_with_word_at(source, &mask, next, word));
+                if missing {
+                    return Some(i);
+                }
+                i += 2;
+                continue;
+            }
+            i += 1;
+        }
+        return first;
+    }
     if detail.contains("an argument tuple such as") {
         let bytes = source.as_bytes();
         let mut i = 0;
@@ -1415,6 +1460,34 @@ fun make_quote: () -> Quote = {
         );
         assert!(message.contains("at line 3, column 17"), "{message}");
         assert!(message.contains("    (one, 2) |> { it }"), "{message}");
+    }
+
+    #[test]
+    fn fallback_without_right_side_points_at_the_operator() {
+        // The `??` inside the string and the comment must be skipped, and the
+        // complete fallback on line 2 must not be reported.
+        let source = "fun main: () -> Int32 = {\n    val a = (\"??\" Option::Some) ?? \"x\" // ?? nothing\n    val b = (1 Option::Some) ??\n    val c = 2\n    c\n}\n";
+        let err = parse_program(source).expect_err("`??` needs a right side");
+        let message = format_parse_error(source, err);
+
+        assert!(
+            message.contains("`??` needs a fallback value on its right"),
+            "{message}"
+        );
+        assert!(message.contains("at line 3, column 30"), "{message}");
+        assert!(
+            message.contains("    val b = (1 Option::Some) ??"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn fallback_at_end_of_a_block_points_at_the_operator() {
+        let source = "fun main: () -> Int32 = {\n    (1 Option::Some) ??\n}\n";
+        let err = parse_program(source).expect_err("`??` needs a right side");
+        let message = format_parse_error(source, err);
+
+        assert!(message.contains("at line 2, column 22"), "{message}");
     }
 
     #[test]

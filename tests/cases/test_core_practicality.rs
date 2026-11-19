@@ -618,3 +618,141 @@ export fun nested_scope_result_instantiates_a_generic: () -> Int32 = {
         5
     );
 }
+
+fn fallback_error(body: &str) -> TypeError {
+    let source = format!(
+        r#"
+fun maybe_text: (n: Int32) -> Option<String> = {{
+    (n > 0) then {{ "text" Option::Some }} else {{ () Option::None }}
+}}
+
+fun maybe_int: (n: Int32) -> Option<Int32> = {{
+    (n > 0) then {{ n Option::Some }} else {{ () Option::None }}
+}}
+
+fun checked: (n: Int32) -> Result<Int32, String> = {{
+    (n > 0) then {{ n Result::Ok }} else {{ "bad" Result::Err }}
+}}
+
+export fun probe: () -> Int32 = {{
+{body}
+}}
+"#
+    );
+    check_source(&source).expect_err("the fallback program must be rejected")
+}
+
+#[test]
+fn fallback_rejects_a_left_side_that_is_not_an_option() {
+    let err = fallback_error("    val n = 5\n    n ?? 1");
+    assert!(
+        matches!(&err, TypeError::FallbackLeftNotOption { found, is_result: false } if found == "Int32"),
+        "{err:?}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "`??` requires an `Option` value on its left, found `Int32`"
+    );
+}
+
+#[test]
+fn fallback_rejects_result_and_points_at_result_ok() {
+    let err = fallback_error("    1 checked ?? 0");
+    assert!(
+        matches!(
+            &err,
+            TypeError::FallbackLeftNotOption {
+                is_result: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let message = err.to_string();
+    assert!(
+        message.contains("`??` requires an `Option` value on its left"),
+        "{message}"
+    );
+    assert!(
+        message.contains("value |> result_ok ?? fallback"),
+        "{message}"
+    );
+}
+
+#[test]
+fn fallback_rejects_a_fallback_of_the_wrong_type() {
+    let err = fallback_error("    1 maybe_int ?? \"zero\"");
+    assert_eq!(
+        err.to_string(),
+        "the fallback of `??` must be `Int32`, the payload of the left `Option<Int32>`, found `String`"
+    );
+
+    // An annotation on the result does not change which side is blamed.
+    let err = fallback_error("    val n: Int32 = 1 maybe_int ?? \"zero\"\n    n");
+    assert!(
+        matches!(&err, TypeError::FallbackTypeMismatch { payload, found } if payload == "Int32" && found == "String"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn fallback_blames_the_annotation_when_the_payload_does_not_match_it() {
+    let err = fallback_error("    val chosen: Int32 = 1 maybe_text ?? 1\n    chosen");
+    assert_eq!(
+        err.to_string(),
+        "`??` yields `String`, the payload of the left `Option<String>`, but `Int32` is expected here"
+    );
+    // Same context, but a fallback that is itself of the wrong type.
+    let err = fallback_error("    val chosen: Int32 = 1 maybe_text ?? false\n    chosen");
+    assert!(
+        matches!(err, TypeError::FallbackResultMismatch { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn fallback_reports_errors_inside_the_fallback_as_they_are() {
+    let err = fallback_error("    1 maybe_int ?? (1 + \"a\")");
+    assert!(
+        !matches!(err, TypeError::FallbackTypeMismatch { .. }),
+        "an error inside the fallback expression is not a payload mismatch: {err:?}"
+    );
+}
+
+#[test]
+fn fallback_binding_used_again_after_the_fallback_is_an_affine_violation() {
+    let err = fallback_error(
+        "    val default_name = \"default\"\n    val name = 1 maybe_text ?? default_name\n    val again = default_name\n    0",
+    );
+    assert!(
+        matches!(&err, TypeError::AffineViolation(name) if name == "default_name"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn fallback_binding_used_on_both_sides_is_an_affine_violation() {
+    let err = fallback_error(
+        "    val shared = \"shared\"\n    val name = (shared Option::Some) ?? shared\n    0",
+    );
+    assert!(
+        matches!(&err, TypeError::AffineViolation(name) if name == "shared"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn fallback_accepts_a_binding_used_only_on_the_fallback_side() {
+    let source = r#"
+fun maybe_text: (n: Int32) -> Option<String> = {
+    (n > 0) then { "text" Option::Some } else { () Option::None }
+}
+
+export fun probe: () -> Int32 = {
+    val default_name = "default"
+    val name = 1 maybe_text ?? default_name
+    name string_length
+}
+"#;
+    check_source(source).expect("a single use in the fallback is fine");
+}

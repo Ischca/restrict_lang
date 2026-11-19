@@ -698,6 +698,17 @@ pub struct MatchExpr {
     pub expr: Box<Expr>,
     /// Match arms with patterns and bodies
     pub arms: Vec<MatchArm>,
+    /// Where the match came from, so diagnostics can use the source spelling
+    pub origin: MatchOrigin,
+}
+
+/// Source spelling a `match` expression was written (or expanded) from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchOrigin {
+    /// Written as `value match { ... }`.
+    Source,
+    /// Expanded by the parser from `value ?? fallback`.
+    Fallback,
 }
 
 /// A single arm in a match expression.

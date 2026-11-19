@@ -4,7 +4,7 @@ MDBOOK_VERSION = "0.5.3"
 WASM_PACK_VERSION = "0.15.0"
 
 [tools]
-rust = "1.94.1"
+rust = "1.100.0"
 pnpm = "11.2.1"
 
 [tasks.test]

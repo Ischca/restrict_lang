@@ -96,8 +96,23 @@ where_clause        = "where" temporal_constraint { "," temporal_constraint } ;
 (* Expression Hierarchy - Lowest to Highest Precedence *)
 expression          = pipe_expr ;
 
-pipe_expr           = logical_or_expr { lexeme_gap pipe_op lexeme_gap logical_or_expr } ;
+pipe_expr           = logical_or_expr { lexeme_gap pipe_op lexeme_gap pipe_stage } ;
                                                   (* explicit multi-line continuation via |> *)
+
+pipe_stage          = scope_block                              (* anonymous exact-once scope: one binder *)
+                    | postfix_expr inline_gap scope_block
+                      { inline_gap postfix_expr inline_gap scope_block }
+                                                               (* scoped verb clause(s) *)
+                    | logical_or_expr ;                        (* plain verb *)
+
+scope_block         = "{" [ "|" [ param_list ] "|" ] { statement } [ expression ] "}" ;
+                      (* unheaded: binds the contextual focus `it` *)
+
+arg_tuple_pipe      = "(" expression "," expression { "," expression } ")"
+                      lexeme_gap pipe_op lexeme_gap postfix_expr
+                      { inline_gap scope_block } ;
+                      (* (a, b) |> verb == (a, b) verb; binds at call_expr precedence *)
+                      (* an argument tuple is not a value and cannot feed a scope_block *)
 
 logical_or_expr     = logical_and_expr { logical_or_op logical_and_expr } ;
 
@@ -111,7 +126,8 @@ additive_expr       = multiplicative_expr { additive_op multiplicative_expr } ;
 
 multiplicative_expr = call_expr { multiplicative_op call_expr } ;
 
-call_expr           = unary_expr [ inline_gap call_expr ] ;  (* right associative for OSV *)
+call_expr           = arg_tuple_pipe
+                    | unary_expr [ inline_gap call_expr ] ;  (* right associative for OSV *)
                                                   (* line-bounded: does not cross newlines *)
                                                   (* a b c parses as a (b c) on one line *)
 
@@ -353,6 +369,7 @@ reserved for future extensions.
 - Nested comments not supported: `/* /* */ */` is invalid
 - OSV precedence: `a + b c` parses as `(a + b) c`
 - Line-bounded direct OSV: bare direct OSV (`a b`), scoped verb attachment, and anonymous scopes (`expr { ... }`) attach on the same line (`inline_gap`); multi-line pipelines continue explicitly via `|>`, infix operators, `.field` / `.clone`, or `then` / `else` / `match` / `while`
+- Pipe stages: `|>` is the multi-line spelling of every application form — `value |> verb`, `(a, b) |> verb`, `value |> verb { ... }`, and `value |> { ... }` elaborate to the same calls as their same-line spellings
 - Postfix chain: `x.field.clone await` applies left-to-right
 - Pure expressions: `x + y` (or `x + y;` when discarding the value or placing multiple statements on one line) is allowed only if type checker confirms no side effects
 - Naming conventions: `UpperCamelCase` for nominal types, forms, contexts, and variant constructors; `snake_case` for functions, methods, variables, fields, modules, and lifetimes (see `docs/NAMING_AND_SYNTAX_DECISIONS.md`)

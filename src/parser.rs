@@ -70,6 +70,8 @@ const STALE_FUNCTION_DECL_ERROR: &str =
     "stale function declaration syntax is not valid Restrict; write `fun name: (param: Type, ...) = { ... }` and use `()` for no parameters";
 const ANONYMOUS_SCOPE_ARITY_ERROR: &str =
     "anonymous exact-once scopes require exactly one value binder; use `{ it ... }` or `{ |value| ... }`";
+const ARGUMENT_TUPLE_SCOPE_ERROR: &str =
+    "an argument tuple such as `(a, b)` is not a value and cannot open an anonymous scope; pipe it to a verb such as `(a, b) |> add` or `(values, 0) |> fold { |sum, value| ... }`";
 
 /// Expects a specific token and consumes it.
 ///
@@ -1463,17 +1465,88 @@ fn binary_expr_min_precedence(input: &str, min_precedence: u8) -> ParseResult<'_
 }
 
 fn pipe_expr(input: &str) -> ParseResult<'_, Expr> {
-    let (input, first) = binary_expr(input)?;
-    let (input, pipes) = many0(tuple((pipe_op, pipe_target)))(input)?;
+    let (mut input, mut expr) = binary_expr(input)?;
 
-    let expr = pipes.into_iter().fold(first, |acc, (op, target)| {
+    while let Ok((after_op, op)) = pipe_op(input) {
+        match pipe_stage(after_op, op, &expr) {
+            Ok((after_stage, stage)) => {
+                expr = stage;
+                input = after_stage;
+            }
+            // Leave an unparseable stage unconsumed so the enclosing parser
+            // reports the error at the pipe, exactly as before.
+            Err(nom::Err::Error(_)) => break,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok((input, expr))
+}
+
+/// Parse the stage that follows a pipe operator and apply it to `object`.
+///
+/// `|>` is the multi-line spelling of every same-line application form, so a
+/// stage is one of:
+///
+/// ```restrict
+/// value |> verb                 // plain pipe
+/// value |> verb { it + 1 }      // scoped verb clause: `value verb { ... }`
+/// value |> { it + 1 }           // anonymous scope:    `value { ... }`
+/// ```
+///
+/// The scoped forms elaborate to the same calls as their same-line spellings.
+fn pipe_stage<'a>(input: &'a str, op: PipeOp, object: &Expr) -> ParseResult<'a, Expr> {
+    if matches!(op, PipeOp::Pipe) {
+        if matches!(lex_token(input), Ok((_, Token::LBrace))) {
+            return anonymous_scope_application(input, object.clone());
+        }
+
+        if let Ok((after_verb, verb)) = simple_expr(input) {
+            if is_scoped_verb_target(&verb)
+                && !has_newline_before_next_token(after_verb)
+                && matches!(lex_token(after_verb), Ok((_, Token::LBrace)))
+            {
+                return scoped_clause_suffixes(
+                    after_verb,
+                    Expr::new(ExprKind::Call(CallExpr {
+                        function: Box::new(verb),
+                        args: vec![Box::new(object.clone())],
+                    })),
+                );
+            }
+        }
+    }
+
+    let (input, target) = pipe_target(input)?;
+    Ok((
+        input,
         Expr::new(ExprKind::Pipe(PipeExpr {
-            expr: Box::new(acc),
+            expr: Box::new(object.clone()),
             op,
             target,
-        }))
-    });
-    Ok((input, expr))
+        })),
+    ))
+}
+
+/// Apply an anonymous exact-once scope to `object`.
+///
+/// `object { it * it }` and `object |> { it * it }` both elaborate to the
+/// immediate application of a unary lambda.
+fn anonymous_scope_application<'a>(input: &'a str, object: Expr) -> ParseResult<'a, Expr> {
+    let (input, scope) = scoped_lambda_block(input)?;
+    let ExprKind::Lambda(lambda) = &scope.kind else {
+        unreachable!("scoped lambda parser must produce a lambda expression")
+    };
+    if lambda.params.len() != 1 {
+        return user_syntax_failure(ANONYMOUS_SCOPE_ARITY_ERROR);
+    }
+    Ok((
+        input,
+        Expr::new(ExprKind::Call(CallExpr {
+            function: Box::new(scope),
+            args: vec![Box::new(object)],
+        })),
+    ))
 }
 
 fn pipe_target(input: &str) -> ParseResult<'_, PipeTarget> {
@@ -1560,6 +1633,26 @@ fn call_expr(input: &str) -> ParseResult<'_, Expr> {
                 separated_list0(expect_token(Token::Comma), expression),
                 expect_token(Token::RParen),
             )(input)?;
+
+            // `(a, b) |> verb` is the multi-line spelling of `(a, b) verb`.
+            // An argument tuple is not a value, so the pipe only supplies its
+            // verb; a single parenthesized expression stays an ordinary value
+            // and is piped by `pipe_expr`.
+            if args.len() >= 2 {
+                if let Ok((after_op, PipeOp::Pipe)) = pipe_op(input) {
+                    if matches!(lex_token(after_op), Ok((_, Token::LBrace))) {
+                        return user_syntax_failure(ARGUMENT_TUPLE_SCOPE_ERROR);
+                    }
+                    let (after_verb, func) = simple_expr(after_op)?;
+                    return scoped_clause_suffixes(
+                        after_verb,
+                        Expr::new(ExprKind::Call(CallExpr {
+                            function: Box::new(func),
+                            args: args.into_iter().map(Box::new).collect(),
+                        })),
+                    );
+                }
+            }
 
             if has_newline_before_next_token(input) {
                 return Err(nom::Err::Error(nom::error::Error::new(
@@ -1774,13 +1867,9 @@ fn expression(input: &str) -> ParseResult<'_, Expr> {
 fn application_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult<'a, Expr> {
     loop {
         if let Ok((after_op, op)) = pipe_op(input) {
-            let (after_target, target) = pipe_target(after_op)?;
-            expr = Expr::new(ExprKind::Pipe(PipeExpr {
-                expr: Box::new(expr),
-                op,
-                target,
-            }));
-            input = after_target;
+            let (after_stage, stage) = pipe_stage(after_op, op, &expr)?;
+            expr = stage;
+            input = after_stage;
             continue;
         }
 
@@ -1789,17 +1878,8 @@ fn application_suffixes<'a>(mut input: &'a str, mut expr: Expr) -> ParseResult<'
         }
 
         if matches!(lex_token(input), Ok((_, Token::LBrace))) {
-            let (after_scope, scope) = scoped_lambda_block(input)?;
-            let ExprKind::Lambda(lambda) = &scope.kind else {
-                unreachable!("scoped lambda parser must produce a lambda expression")
-            };
-            if lambda.params.len() != 1 {
-                return user_syntax_failure(ANONYMOUS_SCOPE_ARITY_ERROR);
-            }
-            expr = Expr::new(ExprKind::Call(CallExpr {
-                function: Box::new(scope),
-                args: vec![Box::new(expr)],
-            }));
+            let (after_scope, applied) = anonymous_scope_application(input, expr)?;
+            expr = applied;
             input = after_scope;
             continue;
         }
@@ -2521,6 +2601,114 @@ mod tests {
             matches!(anonymous_call.args[0].kind, ExprKind::Call(ref map_call)
             if matches!(map_call.function.kind, ExprKind::Ident(ref name) if name == "map"))
         );
+    }
+
+    fn parse_complete_expression(source: &str) -> Expr {
+        let (remaining, expr) = expression(source).unwrap();
+        assert!(
+            remaining.trim().is_empty(),
+            "unparsed input after `{source}`: {remaining:?}"
+        );
+        expr
+    }
+
+    #[test]
+    fn test_pipe_spells_scoped_verb_clause_across_lines() {
+        assert_eq!(
+            parse_complete_expression("values\n    |> map { it + 1 }"),
+            parse_complete_expression("values map { it + 1 }"),
+        );
+        assert_eq!(
+            parse_complete_expression("values\n    |> map { it + 1 } filter { it > 2 }"),
+            parse_complete_expression("values map { it + 1 } filter { it > 2 }"),
+        );
+        assert_eq!(
+            parse_complete_expression("values\n    |> map { it + 1 }\n    |> filter { it > 2 }"),
+            parse_complete_expression("values map { it + 1 } filter { it > 2 }"),
+        );
+    }
+
+    #[test]
+    fn test_pipe_spells_anonymous_scope_across_lines() {
+        assert_eq!(
+            parse_complete_expression("value\n    |> { it * it }"),
+            parse_complete_expression("value { it * it }"),
+        );
+        assert_eq!(
+            parse_complete_expression("values map { it + 1 }\n    |> { |mapped| mapped print }"),
+            parse_complete_expression("values map { it + 1 } { |mapped| mapped print }"),
+        );
+    }
+
+    #[test]
+    fn test_pipe_spells_argument_tuple_call_across_lines() {
+        assert_eq!(
+            parse_complete_expression("(left, right)\n    |> add"),
+            parse_complete_expression("(left, right) add"),
+        );
+        assert_eq!(
+            parse_complete_expression("(values, 0)\n    |> fold { |sum, value| sum + value }"),
+            parse_complete_expression("(values, 0) fold { |sum, value| sum + value }"),
+        );
+        assert_eq!(
+            parse_complete_expression("(left, right) |> add |> double"),
+            parse_complete_expression("((left, right) add) |> double"),
+        );
+    }
+
+    #[test]
+    fn test_scope_stage_opens_where_a_second_argument_appears() {
+        let expr =
+            parse_complete_expression("values\n    |> map { it + 1 }\n    |> { (it, 0) |> fold { |sum, value| sum + value } }");
+
+        let ExprKind::Call(anonymous_call) = expr.kind else {
+            panic!("expected the final stage to be an anonymous scope");
+        };
+        let ExprKind::Lambda(scope) = &anonymous_call.function.kind else {
+            panic!("expected an anonymous scope lambda");
+        };
+        assert!(scope.implicit_focus);
+        assert!(
+            matches!(anonymous_call.args[0].kind, ExprKind::Call(ref map_call)
+            if matches!(map_call.function.kind, ExprKind::Ident(ref name) if name == "map"))
+        );
+    }
+
+    #[test]
+    fn test_plain_pipe_stages_stay_pipe_expressions() {
+        assert!(matches!(
+            parse_complete_expression("value |> increment").kind,
+            ExprKind::Pipe(_)
+        ));
+        assert!(matches!(
+            parse_complete_expression("(value) |> increment").kind,
+            ExprKind::Pipe(_)
+        ));
+        // A brace on the next line is a new statement, not a scope.
+        let (remaining, expr) = expression("value |> increment\n{ 1 }").unwrap();
+        assert!(matches!(expr.kind, ExprKind::Pipe(_)));
+        assert!(remaining.trim_start().starts_with('{'));
+    }
+
+    #[test]
+    fn test_pipe_scope_stage_rejects_wrong_binder_count() {
+        for source in [
+            "value |> { || 1 }",
+            "value |> { |left, right| left + right }",
+        ] {
+            let Err(nom::Err::Failure(error)) = expression(source) else {
+                panic!("expected an anonymous-scope arity failure for `{source}`");
+            };
+            assert_eq!(error.input, ANONYMOUS_SCOPE_ARITY_ERROR);
+        }
+    }
+
+    #[test]
+    fn test_argument_tuple_cannot_open_anonymous_scope() {
+        let Err(nom::Err::Failure(error)) = expression("(left, right) |> { it }") else {
+            panic!("expected an argument-tuple scope failure");
+        };
+        assert_eq!(error.input, ARGUMENT_TUPLE_SCOPE_ERROR);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 **Status**: Accepted direction
 **Decision date**: 2026-11-18
-**Scope**: Official identifier naming conventions (`UpperCamelCase` / `snake_case`) and line-bounded direct OSV / semicolon-free statement boundaries
+**Scope**: Official identifier naming conventions (`UpperCamelCase` / `snake_case`), line-bounded direct OSV / semicolon-free statement boundaries, and pipe stages for scopes and argument tuples (Decision 3, 2026-11-19)
 
 This document records the language-architecture rationale behind Restrict's
 identifier naming conventions and line-bounded statement boundaries.
@@ -223,3 +223,82 @@ contradicted Restrict's design goal of clean, low-noise, semicolon-free code.
   explicit `;` where authors intentionally write them on single-line sequences
   or unit-discard statements, without inserting defensive semicolons across
   lines.
+
+---
+
+## Decision 3: Pipe Stages Continue Scopes and Argument Tuples
+
+**Decision date**: 2026-11-19
+
+### Problem Statement
+
+Decision 2 made direct OSV, scoped verb clauses, and anonymous scopes
+line-bounded, with `|>` as the multi-line continuation. The parser, however,
+accepted only a bare verb after `|>`. Three same-line forms therefore had no
+multi-line spelling:
+
+```restrict
+(a, b) |> add              // syntax error
+values |> map { it + 1 }   // the scope did not attach to `map`
+value |> { it + 1 }        // parsed as a plain block; `it` was undefined
+```
+
+The practical cost showed up when an additional argument became relevant in
+the middle of a flow. Because multi-argument calls group their arguments before
+the verb, the grouping had to be carried back to the first line of the
+expression:
+
+```restrict
+val range_bonus = (([0..entry_count], |i| i + 1) map, 0, |acc, x| acc + x) fold
+```
+
+### Considered Alternatives
+
+- **Option A (Chosen): `|>` continues the existing scope forms**
+  - `value |> verb { ... }`, `value |> { ... }`, and `(a, b) |> verb` elaborate
+    to exactly the same calls as `value verb { ... }`, `value { ... }`, and
+    `(a, b) verb`.
+  - A pipeline opens an anonymous scope at the stage where a further argument
+    appears, and ordinary tuple-call syntax is used inside that scope:
+    `|> { (it, 0) |> fold { |acc, x| acc + x } }`.
+  - No new operator, keyword, or binding rule is introduced. `it` still exists
+    only inside braces.
+- **Option B (Rejected): extra value arguments after the pipe (`|> arg verb`)**
+  - Rejected because `|` also delimits lambda binders. An identifier directly
+    after `|>` reads like a binder name, so the position after `|>` is reserved
+    for a verb or an opening `{`.
+- **Option C (Rejected): configuration arguments on the verb (`|> verb(arg)`)**
+  - Rejected because it reintroduces the `verb(args)` shape that Restrict
+    forbids everywhere else, even if only after a pipe.
+- **Option D (Rejected): a keyword particle (`|> verb with arg`)**
+  - Rejected because it adds a second meaning to `with`, which already
+    introduces context blocks, and it is longer than opening a scope.
+- **Option E (Deferred): focus tuple shorthand (`|> (it, 0) fold { ... }`)**
+  - Would save one pair of braces for single-expression stages.
+  - Deferred because `it` would appear outside any braces, which contradicts
+    the rule that `it` exists only inside the implicit focus scope that
+    introduces it, and because `value |> (expr)` already pipes into a
+    parenthesized callable expression. Revisit after the chosen form has been
+    used in real programs.
+
+### Normative Rules
+
+1. The token after `|>` is a verb or an opening `{`, never a value argument.
+2. `value |> verb { ... }` is a scoped verb clause when `{` opens on the same
+   line as the verb.
+3. `value |> { ... }` is an anonymous exact-once scope with exactly one binder.
+4. `(a, b, ...) |> verb` supplies the verb of an argument tuple. The tuple is
+   not a value, so the call binds at grouped-call precedence and the tuple
+   cannot open an anonymous scope.
+5. Nested implicit focus scopes stay rejected. Inside an unheaded scope stage,
+   an inner scoped clause names its binder, or the stage names its object.
+
+### Design Consequences
+
+- Every same-line application form has a multi-line spelling, so Decision 2 no
+  longer forces long flows onto one line.
+- The parser elaborates the piped forms to the existing call nodes; the type
+  checker and code generator need no new cases.
+- Fallback for `Option` / `Result` (`??`), index access (`container[key]`), and
+  the remaining brevity proposals are separate decisions and are not part of
+  this one.

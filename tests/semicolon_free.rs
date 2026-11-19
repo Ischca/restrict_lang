@@ -176,3 +176,49 @@ export fun run_mixed_semicolons: () -> Int32 = {
 "#;
     assert_eq!(call_export_i32(source, "run_mixed_semicolons"), 31);
 }
+
+#[test]
+fn pipe_continues_scoped_verbs_anonymous_scopes_and_argument_tuples_in_wasm() {
+    let source = r#"
+fun add: (a: Int32, b: Int32) -> Int32 = {
+    a + b
+}
+
+export fun run_pipe_scopes: () -> Int32 = {
+    // The second argument of `fold` appears mid-pipeline; the scope opens there
+    // instead of wrapping the whole pipeline in parentheses from its first line.
+    val shifted_total = [1, 2, 3]
+        |> map { it + 1 }
+        |> { (it, 0) |> fold { |sum, value| sum + value } }
+    val kept = [1, 2, 3]
+        |> map { it * 2 } filter { it > 2 }
+        |> list_count
+    val seeded_total = ([1, 2, 3], 10)
+        |> fold { |sum, value| sum + value }
+    val combined = shifted_total
+        |> { |total| (total, kept) |> add }
+    (combined, seeded_total)
+        |> add
+}
+"#;
+    // shifted_total = 2 + 3 + 4 = 9, kept = 2, seeded_total = 16, combined = 11
+    assert_eq!(call_export_i32(source, "run_pipe_scopes"), 27);
+}
+
+#[test]
+fn pipe_scope_forms_execute_like_their_same_line_spellings() {
+    let piped = r#"
+export fun run: () -> Int32 = {
+    [3, 4, 5]
+        |> filter { it > 3 }
+        |> { (it, 100) |> fold { |sum, value| sum + value } }
+}
+"#;
+    let same_line = r#"
+export fun run: () -> Int32 = {
+    [3, 4, 5] filter { it > 3 } { |kept| (kept, 100) fold { |sum, value| sum + value } }
+}
+"#;
+    assert_eq!(call_export_i32(piped, "run"), 109);
+    assert_eq!(call_export_i32(same_line, "run"), 109);
+}

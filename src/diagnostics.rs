@@ -350,7 +350,7 @@ fn find_word_in_range(
 
 fn is_member_or_namespace_access(source: &str, mask: &[bool], pos: usize) -> bool {
     matches!(prev_non_code_byte(source, mask, pos), Some(b'.'))
-        || prev_non_code_two_bytes(source, mask, pos) == Some([b':', b':'])
+        || prev_non_code_two_bytes(source, mask, pos) == Some(*b"::")
 }
 
 fn is_record_field_label(source: &str, mask: &[bool], pos: usize, after: usize) -> bool {
@@ -834,7 +834,7 @@ fn find_custom_parser_failure_offset(source: &str, detail: &str) -> Option<usize
         for word in ["Some", "None"] {
             let mut cursor = 0;
             while let Some(pos) = find_word(source, &mask, word, cursor) {
-                if prev_non_code_two_bytes(source, &mask, pos) != Some([b':', b':'])
+                if prev_non_code_two_bytes(source, &mask, pos) != Some(*b"::")
                     && !is_match_arm_pattern(source, &mask, pos + word.len())
                 {
                     return Some(pos);
@@ -848,7 +848,7 @@ fn find_custom_parser_failure_offset(source: &str, detail: &str) -> Option<usize
         for word in ["Ok", "Err"] {
             let mut cursor = 0;
             while let Some(pos) = find_word(source, &mask, word, cursor) {
-                if prev_non_code_two_bytes(source, &mask, pos) != Some([b':', b':']) {
+                if prev_non_code_two_bytes(source, &mask, pos) != Some(*b"::") {
                     let next = skip_non_code_ws(source, &mask, pos + word.len());
                     if source[next..].starts_with('(')
                         && !is_match_arm_pattern(source, &mask, pos + word.len())

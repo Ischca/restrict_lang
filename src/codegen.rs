@@ -1585,10 +1585,10 @@ impl WasmCodeGen {
                     *first_wasi_only_in_core = Some(name.to_string());
                 }
             }
-            "exit" | "eprint" | "eprintln" | "print_int" | "print_float" => {
-                if first_wasi_only_in_core.is_none() {
-                    *first_wasi_only_in_core = Some(name.to_string());
-                }
+            "exit" | "eprint" | "eprintln" | "print_int" | "print_float"
+                if first_wasi_only_in_core.is_none() =>
+            {
+                *first_wasi_only_in_core = Some(name.to_string());
             }
             _ => {}
         }

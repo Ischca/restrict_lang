@@ -23,8 +23,8 @@ fun check_equal_bool: (actual: Boolean, expected: Boolean) -> CheckResult = {
 }
 
 fun combine_results: (left: CheckResult, right: CheckResult) -> CheckResult = {
-    val CheckResult { passed: left_passed, failures: left_failures } = left;
-    val CheckResult { passed: right_passed, failures: right_failures } = right;
+    val CheckResult { passed: left_passed, failures: left_failures } = left
+    val CheckResult { passed: right_passed, failures: right_failures } = right
 
     CheckResult {
         passed: left_passed && right_passed,
@@ -33,13 +33,13 @@ fun combine_results: (left: CheckResult, right: CheckResult) -> CheckResult = {
 }
 
 fun suite_result: (first: Int32, second: Int32) -> CheckResult = {
-    val math_result = (first + second, 7) check_equal_int;
-    val order_result = (first < second, true) check_equal_bool;
+    val math_result = (first + second, 7) check_equal_int
+    val order_result = (first < second, true) check_equal_bool
 
     (math_result, order_result) combine_results
 }
 
 fun main: () -> Int32 = {
-    val result = (3, 4) suite_result;
+    val result = (3, 4) suite_result
     result.failures
 }

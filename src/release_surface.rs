@@ -907,12 +907,16 @@ fn reject_tat_expr(expr: &Expr) -> Result<(), ReleaseSurfaceError> {
             "with lifetime blocks are unsupported in v0.0.1; {}",
             TAT_RELEASE_GATE_MESSAGE
         ))),
+        ExprKind::Return(Some(inner)) => reject_tat_expr(inner),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
         | ExprKind::StringLit(_)
         | ExprKind::CharLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
+        | ExprKind::Break
+        | ExprKind::Continue
+        | ExprKind::Return(None)
         | ExprKind::Ident(_)
         | ExprKind::VariantRef(_) => Ok(()),
     }

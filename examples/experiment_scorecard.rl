@@ -37,17 +37,17 @@ fun metric_score_with: (metric: Metric, baseline: Float64) -> Float64 = {
         conversions,
         latency_ms,
         revenue
-    } = metric;
+    } = metric
     val conversion_score = conversions > 50 then {
         revenue + baseline
     } else {
         baseline - 1.0
-    };
+    }
     val exposure_penalty = exposure < 1000 then {
         2.0
     } else {
         0.0
-    };
+    }
 
     conversion_score - exposure_penalty - (latency_ms / 1000.0)
 }
@@ -55,13 +55,13 @@ fun metric_score_with: (metric: Metric, baseline: Float64) -> Float64 = {
 fun make_metric_scorer: (baseline: Float64) -> Metric -> Float64 = {
     val scorer: Metric -> Float64 = |metric| {
         (metric, baseline) metric_score_with
-    };
+    }
 
     scorer
 }
 
 fun make_passing_rule: (minimum: Float64) -> Float64 -> Boolean = {
-    val passing: Float64 -> Boolean = |score| score >= minimum;
+    val passing: Float64 -> Boolean = |score| score >= minimum
     passing
 }
 
@@ -80,23 +80,23 @@ fun evaluate_experiment: (
     baseline: Float64,
     minimum: Float64
 ) -> ExperimentDecision = {
-    val preview_rulebook = (baseline, minimum) build_rulebook;
-    val preview_scorer = preview_rulebook.score_metric;
-    val preview_score = preview_metric |> preview_scorer;
+    val preview_rulebook = (baseline, minimum) build_rulebook
+    val preview_scorer = preview_rulebook.score_metric
+    val preview_score = preview_metric |> preview_scorer
 
     val ScoreRulebook {
         score_metric,
         score_passes
-    } = (baseline, minimum) build_rulebook;
-    val raw_scores = (scoring_metrics, score_metric) map;
-    val passing_scores = (raw_scores, score_passes) filter;
-    val passing_total = (passing_scores, 0.0, add_score) fold;
+    } = (baseline, minimum) build_rulebook
+    val raw_scores = (scoring_metrics, score_metric) map
+    val passing_scores = (raw_scores, score_passes) filter
+    val passing_total = (passing_scores, 0.0, add_score) fold
 
-    val report_rulebook = (baseline, minimum) build_rulebook;
-    val report_scores = (report_metrics, report_rulebook.score_metric) map;
-    val normalized_scores = (report_scores, |score| (score, minimum) normalize_score) map;
-    val fallback_bonus = (fallback_input, |value| value + baseline) map;
-    val accepted = passing_total > minimum;
+    val report_rulebook = (baseline, minimum) build_rulebook
+    val report_scores = (report_metrics, report_rulebook.score_metric) map
+    val normalized_scores = (report_scores, |score| (score, minimum) normalize_score) map
+    val fallback_bonus = (fallback_input, |value| value + baseline) map
+    val accepted = passing_total > minimum
 
     ExperimentDecision {
         preview_score: preview_score,
@@ -113,7 +113,7 @@ fun main: () -> ExperimentDecision = {
         conversions: 64,
         latency_ms: 120.0,
         revenue: 8.5
-    };
+    }
     val scoring_metrics: List<Metric> = [
         Metric {
             exposure: 1200,
@@ -127,7 +127,7 @@ fun main: () -> ExperimentDecision = {
             latency_ms: 220.0,
             revenue: 4.0
         }
-    ];
+    ]
     val report_metrics: List<Metric> = [
         Metric {
             exposure: 1300,
@@ -141,9 +141,9 @@ fun main: () -> ExperimentDecision = {
             latency_ms: 110.0,
             revenue: 7.5
         }
-    ];
-    val Some(seed_bonus) = (1.5) Option::Some;
-    val fallback_input: Option<Float64> = (seed_bonus) Option::Some;
+    ]
+    val Some(seed_bonus) = (1.5) Option::Some
+    val fallback_input: Option<Float64> = (seed_bonus) Option::Some
 
     (scoring_metrics, report_metrics, preview_metric, fallback_input, 3.0, 5.0) evaluate_experiment
 }

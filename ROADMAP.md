@@ -369,6 +369,11 @@ validation errors rather than partially supported ABI features.
 **Goal**: Add suspension and structured concurrency only after the synchronous
 Component ABI, ownership, and cleanup rules are stable.
 
+The [B2 implementation plan](docs/B2_ASYNC_COMPONENT_IMPLEMENTATION_PLAN.md)
+records the current experimental gaps, the first type/ownership increment,
+and the execution evidence required for each increment. Planning and the
+synchronous Next.js demo do not complete any B2 implementation gate.
+
 #### Language and Runtime
 
 - [ ] Specify and implement async functions, `await`, and structured `spawn`

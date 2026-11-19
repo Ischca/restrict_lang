@@ -104,12 +104,12 @@ fun build_plan: (request: ReviewRequest, fallback_owner: Int32) -> ReviewPlan = 
         failed_checks,
         manual_owner,
         freeze_rollout
-    } = request;
-    val risk = (customer_tier, failed_checks) risk_score;
-    val reviewer = (manual_owner, risk, freeze_rollout, fallback_owner) resolve_reviewer;
-    val audit_codes = (risk, customer_tier, freeze_rollout) audit_codes_for;
-    val deferred_codes = (freeze_rollout, risk) deferred_codes_for;
-    val route = (risk, freeze_rollout) route_for;
+    } = request
+    val risk = (customer_tier, failed_checks) risk_score
+    val reviewer = (manual_owner, risk, freeze_rollout, fallback_owner) resolve_reviewer
+    val audit_codes = (risk, customer_tier, freeze_rollout) audit_codes_for
+    val deferred_codes = (freeze_rollout, risk) deferred_codes_for
+    val route = (risk, freeze_rollout) route_for
 
     ReviewPlan {
         ticket_id: ticket_id,
@@ -127,16 +127,16 @@ fun main: () -> Int32 = {
         failed_checks: 2,
         manual_owner: () Option::None,
         freeze_rollout: false
-    };
-    val plan = (request, 77) build_plan;
+    }
+    val plan = (request, 77) build_plan
     val ReviewPlan {
         ticket_id,
         reviewer,
         audit_codes,
         deferred_codes,
         route
-    } = plan;
-    val audit_score = (audit_codes, 0, add_int) fold;
+    } = plan
+    val audit_score = (audit_codes, 0, add_int) fold
     val reviewer_score = reviewer match {
         Some(owner) => {
             owner
@@ -144,7 +144,7 @@ fun main: () -> Int32 = {
         None => {
             0
         }
-    };
+    }
     val deferred_score = deferred_codes match {
         Some(codes) => {
             (codes, 0, add_int) fold
@@ -152,7 +152,7 @@ fun main: () -> Int32 = {
         None => {
             0
         }
-    };
+    }
     val route_score = route match {
         Ok(score) => {
             score
@@ -160,7 +160,7 @@ fun main: () -> Int32 = {
         Err(shortfall) => {
             0 - shortfall
         }
-    };
+    }
 
     ticket_id + audit_score + reviewer_score + deferred_score + route_score
 }

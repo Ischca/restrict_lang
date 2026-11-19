@@ -74,7 +74,7 @@ fun box_value: <T>(box: InferenceBox<T>) -> T = {
         value,
         fallback,
         history
-    } = box;
+    } = box
 
     (fallback, value) choose_value
 }
@@ -101,8 +101,8 @@ fun selection_score: (
 }
 
 fun owner_or_default: (owner: Option<Int32>, fallback_owner: Int32) -> Int32 = {
-    val positive_owner = (owner, |value| value > 0) filter;
-    val routed_owner = (positive_owner, |value| value + 0) map;
+    val positive_owner = (owner, |value| value > 0) filter
+    val routed_owner = (positive_owner, |value| value + 0) map
 
     (routed_owner, fallback_owner) choose_value
 }
@@ -161,8 +161,8 @@ fun should_select_change: (
         touched_files,
         owner,
         status
-    } = change;
-    val score = (risk, touched_files, suite, status, suite_bias) selection_score;
+    } = change
+    val score = (risk, touched_files, suite, status, suite_bias) selection_score
 
     score >= min_score
 }
@@ -180,11 +180,11 @@ fun candidate_for: (
         touched_files,
         owner,
         status
-    } = change;
-    val score = (risk, touched_files, suite, status, suite_bias) selection_score;
-    val selected = score >= min_score;
-    val owner_id = (owner, fallback_owner) owner_or_default;
-    val route = (selected, id, suite) route_candidate;
+    } = change
+    val score = (risk, touched_files, suite, status, suite_bias) selection_score
+    val selected = score >= min_score
+    val owner_id = (owner, fallback_owner) owner_or_default
+    val route = (selected, id, suite) route_candidate
 
     CiCandidate {
         id: id,
@@ -235,7 +235,7 @@ fun fold_change: (
         first_unowned,
         selected_ids,
         quarantined_suites
-    } = state;
+    } = state
     val CiChange {
         id,
         suite,
@@ -243,20 +243,20 @@ fun fold_change: (
         touched_files,
         owner,
         status
-    } = change;
-    val score = (risk, touched_files, suite, status, suite_bias) selection_score;
-    val selected = score >= min_score;
-    val flaky = status == flaky_status;
+    } = change
+    val score = (risk, touched_files, suite, status, suite_bias) selection_score
+    val selected = score >= min_score
+    val flaky = status == flaky_status
     val next_selected_ids = selected then {
         (selected_ids, id) list_append
     } else {
         selected_ids
-    };
+    }
     val next_quarantined_suites = flaky then {
         (quarantined_suites, suite) list_append
     } else {
         quarantined_suites
-    };
+    }
 
     CiPlannerState {
         total_score: total_score + score,
@@ -278,24 +278,24 @@ fun plan_ci_tests: (
         min_score,
         fallback_owner,
         flaky_status
-    } = policy;
-    val suite_bias_value = suite_bias |> box_value;
-    val passthrough = keep;
-    val normalized_candidates = (candidate_changes, passthrough) map;
+    } = policy
+    val suite_bias_value = suite_bias |> box_value
+    val passthrough = keep
+    val normalized_candidates = (candidate_changes, passthrough) map
     val selected_changes = (
         normalized_candidates,
         |change| (change, min_score, suite_bias_value) should_select_change
-    ) filter;
+    ) filter
     val candidates = (
         selected_changes,
         |change| (change, min_score, suite_bias_value, fallback_owner) candidate_for
-    ) map;
-    val initial = () initial_state;
+    ) map
+    val initial = () initial_state
     val state = (
         audit_changes,
         initial,
         |current, change| (current, change, min_score, suite_bias_value, flaky_status) fold_change
-    ) fold;
+    ) fold
     val CiPlannerState {
         total_score,
         selected_count,
@@ -303,8 +303,8 @@ fun plan_ci_tests: (
         first_unowned,
         selected_ids,
         quarantined_suites
-    } = state;
-    val route = (selected_count, total_score) route_plan;
+    } = state
+    val route = (selected_count, total_score) route_plan
 
     CiPlan {
         total_score: total_score,
@@ -337,7 +337,7 @@ fun main: () -> CiPlan = {
             owner: () Option::None,
             status: 2
         }
-    ];
+    ]
     val candidate_changes: List<CiChange> = [
         CiChange {
             id: 201,
@@ -355,17 +355,17 @@ fun main: () -> CiPlan = {
             owner: () Option::None,
             status: 2
         }
-    ];
+    ]
     val suite_bias = InferenceBox {
         value: 4,
         fallback: () Option::None,
         history: []
-    };
+    }
     val policy = CiPolicy {
         min_score: 20,
         fallback_owner: 900,
         flaky_status: 2
-    };
+    }
 
     (audit_changes, candidate_changes, suite_bias, policy) plan_ci_tests
 }

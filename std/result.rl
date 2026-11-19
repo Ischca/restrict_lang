@@ -1,20 +1,66 @@
-// Standard Library: Result reference surface
+// Standard Library: Result
 //
-// This file is not the runtime implementation. The current compiler registers
-// Result constructors and pattern matching directly in the Rust type checker
-// and WebAssembly codegen.
-// Keep this file as a canonical, source-adjacent index for readers and tests.
-//
-// Current compiler-registered surface:
-// - value Result::Ok: Result<T, E> success constructor syntax
-// - error Result::Err: Result<T, E> error constructor syntax
-// - match arms over Ok(value) and Err(value)
-//
-// Canonical expression shapes:
-// - 42 Result::Ok
-// - 7 Result::Err
-// - 42 |> Result::Ok
-// - result match { Ok(value) => { value } Err(code) => { code } }
-//
-// Higher-order Result helpers are outside the compiler-registered v0.0.1
-// surface.
+// Pure-Restrict helpers for Result<T, E>.
+
+pub fun result_is_ok: <T, E>(res: Result<T, E>) -> Boolean = {
+    res match {
+        Ok (value) => { true }
+        Err (err) => { false }
+    }
+}
+
+pub fun result_is_err: <T, E>(res: Result<T, E>) -> Boolean = {
+    res match {
+        Ok (value) => { false }
+        Err (err) => { true }
+    }
+}
+
+pub fun result_unwrap_or: <T, E>(res: Result<T, E>, fallback: T) -> T = {
+    res match {
+        Ok (value) => { value }
+        Err (err) => { fallback }
+    }
+}
+
+pub fun result_unwrap_or_else: <T, E>(res: Result<T, E>, recover: E -> T) -> T = {
+    res match {
+        Ok (value) => { value }
+        Err (err) => { err |> recover }
+    }
+}
+
+pub fun result_map: <T, U, E>(res: Result<T, E>, f: T -> U) -> Result<U, E> = {
+    res match {
+        Ok (value) => { (value |> f) Result::Ok }
+        Err (err) => { (err) Result::Err }
+    }
+}
+
+pub fun result_map_err: <T, E, F>(res: Result<T, E>, f: E -> F) -> Result<T, F> = {
+    res match {
+        Ok (value) => { (value) Result::Ok }
+        Err (err) => { (err |> f) Result::Err }
+    }
+}
+
+pub fun result_and_then: <T, U, E>(res: Result<T, E>, f: T -> Result<U, E>) -> Result<U, E> = {
+    res match {
+        Ok (value) => { value |> f }
+        Err (err) => { (err) Result::Err }
+    }
+}
+
+pub fun result_ok: <T, E>(res: Result<T, E>) -> Option<T> = {
+    res match {
+        Ok (value) => { (value) Option::Some }
+        Err (err) => { () Option::None }
+    }
+}
+
+pub fun result_err: <T, E>(res: Result<T, E>) -> Option<E> = {
+    res match {
+        Ok (value) => { () Option::None }
+        Err (err) => { (err) Option::Some }
+    }
+}

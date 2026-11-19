@@ -38,7 +38,7 @@ fun review_points: (score: Option<Int32>) -> Int32 = {
 fun risk_penalty: (flags: Option<List<Int32>>) -> Int32 = {
     flags match {
         Some(items) => {
-            val total = (items, 0, |acc, flag| acc + flag) fold;
+            val total = (items, 0, |acc, flag| acc + flag) fold
             total + 20
         }
         None => { 0 }
@@ -58,16 +58,16 @@ fun maybe_review: (score: Int32) -> Option<Int32> = {
 }
 
 fun gate_pull_request: (pr: PullRequest) -> GateReport = {
-    val PullRequest { checks, review_score, risk_flags, touched_modules } = pr;
-    val CheckRun { failures, warnings, flaky } = checks;
-    val failure_penalty = failures * 30;
-    val warning_penalty = warnings * 3;
-    val flaky_penalty = (flaky, 15) bool_penalty;
-    val risk = risk_flags |> risk_penalty;
-    val review = review_score |> review_points;
-    val score = 100 + review - failure_penalty - warning_penalty - flaky_penalty - risk;
-    val touched_core_modules = (touched_modules, |module| module > 1) filter;
-    val blockers: List<Int32> = (touched_core_modules, |module| module |> severity_code) map;
+    val PullRequest { checks, review_score, risk_flags, touched_modules } = pr
+    val CheckRun { failures, warnings, flaky } = checks
+    val failure_penalty = failures * 30
+    val warning_penalty = warnings * 3
+    val flaky_penalty = (flaky, 15) bool_penalty
+    val risk = risk_flags |> risk_penalty
+    val review = review_score |> review_points
+    val score = 100 + review - failure_penalty - warning_penalty - flaky_penalty - risk
+    val touched_core_modules = (touched_modules, |module| module > 1) filter
+    val blockers: List<Int32> = (touched_core_modules, |module| module |> severity_code) map
 
     GateReport {
         release_score: score,
@@ -86,7 +86,7 @@ fun main: () -> GateReport = {
         review_score: (10) Option::Some,
         risk_flags: ([]) Option::Some,
         touched_modules: [1, 2, 3]
-    };
+    }
 
     pr |> gate_pull_request
 }

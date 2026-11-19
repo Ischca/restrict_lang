@@ -9,10 +9,15 @@
    - Use `val` for variable declarations (NOT `let`)
    - Use OSV (Object-Subject-Verb) word order
    - Field assignments use `:` (NOT `=`)
-   - Newlines are whitespace; non-callable values naturally start a new
-     expression, while `;` ends an expression before a callable-shaped value
-     that would otherwise extend the same OSV chain
+   - Direct OSV calls and anonymous `{ ... }` scopes are line-bounded; write
+     multi-line code semicolon-free and use `|>` (or infix operators,
+     `.field`/`.clone`, and `then`/`else`/`match`/`while`) to continue across
+     lines. `;` is optional (single-line multi-statements or explicit unit
+     discard only); bare `return` followed by a newline returns `()`.
    - No semicolons after top-level declarations
+   - Use `UpperCamelCase` for types, constructors, forms, and contexts, and
+     `snake_case` for functions, methods, variables, fields, modules, filenames,
+     and lifetimes (see `/docs/NAMING_AND_SYNTAX_DECISIONS.md`)
 3. **ALWAYS follow the type system rules**:
    - Affine types (use at most once)
    - Temporal types for resource management

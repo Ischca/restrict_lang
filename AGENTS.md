@@ -102,10 +102,17 @@ public WebAssembly documentation when the direction changes.
 - **Prototype-based records**: Use `clone` and `freeze` for inheritance
 - **Context binding**: Resource management with `with` blocks
 - **Pipe operator**: `|>` for OSV function composition
-- **Statement boundaries**: Newlines are whitespace. Non-callable values
-  naturally start a new expression; use `;` when a callable-shaped value would
-  otherwise extend the same OSV chain. Never put semicolons after top-level
-  declarations.
+- **Statement boundaries**: Direct OSV calls and anonymous `{ ... }` scopes
+  are line-bounded (do not cross newlines). Multi-line continuation uses `|>`,
+  infix operators, `.field`/`.clone`, or control keywords (`then`, `else`,
+  `match`, `while`), and bare `return` followed by a newline returns `()`.
+  Multi-line Restrict code is semicolon-free; `;` is optional (only for
+  multiple statements on one line or explicitly discarding a block's final
+  value as `()`). Never put semicolons after top-level declarations.
+- **Naming conventions**: `UpperCamelCase` for types, constructors, forms, and
+  contexts (`UserProfile`, `Option::Some`); `snake_case` for functions, methods,
+  variables, fields, modules, filenames, and lifetimes (`parse_int`, `~file`).
+  See `docs/NAMING_AND_SYNTAX_DECISIONS.md`.
 
 ## Important Notes
 
@@ -134,3 +141,23 @@ All 8 WAT generation tests were failing due to parser not handling
 function declarations correctly. Fixed by supporting both complex
 and simple syntax styles.
 ```
+
+## パッケージマネージャ
+
+このプロジェクトでは **pnpm** を使う。`npm` / `yarn` は使わない。
+
+- インストール: `pnpm install`
+- 依存の追加: `pnpm add <pkg>`
+- スクリプト実行: `pnpm <script>`
+
+### npm から移行する場合
+
+1. `pnpm import` で `package-lock.json` から `pnpm-lock.yaml` を生成する
+2. `pnpm install` して、ビルドと起動が通ることを確認する
+3. 通ったら `package-lock.json` を削除する（ロックファイルを2つ残すと解決結果が不定になる）
+
+pnpm は依存解決が厳格なため、`package.json` に書いていない依存を暗黙に使っている箇所で落ちることがある。
+その場合は該当パッケージを明示的に `pnpm add` する。
+
+理由: pnpm はグローバルストアから hardlink / clonefile を張るため、同じ依存を持つ複数プロジェクトで
+ディスク使用量が大幅に減る。npm のフラットな node_modules は複製されるためディスクを食う。

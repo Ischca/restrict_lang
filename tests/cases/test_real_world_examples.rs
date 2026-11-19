@@ -906,7 +906,7 @@ record Profile {
 }
 
 fun main: () -> Profile = {
-    val base = Profile { name: "Ada", score: 10 };
+    mut val base = Profile { name: "Ada", score: 10 };
     base.clone {
         score: 20
     }
@@ -931,7 +931,7 @@ record Profile {
 
 fun main: () -> Profile = {
     val base = Profile { name: "Ada", score: 10 };
-    val patch = Profile { name: "Grace", score: 20 };
+    mut val patch = Profile { name: "Grace", score: 20 };
     base.clone {
         ...patch,
         score: 30

@@ -41,11 +41,11 @@ fun assess_change: (change: Change) -> ReviewPlan = {
         base_risk,
         has_migration,
         canary_signal
-    } = change;
-    val migration_points = (has_migration, 15) points_when;
-    val normalized_canary = (canary_signal, |signal| signal |> clamp_signal) map;
-    val risky_canary = (normalized_canary, |signal| signal >= 80) filter;
-    val score = base_risk + migration_points;
+    } = change
+    val migration_points = (has_migration, 15) points_when
+    val normalized_canary = (canary_signal, |signal| signal |> clamp_signal) map
+    val risky_canary = (normalized_canary, |signal| signal >= 80) filter
+    val score = base_risk + migration_points
     val escalation: Option<Int32> = risky_canary match {
         Some(signal) => {
             (id + signal) Option::Some
@@ -57,7 +57,7 @@ fun assess_change: (change: Change) -> ReviewPlan = {
                 () Option::None
             }
         }
-    };
+    }
 
     ReviewPlan {
         change_id: id,
@@ -73,7 +73,7 @@ fun main: () -> ReviewPlan = {
         base_risk: 55,
         has_migration: true,
         canary_signal: (120) Option::Some
-    };
+    }
 
     change |> assess_change
 }

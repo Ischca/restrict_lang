@@ -6,7 +6,7 @@ fun apply_int: (f: Int32 -> Int32, value: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val add_tax: Int32 -> Int32 = |subtotal| (subtotal * 108) / 100;
-    val taxed = 100 |> add_tax;
+    val add_tax: Int32 -> Int32 = |subtotal| (subtotal * 108) / 100
+    val taxed = 100 |> add_tax
     (|x| x * 2, taxed) apply_int
 }

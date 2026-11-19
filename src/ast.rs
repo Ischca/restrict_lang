@@ -465,6 +465,12 @@ pub enum ExprKind {
     Then(ThenExpr),
     /// While loop
     While(WhileExpr),
+    /// Break out of enclosing while loop
+    Break,
+    /// Continue to next iteration of enclosing while loop
+    Continue,
+    /// Return early from enclosing function
+    Return(Option<Box<Expr>>),
     /// Pattern matching
     Match(MatchExpr),
 
@@ -1180,6 +1186,7 @@ fn visit_expr_subtree_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
         ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
             visit_expr_subtree_mut(inner, f)
         }
+        ExprKind::Return(Some(inner)) => visit_expr_subtree_mut(inner, f),
         ExprKind::Lambda(lambda) => visit_expr_subtree_mut(&mut lambda.body, f),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
@@ -1187,6 +1194,9 @@ fn visit_expr_subtree_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
         | ExprKind::CharLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
+        | ExprKind::Break
+        | ExprKind::Continue
+        | ExprKind::Return(None)
         | ExprKind::Ident(_)
         | ExprKind::VariantRef(_) => {}
     }
@@ -1310,6 +1320,7 @@ fn collect_expr_ids(expr: &Expr, ids: &mut Vec<NodeId>) {
         ExprKind::Freeze(inner) | ExprKind::Await(inner) | ExprKind::Spawn(inner) => {
             collect_expr_ids(inner, ids)
         }
+        ExprKind::Return(Some(inner)) => collect_expr_ids(inner, ids),
         ExprKind::Lambda(lambda) => collect_expr_ids(&lambda.body, ids),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
@@ -1317,6 +1328,9 @@ fn collect_expr_ids(expr: &Expr, ids: &mut Vec<NodeId>) {
         | ExprKind::CharLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Unit
+        | ExprKind::Break
+        | ExprKind::Continue
+        | ExprKind::Return(None)
         | ExprKind::Ident(_)
         | ExprKind::VariantRef(_) => {}
     }

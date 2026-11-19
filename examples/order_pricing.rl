@@ -17,9 +17,9 @@ fun expedited_fee: (expedited: Boolean) -> Int32 = {
 }
 
 fun total_due: (subtotal: Int32, coupon: Int32, expedited: Boolean) -> Int32 = {
-    val discount = (coupon, subtotal) clamp_discount;
-    val shipping = expedited |> expedited_fee;
-    val after_discount = subtotal - discount;
+    val discount = (coupon, subtotal) clamp_discount
+    val shipping = expedited |> expedited_fee
+    val after_discount = subtotal - discount
     after_discount + shipping
 }
 

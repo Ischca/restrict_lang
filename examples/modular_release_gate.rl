@@ -11,7 +11,7 @@ fun build_modular_release_gate: () -> ReleaseVerdict = {
         failing_checks: 1,
         risk_signals: [4, 2, 1],
         manual_owner: () Option::None
-    };
+    }
 
     (input, default_owner) evaluate_release
 }
@@ -21,17 +21,17 @@ fun main: () -> ReleaseVerdict = {
 }
 
 export fun modular_release_gate_score: () -> Int32 = {
-    val verdict = () build_modular_release_gate;
+    val verdict = () build_modular_release_gate
     val ReleaseVerdict {
         score,
         blocked,
         owner
-    } = verdict;
+    } = verdict
     val blocked_score = blocked then {
         100
     } else {
         0
-    };
+    }
 
     score + owner + blocked_score
 }

@@ -26,18 +26,18 @@ fun prioritize_ticket: (
     workflow_mapper: Option<Int32 -> Int32>,
     audit_codes: List<Int32>
 ) -> Int32 = {
-    val mapper = workflow_mapper |> choose_mapper;
-    val adjusted_score = base_score |> mapper;
-    val audit_score = (audit_codes, 0, add_int) fold;
+    val mapper = workflow_mapper |> choose_mapper
+    val adjusted_score = base_score |> mapper
+    val audit_score = (audit_codes, 0, add_int) fold
 
     adjusted_score + audit_score
 }
 
 fun main: () -> Int32 = {
-    val urgent_mapper: Option<Int32 -> Int32> = (incident_boost) Option::Some;
-    val normal_mapper: Option<Int32 -> Int32> = () Option::None;
-    val urgent_score = (10, urgent_mapper, [1, 2]) prioritize_ticket;
-    val normal_score = (20, normal_mapper, [3]) prioritize_ticket;
+    val urgent_mapper: Option<Int32 -> Int32> = (incident_boost) Option::Some
+    val normal_mapper: Option<Int32 -> Int32> = () Option::None
+    val urgent_score = (10, urgent_mapper, [1, 2]) prioritize_ticket
+    val normal_score = (20, normal_mapper, [3]) prioritize_ticket
 
     urgent_score + normal_score
 }

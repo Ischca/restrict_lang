@@ -6,7 +6,7 @@ record Counter {
 }
 
 fun increment: (counter: Counter) -> Counter = {
-    val Counter { value } = counter;
+    val Counter { value } = counter
     Counter { value: value + 1 }
 }
 
@@ -26,10 +26,10 @@ fun classify: (value: Int32) -> Int32 = {
 }
 
 fun main: () -> Int32 = {
-    val base = Counter { value: 1 };
-    val next = base |> increment;
-    val selected = ((12) Option::Some, 0) select_total;
-    val bucket = selected |> classify;
+    val base = Counter { value: 1 }
+    val next = base |> increment
+    val selected = ((12) Option::Some, 0) select_total
+    val bucket = selected |> classify
 
     next.value + bucket
 }

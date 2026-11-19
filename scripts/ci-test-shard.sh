@@ -13,6 +13,9 @@ case "$mode" in
     exec cargo test --workspace --locked --doc --quiet
     ;;
   warder)
+    # Warder tests build restrict_lang with --offline, so every workspace
+    # dependency must already be in the cargo registry cache.
+    cargo fetch --locked
     exec cargo test -p warder --locked --quiet -- --test-threads=1
     ;;
   integration)

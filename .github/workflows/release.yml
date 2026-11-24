@@ -103,7 +103,7 @@ jobs:
           Compress-Archive -Path $packageDir -DestinationPath "$packageDir.zip"
 
       - name: Upload packaged binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: restrict-lang-${{ matrix.platform }}
           path: restrict-lang-v${{ needs.validate.outputs.version }}-${{ matrix.platform }}.${{ matrix.archive }}

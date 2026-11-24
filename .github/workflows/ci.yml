@@ -143,7 +143,7 @@ jobs:
           --policy benchmarks/regression-policy.json
 
       - name: Upload raw benchmark evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-wasm-benchmark-${{ github.run_id }}
           path: target/benchmark-results/

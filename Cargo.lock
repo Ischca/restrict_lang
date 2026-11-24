@@ -2541,7 +2541,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-encoder 0.252.0",
  "wasmi",
- "wasmparser 0.252.0",
+ "wasmparser 0.263.0",
  "wasmtime",
  "wat",
  "web-sys",
@@ -3532,7 +3532,7 @@ dependencies = [
  "url",
  "walkdir",
  "wasmi",
- "wasmparser 0.252.0",
+ "wasmparser 0.263.0",
  "wat",
  "which",
  "wit-parser 0.252.0",
@@ -3779,8 +3779,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f5fa0a054ae153606df820eb0a84213e28cda41bbe04ba2628e71b6ba100fcb"
 dependencies = [
  "bitflags 2.13.0",
+ "hashbrown 0.17.1",
  "indexmap",
  "semver",
+ "serde",
 ]
 
 [[package]]

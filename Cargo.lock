@@ -2546,7 +2546,7 @@ dependencies = [
  "wat",
  "web-sys",
  "wit-bindgen-core 0.58.0",
- "wit-component 0.252.0",
+ "wit-component 0.263.0",
  "wit-parser 0.252.0",
  "zstd",
 ]
@@ -3662,14 +3662,14 @@ dependencies = [
 
 [[package]]
 name = "wasm-metadata"
-version = "0.252.0"
+version = "0.263.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b7e08e02a3cd55bf778009d4cd6faae50da011f293644daf78a531a32d6d142"
+checksum = "8997a297f42413bee775d73a750def062ee1ec4a6d904703cb08046c0296774d"
 dependencies = [
  "anyhow",
  "indexmap",
- "wasm-encoder 0.252.0",
- "wasmparser 0.252.0",
+ "wasm-encoder 0.263.0",
+ "wasmparser 0.263.0",
 ]
 
 [[package]]
@@ -3779,6 +3779,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f5fa0a054ae153606df820eb0a84213e28cda41bbe04ba2628e71b6ba100fcb"
 dependencies = [
  "bitflags 2.13.0",
+ "hashbrown 0.17.1",
  "indexmap",
  "semver",
 ]
@@ -4390,9 +4391,9 @@ dependencies = [
 
 [[package]]
 name = "wit-component"
-version = "0.252.0"
+version = "0.263.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76db0662b590f45d33d0e363fa13539a5a1eecd35d5a12fe208c335461c1053d"
+checksum = "4189bd180353b942b788715519dff886517b540e648c6f6e5129f57429945bf7"
 dependencies = [
  "anyhow",
  "bitflags 2.13.0",
@@ -4401,10 +4402,10 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "wasm-encoder 0.252.0",
- "wasm-metadata 0.252.0",
- "wasmparser 0.252.0",
- "wit-parser 0.252.0",
+ "wasm-encoder 0.263.0",
+ "wasm-metadata 0.263.0",
+ "wasmparser 0.263.0",
+ "wit-parser 0.263.0",
 ]
 
 [[package]]
@@ -4461,6 +4462,25 @@ dependencies = [
  "serde_json",
  "unicode-ident",
  "wasmparser 0.252.0",
+]
+
+[[package]]
+name = "wit-parser"
+version = "0.263.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "874d6ce9db4261cb66980ab14f3da066b24292497b6f46f988c0d1b9b27913f3"
+dependencies = [
+ "anyhow",
+ "hashbrown 0.17.1",
+ "id-arena",
+ "indexmap",
+ "log",
+ "semver",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "unicode-ident",
+ "wasmparser 0.263.0",
 ]
 
 [[package]]

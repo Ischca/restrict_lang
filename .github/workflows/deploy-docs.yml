@@ -28,7 +28,7 @@ jobs:
         uses: actions/configure-pages@v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.100.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v1

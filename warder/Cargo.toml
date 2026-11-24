@@ -33,7 +33,7 @@ restrict_lang = { path = "..", version = "0.1.0" }
 walkdir = "2.3"
 reqwest = { version = "0.12", features = ["json"] }
 wat = "1"
-wasmparser = "0.252"
+wasmparser = "0.263"
 wasmi = "=1.1.0"
 wit-parser = "=0.252.0"
 

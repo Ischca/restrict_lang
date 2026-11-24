@@ -44,7 +44,7 @@ hex = "0.4"
 wasmi = "=1.1.0"
 wit-component = "=0.252.0"
 wit-bindgen-core = "=0.58.0"
-wasm-encoder = { version = "=0.252.0", features = ["wasmparser"] }
+wasm-encoder = { version = "=0.263.0", features = ["wasmparser"] }
 
 [[bin]]
 name = "restrict_lang"

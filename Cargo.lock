@@ -2539,7 +2539,7 @@ dependencies = [
  "tokio",
  "tower-lsp",
  "wasm-bindgen",
- "wasm-encoder 0.252.0",
+ "wasm-encoder 0.263.0",
  "wasmi",
  "wasmparser 0.252.0",
  "wasmtime",
